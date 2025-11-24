@@ -9,7 +9,7 @@ This document defines WobbleBot’s testing approach across phases.  Tests are e
    - Validate ports and adapters with mocks.
 
 2. **Integration Tests**
-   - Exercise end‑to‑end flows using mock adapters (e.g., mock exchange, mock banking API).
+   - Exercise end‑to‑end flows using mock adapters (e.g., mock exchange with withdrawal capability).
    - Limited live API tests against Kraken when using real keys; these must be gated behind environment flags to avoid accidental trades.
 
 3. **System Tests**
@@ -57,7 +57,7 @@ This document defines WobbleBot’s testing approach across phases.  Tests are e
 
 - Utilize saved market data snapshots for deterministic tests.
 - Provide static JSON fixtures for Advisor recommendations and Harvester proposals.
-- Use stub servers or in‑memory mocks for Kraken and banking APIs during tests to avoid external side effects.
+- Use stub servers or in‑memory mocks for Kraken API (trading + withdrawals per ADR-004) during tests to avoid external side effects.
 
 ## Definition of “Tested Enough” per Stage
 

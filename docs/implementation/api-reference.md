@@ -19,7 +19,7 @@ Run the main trading loop using the configured environment.
 
 ### `wobblebot status`
 
-Display a high‑level status including active coins, open orders, recent cycles, and the current modes of the Trader, Advisor, and Harvester.
+Display a high‑level status including active coins, open orders, recent cycles, and the current modes of the Bot Core, Advisor, and Harvester.
 
 ### `wobblebot advise`
 

@@ -6,10 +6,7 @@ This document defines boundaries, actors, and environment.
 ## External Actors
 
 - **Kraken Exchange API**
-  Provides market data, account balances, and order execution.
-
-- **Banking API (Harvester)**
-  Optional; used only for controlled deposits/withdrawals.
+  Provides market data, account balances, order execution, and fund withdrawals (ACH/wire).
 
 - **Local LLM (Ollama)**
   Provides strategy recommendations in JSON format.
@@ -17,7 +14,7 @@ This document defines boundaries, actors, and environment.
 - **User (Human Operator)**
   Oversees operations, approves certain actions, reviews logs.
 
-## Context Diagram (ASCII)
+**Note:** Per ADR-004, no separate banking API integration is required. Kraken's withdrawal API handles bank transfers directly.## Context Diagram (ASCII)
 
 ```
                  +---------------------+
@@ -38,12 +35,14 @@ This document defines boundaries, actors, and environment.
 |   +-----------+      +--------------+      +---------------+   |
 |         ^                    ^                      ^          |
 |         |                    |                      |          |
-|  +--------------+     +--------------+      +---------------+  |
-|  |  LLM Advisor |<--->|   Harvester  |<---->|  Banking API  |  |
-|  +--------------+     +--------------+      +---------------+  |
-|          ^                    ^                                 |
-|          \--------------------/                                 |
-|                 (via Orchestrator only)                         |
+|  +--------------+     +--------------+                         |
+|  |  LLM Advisor |<--->|   Harvester  |                         |
+|  +--------------+     +--------------+                         |
+|          ^                    |                                |
+|          \--------------------/                                |
+|         (via Orchestrator only)                                |
+|                                                                |
+|  Note: Harvester uses Kraken API for withdrawals (ADR-004)    |
 +---------------------------------------------------------------+
 ```
 

@@ -6,9 +6,9 @@ This guide is for the person operating WobbleBot in day‑to‑day use.  It desc
 
 WobbleBot consists of three primary subsystems:
 
-1. **Trader (Bot Core)** – Implements the deterministic micro‑grid trading strategy.  It places limit orders and tracks positions and P&L.  Controls: off | paper | live.
+1. **Bot Core (Trading Engine)** – Implements the deterministic micro‑grid trading strategy.  It places limit orders and tracks positions and P&L.  Controls: off | paper | live.
 2. **Advisor (LLM)** – Generates strategy suggestions in JSON format.  It cannot execute trades or move money.  Controls: off | passive (record suggestions) | active (auto‑apply within safe bounds).
-3. **Harvester** – Manages balances between Kraken and a bank account.  In passive mode it only proposes transfers; in active mode it executes withdrawals (and optionally deposits) according to configured thresholds.  Controls: off | passive | active (withdrawals only in v1.0).
+3. **Harvester** – Manages balances between Kraken and bank account via Kraken's withdrawal API (per ADR-004).  In passive mode it only proposes transfers; in active mode it executes withdrawals according to configured thresholds.  Controls: off | passive | active (withdrawals only in v1.0).
 
 Each subsystem can be independently turned on, put into passive mode, or fully disabled.  Mode changes should be deliberate and recorded (see below).
 
@@ -43,10 +43,10 @@ After editing the config, restart WobbleBot to apply changes.  Keep old configur
 
 ### Safe Ramp‑Up
 
-1. **Initialize** – Start with all subsystems disabled except Trader in paper mode.  This means no real trades, no advisor calls, no transfers.
+1. **Initialize** – Start with all subsystems disabled except Bot Core in paper mode.  This means no real trades, no advisor calls, no transfers.
 2. **Observe** – Let the bot run for several days.  Check logs, DB entries, and metrics.  Tune grid parameters and safety caps based on observed behavior.
 3. **Enable Advisor (Passive)** – Turn on the Advisor in passive mode.  It will produce JSON suggestions but not apply them.  Review the suggestions to gauge their usefulness and sanity.
-4. **Enable Trader (Tiny Live)** – Switch Trader to live mode with tiny order sizes (e.g., $5 per order).  Continue monitoring.  Ensure safety caps are working.
+4. **Enable Bot Core (Tiny Live)** – Switch Bot Core to live mode with tiny order sizes (e.g., $5 per order).  Continue monitoring.  Ensure safety caps are working.
 5. **Enable Harvester (Passive)** – Let the Harvester propose transfers when the Kraken balance exceeds your target band.  Verify proposals match your risk appetite.
 6. **Enable Harvester (Active)** – If comfortable, enable active withdrawals.  The Harvester will automatically transfer excess funds from Kraken to your bank within configured limits.  Deposits remain manual unless explicitly enabled later.
 
@@ -64,7 +64,7 @@ Once ramped up, normal operations involve:
 
 If you need to pause trading or halt all actions:
 
-1. Edit the config to set all subsystems to `off` or desired safe modes (e.g., Trader → paper, Advisor → off, Harvester → passive).
+1. Edit the config to set all subsystems to `off` or desired safe modes (e.g., Bot Core → paper, Advisor → off, Harvester → passive).
 2. Alternatively, use the CLI if such commands are implemented (e.g., `wobblebot run --paper`).
 3. Restart WobbleBot.
 4. Confirm via logs and DB that no new orders or transfers are being created.
@@ -83,7 +83,7 @@ To understand what WobbleBot is doing at any given time, you can:
 Sometimes you need to act fast:
 
 - **Stop all containers** – Run `docker compose down` to instantly halt the system.
-- **Switch to paper mode** – Edit the config (or use a CLI flag) to set Trader to paper, Advisor to off, and Harvester to off, then restart.
+- **Switch to paper mode** – Edit the config (or use a CLI flag) to set Bot Core to paper, Advisor to off, and Harvester to off, then restart.
 - **Disable withdrawals** – Remove or disable the Harvester key in the environment.  Without a valid key, withdrawals cannot occur.
 
 After any emergency action, perform a detailed review before resuming normal operations.

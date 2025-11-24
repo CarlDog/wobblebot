@@ -75,12 +75,12 @@ WobbleBot persists state in a local SQLite database.  Protect this data:
 ### External Service Outages
 
 - **Kraken Issues** – If Kraken is unreachable or returns errors, switch to paper‑trading mode (via config or CLI flag) until connectivity is restored.
-- **Banking API Issues** – If bank transfers fail, disable or set the Harvester to passive mode.  Log the issue and retry later.
+- **Kraken Withdrawal Issues** – If bank transfers (withdrawals) fail, disable or set the Harvester to passive mode.  Log the issue and retry later. Per ADR-004, withdrawals are handled via Kraken's API.
 - **LLM Advisor Issues** – If the Advisor is down or producing invalid JSON, disable it in the config.  The bot will continue using the last valid settings.
 
 ## Mode Management
 
-Changing the mode of any subsystem (Trader, Advisor, Harvester) is akin to a production change.  Follow a safe procedure:
+Changing the mode of any subsystem (Bot Core, Advisor, Harvester) is akin to a production change.  Follow a safe procedure:
 
 1. Record the change: note the date, time, reason, and new mode.
 2. Perform mode changes during low‑volatility periods when possible.

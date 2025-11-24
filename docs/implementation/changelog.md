@@ -23,11 +23,11 @@ All notable changes to WobbleBot will be documented in this file.  This project 
 - Kraken exchange adapter integrated for live trading with support for paper mode and tiny order sizes.
 - Multi‑asset trading support with per‑asset and global exposure limits.
 - Strategy Advisor module integrating a local LLM, with JSON output and optional auto‑apply under strict bounds.
-- Harvester module for guarded withdrawals from Kraken to bank accounts, with passive and active modes.
-- Centralized Orchestrator coordinating Trader, Advisor, and Harvester modules.
+- Harvester module for guarded withdrawals from Kraken to bank accounts, with passive and active modes (uses Kraken withdrawal API per ADR-004).
+- Centralized Orchestrator coordinating Bot Core, Advisor, and Harvester modules.
 - Data Collector for live market data and volatility metrics.
 - Observability layer: structured logging, metrics, and dashboard integration.
-- Deployment via Docker Compose on Synology NAS or locally.
+- Deployment via Docker Compose on Synology NAS or locally.
 - Comprehensive documentation: architecture, planning, implementation, operator and operations guides.
 
 ### Changed

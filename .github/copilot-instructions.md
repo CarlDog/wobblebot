@@ -38,7 +38,7 @@ All modules communicate through **abstract ports**, never direct dependencies:
 
 ### Orchestrator
 - Central coordinator for lifecycle, scheduling, module interaction
-- **Only component** that coordinates between Trader, Advisor, and Harvester
+- **Only component** that coordinates between Bot Core, Advisor, and Harvester
 - Aggregates logs and state transitions for observability
 
 ## Safety Constraints (Non-Negotiable)
