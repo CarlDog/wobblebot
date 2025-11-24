@@ -20,14 +20,14 @@ Run a canned scenario where WobbleBot “trades” in pure simulation and output
 
 ---
 
-## M2 – Phase 2 Complete: “Micro‑Grid Live”
+## M2 – Phase 2 Complete: "Micro-Grid Live"
 
-**Covers:** Phase 2 (Stages 2.1–2.5)
+**Covers:** Phase 2 (Stages 2.1–2.5)
 
 **Definition of Done:**
 
-- Kraken adapter integrates with the exchange’s public and private endpoints (read‑only key).
-- Micro‑grid strategy is operational with at least one coin.
+- Kraken adapter integrates with the exchange's public and private endpoints (read‑only key).
+- Micro-grid strategy is operational with at least one coin.
 - Multi‑asset support works with configured caps.
 - The bot can run in either full paper mode or tiny‑size live mode.
 

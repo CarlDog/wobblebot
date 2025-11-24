@@ -12,15 +12,15 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 4. **Stage 1.4 – Kraken Mock & Simulation Mode** – Implement a fake exchange adapter for dry‑run simulations.  Support a paper trading loop with hard‑coded scenarios.
 5. **Stage 1.5 – Phase 1 Integration Check** – Demonstrate an end‑to‑end simulated cycle: load config → run core loop against the mock exchange → persist results → view logs.  No external API calls yet.
 
-## Phase 2 – Core Trading Engine (Real Kraken, No Money Moves)
+## Phase 2 – Core Trading Engine (Real Kraken, No Money Moves)
 
-**Goal:** Deterministic micro‑grid trading against **real Kraken** with tiny exposure and **no withdrawals**.
+**Goal:** Deterministic micro-grid trading against **real Kraken** with tiny exposure and **no withdrawals**.
 
 1. **Stage 2.1 – Kraken Adapter (Read‑Only + Minimal Data Collector)** – Integrate with the Kraken API using a read‑only key.  Fetch tickers, order books, and account balances.  Provide a minimal `DataCollector v1` that supplies current prices and balances to the Bot Core.
-2. **Stage 2.2 – Micro‑Grid Engine** – Implement the configurable grid logic per asset (grid boundaries, spacing, order sizing).  Enforce per‑coin caps on maximum orders and maximum funds in play.
+2. **Stage 2.2 – Micro-Grid Engine** – Implement the configurable grid logic per asset (grid boundaries, spacing, order sizing).  Enforce per‑coin caps on maximum orders and maximum funds in play.
 3. **Stage 2.3 – Live Paper Mode / Tiny‑Size Mode** – Enable live trading against Kraken with minimal order sizes (or full paper mode via configuration).  Track profit and loss, cycle counts, and basic volatility metrics.
 4. **Stage 2.4 – Multi‑Asset Support** – Extend the core to run grids for multiple whitelisted coins (e.g., DOGE, ADA, SOL, MATIC, ETH).  Enforce shared safety rules such as daily spend caps and global exposure limits.
-5. **Stage 2.5 – Phase 2 Integration Check** – Demonstrate a full pipeline: configuration → live Kraken adapter + `DataCollector v1` → micro‑grid engine → logs and database entries.  All withdrawals remain disabled at the API level.
+5. **Stage 2.5 – Phase 2 Integration Check** – Demonstrate a full pipeline: configuration → live Kraken adapter + `DataCollector v1` → micro-grid engine → logs and database entries.  All withdrawals remain disabled at the API level.
 
 ## Phase 3 – Strategy Advisor & Analytics
 

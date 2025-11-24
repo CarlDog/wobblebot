@@ -4,9 +4,9 @@ This document enumerates WobbleBot’s functional and non‑functional requireme
 
 ## Functional Requirements (FR)
 
-### FR‑001 – Micro‑Grid Trading
+### FR‑001 – Micro-Grid Trading
 
-WobbleBot **SHALL** implement a configurable micro‑grid strategy for each tracked coin:
+WobbleBot **SHALL** implement a configurable micro-grid strategy for each tracked coin:
 
 - Grid ranges and step sizes are defined per asset.
 - Orders are placed as limit orders via the exchange adapter.

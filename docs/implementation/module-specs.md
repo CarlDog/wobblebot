@@ -28,7 +28,7 @@ When creating a module spec, follow this outline:
 
 ## Example – Bot Core (High‑Level)
 
-**Overview:** Implements deterministic micro‑grid trading logic.  It manages grids for each asset, places orders via the exchange adapter, and tracks P&L and exposures.
+**Overview:** Implements deterministic micro-grid trading logic.  It manages grids for each asset, places orders via the exchange adapter, and tracks P&L and exposures.
 
 **Responsibilities:** Decide when to place or cancel orders, enforce safety limits, update positions and cycle counters.  It does **not** know about LLM suggestions or funds transfers (handled by Advisor and Harvester).
 

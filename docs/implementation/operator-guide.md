@@ -6,7 +6,7 @@ This guide is for the person operating WobbleBot in day‑to‑day use.  It desc
 
 WobbleBot consists of three primary subsystems:
 
-1. **Bot Core (Trading Engine)** – Implements the deterministic micro‑grid trading strategy.  It places limit orders and tracks positions and P&L.  Controls: off | paper | live.
+1. **Bot Core (Trading Engine)** – Implements the deterministic micro-grid trading strategy.  It places limit orders and tracks positions and P&L.  Controls: off | paper | live.
 2. **Advisor (LLM)** – Generates strategy suggestions in JSON format.  It cannot execute trades or move money.  Controls: off | passive (record suggestions) | active (auto‑apply within safe bounds).
 3. **Harvester** – Manages balances between Kraken and bank account via Kraken's withdrawal API (per ADR-004).  In passive mode it only proposes transfers; in active mode it executes withdrawals according to configured thresholds.  Controls: off | passive | active (withdrawals only in v1.0).
 

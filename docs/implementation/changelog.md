@@ -19,7 +19,7 @@ All notable changes to WobbleBot will be documented in this file.  This project 
 ## [v1.0.0] – TBD
 
 ### Added
-- Implemented deterministic micro‑grid trading engine with configurable grids and safety caps.
+- Implemented deterministic micro-grid trading engine with configurable grids and safety caps.
 - Kraken exchange adapter integrated for live trading with support for paper mode and tiny order sizes.
 - Multi‑asset trading support with per‑asset and global exposure limits.
 - Strategy Advisor module integrating a local LLM, with JSON output and optional auto‑apply under strict bounds.

@@ -27,9 +27,9 @@ This document defines WobbleBot’s testing approach across phases.  Tests are e
 - **Unit tests** for domain models and port interfaces.
 - **Integration tests** for the simulated pipeline using mock exchange and SQLite.
 
-### Phase 2 – Core Trading
+### Phase 2 – Core Trading
 
-- **Unit tests** for the micro‑grid engine, grid generation, and safety enforcement.
+- **Unit tests** for the micro-grid engine, grid generation, and safety enforcement.
 - **Integration tests** with real Kraken endpoints for price retrieval and minimal order execution (gated by flags).
 
 ### Phase 3 – Advisor Integration
