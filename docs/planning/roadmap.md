@@ -36,7 +36,7 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 
 **Goal:** Compartmentalized module that manages **funds transfers**, not trades.
 
-1. **Stage 4.1 – Harvester Domain & Ports** – Define the Harvester domain model, `HarvesterPort`, and banking adapter ports.  Capture rules for minimum Kraken liquidity, surplus scraping, and top‑up thresholds.
+1. **Stage 4.1 – Harvester Domain & Ports** – Define the Harvester domain model and `HarvesterPort`.  Capture rules for minimum Kraken liquidity, surplus scraping, and top‑up thresholds.  Per ADR-004, Harvester uses Kraken's withdrawal API (via ExchangePort) rather than separate banking integration.
 2. **Stage 4.2 – Read‑Only Balance Monitoring** – Harvester reads Kraken balances and, if available, bank balances.  Log hypothetical transfers without moving any money.
 3. **Stage 4.3 – Passive Mode Transfers** – Harvester produces “transfer proposals” (amount, direction, and rationale) for manual review.  Orchestrator surfaces proposals via logs or notifications.
 4. **Stage 4.4 – Active Mode (Guarded Withdrawals)** – Enable actual **Kraken → bank withdrawals** within strict caps.  Automated bank → Kraken deposits may remain manual until additional ADRs and safety reviews are completed.
