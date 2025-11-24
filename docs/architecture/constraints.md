@@ -1,39 +1,42 @@
 # System Constraints
 
-These constraints shape and limit the design.  
+These constraints shape and limit the design.
 They are non-negotiable unless explicitly overridden by an ADR.
 
 ## Technical Constraints
 
-- **Python-only runtime**  
+- **Python-only runtime**
   All backend modules must be Python 3.11+.
 
-- **SQLite primary database**  
+- **SQLite primary database**
   No external DB dependencies unless added by ADR.
 
-- **Docker-based execution**  
+- **Docker-based execution**
   System must run isolated in containers on Synology NAS.
 
-- **Kraken exchange only (Phase 1–3)**  
+- **Kraken exchange only (Phase 1–3)**
   Multi-exchange support deferred to later phases.
 
 ## Safety Constraints
 
 - **No module except Harvester may initiate fund transfers.**
 
-- **LLM Strategy Advisor cannot send executable commands**  
-  Only produces JSON suggestions.
+- **LLM Strategy Advisor cannot send executable commands**
+  Only produces JSON suggestions (implements AdvisorPort).
 
-- **Kraken API keys must exclude withdrawal permissions**  
-  (Except Harvester’s dedicated key.)
+- **Kraken API keys must exclude withdrawal permissions**
+  (Except Harvester's dedicated key, which has withdrawal access but operates under strict thresholds.)
 
-- **Max balance exposure and daily spend caps mandatory**  
-  Bot Core must enforce locally.
+- **Max balance exposure and daily spend caps mandatory**
+  Bot Core enforces locally; Orchestrator provides defense-in-depth validation.
+
+- **Harvester operates under strict thresholds**
+  Minimum exchange liquidity, surplus scraping limits, top-up caps, max daily withdrawal limits.
 
 ## Architectural Constraints
 
-- **Hexagonal architecture is required.**  
-- **All modules communicate through ports.**  
+- **Hexagonal architecture is required.**
+- **All modules communicate through ports.**
 - **No module should depend on another’s internal implementation.**
 
 ## Operational Constraints
