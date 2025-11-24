@@ -1,0 +1,247 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		// Python
+		"python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+		"python.terminal.activateEnvironment": true,
+		"python.analysis.typeCheckingMode": "basic",
+		"python.analysis.autoImportCompletions": true,
+		"python.analysis.diagnosticMode": "workspace",
+		"python.analysis.extraPaths": [
+			"${workspaceFolder}/src"
+		],
+		// Testing
+		"python.testing.pytestEnabled": true,
+		"python.testing.unittestEnabled": false,
+		"python.testing.pytestArgs": [
+			"tests",
+			"-v"
+		],
+		// Formatting
+		"editor.formatOnSave": true,
+		"[python]": {
+			"editor.defaultFormatter": "ms-python.black-formatter",
+			"editor.formatOnSave": true,
+			"editor.codeActionsOnSave": {
+				"source.organizeImports": "explicit"
+			}
+		},
+		// Black formatter
+		"black-formatter.args": [
+			"--line-length=100"
+		],
+		// isort
+		"isort.args": [
+			"--profile=black",
+			"--line-length=100"
+		],
+		// Mypy
+		"mypy-type-checker.args": [
+			"--config-file=pyproject.toml"
+		],
+		// Editor
+		"editor.rulers": [
+			100
+		],
+		"editor.tabSize": 4,
+		"editor.insertSpaces": true,
+		"files.trimTrailingWhitespace": true,
+		"files.insertFinalNewline": true,
+		"files.exclude": {
+			"**/__pycache__": true,
+			"**/*.pyc": true,
+			"**/.pytest_cache": true,
+			"**/.mypy_cache": true,
+			"**/.coverage": true,
+			"**/htmlcov": true,
+			"**/*.egg-info": true
+		},
+		// Search
+		"search.exclude": {
+			"**/.venv": true,
+			"**/node_modules": true,
+			"**/__pycache__": true,
+			"**/.pytest_cache": true,
+			"**/.mypy_cache": true,
+			"**/htmlcov": true,
+			"**/*.egg-info": true
+		}
+	},
+	"extensions": {
+		"recommendations": [
+			"ms-python.python",
+			"ms-python.vscode-pylance",
+			"ms-python.black-formatter",
+			"ms-python.isort",
+			"ms-python.mypy-type-checker",
+			"ms-python.pylint",
+			"github.copilot",
+			"github.copilot-chat",
+			"editorconfig.editorconfig",
+			"eamodio.gitlens",
+			"donjayamanne.githistory",
+			"yzhang.markdown-all-in-one",
+			"bierner.markdown-mermaid",
+			"tamasfe.even-better-toml",
+			"redhat.vscode-yaml"
+		]
+	},
+	"tasks": {
+		"version": "2.0.0",
+		"tasks": [
+			{
+				"label": "Test: All",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"pytest",
+					"tests/",
+					"-v"
+				],
+				"group": "test",
+				"presentation": {
+					"reveal": "always",
+					"panel": "new"
+				}
+			},
+			{
+				"label": "Test: Unit Only",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"pytest",
+					"tests/",
+					"-v",
+					"-m",
+					"unit"
+				],
+				"group": "test",
+				"presentation": {
+					"reveal": "always",
+					"panel": "new"
+				}
+			},
+			{
+				"label": "Format: Black",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"black",
+					"src/",
+					"tests/"
+				],
+				"presentation": {
+					"reveal": "always",
+					"panel": "shared"
+				}
+			},
+			{
+				"label": "Format: isort",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"isort",
+					"src/",
+					"tests/"
+				],
+				"presentation": {
+					"reveal": "always",
+					"panel": "shared"
+				}
+			},
+			{
+				"label": "Lint: mypy",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"mypy",
+					"src/"
+				],
+				"presentation": {
+					"reveal": "always",
+					"panel": "shared"
+				}
+			},
+			{
+				"label": "Lint: pylint",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-m",
+					"pylint",
+					"src/"
+				],
+				"presentation": {
+					"reveal": "always",
+					"panel": "shared"
+				}
+			},
+			{
+				"label": "Pre-commit: All Checks",
+				"type": "shell",
+				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+				"args": [
+					"-c",
+					"import subprocess; subprocess.run(['python', '-m', 'black', 'src/', 'tests/']); subprocess.run(['python', '-m', 'isort', 'src/', 'tests/']); subprocess.run(['python', '-m', 'mypy', 'src/']); subprocess.run(['python', '-m', 'pytest', 'tests/', '-v'])"
+				],
+				"group": {
+					"kind": "build",
+					"isDefault": true
+				},
+				"presentation": {
+					"reveal": "always",
+					"panel": "new"
+				}
+			}
+		]
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Python: Current File",
+				"type": "debugpy",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"justMyCode": true,
+				"env": {
+					"PYTHONPATH": "${workspaceFolder}/src"
+				}
+			},
+			{
+				"name": "Python: Pytest Current File",
+				"type": "debugpy",
+				"request": "launch",
+				"module": "pytest",
+				"args": [
+					"${file}",
+					"-v"
+				],
+				"console": "integratedTerminal",
+				"justMyCode": false
+			},
+			{
+				"name": "Python: All Tests",
+				"type": "debugpy",
+				"request": "launch",
+				"module": "pytest",
+				"args": [
+					"tests/",
+					"-v"
+				],
+				"console": "integratedTerminal",
+				"justMyCode": false
+			}
+		]
+	}
+}

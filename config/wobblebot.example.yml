@@ -1,0 +1,165 @@
+# WobbleBot Configuration (Example)
+# Copy this file to wobblebot.yml and adjust for your needs
+
+# ============================================================================
+# Application Settings
+# ============================================================================
+application:
+  name: "WobbleBot"
+  version: "0.1.0"
+  mode: "sandbox" # sandbox, dev, live-low-risk, production
+
+# ============================================================================
+# Safety Constraints (Non-Negotiable)
+# ============================================================================
+safety:
+  # Maximum total exposure across all coins (USD)
+  max_total_exposure_usd: 1000.0
+
+  # Maximum daily spend limit (USD)
+  max_daily_spend_usd: 100.0
+
+  # Maximum exposure per coin (USD)
+  max_per_coin_exposure_usd: 200.0
+
+  # Maximum number of open orders per coin
+  max_orders_per_coin: 10
+
+  # Emergency stop conditions
+  emergency_stop:
+    enabled: true
+    # Stop trading if total loss exceeds this percentage
+    max_loss_percentage: 20.0
+    # Stop trading if exchange balance drops below this (USD)
+    min_exchange_balance_usd: 50.0
+
+# ============================================================================
+# Exchange Settings
+# ============================================================================
+exchange:
+  name: "kraken"
+
+  # API credentials loaded from environment variables
+  # KRAKEN_API_KEY and KRAKEN_API_SECRET
+
+  # Rate limiting (requests per second)
+  rate_limit_rps: 1.0
+
+  # Retry configuration
+  max_retries: 3
+  retry_delay_seconds: 2.0
+
+# ============================================================================
+# Grid Trading Configuration
+# ============================================================================
+grid:
+  # Default grid parameters (can be overridden per coin)
+  default:
+    # Grid spacing as percentage of base price
+    spacing_percentage: 1.0
+
+    # Number of grid levels above and below
+    levels_above: 5
+    levels_below: 5
+
+    # Order size per grid level (USD)
+    order_size_usd: 10.0
+
+  # Per-coin overrides
+  coins:
+    DOGE:
+      spacing_percentage: 2.0
+      levels_above: 3
+      levels_below: 3
+      order_size_usd: 15.0
+      enabled: true
+
+    ADA:
+      spacing_percentage: 1.5
+      levels_above: 4
+      levels_below: 4
+      order_size_usd: 12.0
+      enabled: false # Disabled for now
+
+    SOL:
+      spacing_percentage: 1.0
+      levels_above: 5
+      levels_below: 5
+      order_size_usd: 10.0
+      enabled: false
+
+    MATIC:
+      spacing_percentage: 1.5
+      levels_above: 4
+      levels_below: 4
+      order_size_usd: 10.0
+      enabled: false
+
+    ETH:
+      spacing_percentage: 0.5
+      levels_above: 6
+      levels_below: 6
+      order_size_usd: 20.0
+      enabled: false
+
+# ============================================================================
+# Strategy Advisor Settings (Phase 3+)
+# ============================================================================
+advisor:
+  enabled: false # Enable in Phase 3
+
+  # How often to request advisor recommendations (hours)
+  interval_hours: 24
+
+  # Auto-apply recommendations (with strict validation)
+  auto_apply:
+    enabled: false
+    # Only auto-apply if recommendations are within these bounds
+    max_spacing_change_percentage: 20.0
+    max_order_size_change_percentage: 15.0
+
+# ============================================================================
+# Harvester Settings (Phase 4+)
+# ============================================================================
+harvester:
+  enabled: false # Enable in Phase 4
+
+  # Minimum liquidity to keep on exchange (USD)
+  min_exchange_liquidity_usd: 200.0
+
+  # Surplus threshold for scraping to bank (USD)
+  surplus_threshold_usd: 500.0
+
+  # Top-up threshold for bank → exchange transfers (USD)
+  topup_threshold_usd: 150.0
+
+  # Transfer limits
+  max_withdrawal_per_day_usd: 1000.0
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR
+
+  # Log to file
+  file:
+    enabled: true
+    path: "logs/wobblebot.log"
+    max_size_mb: 10
+    backup_count: 5
+
+  # Log to console
+  console:
+    enabled: true
+
+# ============================================================================
+# Database Configuration
+# ============================================================================
+database:
+  type: "sqlite"
+  path: "data/wobblebot.db"
+
+  # Connection pool settings (if applicable)
+  pool_size: 5
+  max_overflow: 10
