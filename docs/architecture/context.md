@@ -14,7 +14,9 @@ This document defines boundaries, actors, and environment.
 - **User (Human Operator)**
   Oversees operations, approves certain actions, reviews logs.
 
-**Note:** Per ADR-004, no separate banking API integration is required. Kraken's withdrawal API handles bank transfers directly.## Context Diagram (ASCII)
+**Note:** Per ADR-004, no separate banking API integration is required. Kraken's withdrawal API handles bank transfers directly.
+
+## Context Diagram (ASCII)
 
 ```
                  +---------------------+

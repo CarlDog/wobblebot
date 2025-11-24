@@ -9,8 +9,8 @@
 ## Security
 
 - Minimal API permissions
-- Separate API keys per module where applicable
-- Banking adapter locked down behind thresholds
+- Separate API keys per module where applicable (trading key vs. withdrawal-enabled key)
+- Harvester module locked down behind thresholds (uses Kraken withdrawal API per ADR-004)
 - No module may trigger external calls without Orchestrator gating
 
 ## Error Handling
