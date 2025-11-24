@@ -33,6 +33,9 @@ They are non-negotiable unless explicitly overridden by an ADR.
 - **Harvester operates under strict thresholds**
   Minimum exchange liquidity, surplus scraping limits, top-up caps, max daily withdrawal limits.
 
+- **Harvester uses Kraken's withdrawal API for fund transfers**
+  Per ADR-004, no separate banking API integration required (Kraken handles ACH/wire transfers).
+
 ## Architectural Constraints
 
 - **Hexagonal architecture is required.**

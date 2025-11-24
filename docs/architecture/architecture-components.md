@@ -17,9 +17,8 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 - **AdvisorPort** – Interface for Strategy Advisor to receive summaries and return recommendations
 - **DataCollectorPort** – Market metrics, historical data, derived analytics (aggregation layer)
 
-### Treasury & Banking Ports
+### Treasury Ports
 - **HarvesterPort** – Interface for Orchestrator to interact with Harvester (fund transfer management)
-- **BankingPort** – External bank API integration (implemented by Banking Adapter, used by Harvester)
 
 ### Operational Ports
 - **NotifierPort** – Alerts, notifications (email, Slack, Discord, etc.)
@@ -71,14 +70,15 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 - Bank ↔ Kraken balance manager
 - **Implements HarvesterPort** (consumed by Orchestrator)
 - **Depends on:**
-  - **BankingPort** (external bank API adapter) for withdrawals/deposits
-  - **ExchangePort** (Kraken Adapter) for exchange balance queries
-- Executes controlled fund movements **only via BankingPort**
+  - **ExchangePort** (Kraken Adapter with withdrawal permissions) for balance queries AND fund transfers
+  - **StoragePort** for logging transfer proposals and outcomes
+- **Executes withdrawals via Kraken's withdrawal API** (ACH, wire transfers)
 - Blind to trading implementation and LLM internals
 - Operates on:
-  - Current balances (from ExchangePort + BankingPort)
-  - Static rules + thresholds configured in Harvester config
+  - Current Kraken balance (from ExchangePort)
+  - Static rules + thresholds configured in Harvester config (min liquidity, surplus scraping, top-up)
 - **Uses dedicated Kraken API key with withdrawal permissions** (separate from trading key)
+- **Note:** Per ADR-004, no separate banking API integration is needed—Kraken handles bank transfers
 
 ## 7. Storage Layer (Persistence)
 - SQLite database (Phase 1–2)

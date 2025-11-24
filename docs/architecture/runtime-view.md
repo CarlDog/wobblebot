@@ -28,10 +28,11 @@ This document describes key runtime executions and interactions.
 
 1. Orchestrator queries Harvester for balance status (via HarvesterPort)
 2. Harvester checks Kraken balance (via ExchangePort)
-3. Harvester checks bank balance (via BankingPort)
-4. Harvester applies threshold logic (min liquidity, surplus scraping, top-up rules)
-5. If action required → Harvester builds transfer proposal
-6. Orchestrator enforces safety caps and validates proposal
-7. Harvester executes transfer (via BankingPort)
-8. Transfer outcome recorded in DB (via StoragePort)
-9. Orchestrator logs full audit trail
+3. Harvester applies threshold logic (min liquidity, surplus scraping, top-up rules)
+4. If withdrawal needed → Harvester builds transfer proposal
+5. Orchestrator enforces safety caps and validates proposal
+6. Harvester executes withdrawal via Kraken's withdrawal API (via ExchangePort with withdrawal permissions)
+7. Transfer outcome recorded in DB (via StoragePort)
+8. Orchestrator logs full audit trail
+
+**Note:** Per ADR-004, Harvester uses Kraken's withdrawal endpoints (ACH/wire) rather than separate banking API.

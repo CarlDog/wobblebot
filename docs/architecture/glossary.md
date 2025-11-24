@@ -6,7 +6,7 @@
 
 **Strategy Advisor** – LLM-powered module producing JSON configuration recommendations (advisory-only, no execution authority).
 
-**Harvester** – Module responsible for safe transfers between Kraken and bank accounts. Only module with withdrawal permissions.
+**Harvester** – Module responsible for safe transfers between Kraken and bank accounts. Uses Kraken's withdrawal API (no separate banking integration needed per ADR-004).
 
 **Ports & Adapters** – Hexagonal architecture pattern enabling modular design. Ports are abstract interfaces; adapters are concrete implementations.
 
@@ -32,6 +32,6 @@
 
 **HarvesterPort** – Interface for fund transfer management. Implemented by Harvester module.
 
-**BankingPort** – Interface for bank API interactions. Implemented by Banking Adapter, used by Harvester.
-
 **NotifierPort** – Interface for alerts and notifications. Implementation TBD.
+
+**Note on BankingPort:** Originally planned as a separate port for bank API integration. Per ADR-004, not needed—Kraken's withdrawal API handles bank transfers directly.
