@@ -58,9 +58,9 @@ A typical WobbleBot repository contains:
 
    WobbleBot can run in different modes controlled by config and environment variables:
 
-   - **Sandbox / Dev** – Paper trading; fake or disabled banking adapter; Advisor on with verbose logging.  Safe for local testing.
-   - **Live / Low‑Risk** – Real trading on Kraken with tiny order sizes; Harvester in passive mode (no transfers); Advisor restricted to read‑only or safe bounds.
-   - **Production** – Real trading with configured caps; Harvester active for withdrawals (within strict limits); Advisor optionally auto‑applying safe suggestions.
+   - **Sandbox / Dev** \u2013 Paper trading; Harvester disabled; Advisor on with verbose logging.  Safe for local testing.
+   - **Live / Low\u2011Risk** \u2013 Real trading on Kraken with tiny order sizes; Harvester in passive mode (no transfers); Advisor restricted to read\u2011only or safe bounds.
+   - **Production** \u2013 Real trading with configured caps; Harvester active for withdrawals (within strict limits per ADR-004); Advisor optionally auto\u2011applying safe suggestions.
 
    Always verify your mode before starting WobbleBot to avoid unintended trades or withdrawals.
 
