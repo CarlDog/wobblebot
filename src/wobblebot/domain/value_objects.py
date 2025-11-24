@@ -1,0 +1,158 @@
+"""Domain value objects for WobbleBot.
+
+Value objects are immutable, validated data containers that represent
+concepts without identity. They enforce domain invariants at creation time.
+"""
+
+from datetime import datetime
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class Symbol(BaseModel):
+    """Trading pair symbol (e.g., BTC/USD, ETH/USD).
+
+    Attributes:
+        base: Base currency (e.g., BTC, ETH)
+        quote: Quote currency (e.g., USD, USDT)
+    """
+
+    base: str = Field(..., min_length=1, max_length=10, description="Base currency")
+    quote: str = Field(..., min_length=1, max_length=10, description="Quote currency")
+
+    @field_validator("base", "quote")
+    @classmethod
+    def uppercase_currency(cls, v: str) -> str:
+        """Ensure currency codes are uppercase."""
+        return v.upper().strip()
+
+    def __str__(self) -> str:
+        """Format as BASE/QUOTE."""
+        return f"{self.base}/{self.quote}"
+
+    def to_kraken_format(self) -> str:
+        """Format for Kraken API (e.g., BTCUSD, ETHUSD)."""
+        return f"{self.base}{self.quote}"
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True  # Make immutable
+
+
+class Price(BaseModel):
+    """Price value with validation.
+
+    Attributes:
+        amount: Decimal amount (must be positive)
+        currency: Currency code (e.g., USD)
+    """
+
+    amount: Decimal = Field(..., gt=0, description="Price amount (must be positive)")
+    currency: str = Field(..., min_length=1, max_length=10, description="Currency code")
+
+    @field_validator("currency")
+    @classmethod
+    def uppercase_currency(cls, v: str) -> str:
+        """Ensure currency code is uppercase."""
+        return v.upper().strip()
+
+    def __str__(self) -> str:
+        """Format as amount + currency."""
+        return f"{self.amount:.8f} {self.currency}"
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True  # Make immutable
+
+
+class Amount(BaseModel):
+    """Quantity/amount value with validation.
+
+    Attributes:
+        value: Decimal value (must be positive)
+        asset: Asset code (e.g., BTC, USD)
+    """
+
+    value: Decimal = Field(..., gt=0, description="Amount value (must be positive)")
+    asset: str = Field(..., min_length=1, max_length=10, description="Asset code")
+
+    @field_validator("asset")
+    @classmethod
+    def uppercase_asset(cls, v: str) -> str:
+        """Ensure asset code is uppercase."""
+        return v.upper().strip()
+
+    def __str__(self) -> str:
+        """Format as value + asset."""
+        return f"{self.value:.8f} {self.asset}"
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True  # Make immutable
+
+
+class OrderSide(BaseModel):
+    """Order side (buy/sell).
+
+    Attributes:
+        side: Either 'buy' or 'sell'
+    """
+
+    side: Literal["buy", "sell"]
+
+    def __str__(self) -> str:
+        """Return side as string."""
+        return self.side
+
+    def is_buy(self) -> bool:
+        """Check if this is a buy order."""
+        return self.side == "buy"
+
+    def is_sell(self) -> bool:
+        """Check if this is a sell order."""
+        return self.side == "sell"
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True  # Make immutable
+
+
+class Timestamp(BaseModel):
+    """Timestamp value object.
+
+    Attributes:
+        dt: UTC datetime
+    """
+
+    dt: datetime = Field(..., description="UTC datetime")
+
+    @field_validator("dt")
+    @classmethod
+    def ensure_utc(cls, v: datetime) -> datetime:
+        """Ensure datetime is timezone-aware (UTC)."""
+        if v.tzinfo is None:
+            raise ValueError("Timestamp must be timezone-aware (UTC)")
+        return v
+
+    def __str__(self) -> str:
+        """Format as ISO 8601."""
+        return self.dt.isoformat()
+
+    def to_unix_ms(self) -> int:
+        """Convert to Unix timestamp in milliseconds."""
+        return int(self.dt.timestamp() * 1000)
+
+    def to_unix_seconds(self) -> float:
+        """Convert to Unix timestamp in seconds (Kraken API format)."""
+        return self.dt.timestamp()
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True  # Make immutable

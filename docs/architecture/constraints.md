@@ -6,7 +6,7 @@ They are non-negotiable unless explicitly overridden by an ADR.
 ## Technical Constraints
 
 - **Python-only runtime**
-  All backend modules must be Python 3.11+.
+  All backend modules must be Python 3.13+.
 
 - **SQLite primary database**
   No external DB dependencies unless added by ADR.

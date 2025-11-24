@@ -4,7 +4,7 @@ This document defines how to write code in the WobbleBot project so that future 
 
 ## Language & Version
 
-- Use **Python 3.11+** for all backend modules.
+- Use **Python 3.13+** for all backend modules.
 - Prefer the standard library unless there is a compelling reason to add a dependency.
 
 ## Project Structure

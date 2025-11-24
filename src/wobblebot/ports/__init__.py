@@ -5,4 +5,33 @@ This layer defines abstract ports (interfaces) that domain and application layer
 depend on. Adapters implement these ports to provide concrete functionality.
 """
 
-__all__: list[str] = []
+from wobblebot.ports.advisor import (
+    AdvisorPort,
+    AdvisorRecommendation,
+    PerformanceSummary,
+)
+from wobblebot.ports.data_collector import DataCollectorPort, MarketSnapshot
+from wobblebot.ports.exchange import ExchangePort
+from wobblebot.ports.harvester import HarvesterPort, TransferProposal, TransferResult
+from wobblebot.ports.notifier import Notification, NotifierPort
+from wobblebot.ports.storage import StoragePort
+
+__all__ = [
+    # Core ports
+    "ExchangePort",
+    "StoragePort",
+    "DataCollectorPort",
+    # Phase 3+ ports
+    "AdvisorPort",
+    "PerformanceSummary",
+    "AdvisorRecommendation",
+    # Phase 4+ ports
+    "HarvesterPort",
+    "TransferProposal",
+    "TransferResult",
+    # Future ports
+    "NotifierPort",
+    "Notification",
+    # Data Collector types
+    "MarketSnapshot",
+]

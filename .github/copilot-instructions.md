@@ -85,7 +85,7 @@ Currently in **Phase 1** (Foundation & Sandbox) – no real trading yet. See `do
 - `feature/phaseX-stageY-*` – Short-lived feature branches
 
 ### Code Style & Tools
-- **Python 3.11+** required
+- **Python 3.13+** required
 - Use **black** for formatting, **isort** for imports, **mypy/pyright** for type checking
 - Prefer **dataclasses or Pydantic models** for structured data
 - **Never use `print()`** – use project logging utilities

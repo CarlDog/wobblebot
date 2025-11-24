@@ -1,0 +1,131 @@
+"""StoragePort - Abstract interface for persistence operations.
+
+This port defines the contract for storing and retrieving domain entities.
+Adapters implement this interface for specific storage backends (SQLite, Postgres, etc.).
+"""
+
+from abc import ABC, abstractmethod
+from datetime import datetime
+from uuid import UUID
+
+from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.value_objects import Symbol
+
+
+class StoragePort(ABC):
+    """Abstract interface for persistence operations.
+
+    Implementations must handle:
+    - Order persistence and queries
+    - Trade history
+    - Balance snapshots
+    - Configuration snapshots (future)
+    - Audit logs (future)
+
+    Note: Position tracking deferred to Phase 3+ (see ADR-005)
+    """
+
+    # Order operations
+    @abstractmethod
+    async def save_order(self, order: Order) -> None:
+        """Persist an order.
+
+        Args:
+            order: Order to save (insert or update)
+
+        Raises:
+            StorageError: If save fails
+        """
+        pass
+
+    @abstractmethod
+    async def get_order(self, order_id: UUID) -> Order | None:
+        """Retrieve an order by ID.
+
+        Args:
+            order_id: Order ID
+
+        Returns:
+            Order if found, None otherwise
+
+        Raises:
+            StorageError: If retrieval fails
+        """
+        pass
+
+    @abstractmethod
+    async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
+        """Get all open orders, optionally filtered by symbol.
+
+        Args:
+            symbol: Optional symbol filter
+
+        Returns:
+            List of open orders
+
+        Raises:
+            StorageError: If retrieval fails
+        """
+        pass
+
+    # Trade operations
+    @abstractmethod
+    async def save_trade(self, trade: Trade) -> None:
+        """Persist a trade.
+
+        Args:
+            trade: Trade to save
+
+        Raises:
+            StorageError: If save fails
+        """
+        pass
+
+    @abstractmethod
+    async def get_trades(
+        self,
+        symbol: Symbol | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 100,
+    ) -> list[Trade]:
+        """Get trade history with optional filters.
+
+        Args:
+            symbol: Optional symbol filter
+            start_time: Optional start time filter
+            end_time: Optional end time filter
+            limit: Maximum number of trades to return
+
+        Returns:
+            List of trades
+
+        Raises:
+            StorageError: If retrieval fails
+        """
+        pass
+
+    # Balance operations
+    @abstractmethod
+    async def save_balance_snapshot(self, balances: list[Balance]) -> None:
+        """Save a snapshot of all balances.
+
+        Args:
+            balances: List of balances to snapshot
+
+        Raises:
+            StorageError: If save fails
+        """
+        pass
+
+    @abstractmethod
+    async def get_latest_balance_snapshot(self) -> list[Balance]:
+        """Get the most recent balance snapshot.
+
+        Returns:
+            List of balances from latest snapshot
+
+        Raises:
+            StorageError: If retrieval fails
+        """
+        pass

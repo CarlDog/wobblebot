@@ -6,7 +6,7 @@ This guide covers local development setup, tooling, testing, and pre-commit work
 
 ## Prerequisites
 
-- **Python 3.11+** (verify with `python --version`)
+- **Python 3.13+** (verify with `python --version`)
 - **Git** for version control
 - **VS Code** (recommended) or your preferred editor
 - **Make** (optional, for convenience commands)

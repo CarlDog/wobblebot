@@ -3,7 +3,7 @@
 **Deterministic, safety-first micro-trading system using hexagonal architecture**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ---
@@ -23,7 +23,7 @@ Built using **hexagonal architecture (Ports & Adapters)** for clean boundaries, 
 
 ## Project Status
 
-**Current Phase:** Phase 1 – Foundation & Sandbox  
+**Current Phase:** Phase 1 – Foundation & Sandbox
 **Stage:** 1.1 – Repo & Scaffolding
 
 See [docs/planning/roadmap.md](docs/planning/roadmap.md) for the full development roadmap.
@@ -34,7 +34,7 @@ See [docs/planning/roadmap.md](docs/planning/roadmap.md) for the full developmen
 
 ### Prerequisites
 
-- **Python 3.11+** (verify with `python --version`)
+- **Python 3.13+** (verify with `python --version`)
 - **pip** or **poetry** for dependency management
 - **Git** for version control
 

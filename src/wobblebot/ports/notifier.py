@@ -1,0 +1,58 @@
+"""NotifierPort - Abstract interface for alerts and notifications.
+
+This port defines the contract for sending notifications (email, Slack, etc.).
+Implementations are added as needed (Phase 5+).
+"""
+
+from abc import ABC, abstractmethod
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class Notification(BaseModel):
+    """A notification message."""
+
+    level: Literal["info", "warning", "error", "critical"]
+    title: str = Field(..., min_length=1, max_length=200)
+    message: str
+    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    context: dict[str, Any] = Field(default_factory=dict, description="Additional context")
+
+
+class NotifierPort(ABC):
+    """Abstract interface for notifications.
+
+    Future feature - sends alerts via various channels.
+
+    Implementations (TBD):
+    - Email notifier
+    - Slack notifier
+    - Discord notifier
+    - SMS notifier (Twilio)
+    """
+
+    @abstractmethod
+    async def send_notification(self, notification: Notification) -> None:
+        """Send a notification.
+
+        Args:
+            notification: Notification to send
+
+        Raises:
+            NotifierError: If notification cannot be sent
+        """
+        pass
+
+    @abstractmethod
+    async def send_error_alert(self, error: Exception, context: dict[str, Any]) -> None:
+        """Send an error alert with context.
+
+        Args:
+            error: Exception that occurred
+            context: Additional context (module, operation, etc.)
+
+        Raises:
+            NotifierError: If alert cannot be sent
+        """
+        pass
