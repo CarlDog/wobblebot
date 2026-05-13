@@ -12,6 +12,7 @@ All notable changes to WobbleBot will be documented in this file.  This project 
   - `configure_logging` in `wobblebot.config.logging` — stdlib-only, idempotent, switchable between plain text (dev) and one-JSON-object-per-line (container/aggregator). Driven by `WOBBLEBOT_LOG_LEVEL` / `WOBBLEBOT_LOG_FORMAT` env vars.
 - Pre-commit hook (`.githooks/pre-commit`) with gitleaks + PII pattern check + author-identity guard.
 - Port exception hierarchy (`ports/exceptions.py`): shared `WobbleBotPortError` base plus per-port `ExchangeError`, `StorageError`, `AdvisorError`, `HarvesterError`, `NotifierError`, `DataCollectorError`. Convention codified in each port docstring: domain misses return `T | None`, protocol failures raise the port error.
+- Phase 1.4 — `MockExchangeAdapter`: in-memory `ExchangePort` for dry-run simulations. Limit-order matching (buy fills when market ≤ limit, sell when market ≥ limit), configurable fee model (default 0.26%), scenario playback via `run_scenario([(symbol, price), ...])`, balance tracking with locked-funds reservation. 23 unit tests covering price feed, order placement, matching mechanics, balance debits/credits per fill, cancellation, withdrawal, and trade history ordering.
 
 ### Changed
 - Domain exception signatures take `Decimal` (was `float`), preventing precision loss when reporting balance violations.

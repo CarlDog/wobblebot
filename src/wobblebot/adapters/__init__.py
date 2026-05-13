@@ -11,6 +11,7 @@ Note: Harvester uses ExchangePort for withdrawals (ADR-004); there is no
 separate banking adapter.
 """
 
+from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 
-__all__ = ["SQLiteStorageAdapter"]
+__all__ = ["SQLiteStorageAdapter", "MockExchangeAdapter"]
