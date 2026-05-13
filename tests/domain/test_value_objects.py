@@ -117,34 +117,24 @@ class TestAmount:
 
 
 class TestOrderSide:
-    """Tests for OrderSide value object."""
+    """Tests for OrderSide enum."""
 
     def test_buy_side(self):
-        """Test buy side creation and methods."""
-        side = OrderSide(side="buy")
-        assert side.side == "buy"
-        assert side.is_buy()
-        assert not side.is_sell()
-        assert str(side) == "buy"
+        """OrderSide.BUY is the canonical buy value."""
+        assert OrderSide.BUY == "buy"
+        assert OrderSide("buy") is OrderSide.BUY
+        assert str(OrderSide.BUY) == "buy"
 
     def test_sell_side(self):
-        """Test sell side creation and methods."""
-        side = OrderSide(side="sell")
-        assert side.side == "sell"
-        assert side.is_sell()
-        assert not side.is_buy()
-        assert str(side) == "sell"
+        """OrderSide.SELL is the canonical sell value."""
+        assert OrderSide.SELL == "sell"
+        assert OrderSide("sell") is OrderSide.SELL
+        assert str(OrderSide.SELL) == "sell"
 
     def test_invalid_side(self):
-        """Test invalid side is rejected."""
-        with pytest.raises(ValidationError):
-            OrderSide(side="long")  # type: ignore
-
-    def test_immutability(self):
-        """Test that OrderSide is immutable."""
-        side = OrderSide(side="buy")
-        with pytest.raises(ValidationError):
-            side.side = "sell"  # type: ignore
+        """Constructing from an unknown string raises ValueError."""
+        with pytest.raises(ValueError):
+            OrderSide("long")
 
 
 class TestTimestamp:

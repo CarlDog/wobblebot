@@ -6,6 +6,7 @@ concepts without identity. They enforce domain invariants at creation time.
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -96,31 +97,14 @@ class Amount(BaseModel):
         frozen = True  # Make immutable
 
 
-class OrderSide(BaseModel):
-    """Order side (buy/sell).
-
-    Attributes:
-        side: Either 'buy' or 'sell'
+class OrderSide(StrEnum):
+    """Order side. StrEnum so the value compares as a plain string for
+    SQL drivers and JSON, while still giving us symbolic constants in
+    code.
     """
 
-    side: Literal["buy", "sell"]
-
-    def __str__(self) -> str:
-        """Return side as string."""
-        return self.side
-
-    def is_buy(self) -> bool:
-        """Check if this is a buy order."""
-        return self.side == "buy"
-
-    def is_sell(self) -> bool:
-        """Check if this is a sell order."""
-        return self.side == "sell"
-
-    class Config:
-        """Pydantic config."""
-
-        frozen = True  # Make immutable
+    BUY = "buy"
+    SELL = "sell"
 
 
 class Timestamp(BaseModel):

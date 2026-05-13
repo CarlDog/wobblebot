@@ -16,7 +16,7 @@ class TestOrder:
     def test_order_creation(self):
         """Test creating a new order."""
         symbol = Symbol(base="BTC", quote="USD")
-        side = OrderSide(side="buy")
+        side = OrderSide.BUY
         price = Price(amount=Decimal("50000"), currency="USD")
         amount = Amount(value=Decimal("0.1"), asset="BTC")
         now = Timestamp(dt=datetime.now(timezone.utc))
@@ -145,7 +145,7 @@ class TestOrder:
         now = Timestamp(dt=datetime.now(timezone.utc))
         return Order(
             symbol=Symbol(base="BTC", quote="USD"),
-            side=OrderSide(side="buy"),
+            side=OrderSide.BUY,
             price=Price(amount=Decimal("50000"), currency="USD"),
             amount=Amount(value=Decimal("0.1"), asset="BTC"),
             created_at=now,
@@ -158,7 +158,7 @@ class TestTrade:
     def test_trade_creation(self):
         """Test creating a trade."""
         symbol = Symbol(base="BTC", quote="USD")
-        side = OrderSide(side="sell")
+        side = OrderSide.SELL
         price = Price(amount=Decimal("51000"), currency="USD")
         amount = Amount(value=Decimal("0.1"), asset="BTC")
         executed_at = Timestamp(dt=datetime.now(timezone.utc))
@@ -193,7 +193,7 @@ class TestTrade:
             id="TEST-TXID",  # String ID
             order_id="TEST-ORDER",  # String order ID
             symbol=Symbol(base="BTC", quote="USD"),
-            side=OrderSide(side="sell"),
+            side=OrderSide.SELL,
             price=Price(amount=Decimal("51000"), currency="USD"),
             amount=Amount(value=Decimal("0.1"), asset="BTC"),
             fee=Decimal("5.10"),

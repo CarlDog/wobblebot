@@ -40,7 +40,7 @@ def _make_order(
 ) -> Order:
     return Order(
         symbol=symbol or Symbol(base="BTC", quote="USD"),
-        side=OrderSide(side=side),
+        side=OrderSide(side),
         price=Price(amount=Decimal(price_amount), currency="USD"),
         amount=Amount(value=Decimal(amount_value), asset="BTC"),
         status=status,
@@ -59,7 +59,7 @@ def _make_trade(
         id=trade_id,
         order_id=order_id,
         symbol=symbol or Symbol(base="BTC", quote="USD"),
-        side=OrderSide(side="buy"),
+        side=OrderSide.BUY,
         price=Price(amount=Decimal("50000.12345678"), currency="USD"),
         amount=Amount(value=Decimal("0.05"), asset="BTC"),
         fee=Decimal("0.25"),
