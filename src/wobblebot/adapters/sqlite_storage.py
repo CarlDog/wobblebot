@@ -10,7 +10,7 @@ and a nullable Kraken txid for cross-system identification.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -94,6 +94,10 @@ class SQLiteStorageAdapter(StoragePort):
             return
         try:
             self._conn = await aiosqlite.connect(self._db_path)
+            # Setting row_factory on the connection makes cursors inherit
+            # it at execute() time; setting it on a cursor afterward is
+            # unreliable and version-dependent in aiosqlite.
+            self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA foreign_keys = ON")
             await self._conn.executescript(_SCHEMA)
             await self._conn.commit()
@@ -148,7 +152,8 @@ class SQLiteStorageAdapter(StoragePort):
                 ),
             )
             await conn.commit()
-        except aiosqlite.Error as exc:
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
             raise StorageError(f"Failed to save order {order.id}: {exc}") from exc
 
     async def get_order(self, order_id: UUID) -> Order | None:
@@ -157,11 +162,10 @@ class SQLiteStorageAdapter(StoragePort):
             async with conn.execute(
                 "SELECT * FROM orders WHERE id = ?", (str(order_id),)
             ) as cursor:
-                cursor.row_factory = aiosqlite.Row
                 row = await cursor.fetchone()
-        except aiosqlite.Error as exc:
+            return _row_to_order(row) if row else None
+        except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load order {order_id}: {exc}") from exc
-        return _row_to_order(row) if row else None
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
         conn = self._require_conn()
@@ -173,11 +177,10 @@ class SQLiteStorageAdapter(StoragePort):
         sql += " ORDER BY created_at"
         try:
             async with conn.execute(sql, params) as cursor:
-                cursor.row_factory = aiosqlite.Row
                 rows = await cursor.fetchall()
-        except aiosqlite.Error as exc:
+            return [_row_to_order(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load open orders: {exc}") from exc
-        return [_row_to_order(row) for row in rows]
 
     async def save_trade(self, trade: Trade) -> None:
         conn = self._require_conn()
@@ -208,7 +211,8 @@ class SQLiteStorageAdapter(StoragePort):
                 ),
             )
             await conn.commit()
-        except aiosqlite.Error as exc:
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
             raise StorageError(f"Failed to save trade {trade.id}: {exc}") from exc
 
     async def get_trades(
@@ -226,26 +230,25 @@ class SQLiteStorageAdapter(StoragePort):
             params.extend([symbol.base, symbol.quote])
         if start_time is not None:
             clauses.append("executed_at >= ?")
-            params.append(start_time.isoformat())
+            params.append(start_time.astimezone(UTC).isoformat())
         if end_time is not None:
             clauses.append("executed_at <= ?")
-            params.append(end_time.isoformat())
+            params.append(end_time.astimezone(UTC).isoformat())
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM trades{where} ORDER BY executed_at DESC LIMIT ?"
         params.append(limit)
         try:
             async with conn.execute(sql, tuple(params)) as cursor:
-                cursor.row_factory = aiosqlite.Row
                 rows = await cursor.fetchall()
-        except aiosqlite.Error as exc:
+            return [_row_to_trade(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load trades: {exc}") from exc
-        return [_row_to_trade(row) for row in rows]
 
     async def save_balance_snapshot(self, balances: list[Balance]) -> None:
         conn = self._require_conn()
         if not balances:
             raise StorageError("Cannot save an empty balance snapshot")
-        snapshot_at = datetime.now(tz=balances[0].updated_at.dt.tzinfo).isoformat()
+        snapshot_at = datetime.now(UTC).isoformat()
         try:
             async with conn.execute(
                 "INSERT INTO balance_snapshots (snapshot_at) VALUES (?)",
@@ -271,7 +274,8 @@ class SQLiteStorageAdapter(StoragePort):
                 ],
             )
             await conn.commit()
-        except aiosqlite.Error as exc:
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
             raise StorageError(f"Failed to save balance snapshot: {exc}") from exc
 
     async def get_latest_balance_snapshot(self) -> list[Balance]:
@@ -283,9 +287,8 @@ class SQLiteStorageAdapter(StoragePort):
                 WHERE snapshot_id = (SELECT MAX(snapshot_id) FROM balance_snapshots)
                 ORDER BY asset
                 """) as cursor:
-                cursor.row_factory = aiosqlite.Row
                 rows = await cursor.fetchall()
-        except aiosqlite.Error as exc:
+        except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load latest balance snapshot: {exc}") from exc
         return [
             Balance(

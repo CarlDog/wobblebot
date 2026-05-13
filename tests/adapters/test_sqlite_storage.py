@@ -228,3 +228,39 @@ class TestBalanceSnapshots:
 
     async def test_no_snapshot_returns_empty_list(self, storage: SQLiteStorageAdapter) -> None:
         assert await storage.get_latest_balance_snapshot() == []
+
+    async def test_snapshot_rolls_back_on_duplicate_assets(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A failure mid-snapshot must not leave an orphan header row.
+
+        save_balance_snapshot inserts the snapshot_id header first, then
+        bulk-inserts entries. If the entries fail (here: duplicate
+        (snapshot_id, asset) primary key), the snapshot header must roll
+        back too — otherwise the next call commits both as an orphan.
+        """
+        await storage.save_balance_snapshot(
+            [Balance(asset="BTC", total=Decimal("1"), available=Decimal("1"))]
+        )
+
+        # Duplicate asset within one snapshot violates the (snapshot_id, asset) PK
+        duplicate = [
+            Balance(asset="ETH", total=Decimal("2"), available=Decimal("2")),
+            Balance(asset="ETH", total=Decimal("3"), available=Decimal("3")),
+        ]
+        with pytest.raises(StorageError):
+            await storage.save_balance_snapshot(duplicate)
+
+        # Latest snapshot must still be the original BTC one, not an orphan
+        latest = await storage.get_latest_balance_snapshot()
+        assert len(latest) == 1
+        assert latest[0].asset == "BTC"
+
+        # And we must still be able to save a fresh snapshot afterwards
+        # (proves the connection's transaction state is clean)
+        await storage.save_balance_snapshot(
+            [Balance(asset="USD", total=Decimal("100"), available=Decimal("100"))]
+        )
+        latest = await storage.get_latest_balance_snapshot()
+        assert len(latest) == 1
+        assert latest[0].asset == "USD"

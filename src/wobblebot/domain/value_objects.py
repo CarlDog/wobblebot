@@ -4,7 +4,7 @@ Value objects are immutable, validated data containers that represent
 concepts without identity. They enforce domain invariants at creation time.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -135,10 +135,15 @@ class Timestamp(BaseModel):
     @field_validator("dt")
     @classmethod
     def ensure_utc(cls, v: datetime) -> datetime:
-        """Ensure datetime is timezone-aware (UTC)."""
+        """Require timezone-aware input and normalize the value to UTC.
+
+        Storing every timestamp in UTC keeps ISO 8601 string ordering
+        consistent with chronological ordering — important for the
+        SQLite adapter, which ORDER BYs on the TEXT representation.
+        """
         if v.tzinfo is None:
-            raise ValueError("Timestamp must be timezone-aware (UTC)")
-        return v
+            raise ValueError("Timestamp must be timezone-aware")
+        return v.astimezone(UTC)
 
     def __str__(self) -> str:
         """Format as ISO 8601."""

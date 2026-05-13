@@ -192,3 +192,19 @@ class TestTimestamp:
         ts = Timestamp(dt=dt)
         with pytest.raises(ValidationError):
             ts.dt = datetime.now(timezone.utc)  # type: ignore
+
+    def test_timestamp_normalizes_to_utc(self):
+        """Non-UTC tz-aware inputs are converted to UTC.
+
+        This is what guarantees that .isoformat() always ends in +00:00
+        and that ISO 8601 TEXT ordering in SQLite matches chronological
+        ordering. Without it, '2026-01-01T07:00:00-05:00' and
+        '2026-01-01T13:00:00+00:00' (same instant) would sort wrong.
+        """
+        from datetime import timedelta
+
+        eastern = timezone(timedelta(hours=-5))
+        ts = Timestamp(dt=datetime(2026, 1, 1, 12, 0, 0, tzinfo=eastern))
+        assert ts.dt.tzinfo == timezone.utc
+        assert ts.dt.hour == 17  # 12:00 EST -> 17:00 UTC
+        assert ts.dt.isoformat().endswith("+00:00")
