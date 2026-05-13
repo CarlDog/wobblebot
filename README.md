@@ -23,8 +23,13 @@ Built using **hexagonal architecture (Ports & Adapters)** for clean boundaries, 
 
 ## Project Status
 
-**Current Phase:** Phase 1 – Foundation & Sandbox
-**Stage:** 1.4 – Kraken Mock & Simulation Mode (complete). Next: 1.5 – Phase 1 integration check.
+**Current Phase:** Phase 1 – Foundation & Sandbox (**complete**)
+**Next:** Phase 2 – Real Kraken integration, micro-grid engine, tiny-size live trading.
+
+Try the Phase 1 integration check:
+```bash
+python -m wobblebot.cli.simulate --log-format json
+```
 
 See [docs/planning/roadmap.md](docs/planning/roadmap.md) for the full development roadmap.
 
