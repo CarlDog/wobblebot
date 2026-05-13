@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from wobblebot.domain.exceptions import InsufficientBalance, InvalidOrderState
+from wobblebot.domain.exceptions import InvalidOrderState
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 
@@ -206,10 +206,10 @@ class TestTrade:
 
 
 class TestBalance:
-    """Tests for Balance model."""
+    """Tests for the Balance immutable snapshot."""
 
     def test_balance_creation(self):
-        """Test creating a balance."""
+        """Constructing a balance with explicit fields."""
         balance = Balance(
             asset="BTC",
             total=Decimal("1.5"),
@@ -221,51 +221,8 @@ class TestBalance:
         assert balance.available == Decimal("1.5")
         assert balance.locked == Decimal("0")
 
-    def test_lock_funds(self):
-        """Test locking funds."""
+    def test_balance_is_frozen(self):
+        """A Balance is an immutable snapshot - attribute assignment must raise."""
         balance = Balance(asset="BTC", total=Decimal("1.5"), available=Decimal("1.5"))
-
-        balance.lock(amount=Decimal("0.5"))
-
-        assert balance.available == Decimal("1.0")
-        assert balance.locked == Decimal("0.5")
-        assert balance.total == Decimal("1.5")  # Total unchanged
-
-    def test_lock_insufficient_funds(self):
-        """Test locking more than available raises exception."""
-        balance = Balance(asset="BTC", total=Decimal("1.0"), available=Decimal("1.0"))
-
-        with pytest.raises(InsufficientBalance):
-            balance.lock(amount=Decimal("1.5"))
-
-    def test_unlock_funds(self):
-        """Test unlocking funds."""
-        balance = Balance(asset="BTC", total=Decimal("1.5"), available=Decimal("1.0"))
-        balance.lock(amount=Decimal("0.5"))  # Lock 0.5, available now 0.5
-        assert balance.locked == Decimal("0.5")
-        assert balance.available == Decimal("0.5")
-
-        balance.unlock(amount=Decimal("0.3"))  # Unlock 0.3
-
-        assert balance.available == Decimal("0.8")  # 0.5 + 0.3
-        assert balance.locked == Decimal("0.2")  # 0.5 - 0.3
-
-    def test_unlock_validates_amount(self):
-        """Test unlock validates amount."""
-        balance = Balance(asset="BTC", total=Decimal("1.5"), available=Decimal("1.0"))
-        balance.lock(amount=Decimal("0.5"))
-
-        with pytest.raises(ValueError, match="exceeds locked amount"):
-            balance.unlock(amount=Decimal("1.0"))  # More than locked
-
-    def test_lock_unlock_roundtrip(self):
-        """Test lock/unlock roundtrip."""
-        balance = Balance(asset="USD", total=Decimal("1000"), available=Decimal("1000"))
-
-        balance.lock(amount=Decimal("100"))
-        assert balance.available == Decimal("900")
-        assert balance.locked == Decimal("100")
-
-        balance.unlock(amount=Decimal("100"))
-        assert balance.available == Decimal("1000")
-        assert balance.locked == Decimal("0")
+        with pytest.raises(Exception):  # Pydantic ValidationError on frozen model
+            balance.available = Decimal("1.0")  # type: ignore

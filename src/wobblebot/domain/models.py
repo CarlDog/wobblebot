@@ -167,14 +167,22 @@ class Trade(BaseModel):
 
 
 class Balance(BaseModel):
-    """Represents an account balance for a single asset.
+    """Immutable account balance snapshot for a single asset.
+
+    A balance is a point-in-time reading. To "lock funds for an order"
+    you do NOT mutate a Balance — you record the open order in
+    ``StoragePort`` and compute ``locked`` at read time from the
+    open-order set (or read Kraken's ``hold_trade`` directly via the
+    ``ExchangePort``). This keeps the exchange as the source of truth
+    and removes the need for in-memory reconciliation.
 
     Attributes:
         asset: Asset code (e.g., BTC, USD)
-        total: Total balance
-        available: Available balance (not locked in orders)
-        locked: Balance locked in open orders
-        updated_at: When balance was last updated
+        total: Total balance (``available + locked``)
+        available: Available balance (not in open orders)
+        locked: Balance locked in open orders — mirrors Kraken's
+            ``hold_trade``. Informational; computed by the adapter.
+        updated_at: When this snapshot was taken.
     """
 
     asset: str = Field(..., min_length=1, max_length=10)
@@ -183,30 +191,7 @@ class Balance(BaseModel):
     locked: Decimal = Field(default=Decimal("0"), ge=0)
     updated_at: Timestamp = Field(default_factory=lambda: Timestamp(dt=datetime.now(UTC)))
 
-    def lock(self, amount: Decimal) -> None:
-        """Lock funds for an order."""
-        if amount > self.available:
-            from wobblebot.domain.exceptions import InsufficientBalance
-
-            raise InsufficientBalance(
-                required=amount,
-                available=self.available,
-                asset=self.asset,
-            )
-
-        self.available -= amount
-        self.locked += amount
-        self.updated_at = Timestamp(dt=datetime.now(UTC))
-
-    def unlock(self, amount: Decimal) -> None:
-        """Unlock funds (e.g., after order cancellation)."""
-        if amount > self.locked:
-            raise ValueError(f"Cannot unlock {amount}: exceeds locked amount {self.locked}")
-        self.locked -= amount
-        self.available += amount
-        self.updated_at = Timestamp(dt=datetime.now(UTC))
-
     class Config:
         """Pydantic config."""
 
-        validate_assignment = True
+        frozen = True
