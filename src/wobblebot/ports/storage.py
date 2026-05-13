@@ -12,14 +12,6 @@ from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Symbol
 
 
-class StorageError(Exception):
-    """Raised when a storage operation fails.
-
-    This is an adapter-layer concern, not a domain rule violation,
-    so it lives alongside the port rather than in domain.exceptions.
-    """
-
-
 class StoragePort(ABC):
     """Abstract interface for persistence operations.
 
@@ -30,7 +22,20 @@ class StoragePort(ABC):
     - Configuration snapshots (future)
     - Audit logs (future)
 
-    Note: Position tracking deferred to Phase 3+ (see ADR-005)
+    Position tracking deferred to Phase 3+ (see ADR-005).
+
+    Error convention:
+    - Domain-data miss returns ``None`` (e.g. unknown order id).
+      Empty list queries return ``[]``.
+    - Protocol failure raises ``StorageError`` (DB unreachable,
+      constraint violation that domain layer cannot prevent, etc.).
+
+    Caller contract for concurrent writes:
+    - The adapter offers no optimistic concurrency control. Two
+      coroutines doing ``get_order(X) -> mutate -> save_order(X)``
+      concurrently will clobber each other silently. Callers (Bot
+      Core in Phase 2+) MUST serialize per-entity writes themselves —
+      e.g. a per-order ``asyncio.Lock`` keyed by ``order.id``.
     """
 
     # Order operations

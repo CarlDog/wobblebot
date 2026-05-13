@@ -19,7 +19,8 @@ import aiosqlite
 
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.storage import StorageError, StoragePort
+from wobblebot.ports.exceptions import StorageError
+from wobblebot.ports.storage import StoragePort
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
@@ -82,7 +83,19 @@ CREATE TABLE IF NOT EXISTS balance_entries (
 
 
 class SQLiteStorageAdapter(StoragePort):
-    """SQLite-backed StoragePort implementation."""
+    """SQLite-backed StoragePort implementation.
+
+    The adapter holds a single long-lived ``aiosqlite.Connection``.
+    Write statements (save_order, save_trade, save_balance_snapshot)
+    are wrapped in a try/commit/rollback discipline so a mid-write
+    failure cannot leave a dangling transaction on the connection.
+
+    Per the StoragePort caller contract: callers MUST serialize
+    per-entity writes themselves. This adapter offers no optimistic
+    concurrency control. Concurrent ``get_order(X) -> mutate ->
+    save_order(X)`` from two coroutines will produce a silent lost
+    update — last writer wins.
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)

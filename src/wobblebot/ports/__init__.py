@@ -11,16 +11,24 @@ from wobblebot.ports.advisor import (
     PerformanceSummary,
 )
 from wobblebot.ports.data_collector import DataCollectorPort, MarketSnapshot
+from wobblebot.ports.exceptions import (
+    AdvisorError,
+    DataCollectorError,
+    ExchangeError,
+    HarvesterError,
+    NotifierError,
+    StorageError,
+    WobbleBotPortError,
+)
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import HarvesterPort, TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, NotifierPort
-from wobblebot.ports.storage import StorageError, StoragePort
+from wobblebot.ports.storage import StoragePort
 
 __all__ = [
     # Core ports
     "ExchangePort",
     "StoragePort",
-    "StorageError",
     "DataCollectorPort",
     # Phase 3+ ports
     "AdvisorPort",
@@ -35,4 +43,12 @@ __all__ = [
     "Notification",
     # Data Collector types
     "MarketSnapshot",
+    # Port-layer exceptions
+    "WobbleBotPortError",
+    "ExchangeError",
+    "StorageError",
+    "AdvisorError",
+    "HarvesterError",
+    "NotifierError",
+    "DataCollectorError",
 ]

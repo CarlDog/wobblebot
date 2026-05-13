@@ -20,6 +20,14 @@ class ExchangePort(ABC):
     - Balance queries
     - Trade history
     - (Phase 4+) Withdrawal operations via exchange API
+
+    Error convention:
+    - Domain-data miss returns ``None`` (e.g. unknown order, asset
+      never held). Methods that document this in their Returns clause
+      use ``T | None``.
+    - Protocol / transport / upstream failure raises ``ExchangeError``
+      (or a domain exception like ``InsufficientBalance`` when the
+      upstream surfaces a business-rule violation).
     """
 
     @abstractmethod
@@ -50,17 +58,22 @@ class ExchangePort(ABC):
         pass
 
     @abstractmethod
-    async def get_balance(self, asset: str) -> Balance:
+    async def get_balance(self, asset: str) -> Balance | None:
         """Get balance for a specific asset.
 
         Args:
             asset: Asset code (e.g., BTC, USD)
 
         Returns:
-            Balance for the specified asset
+            Balance for the specified asset, or ``None`` if the account
+            has never held it. Kraken's balance endpoint omits
+            never-held assets entirely, so adapters distinguish "no
+            entry" (return ``None``) from "held it, currently zero"
+            (return ``Balance(total=0, ...)``).
 
         Raises:
-            ExchangeError: If balance cannot be retrieved
+            ExchangeError: If balance cannot be retrieved due to a
+                transport or protocol failure.
         """
         pass
 

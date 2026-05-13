@@ -58,6 +58,11 @@ class AdvisorPort(ABC):
 
     Implementations:
     - Strategy Advisor (LLM adapter via Ollama or similar)
+
+    Error convention:
+    - Protocol/transport/validation failure raises ``AdvisorError``
+      (LLM backend unreachable, JSON-schema validation fails, output
+      violates configured safety bounds).
     """
 
     @abstractmethod

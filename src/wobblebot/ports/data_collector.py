@@ -36,6 +36,13 @@ class DataCollectorPort(ABC):
 
     Implementations:
     - Data Collector service (primary)
+
+    Error convention:
+    - Protocol/transport failure raises ``DataCollectorError`` (upstream
+      price feed unreachable, derived metric calculation fails, cache
+      stampede, etc.). Domain-data miss (e.g. unknown symbol) raises
+      rather than returns ``None`` — an unknown symbol is a caller
+      bug, not a transient absence.
     """
 
     @abstractmethod

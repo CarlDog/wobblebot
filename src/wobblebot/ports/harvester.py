@@ -48,6 +48,13 @@ class HarvesterPort(ABC):
 
     Implementations:
     - Harvester module (uses Kraken withdrawal API per ADR-004)
+
+    Error convention:
+    - "No transfer needed" returns ``None`` from
+      ``check_balance_status``; not an error.
+    - Protocol/transport failure raises ``HarvesterError`` (Kraken
+      withdrawal endpoint rejects, bank address book lookup fails,
+      safety-cap validation fails).
     """
 
     @abstractmethod

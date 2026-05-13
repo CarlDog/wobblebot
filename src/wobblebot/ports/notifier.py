@@ -32,6 +32,12 @@ class NotifierPort(ABC):
     - Slack notifier
     - Discord notifier
     - SMS notifier (Twilio)
+
+    Error convention:
+    - Protocol/transport failure raises ``NotifierError`` (channel
+      webhook returns non-2xx, gateway times out, etc.). Notifier
+      failures are typically non-fatal to the caller; the caller
+      decides whether to retry, fall back, or swallow.
     """
 
     @abstractmethod

@@ -17,7 +17,7 @@ import pytest_asyncio
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.storage import StorageError
+from wobblebot.ports.exceptions import StorageError
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
