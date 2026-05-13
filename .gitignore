@@ -62,6 +62,9 @@ venv.bak/
 *~
 .DS_Store
 
+# Claude Code (machine-specific permissions/settings cache)
+.claude/
+
 # mypy
 .mypy_cache/
 .dmypy.json

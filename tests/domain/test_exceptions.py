@@ -86,9 +86,7 @@ class TestInsufficientBalance:
 
     def test_exception_message(self):
         """Test exception message formatting."""
-        exc = InsufficientBalance(
-            required=Decimal("1.5"), available=Decimal("0.8"), asset="BTC"
-        )
+        exc = InsufficientBalance(required=Decimal("1.5"), available=Decimal("0.8"), asset="BTC")
         assert "1.5" in str(exc)
         assert "0.8" in str(exc)
         assert "BTC" in str(exc)
