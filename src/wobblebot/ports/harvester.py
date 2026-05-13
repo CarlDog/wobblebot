@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from wobblebot.domain.value_objects import Timestamp
+
 
 class TransferProposal(BaseModel):
     """Proposal for a fund transfer.
@@ -36,7 +38,7 @@ class TransferResult(BaseModel):
     transaction_id: str = Field(..., description="Exchange/bank transaction ID")
     status: Literal["pending", "completed", "failed"]
     executed_amount: Decimal = Field(..., ge=0)
-    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    timestamp: Timestamp = Field(..., description="When the transfer settled")
 
 
 class HarvesterPort(ABC):

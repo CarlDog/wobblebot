@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from wobblebot.domain.value_objects import Timestamp
+
 
 class Notification(BaseModel):
     """A notification message."""
@@ -16,7 +18,7 @@ class Notification(BaseModel):
     level: Literal["info", "warning", "error", "critical"]
     title: str = Field(..., min_length=1, max_length=200)
     message: str
-    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    timestamp: Timestamp = Field(..., description="When the notification was raised")
     context: dict[str, Any] = Field(default_factory=dict, description="Additional context")
 
 

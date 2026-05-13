@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from wobblebot.domain.value_objects import Timestamp
+
 
 class PerformanceSummary(BaseModel):
     """Sanitized performance summary sent to the Advisor.
@@ -35,7 +37,7 @@ class AdvisorRecommendation(BaseModel):
     """
 
     recommendation_id: str = Field(..., description="Unique recommendation ID")
-    timestamp: str = Field(..., description="ISO 8601 timestamp")
+    timestamp: Timestamp = Field(..., description="When the recommendation was issued")
     config_changes: dict[str, Any] = Field(
         default_factory=dict,
         description="Proposed configuration changes (key-value pairs)",
