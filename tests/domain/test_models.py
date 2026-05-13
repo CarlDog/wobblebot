@@ -49,31 +49,58 @@ class TestOrder:
         with pytest.raises(ValueError, match="exchange_id is required"):
             order.mark_open(exchange_id=None)  # type: ignore
 
-    def test_mark_closed_full(self):
-        """Test marking an order as fully closed."""
+    def test_record_fill_full_closes_order(self):
+        """A fill equal to the order amount transitions status to closed."""
         order = self._create_test_order()
         order.mark_open(exchange_id="kraken-456")
-        order.mark_closed(filled_amount=Decimal("0.1"))
+        order.record_fill(filled_amount=Decimal("0.1"))
 
         assert order.status == "closed"
         assert order.filled_amount == Decimal("0.1")
 
-    def test_mark_closed_partial(self):
-        """Test marking an order as partially closed."""
+    def test_record_fill_partial_keeps_open(self):
+        """A partial fill leaves status as open - the order remains on the book."""
         order = self._create_test_order()
         order.mark_open(exchange_id="kraken-456")
-        order.mark_closed(filled_amount=Decimal("0.05"))
+        order.record_fill(filled_amount=Decimal("0.03"))
 
+        assert order.status == "open"
+        assert order.filled_amount == Decimal("0.03")
+
+    def test_record_fill_accumulates_then_closes(self):
+        """Successive cumulative fills accumulate; full fill closes the order."""
+        order = self._create_test_order()
+        order.mark_open(exchange_id="kraken-456")
+        order.record_fill(filled_amount=Decimal("0.04"))
+        assert order.status == "open"
+        order.record_fill(filled_amount=Decimal("0.07"))
+        assert order.status == "open"
+        assert order.filled_amount == Decimal("0.07")
+        order.record_fill(filled_amount=Decimal("0.1"))
         assert order.status == "closed"
-        assert order.filled_amount == Decimal("0.05")
 
-    def test_mark_closed_validates_amount(self):
-        """Test mark_closed validates filled amount."""
+    def test_record_fill_rejects_decrease(self):
+        """Fills are cumulative; a decrease must raise."""
+        order = self._create_test_order()
+        order.mark_open(exchange_id="kraken-456")
+        order.record_fill(filled_amount=Decimal("0.05"))
+
+        with pytest.raises(ValueError, match="cannot decrease"):
+            order.record_fill(filled_amount=Decimal("0.03"))
+
+    def test_record_fill_rejects_overfill(self):
+        """A fill larger than the order amount must raise."""
         order = self._create_test_order()
         order.mark_open(exchange_id="kraken-456")
 
         with pytest.raises(ValueError, match="cannot exceed order amount"):
-            order.mark_closed(filled_amount=Decimal("1.0"))  # More than order amount
+            order.record_fill(filled_amount=Decimal("1.0"))
+
+    def test_record_fill_requires_open_status(self):
+        """record_fill rejects orders that aren't currently open."""
+        order = self._create_test_order()  # status='pending'
+        with pytest.raises(ValueError, match="only 'open' orders"):
+            order.record_fill(filled_amount=Decimal("0.05"))
 
     def test_mark_canceled(self):
         """Test marking an order as canceled."""
@@ -100,14 +127,14 @@ class TestOrder:
         order.mark_open(exchange_id="kraken-456")
         assert order.is_active()  # open
 
-        order.mark_closed(filled_amount=Decimal("0.1"))
+        order.record_fill(filled_amount=Decimal("0.1"))
         assert not order.is_active()  # closed
 
     def test_status_transition_validation(self):
         """Test invalid status transitions are caught."""
         order = self._create_test_order()
         order.mark_open(exchange_id="kraken-456")
-        order.mark_closed(filled_amount=Decimal("0.1"))  # Closed
+        order.record_fill(filled_amount=Decimal("0.1"))  # Closed
 
         # Cannot cancel a closed order
         with pytest.raises(InvalidOrderState):

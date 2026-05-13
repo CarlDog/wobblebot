@@ -65,21 +65,38 @@ class Order(BaseModel):
         self.status = "open"
         self.updated_at = Timestamp(dt=datetime.now(UTC))
 
-    def mark_closed(self, filled_amount: Decimal) -> None:
-        """Mark order as closed (fully or partially filled).
+    def record_fill(self, filled_amount: Decimal) -> None:
+        """Record a fill event from the exchange.
+
+        Accepts the *cumulative* filled amount (matches Kraken's ``vol_exec``).
+        Status transitions to ``closed`` only on a full fill; partial fills
+        keep ``status='open'`` since the order remains on the book.
 
         Args:
-            filled_amount: Amount filled
+            filled_amount: Cumulative amount filled so far. Must be in
+                [self.filled_amount, self.amount.value].
 
         Raises:
-            ValueError: If filled amount exceeds order amount
+            ValueError: If filled_amount exceeds order amount, decreases
+                from the prior fill amount, or the order is not open.
         """
         if filled_amount > self.amount.value:
             raise ValueError(
                 f"Filled amount {filled_amount} cannot exceed order amount {self.amount.value}"
             )
+        if filled_amount < self.filled_amount:
+            raise ValueError(
+                f"Filled amount {filled_amount} cannot decrease from prior "
+                f"value {self.filled_amount}; fills are cumulative"
+            )
+        if self.status != "open":
+            raise ValueError(
+                f"Cannot record a fill on an order in status '{self.status}'; "
+                "only 'open' orders accept fills"
+            )
         self.filled_amount = filled_amount
-        self.status = "closed"
+        if filled_amount == self.amount.value:
+            self.status = "closed"
         self.updated_at = Timestamp(dt=datetime.now(UTC))
 
     def mark_canceled(self) -> None:
@@ -172,8 +189,8 @@ class Balance(BaseModel):
             from wobblebot.domain.exceptions import InsufficientBalance
 
             raise InsufficientBalance(
-                required=float(amount),
-                available=float(self.available),
+                required=amount,
+                available=self.available,
                 asset=self.asset,
             )
 

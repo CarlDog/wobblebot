@@ -4,6 +4,8 @@ These exceptions represent business rule violations and should be raised
 by domain models when invariants are broken.
 """
 
+from decimal import Decimal
+
 
 class WobbleBotDomainError(Exception):
     """Base exception for all domain errors."""
@@ -14,7 +16,7 @@ class WobbleBotDomainError(Exception):
 class ExposureLimitExceeded(WobbleBotDomainError):
     """Raised when an operation would exceed configured exposure limits."""
 
-    def __init__(self, current: float, limit: float, message: str | None = None):
+    def __init__(self, current: Decimal, limit: Decimal, message: str | None = None):
         self.current = current
         self.limit = limit
         default_msg = f"Exposure limit exceeded: {current} > {limit}"
@@ -24,7 +26,7 @@ class ExposureLimitExceeded(WobbleBotDomainError):
 class DailySpendCapExceeded(WobbleBotDomainError):
     """Raised when daily spend cap is exceeded."""
 
-    def __init__(self, spent_today: float, cap: float, message: str | None = None):
+    def __init__(self, spent_today: Decimal, cap: Decimal, message: str | None = None):
         self.spent_today = spent_today
         self.cap = cap
         default_msg = f"Daily spend cap exceeded: {spent_today} > {cap}"
@@ -50,7 +52,7 @@ class InvalidGridConfiguration(WobbleBotDomainError):
 class InsufficientBalance(WobbleBotDomainError):
     """Raised when attempting an operation with insufficient funds."""
 
-    def __init__(self, required: float, available: float, asset: str):
+    def __init__(self, required: Decimal, available: Decimal, asset: str):
         self.required = required
         self.available = available
         self.asset = asset

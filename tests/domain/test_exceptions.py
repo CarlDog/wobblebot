@@ -20,11 +20,11 @@ class TestExceptionHierarchy:
     def test_all_exceptions_inherit_from_base(self):
         """Test all custom exceptions inherit from WobbleBotDomainError."""
         exceptions = [
-            ExposureLimitExceeded(current=100, limit=50),
-            DailySpendCapExceeded(spent_today=200, cap=100),
-            InvalidOrderState(current_state="filled", attempted_transition="cancel"),
+            ExposureLimitExceeded(current=Decimal("100"), limit=Decimal("50")),
+            DailySpendCapExceeded(spent_today=Decimal("200"), cap=Decimal("100")),
+            InvalidOrderState(current_state="closed", attempted_transition="cancel"),
             InvalidGridConfiguration("Invalid spacing"),
-            InsufficientBalance(required=100, available=50, asset="BTC"),
+            InsufficientBalance(required=Decimal("100"), available=Decimal("50"), asset="BTC"),
             InvalidPriceRange("Min > Max"),
             InvalidAmount("Cannot be negative"),
         ]
@@ -42,12 +42,6 @@ class TestExposureLimitExceeded:
         assert "150.50" in str(exc)
         assert "100.00" in str(exc)
         assert "exposure limit exceeded" in str(exc).lower()
-
-    def test_exception_message_with_floats(self):
-        """Test exception message formatting with float values."""
-        exc = ExposureLimitExceeded(current=150.5, limit=100.0)
-        assert "150.5" in str(exc)
-        assert "100.0" in str(exc)
 
 
 class TestDailySpendCapExceeded:
