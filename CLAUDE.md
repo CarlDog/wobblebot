@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth for current state:** `docs/planning/roadmap.md` (phases & stages).
 **Most recent completion milestone:** `STAGE-1.1-COMPLETE.md` (scaffolding done).
-**Current work:** Phase 1, Stage 1.3 — Storage & Logging Backbone. Storage half is complete (SQLite adapter implementing `StoragePort`, 19 tests, transaction-safe). Logging half is next.
+**Current work:** Phase 1, Stage 1.3 complete (SQLite `StoragePort` adapter + `configure_logging` with plain/JSON formats). Next: Stage 1.4 — Kraken Mock & Simulation Mode.
 
 Before responding to any non-trivial request, read `docs/planning/roadmap.md` and cross-check that the requested work matches the current stage. If the user asks for Phase N+1 work while Phase N is in progress, name the drift before starting.
 
