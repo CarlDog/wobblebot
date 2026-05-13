@@ -1,0 +1,17 @@
+title = "wobblebot gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths excluded from secret scanning"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)htmlcov/''',
+  '''(^|/)\.pytest_cache/''',
+  '''(^|/)\.mypy_cache/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+]

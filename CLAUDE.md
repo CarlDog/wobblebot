@@ -14,6 +14,17 @@ Before responding to any non-trivial request, read `docs/planning/roadmap.md` an
 
 The Windows-friendly Makefile uses `.venv/Scripts/python.exe` — if your shell can't run `make`, invoke the same commands directly through the venv interpreter or activate it first.
 
+**First-time setup on a fresh clone** — once, before your first commit:
+
+```bash
+./scripts/install-hooks.sh        # or scripts\install-hooks.ps1 on PowerShell
+```
+
+This points `core.hooksPath` at `.githooks/`, enabling the repo-specific
+pre-commit hook (gitleaks + PII pattern check + author-identity guard).
+Without it, only the global `.git/hooks/pre-commit` runs, which only does
+gitleaks — missing the PII/identity checks required for this repo.
+
 | Task | Command |
 |------|---------|
 | Install (editable + dev extras) | `pip install -e ".[dev]"` |

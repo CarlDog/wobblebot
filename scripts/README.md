@@ -1,10 +1,12 @@
 # Utility Scripts
 
-**Status:** Placeholder for future automation scripts
+## Current
 
-This directory will contain utility scripts for development, deployment, and operational tasks.
+- `install-hooks.sh` / `install-hooks.ps1` — point `core.hooksPath` at
+  `.githooks/` so the repo-specific pre-commit hook runs (gitleaks +
+  PII pattern check + author-identity guard). Run once per fresh clone.
 
-## Planned Scripts
+## Planned (Phase 2+)
 
 - `setup.sh` / `setup.ps1` – First-time setup automation (venv, deps, config)
 - `deploy.sh` / `deploy.ps1` – Deployment helpers for Synology NAS
