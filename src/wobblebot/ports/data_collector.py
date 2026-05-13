@@ -5,21 +5,27 @@ The Data Collector service implements this port and sits between Bot Core and Ex
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from pydantic import BaseModel
+
 from wobblebot.domain.models import Balance
-from wobblebot.domain.value_objects import Price, Symbol
+from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 
 
-class MarketSnapshot(ABC):
-    """Market data snapshot for a symbol at a point in time."""
+class MarketSnapshot(BaseModel):
+    """Market data snapshot for a symbol at a point in time.
+
+    Phase 3+ will extend this with volume, volatility, and cycle stats.
+    """
 
     symbol: Symbol
     price: Price
-    timestamp: datetime
-    # Phase 3+ will add: volume, volatility, etc.
+    timestamp: Timestamp
+
+    class Config:
+        frozen = True
 
 
 class DataCollectorPort(ABC):

@@ -88,7 +88,8 @@ class ExchangePort(ABC):
             order: Order to cancel (must have exchange_id)
 
         Returns:
-            Updated order with status 'cancelled'
+            Updated order with status 'canceled' (American spelling per
+            ADR-005, matching Kraken's canonical vocabulary)
 
         Raises:
             ExchangeError: If cancellation fails
