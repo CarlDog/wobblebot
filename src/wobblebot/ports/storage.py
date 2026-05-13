@@ -12,6 +12,14 @@ from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Symbol
 
 
+class StorageError(Exception):
+    """Raised when a storage operation fails.
+
+    This is an adapter-layer concern, not a domain rule violation,
+    so it lives alongside the port rather than in domain.exceptions.
+    """
+
+
 class StoragePort(ABC):
     """Abstract interface for persistence operations.
 
