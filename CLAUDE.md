@@ -4,9 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-**Source of truth for current state:** `docs/planning/roadmap.md` (phases & stages).
-**Most recent completion milestone:** `STAGE-1.1-COMPLETE.md` (scaffolding done).
-**Current work:** **Phase 1 complete.** Stage 1.5 wired the layers end-to-end: `python -m wobblebot.cli.simulate` runs a buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter` + `configure_logging` and persists everything to SQLite. Next: Phase 2 — real Kraken adapter, micro-grid engine, tiny-size live trading. See `docs/planning/roadmap.md` Phase 2.
+**Source of truth:** `docs/planning/roadmap.md`. Each stage in Phase 1 carries a ✅ completion date.
+
+**Phase 1 (Foundation & Sandbox) is complete as of 2026-05-13.** The integration check passes end-to-end — `python -m wobblebot.cli.simulate` runs a buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter` + `configure_logging` and persists orders, trades, and a balance snapshot into SQLite. 112 tests passing, mypy clean, black clean.
+
+**Next:** Phase 2 — real Kraken integration, micro-grid engine, tiny-size live trading with no withdrawals. Start at Stage 2.1 (Kraken read-only adapter + minimal `DataCollector v1`). The hex pattern is set up specifically for this — the new `KrakenAdapter` should slot into the same `ExchangePort` contract `MockExchangeAdapter` already satisfies, with no domain or service-layer changes needed.
+
+**Design decisions ratified during Phase 1 closeout (do not relitigate without an ADR):**
+- `Balance` is an immutable snapshot (`frozen=True`). Funds "locked for an order" are derived at read time from the open-order set, not maintained in-memory.
+- `OrderSide` is a `StrEnum` (`OrderSide.BUY`, `OrderSide.SELL`), not a Pydantic model. SQL drivers and JSON serialize it as the plain string value.
+- Port error convention: domain-data miss returns `T | None`, protocol/transport failure raises the port's error type (`ExchangeError`, `StorageError`, etc. — all in `wobblebot.ports.exceptions`).
+- `StoragePort` callers must serialize per-entity writes themselves (no optimistic concurrency control in the adapter).
+- `Timestamp` normalizes all tz-aware inputs to UTC so ISO 8601 string ordering matches chronological ordering.
+- Pydantic mypy plugin is enabled in `pyproject.toml` and load-bearing — do not remove.
 
 Before responding to any non-trivial request, read `docs/planning/roadmap.md` and cross-check that the requested work matches the current stage. If the user asks for Phase N+1 work while Phase N is in progress, name the drift before starting.
 

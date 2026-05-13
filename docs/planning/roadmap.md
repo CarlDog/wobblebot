@@ -2,15 +2,15 @@
 
 WobbleBot’s development is organized into **five phases**, each containing **five stages**.  We build like a house: lay the foundation, frame the structure, wire up systems, finish the surfaces, then polish and decorate.  This roadmap lays out what gets built when; it is a *guiding structure*, not a rigid contract—phases and stages may be merged or adjusted as we learn.
 
-## Phase 1 – Foundation & Sandbox
+## Phase 1 – Foundation & Sandbox ✅ Complete (2026-05-13)
 
 **Goal:** Bootstrapped skeleton of WobbleBot with no real trading risk.
 
-1. **Stage 1.1 – Repo & Scaffolding** – Create the repository structure (`src/`, `docs/`, `config/`, `docker/`).  Add base Python project configuration, linting, and formatting tools.
-2. **Stage 1.2 – Hex Core Skeleton** – Define core domain models (`Order`, `Trade`, `Position`).  Define abstract ports (e.g., `ExchangePort`, `StoragePort`, `AdvisorPort`, `HarvesterPort`, `NotifierPort`).
-3. **Stage 1.3 – Storage & Logging Backbone** – Implement the SQLite adapter and configure logging.  Provide basic persistence for trades, configuration snapshots, and events.
-4. **Stage 1.4 – Kraken Mock & Simulation Mode** – Implement a fake exchange adapter for dry‑run simulations.  Support a paper trading loop with hard‑coded scenarios.
-5. **Stage 1.5 – Phase 1 Integration Check** – Demonstrate an end‑to‑end simulated cycle: load config → run core loop against the mock exchange → persist results → view logs.  No external API calls yet.
+1. **Stage 1.1 – Repo & Scaffolding** ✅ (2025-11-24) – Create the repository structure (`src/`, `docs/`, `config/`, `docker/`).  Add base Python project configuration, linting, and formatting tools.
+2. **Stage 1.2 – Hex Core Skeleton** ✅ (2025-11-24) – Define core domain models (`Order`, `Trade`, `Position`).  Define abstract ports (e.g., `ExchangePort`, `StoragePort`, `AdvisorPort`, `HarvesterPort`, `NotifierPort`).
+3. **Stage 1.3 – Storage & Logging Backbone** ✅ (2026-05-12) – Implement the SQLite adapter and configure logging.  Provide basic persistence for trades, configuration snapshots, and events.
+4. **Stage 1.4 – Kraken Mock & Simulation Mode** ✅ (2026-05-12) – Implement a fake exchange adapter for dry‑run simulations.  Support a paper trading loop with hard‑coded scenarios.
+5. **Stage 1.5 – Phase 1 Integration Check** ✅ (2026-05-13) – Demonstrate an end‑to‑end simulated cycle: load config → run core loop against the mock exchange → persist results → view logs.  No external API calls yet.
 
 ## Phase 2 – Core Trading Engine (Real Kraken, No Money Moves)
 
