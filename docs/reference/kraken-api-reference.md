@@ -1,5 +1,24 @@
 # Kraken API Reference for WobbleBot
 
+> **Historical design notes — partially superseded by ADR-005.**
+>
+> This document captures the pre-ADR-005 research and deliberation that
+> led to the current domain model. Sections that read like
+> recommendations ("Mismatch identified", "Recommendation: status
+> mapping layer", "Our Order model currently uses…", "Current Model")
+> describe the *old* model state — they were resolved by adopting
+> Kraken's canonical vocabulary directly in `src/wobblebot/domain/`.
+>
+> **No mapping layer exists or is needed.** The Order status `Literal`
+> is exactly Kraken's: `pending | open | closed | canceled | expired`
+> (American "canceled"). `Trade.id` and `Trade.order_id` are plain
+> Kraken txid strings, not UUIDs. `Order` uses the dual-ID strategy
+> recommended in section "Architectural Recommendations → 1".
+>
+> The Kraken API descriptions themselves (request/response shapes,
+> field semantics, precision rules) remain accurate and useful as a
+> reference when implementing the Kraken adapter in Phase 2.
+
 **Purpose:** Domain model design decisions based on Kraken REST API v0 data structures and field naming conventions.
 
 **Sources:**
@@ -127,18 +146,11 @@ From Kraken API observations:
 - `"canceled"` — Order cancelled (note: Kraken uses "canceled", not "cancelled")
 - `"expired"` — Order expired (time-based)
 
-**Decision:** Our Order model currently uses `"pending" | "open" | "filled" | "cancelled" | "failed"`.
-
-**Mismatch identified:**
-- Kraken: `"canceled"`, `"closed"`
-- Our model: `"cancelled"`, `"filled"`
-
-**Recommendation:** Use Kraken's exact status values for exchange compatibility:
+**Resolved by ADR-005:** the domain model adopts Kraken's exact values:
 ```python
 status: Literal["pending", "open", "closed", "canceled", "expired"]
 ```
-
-Map internally if needed, but store Kraken's canonical values.
+No mapping layer in the adapter — Kraken's strings flow through unchanged.
 
 ---
 
@@ -301,20 +313,24 @@ async def execute_transfer(
 
 ## Field Naming Conventions Summary
 
-| Concept | Kraken API | Our Domain Model | Resolution |
-|---------|-----------|------------------|------------|
-| **Order ID** | `txid` (string) | `id: UUID`, `exchange_id: str` | ✅ Keep both, use `exchange_id` for Kraken txid |
-| **Order status** | `"open"`, `"closed"`, `"canceled"`, `"expired"` | `"pending"`, `"open"`, `"filled"`, `"cancelled"`, `"failed"` | ⚠️ Align with Kraken: use `"closed"`, `"canceled"` |
-| **Order volume** | `vol` (string), `vol_exec` (string) | `amount: Amount`, `filled_amount: Decimal` | ✅ Compatible (map `vol` → `amount.value`) |
-| **Order price** | `price` (string, limit price) | `price: Price` | ✅ Compatible |
-| **Order side** | `type: "buy"` or `"sell"` | `side: OrderSide` with `"buy"` or `"sell"` | ✅ Exact match |
-| **Trade ID** | `txid` (string, response key) | `id: UUID` | ⚠️ Change to `id: str` |
-| **Trade order ref** | `ordertxid` (string) | `order_id: UUID` | ⚠️ Change to `order_id: str` |
-| **Trade fee** | `fee` (decimal string, quote currency) | `fee: Amount` | ⚠️ Change to `fee: Decimal` (simpler) |
-| **Trade volume** | `vol` (decimal string) | `amount: Amount` | ✅ Compatible |
-| **Balance** | `{"XXBT": "1.5"}` (flat dict) | `Balance(asset, total, available, locked)` | ✅ Compatible (adapter calculates locked) |
-| **Timestamp** | Unix float (seconds.microseconds) | `Timestamp(dt: datetime)` | ✅ Compatible (convert in adapter) |
-| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base="BTC", quote="USD")` with `to_kraken_format()` | ✅ Perfect |
+Reflects the post-ADR-005 domain model. The ⚠️ rows in the original
+version of this table were all subsequently aligned with Kraken's
+vocabulary.
+
+| Concept | Kraken API | Domain Model |
+|---------|-----------|--------------|
+| **Order ID** | `txid` (string) | `id: UUID`, `exchange_id: str \| None` (dual ID) |
+| **Order status** | `pending`/`open`/`closed`/`canceled`/`expired` | Same Literal, verbatim |
+| **Order volume** | `vol` (string), `vol_exec` (string) | `amount: Amount`, `filled_amount: Decimal` |
+| **Order price** | `price` (string, limit price) | `price: Price` |
+| **Order side** | `type: "buy"` or `"sell"` | `side: OrderSide` with `"buy"` or `"sell"` |
+| **Trade ID** | `txid` (string, response key) | `id: str` (Kraken txid) |
+| **Trade order ref** | `ordertxid` (string) | `order_id: str` (Kraken parent txid) |
+| **Trade fee** | `fee` (decimal string, quote currency) | `fee: Decimal` |
+| **Trade volume** | `vol` (decimal string) | `amount: Amount` |
+| **Balance** | `{"XXBT": "1.5"}` (flat dict) | `Balance(asset, total, available, locked)` — adapter calculates `locked` from open-order set |
+| **Timestamp** | Unix float (seconds.microseconds) | `Timestamp(dt: datetime)` — adapter converts via `to_unix_seconds()` |
+| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base, quote)` with `to_kraken_format()` |
 
 ---
 
@@ -358,43 +374,21 @@ class Order(BaseModel):
 
 ### **2. Order Status Alignment**
 
-**Current Model:**
-```python
-status: Literal["pending", "open", "filled", "cancelled", "failed"]
-```
-
-**Kraken API:**
+**Kraken API status vocabulary:**
 ```python
 status: "pending" | "open" | "closed" | "canceled" | "expired"
 ```
 
-**Recommendation:** Create a **status mapping layer** in the Kraken adapter:
-
-```python
-# src/wobblebot/adapters/kraken/mappings.py
-
-KRAKEN_TO_DOMAIN_STATUS = {
-    "pending": "pending",
-    "open": "open",
-    "closed": "filled",
-    "canceled": "cancelled",
-    "expired": "cancelled",
-}
-
-DOMAIN_TO_KRAKEN_STATUS = {
-    "pending": "pending",
-    "open": "open",
-    "filled": "closed",
-    "cancelled": "canceled",
-}
-```
-
-Or **adopt Kraken's status values directly** in domain model:
+**Resolved by ADR-005:** the domain model adopts these values verbatim
+(`src/wobblebot/domain/models.py:48`):
 ```python
 status: Literal["pending", "open", "closed", "canceled", "expired"]
 ```
 
-**Verdict:** Use Kraken's canonical values in domain. Simpler, no mapping needed, industry-standard terminology.
+No mapping table. No translation in the adapter. Kraken's terminology
+*is* the domain terminology. (The alternative — keeping a mapping
+layer for "future flexibility" — was rejected as premature abstraction
+since spot trading on Kraken is the Phase 1-5 target.)
 
 ### **3. Trade Fee Structure**
 
@@ -503,24 +497,16 @@ Based on Kraken API realities, here are the recommended changes:
        return self.dt.timestamp()
    ```
 
-### **Phase 1.2 Tests Updates**
-
-Update test assertions to use:
-- `status == "closed"` instead of `"filled"`
-- `status == "canceled"` instead of `"cancelled"`
-- String IDs for `Trade` instead of UUID expectations
-
 ---
 
-## Summary
+## Summary — what shipped
 
-This document answers your architectural questions:
+All six items below were adopted into the Phase 1.2 domain model and
+codified in ADR-005:
 
-1. **IDs:** String (Kraken txid) stored in `exchange_id: str`, internal UUID in `id: UUID`
-2. **Status values:** Use Kraken's canonical: `"closed"`, `"canceled"`, `"expired"`
-3. **Amounts:** `Decimal` for most fields, `Amount` value object when asset context needed
-4. **Trade fees:** Simplified to `Decimal` (quote currency implicit)
-5. **Timestamps:** Add `to_unix_seconds()` for Kraken compatibility
-6. **Position model:** Defer to Phase 3+ (margin trading), not needed for spot trading
-
-**Next action:** Update domain models to align with Kraken API, then fix tests accordingly.
+1. **IDs:** dual-ID for `Order` (`id: UUID` internal + `exchange_id: str | None` Kraken txid); plain `id: str` for `Trade` and `Trade.order_id` (Kraken txids).
+2. **Status values:** Kraken's canonical Literal verbatim — `pending | open | closed | canceled | expired`. No mapping layer.
+3. **Amounts:** `Decimal` for most fields; `Amount` value object when asset context is needed.
+4. **Trade fees:** `Decimal` in quote currency (simplified from `Amount`).
+5. **Timestamps:** `Timestamp.to_unix_seconds()` provides the Kraken-compatible float-seconds format.
+6. **Position model:** deferred to Phase 3+ (margin trading); spot trading does not need it.
