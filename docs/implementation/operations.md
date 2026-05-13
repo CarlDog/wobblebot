@@ -1,5 +1,10 @@
 # Operations & Maintenance Guide
 
+> **Status: forward-looking design doc.** Describes the Phase 2+ target
+> system. None of the commands, configs, schemas, or endpoints below exist
+> yet. Current code (Phase 1.3) runs only via the test suite. Track real
+> progress in [docs/planning/roadmap.md](../planning/roadmap.md).
+
 This document explains how to run, monitor, and maintain WobbleBot on a day‑to‑day basis.  Think of it as the operations playbook for keeping the bot healthy and safe in production.
 
 ## Starting & Stopping

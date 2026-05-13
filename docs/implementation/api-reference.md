@@ -1,5 +1,10 @@
 # API & Interface Reference
 
+> **Status: forward-looking design doc.** Describes the Phase 2+ target
+> system. None of the commands, configs, schemas, or endpoints below exist
+> yet. Current code (Phase 1.3) runs only via the test suite. Track real
+> progress in [docs/planning/roadmap.md](../planning/roadmap.md).
+
 This document describes WobbleBot’s public interfaces.  These include command‑line entry points, any optional HTTP endpoints, and the JSON schema expected from the LLM Advisor.  External APIs (Kraken, banking, LLM servers) are out of scope and should be referenced from vendor documentation.
 
 ## Command‑Line Interface (Planned)

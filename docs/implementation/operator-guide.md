@@ -1,5 +1,10 @@
 # Operator Guide
 
+> **Status: forward-looking design doc.** Describes the Phase 2+ target
+> system. None of the commands, configs, schemas, or endpoints below exist
+> yet. Current code (Phase 1.3) runs only via the test suite. Track real
+> progress in [docs/planning/roadmap.md](../planning/roadmap.md).
+
 This guide is for the person operating WobbleBot in day‑to‑day use.  It describes the mental model, configuration basics, typical workflows, and emergency procedures.  It supplements the `deployment-guide.md` and `operations.md` with a focus on the operator’s perspective.
 
 ## Mental Model

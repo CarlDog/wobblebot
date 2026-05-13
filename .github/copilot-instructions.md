@@ -11,7 +11,7 @@ All modules communicate through **abstract ports**, never direct dependencies:
 
 - **Domain** (`src/wobblebot/domain/`) – Pure business logic, zero external I/O
 - **Ports** (`src/wobblebot/ports/`) – Abstract interfaces (e.g., `ExchangePort`, `StoragePort`, `AdvisorPort`, `HarvesterPort`)
-- **Adapters** (`src/wobblebot/adapters/`) – Concrete implementations (Kraken API, SQLite, LLM, banking)
+- **Adapters** (`src/wobblebot/adapters/`) – Concrete implementations (Kraken API, SQLite, LLM)
 - **Services** (`src/wobblebot/services/`) – Orchestrators and coordination logic
 
 **Never** let domain code import adapters. Use dependency injection via constructors.

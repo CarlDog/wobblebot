@@ -24,7 +24,7 @@ Built using **hexagonal architecture (Ports & Adapters)** for clean boundaries, 
 ## Project Status
 
 **Current Phase:** Phase 1 – Foundation & Sandbox
-**Stage:** 1.1 – Repo & Scaffolding
+**Stage:** 1.3 – Storage & Logging Backbone (storage complete, logging in progress)
 
 See [docs/planning/roadmap.md](docs/planning/roadmap.md) for the full development roadmap.
 
@@ -126,7 +126,7 @@ WobbleBot follows **hexagonal architecture** with strict layer boundaries:
 
 - **Domain Layer** – Pure business logic, zero external I/O
 - **Ports Layer** – Abstract interfaces defining contracts
-- **Adapters Layer** – Concrete implementations (Kraken API, SQLite, LLM, banking)
+- **Adapters Layer** – Concrete implementations (Kraken API, SQLite, LLM)
 - **Services Layer** – Orchestration and coordination logic
 
 **Key Constraint:** Domain code never imports adapters. All communication happens through ports with dependency injection.

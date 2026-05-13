@@ -32,7 +32,7 @@ When creating a module spec, follow this outline:
 
 **Responsibilities:** Decide when to place or cancel orders, enforce safety limits, update positions and cycle counters.  It does **not** know about LLM suggestions or funds transfers (handled by Advisor and Harvester).
 
-**Interfaces:** Implements `ExchangePort`, `StoragePort`, and `NotifierPort`.  Provides methods like `run_cycle()`, `on_order_filled()`, and `calculate_grid_levels()`.
+**Interfaces:** *Depends on* (via constructor injection) `ExchangePort`, `StoragePort`, and `NotifierPort` — Bot Core is a consumer of these ports, not an implementer. Adapters implement the ports. Planned methods include `run_cycle()`, `on_order_filled()`, and `calculate_grid_levels()` (Phase 2+).
 
 **Data Flow:** Consumes price and balance data from the Data Collector, reads configuration parameters, and emits order requests to the Kraken adapter.  Persists trades and positions to the storage adapter.
 

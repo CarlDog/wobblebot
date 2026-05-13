@@ -12,7 +12,7 @@ This document defines how to write code in the WobbleBot project so that future 
 - `src/wobblebot/` – application code
   - `domain/` – core domain models and deterministic business logic
   - `ports/` – abstract interfaces (hexagonal ports)
-  - `adapters/` – concrete implementations (e.g., Kraken API, SQLite DB, LLM adapter, Harvester banking)
+  - `adapters/` – concrete implementations (e.g., Kraken API, SQLite DB, LLM adapter)
   - `services/` – orchestrators, schedulers, and higher‑level flows
   - `cli/` – command‑line entry points
   - `config/` – configuration schemas, loaders, and default values
