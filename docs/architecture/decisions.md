@@ -101,7 +101,7 @@ This file tracks major system decisions.
    The engine reads `GridSlot` state from SQLite each tick and acts on that snapshot. At startup and every N ticks (default N=100, configurable), it reconciles against `ExchangePort.get_open_orders` — orders that exist on the exchange but not in our DB are imported; orders in our DB that no longer exist on the exchange are marked closed and trigger counter-action logic.
    *Reason:* restart resilience requires durable state, and the engine can crash between "send AddOrder" and "persist response." Reconciliation is the only convergent strategy under outages, region failovers, or process restarts.
 
-4. **Order ID strategy: introduce a `GridSlot` model.**
+4. **Order ID strategy: `GridSlot` is a derived view; only `GridState` (the anchor) is persisted.**
    `domain/grid.py` defines:
    ```python
    class GridSlot(BaseModel):
@@ -111,6 +111,12 @@ This file tracks major system decisions.
        order_id: UUID | None  # None = empty slot, awaiting placement
    ```
    The grid is a *layout*; orders are *transient occupants* of slots. Separating the two lets `step()` reason about "what should exist" without coupling to "what currently exists."
+
+   The only persisted entity is `GridState` (one row per symbol: `reference_price`, `spacing_percentage`, `levels_above`, `levels_below`, `created_at`). Each tick the engine reconstitutes `GridSlot`s by:
+   1. `compute_grid_levels(grid_state)` to get the layout, then
+   2. querying the existing `orders` table for open orders matching each level's price, to fill in `order_id`.
+
+   *Rejected:* a separate `grid_slot` table with FKs to `orders.id`. Two tables would create FK consistency burden, a second source of truth for "is this slot occupied," and a place where the engine's view could disagree with the order table. Deriving slots from one table eliminates that class of bug, and the `Order` table is already authoritative for order state per ADR-005.
 
 5. **Concurrency model: single asyncio task, per-coin `asyncio.Lock`.**
    For Stage 2.2 a single task steps each coin in turn. Each `Symbol` carries an `asyncio.Lock` so `step()` is re-entrant-safe if Stage 5 hardening later parallelizes per-coin tasks.

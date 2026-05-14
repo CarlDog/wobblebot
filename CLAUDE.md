@@ -11,13 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: loads credentials from `.env`, wires `KrakenAdapter` + `DataCollector`, prints current price + balances against real Kraken. Read-only — places nothing, moves nothing.
 
-204 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.92/10 on `src/`.
+228 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.93/10 on `src/`.
 
 **Stage 2.2 (Micro-Grid Engine) is in progress.** Design + slicing + 6 ratified decisions live at `docs/planning/stage-2.2-design.md` and `docs/architecture/decisions.md` ADR-006. Slice progress:
 - ✅ ADR-006 — grid engine architecture decisions ratified.
 - ✅ Slice 2.2.1 — `GridConfig` / `SafetyConfig` Pydantic schemas + `load_config()` YAML loader (`src/wobblebot/config/`).
-- ⏳ Slice 2.2.2 — pure grid math in `src/wobblebot/domain/grid.py` (`compute_grid_levels`, `next_counter_action`, `GridSlot` model).
-- ⏳ Slice 2.2.3 — `GridEngine` service (the largest slice, ~2-3 hours).
+- ✅ Slice 2.2.2 — pure grid math in `src/wobblebot/domain/grid.py` (`GridLevel`, `GridSlot`, `compute_grid_levels`, `next_counter_action`, `is_offside`, `grid_spacing`).
+- ⏳ Slice 2.2.3 — `GridEngine` service (the largest slice, ~2-3 hours). Persists `GridState` (per-symbol anchor) only; `GridSlot` is a derived view from `compute_grid_levels` + the existing `orders` table — see ADR-006 decision 4.
 - ⏳ Slice 2.2.4 — safety cap enforcement inside the engine.
 - ⏳ Slice 2.2.5 — end-to-end integration test against `MockExchangeAdapter`.
 
