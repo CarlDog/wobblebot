@@ -19,6 +19,16 @@
 > field semantics, precision rules) remain accurate and useful as a
 > reference when implementing the Kraken adapter in Phase 2.
 
+> **Live verification:** 2026-05-14. Public endpoints
+> (`SystemStatus`, `AssetPairs`, `Ticker`, `Assets`) re-fetched against
+> `api.kraken.com` and cross-checked against the shapes below. Private
+> endpoints (`Balance`, `OpenOrders`, `TradesHistory`, `AddOrder`,
+> `Withdraw`) are not live-verified — claims about them come from
+> Kraken's documentation and have not changed in the intervening
+> period to public knowledge. The integration test
+> `tests/integration/test_kraken_api_health.py` re-checks public
+> shapes on demand.
+
 **Purpose:** Domain model design decisions based on Kraken REST API v0 data structures and field naming conventions.
 
 **Sources:**
@@ -41,30 +51,123 @@ Kraken uses **string IDs** for all resources:
 
 ### 2. **Symbol Format: Pair Strings**
 Kraken symbols are concatenated strings:
-- REST API: `"XXBTZUSD"`, `"XETHZUSD"`, `"ADAUSD"` (no separator)
-- WebSocket API: `"XBT/USD"`, `"ETH/USD"` (slash separator)
-- Altnames: `"BTCUSD"`, `"ETHUSD"` (short form)
+- REST API key form: `"XXBTZUSD"`, `"XETHZUSD"`, `"XDGUSD"` (no separator)
+- WebSocket name (`wsname`): `"XBT/USD"`, `"ETH/USD"`, `"XDG/USD"` (slash separator)
+- Altname: `"XBTUSD"`, `"ETHUSD"`, `"XDGUSD"` (short form, no separator)
 
 Assets have prefix notation:
-- `X` prefix for crypto: `XXBT` (BTC), `XETH` (ETH)
+- `X` prefix for crypto: `XXBT` (BTC), `XETH` (ETH), `XXDG` (DOGE)
 - `Z` prefix for fiat: `ZUSD` (USD), `ZEUR` (EUR)
-- Exceptions: `"DASH"`, `"GNO"` (4-char assets, no prefix)
+- Newer/added assets often drop the prefix: `ADA`, `SOL`, `MATIC`, `DASH`, `GNO`
 
-**Decision:** Our `Symbol` value object correctly uses `base/quote` with `to_kraken_format()` method. Keep current design.
+**Asset-code aliasing gotchas.** Some popular asset codes don't match
+their colloquial ticker symbol:
+
+| Colloquial | Kraken asset code | Pair key | Altname / wsname base |
+|------------|-------------------|----------|------------------------|
+| BTC        | `XXBT`            | `XXBTZUSD` | `XBT` |
+| DOGE       | `XXDG`            | `XDGUSD`   | `XDG` |
+| (others)   | mostly identity   | varies     | identity              |
+
+The DOGE/XDG asymmetry matters: our config (`config/wobblebot.example.yml`)
+lists `DOGE` as a grid coin. The `Symbol → Kraken` translator needs a
+small alias table or it'll request a non-existent `DOGEUSD` pair.
+Build the alias table from `/0/public/AssetPairs` at startup rather
+than hard-coding it — Kraken adds/removes pairs over time, and a
+runtime lookup catches drift without code changes.
+
+**Decision:** Our `Symbol` value object correctly uses `base/quote` with `to_kraken_format()` method. Keep current design — but `to_kraken_format` must consult an alias table populated from `AssetPairs`.
 
 ### 3. **Amounts and Prices: Decimal Strings**
 Kraken returns all monetary values as **decimal strings**, not floats:
-- Prices: `"50000.50000"`
+- Prices: `"79035.20000"`
 - Volumes: `"0.12345678"`
 - Fees: `"5.10"`
 - Costs: `"6000.60"`
 
-Precision varies by asset:
-- BTC: 8 decimal places
-- USD: 2-4 decimal places
-- Get from `/0/public/Assets` and `/0/public/AssetPairs` endpoints
+Precision is communicated by two separate field families. Don't conflate them:
 
-**Decision:** Use Python `Decimal` type internally. Our `Price` and `Amount` value objects correctly use `Decimal`. Good.
+**Per-asset (from `/0/public/Assets`):**
+- `decimals` — internal precision the exchange tracks (e.g. `XXBT: 10`, `ZUSD: 4`).
+- `display_decimals` — precision used in the Kraken web UI (e.g. `XXBT: 5`, `ZUSD: 2`).
+
+**Per-pair (from `/0/public/AssetPairs`):**
+- `pair_decimals` — price quote precision for this pair (e.g. `XXBTZUSD: 1`).
+- `lot_decimals` — volume precision (e.g. `XXBTZUSD: 8`).
+- `cost_decimals` — cost-side precision = price × volume (e.g. `XXBTZUSD: 5`).
+
+For trading, **`pair_decimals` and `lot_decimals` are load-bearing** —
+submitting a price or volume with extra precision is rejected. Read
+them once at startup along with the alias table.
+
+**Decision:** Use Python `Decimal` type internally. Our `Price` and `Amount` value objects correctly use `Decimal`. Good. Phase 2.3 will add per-pair precision quantization in `KrakenAdapter.place_order` using `lot_decimals` / `pair_decimals` from a startup `AssetPairs` snapshot.
+
+---
+
+## Public Market Data
+
+### **Response: Ticker** (`/0/public/Ticker?pair=...`)
+
+```json
+{
+    "error": [],
+    "result": {
+        "XXBTZUSD": {
+            "a": ["79035.20000", "1", "1.000"],
+            "b": ["79035.10000", "1", "1.000"],
+            "c": ["79033.80000", "0.00156715"],
+            "v": ["98.21298882", "1602.79390704"],
+            "p": ["79448.11928", "79717.97007"],
+            "t": [5634, 51349],
+            "l": ["78995.20000", "78720.90000"],
+            "h": ["79664.90000", "81277.00000"],
+            "o": "79292.10000"
+        }
+    }
+}
+```
+
+**Field semantics:**
+
+| Key | Shape | Meaning |
+|-----|-------|---------|
+| `a` | `[price, whole_lot_volume, lot_volume]` | Best ask |
+| `b` | `[price, whole_lot_volume, lot_volume]` | Best bid |
+| `c` | `[price, lot_volume]` | **Last trade closed** — `c[0]` is the canonical "current price" |
+| `v` | `[today, last_24h]` | Volume |
+| `p` | `[today, last_24h]` | Volume-weighted average price |
+| `t` | `[today, last_24h]` | Number of trades |
+| `l` | `[today, last_24h]` | Low price |
+| `h` | `[today, last_24h]` | High price |
+| `o` | `string` | Today's opening price |
+
+**For our adapter's `get_current_price`: use `result[<pair_key>]["c"][0]`.**
+The bid/ask spread (`a[0]` and `b[0]`) is more useful for execution
+decisions, but Stage 2.1 only needs a mid-price-ish single number;
+last-trade is the standard pick.
+
+### **Response: AssetPairs** (`/0/public/AssetPairs`)
+
+Returns metadata for every tradable pair. The fields we care about:
+
+| Field | Type | Used for |
+|-------|------|----------|
+| `altname` | string | Short pair name (e.g. `XBTUSD`) — useful for log messages |
+| `wsname` | string | WebSocket-format name (e.g. `XBT/USD`) — Phase 2+ if WS lands |
+| `base` | string | Base asset code (e.g. `XXBT`) — drives the alias table |
+| `quote` | string | Quote asset code (e.g. `ZUSD`) |
+| `pair_decimals` | int | Price precision for order placement |
+| `lot_decimals` | int | Volume precision for order placement |
+| `cost_decimals` | int | Cost-side precision (less load-bearing) |
+| `ordermin` | string | Minimum order volume |
+| `costmin` | string | Minimum order cost |
+| `tick_size` | string | Smallest price increment |
+| `status` | string | `"online"`, `"cancel_only"`, `"post_only"`, etc. — gate before placing |
+
+The response key (e.g. `"XXBTZUSD"`) is the canonical pair identifier
+used in `Ticker`, `OpenOrders`, `AddOrder`, and elsewhere. `altname`
+and `wsname` are alternative representations of the same pair —
+useful for display, not for API requests.
 
 ---
 
