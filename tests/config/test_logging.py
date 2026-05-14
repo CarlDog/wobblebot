@@ -35,7 +35,7 @@ def _reset_wobblebot_logger():
 class TestPlainFormat:
     def test_plain_format_emits_human_readable_line(self):
         buf = io.StringIO()
-        configure_logging(level="INFO", format="plain", stream=buf)
+        configure_logging(level="INFO", log_format="plain", stream=buf)
         logger = logging.getLogger("wobblebot.test")
         logger.info("starting up")
 
@@ -45,7 +45,7 @@ class TestPlainFormat:
 
     def test_plain_format_respects_level(self):
         buf = io.StringIO()
-        configure_logging(level="WARNING", format="plain", stream=buf)
+        configure_logging(level="WARNING", log_format="plain", stream=buf)
         logger = logging.getLogger("wobblebot.test")
         logger.info("filtered out")
         logger.warning("kept")
@@ -58,7 +58,7 @@ class TestPlainFormat:
 class TestJsonFormat:
     def test_json_format_emits_one_object_per_record(self):
         buf = io.StringIO()
-        configure_logging(level="INFO", format="json", stream=buf)
+        configure_logging(level="INFO", log_format="json", stream=buf)
         logger = logging.getLogger("wobblebot.adapters.sqlite_storage")
         logger.info("placed order")
 
@@ -72,7 +72,7 @@ class TestJsonFormat:
 
     def test_json_format_surfaces_extras(self):
         buf = io.StringIO()
-        configure_logging(level="INFO", format="json", stream=buf)
+        configure_logging(level="INFO", log_format="json", stream=buf)
         logger = logging.getLogger("wobblebot.test")
         logger.info(
             "trade recorded",
@@ -85,7 +85,7 @@ class TestJsonFormat:
 
     def test_json_format_includes_exc_info(self):
         buf = io.StringIO()
-        configure_logging(level="INFO", format="json", stream=buf)
+        configure_logging(level="INFO", log_format="json", stream=buf)
         logger = logging.getLogger("wobblebot.test")
         try:
             raise RuntimeError("boom")
@@ -100,9 +100,9 @@ class TestJsonFormat:
 class TestConfigureLoggingContract:
     def test_idempotent_no_double_handler(self):
         buf = io.StringIO()
-        configure_logging(level="INFO", format="plain", stream=buf)
-        configure_logging(level="INFO", format="plain", stream=buf)
-        configure_logging(level="INFO", format="plain", stream=buf)
+        configure_logging(level="INFO", log_format="plain", stream=buf)
+        configure_logging(level="INFO", log_format="plain", stream=buf)
+        configure_logging(level="INFO", log_format="plain", stream=buf)
 
         logger = logging.getLogger("wobblebot.test")
         logger.info("only once")
@@ -112,7 +112,7 @@ class TestConfigureLoggingContract:
 
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Invalid log format"):
-            configure_logging(format="yaml")  # type: ignore[arg-type]
+            configure_logging(log_format="yaml")  # type: ignore[arg-type]
 
     def test_env_var_defaults(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("WOBBLEBOT_LOG_LEVEL", "DEBUG")
@@ -131,7 +131,7 @@ class TestConfigureLoggingContract:
         monkeypatch.setenv("WOBBLEBOT_LOG_LEVEL", "DEBUG")
         monkeypatch.setenv("WOBBLEBOT_LOG_FORMAT", "json")
         buf = io.StringIO()
-        configure_logging(level="WARNING", format="plain", stream=buf)
+        configure_logging(level="WARNING", log_format="plain", stream=buf)
 
         logger = logging.getLogger("wobblebot.test")
         logger.info("should be filtered")

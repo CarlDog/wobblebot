@@ -29,7 +29,7 @@ from wobblebot.services.simulator import run_buy_dip_sell_rebound_cycle
 
 
 async def _run(db_path: str, log_format: str) -> int:
-    configure_logging(format=log_format)  # type: ignore[arg-type]
+    configure_logging(log_format=log_format)  # type: ignore[arg-type]
     logger = logging.getLogger("wobblebot.cli.simulate")
 
     symbol = Symbol(base="BTC", quote="USD")

@@ -48,7 +48,7 @@ def _parse_symbol(raw: str) -> Symbol:
 
 
 async def _run(symbol: Symbol, log_format: LogFormat) -> int:
-    configure_logging(format=log_format)
+    configure_logging(log_format=log_format)
     logger = logging.getLogger("wobblebot.cli.check")
 
     try:

@@ -68,7 +68,7 @@ _PLAIN_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 def configure_logging(
     level: str | None = None,
-    format: LogFormat | None = None,
+    log_format: LogFormat | None = None,
     stream: IO[str] | None = None,
 ) -> None:
     """Configure the root logger for the wobblebot package.
@@ -76,8 +76,8 @@ def configure_logging(
     Args:
         level: Logging level name (DEBUG/INFO/WARNING/ERROR/CRITICAL).
             Defaults to ``$WOBBLEBOT_LOG_LEVEL`` or ``INFO``.
-        format: ``"plain"`` (human-readable) or ``"json"`` (one object
-            per line). Defaults to ``$WOBBLEBOT_LOG_FORMAT`` or
+        log_format: ``"plain"`` (human-readable) or ``"json"`` (one
+            object per line). Defaults to ``$WOBBLEBOT_LOG_FORMAT`` or
             ``"plain"``.
         stream: Output stream. Defaults to ``sys.stderr``.
 
@@ -86,7 +86,7 @@ def configure_logging(
     """
     resolved_level = (level or os.environ.get("WOBBLEBOT_LOG_LEVEL") or "INFO").upper()
     resolved_format: LogFormat = (
-        format or os.environ.get("WOBBLEBOT_LOG_FORMAT") or "plain"  # type: ignore[assignment]
+        log_format or os.environ.get("WOBBLEBOT_LOG_FORMAT") or "plain"  # type: ignore[assignment]
     )
     if resolved_format not in ("plain", "json"):
         raise ValueError(f"Invalid log format {resolved_format!r}; expected 'plain' or 'json'")
