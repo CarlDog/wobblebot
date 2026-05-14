@@ -76,7 +76,7 @@ Build the alias table from `/0/public/AssetPairs` at startup rather
 than hard-coding it — Kraken adds/removes pairs over time, and a
 runtime lookup catches drift without code changes.
 
-**Decision:** Our `Symbol` value object correctly uses `base/quote` with `to_kraken_format()` method. Keep current design — but `to_kraken_format` must consult an alias table populated from `AssetPairs`.
+**Decision:** Our `Symbol` value object uses `base/quote` (e.g. `BTC/USD`). Kraken-format translation lives in the adapter, not the domain — `KrakenAdapter` has a small conventional dict (`BTC↔XBT`, `DOGE↔XDG`) plus a startup-populated `Assets`-endpoint cache that maps Kraken's legacy response codes (XXBT, ZUSD) to altnames (XBT, USD). A `Symbol.to_kraken_format()` method previously lived on the domain object and was removed in Stage 2.1 slice 2.5 — it violated hex-layer rules and was broken anyway (`Symbol("BTC","USD").to_kraken_format()` returned `"BTCUSD"`, which Kraken rejects; the correct altname is `"XBTUSD"`).
 
 ### 3. **Amounts and Prices: Decimal Strings**
 Kraken returns all monetary values as **decimal strings**, not floats:
@@ -433,7 +433,7 @@ vocabulary.
 | **Trade volume** | `vol` (decimal string) | `amount: Amount` |
 | **Balance** | `{"XXBT": "1.5"}` (flat dict) | `Balance(asset, total, available, locked)` — adapter calculates `locked` from open-order set |
 | **Timestamp** | Unix float (seconds.microseconds) | `Timestamp(dt: datetime)` — adapter converts via `to_unix_seconds()` |
-| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base, quote)` with `to_kraken_format()` |
+| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base, quote)`; Kraken-format translation in `KrakenAdapter` (`_symbol_to_kraken_altname` + dynamic Assets cache) |
 
 ---
 

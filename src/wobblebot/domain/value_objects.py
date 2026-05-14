@@ -33,10 +33,6 @@ class Symbol(BaseModel):
         """Format as BASE/QUOTE."""
         return f"{self.base}/{self.quote}"
 
-    def to_kraken_format(self) -> str:
-        """Format for Kraken API (e.g., BTCUSD, ETHUSD)."""
-        return f"{self.base}{self.quote}"
-
     class Config:
         """Pydantic config."""
 

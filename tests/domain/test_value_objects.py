@@ -29,11 +29,6 @@ class TestSymbol:
         symbol = Symbol(base="ETH", quote="USD")
         assert str(symbol) == "ETH/USD"
 
-    def test_symbol_kraken_format(self):
-        """Test Kraken API format conversion."""
-        symbol = Symbol(base="BTC", quote="USD")
-        assert symbol.to_kraken_format() == "BTCUSD"
-
     def test_symbol_immutability(self):
         """Test that Symbol is immutable."""
         symbol = Symbol(base="BTC", quote="USD")

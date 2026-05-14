@@ -21,6 +21,7 @@ instance (per ADR-003).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -39,36 +40,20 @@ from wobblebot.ports.exchange import ExchangePort
 
 _API_VERSION = "0"
 
-# Asset-code aliases between our domain vocabulary and Kraken's.
+# Colloquial-naming aliases between our domain vocabulary and Kraken's
+# altname vocabulary. These are conventions we *choose* — Kraken's data
+# doesn't tell us "BTC means the same thing as XBT". Anything not listed
+# falls through as identity (USD, ETH, ADA, SOL, ...).
 #
-# Kraken uses legacy short-names ("XBT" for BTC, "XDG" for DOGE) in altname
-# pair strings, and X/Z-prefixed forms ("XXBT", "ZUSD") in response keys.
-# Newer assets (ADA, SOL, MATIC, etc.) use identity codes — no entry needed.
-#
-# Slice 2 hand-maintained these dicts. Slice 2.5 will replace them with a
-# startup AssetPairs fetch + cache, so the lists stay tight.
+# The legacy X/Z-prefixed *response codes* (XXBT, ZUSD, XETH, etc.) are
+# NOT here — those are resolved dynamically via the live Assets
+# endpoint cache (see ``KrakenAdapter._ensure_asset_metadata``), so new
+# assets Kraken adds work without code changes.
 _INTERNAL_TO_KRAKEN_ALTNAME: dict[str, str] = {
     "BTC": "XBT",
     "DOGE": "XDG",
 }
-
-# Kraken response/canonical asset codes → internal vocabulary.
-# The Balance/BalanceEx endpoints return these prefixed forms.
-_KRAKEN_TO_INTERNAL_ASSET: dict[str, str] = {
-    "XXBT": "BTC",
-    "XETH": "ETH",
-    "XXDG": "DOGE",
-    "XLTC": "LTC",
-    "XXRP": "XRP",
-    "XXLM": "XLM",
-    "ZUSD": "USD",
-    "ZEUR": "EUR",
-    "ZGBP": "GBP",
-    "ZJPY": "JPY",
-    "ZCAD": "CAD",
-    "ZAUD": "AUD",
-    "ZCHF": "CHF",
-}
+_KRAKEN_ALTNAME_TO_INTERNAL: dict[str, str] = {v: k for k, v in _INTERNAL_TO_KRAKEN_ALTNAME.items()}
 
 
 class KrakenAdapter(ExchangePort):
@@ -98,6 +83,10 @@ class KrakenAdapter(ExchangePort):
             self._http = http_client
             self._owns_client = False
         self._last_nonce = 0
+        # Lazy cache: Kraken response code -> altname (e.g. XXBT -> XBT,
+        # ZUSD -> USD). Populated from /0/public/Assets on first need.
+        self._asset_altnames: dict[str, str] | None = None
+        self._asset_metadata_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if the adapter created it.
@@ -135,7 +124,13 @@ class KrakenAdapter(ExchangePort):
         ``hold_trade`` per asset, which our ``Balance.locked`` field
         mirrors directly. The plain ``Balance`` endpoint omits hold
         info and forces clients to cross-reference OpenOrders.
+
+        First call also populates the asset-metadata cache so Kraken's
+        legacy X/Z-prefixed response codes (``XXBT``, ``ZUSD``) can be
+        resolved to our internal vocabulary without hand-maintaining a
+        per-asset list. Subsequent calls reuse the cache.
         """
+        await self._ensure_asset_metadata()
         result = await self._private_post("/0/private/BalanceEx")
         return [self._parse_balance_entry(code, entry) for code, entry in result.items()]
 
@@ -177,17 +172,68 @@ class KrakenAdapter(ExchangePort):
             "Withdrawals are exclusive to the Phase 4 Harvester key (ADR-003)"
         )
 
+    # ------------------------------------------------ Asset metadata cache
+
+    async def _ensure_asset_metadata(self) -> None:
+        """Populate the asset-altname cache from ``/0/public/Assets``.
+
+        Lazy + one-shot per adapter instance. Concurrent first-call
+        invocations are serialized by ``_asset_metadata_lock`` so we
+        never issue two parallel fetches.
+
+        The Assets response gives the canonical ``response_code →
+        altname`` map (e.g. ``XXBT → XBT``, ``ZUSD → USD``, ``ADA →
+        ADA``). Combined with ``_KRAKEN_ALTNAME_TO_INTERNAL`` (which
+        captures conventions like XBT↔BTC, XDG↔DOGE), this lets us
+        translate any Kraken response code to internal vocabulary
+        without a hand-maintained per-asset list.
+        """
+        if self._asset_altnames is not None:
+            return
+        async with self._asset_metadata_lock:
+            if self._asset_altnames is not None:
+                return  # another coroutine populated it while we waited
+            assets = await self._public_get("/0/public/Assets")
+            altnames: dict[str, str] = {}
+            for kraken_code, info in assets.items():
+                altname = info.get("altname") if isinstance(info, dict) else None
+                if not isinstance(altname, str):
+                    raise ExchangeError(
+                        f"Kraken /0/public/Assets entry {kraken_code!r} missing altname"
+                    )
+                altnames[kraken_code] = altname
+            self._asset_altnames = altnames
+
+    def _kraken_code_to_internal(self, kraken_code: str) -> str:
+        """Translate a Kraken response code (``XXBT``) to internal vocabulary (``BTC``).
+
+        Composes two lookups:
+
+        1. ``response_code → altname`` from the cached Assets map.
+        2. ``altname → internal`` from the conventional dict.
+
+        Falls through identity at both stages if no mapping exists, so
+        new assets Kraken adds work without code changes.
+
+        Precondition: ``_ensure_asset_metadata`` has been awaited.
+        """
+        if self._asset_altnames is None:
+            raise ExchangeError(
+                "Asset metadata cache not initialized; call _ensure_asset_metadata first"
+            )
+        altname = self._asset_altnames.get(kraken_code, kraken_code)
+        return _KRAKEN_ALTNAME_TO_INTERNAL.get(altname, altname)
+
     # ------------------------------------------------ Response parsing
 
-    @staticmethod
-    def _parse_balance_entry(kraken_code: str, entry: dict[str, str]) -> Balance:
+    def _parse_balance_entry(self, kraken_code: str, entry: dict[str, str]) -> Balance:
         """Translate one BalanceEx entry into our domain ``Balance``.
 
         BalanceEx entry shape: ``{"balance": "<decimal>", "hold_trade": "<decimal>"}``.
         ``balance`` is the total holding (Kraken's source of truth);
         ``hold_trade`` is the portion locked by open orders.
         """
-        internal_code = _KRAKEN_TO_INTERNAL_ASSET.get(kraken_code, kraken_code)
+        internal_code = self._kraken_code_to_internal(kraken_code)
         total = Decimal(entry["balance"])
         hold = Decimal(entry["hold_trade"])
         return Balance(

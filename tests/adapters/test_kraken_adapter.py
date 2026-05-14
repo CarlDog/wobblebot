@@ -44,10 +44,47 @@ pytestmark = pytest.mark.unit
 # signature isn't verified by the mocked transport.
 _TEST_SECRET = "c2VjcmV0"
 
+# Canned /0/public/Assets response. The adapter's _ensure_asset_metadata
+# fetches this on the first balance call to translate Kraken's
+# X/Z-prefixed response codes (XXBT, ZUSD) to altnames.
+_CANNED_ASSETS_RESPONSE: dict[str, Any] = {
+    "error": [],
+    "result": {
+        "XXBT": {"altname": "XBT", "decimals": 10, "display_decimals": 5, "status": "enabled"},
+        "ZUSD": {"altname": "USD", "decimals": 4, "display_decimals": 2, "status": "enabled"},
+        "ADA": {"altname": "ADA", "decimals": 8, "display_decimals": 6, "status": "enabled"},
+        "XXDG": {"altname": "XDG", "decimals": 8, "display_decimals": 2, "status": "enabled"},
+        "XETH": {"altname": "ETH", "decimals": 10, "display_decimals": 5, "status": "enabled"},
+    },
+}
+
 
 def _make_adapter(handler: Callable[[httpx.Request], httpx.Response]) -> KrakenAdapter:
     """Wire a KrakenAdapter against an httpx.MockTransport using ``handler``."""
     transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(base_url="https://api.kraken.com", transport=transport)
+    return KrakenAdapter(
+        config=KrakenConfig(api_key="public-half", api_secret=_TEST_SECRET),
+        http_client=client,
+    )
+
+
+def _make_adapter_with_metadata(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> KrakenAdapter:
+    """Adapter where ``/0/public/Assets`` returns canned data; everything else routes to ``handler``.
+
+    Used by tests of methods that lazily fetch asset metadata
+    (``get_balances`` / ``get_balance``). Lets each test focus on the
+    endpoint it cares about without re-canning Assets each time.
+    """
+
+    def dispatching_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/0/public/Assets":
+            return httpx.Response(200, json=_CANNED_ASSETS_RESPONSE)
+        return handler(request)
+
+    transport = httpx.MockTransport(dispatching_handler)
     client = httpx.AsyncClient(base_url="https://api.kraken.com", transport=transport)
     return KrakenAdapter(
         config=KrakenConfig(api_key="public-half", api_secret=_TEST_SECRET),
@@ -180,7 +217,7 @@ class TestGetBalances:
                 },
             )
 
-        adapter = _make_adapter(handler)
+        adapter = _make_adapter_with_metadata(handler)
         try:
             balances = await adapter.get_balances()
         finally:
@@ -208,7 +245,7 @@ class TestGetBalances:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"error": ["EAPI:Invalid key"], "result": {}})
 
-        adapter = _make_adapter(handler)
+        adapter = _make_adapter_with_metadata(handler)
         try:
             with pytest.raises(ExchangeError, match="EAPI:Invalid key"):
                 await adapter.get_balances()
@@ -231,7 +268,7 @@ class TestGetBalance:
                 },
             )
 
-        adapter = _make_adapter(handler)
+        adapter = _make_adapter_with_metadata(handler)
         try:
             btc = await adapter.get_balance("BTC")
         finally:
@@ -251,7 +288,7 @@ class TestGetBalance:
                 },
             )
 
-        adapter = _make_adapter(handler)
+        adapter = _make_adapter_with_metadata(handler)
         try:
             sol = await adapter.get_balance("SOL")
         finally:
@@ -269,7 +306,7 @@ class TestGetBalance:
                 },
             )
 
-        adapter = _make_adapter(handler)
+        adapter = _make_adapter_with_metadata(handler)
         try:
             result = await adapter.get_balance("btc")
         finally:
@@ -277,6 +314,169 @@ class TestGetBalance:
 
         assert result is not None
         assert result.asset == "BTC"
+
+
+@pytest.mark.asyncio
+class TestAssetMetadataCache:
+    """Tests for ``_ensure_asset_metadata`` and the resulting code translation."""
+
+    async def test_first_get_balances_fetches_assets_then_balance_ex(self) -> None:
+        """Two endpoints hit on first call: Assets, then BalanceEx."""
+        request_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            request_paths.append(request.url.path)
+            if request.url.path == "/0/public/Assets":
+                return httpx.Response(200, json=_CANNED_ASSETS_RESPONSE)
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {"XXBT": {"balance": "1.0", "hold_trade": "0"}},
+                },
+            )
+
+        # Don't use the _with_metadata helper here — we want to observe the
+        # actual Assets fetch.
+        adapter = _make_adapter(handler)
+        try:
+            await adapter.get_balances()
+        finally:
+            await adapter.aclose()
+
+        assert request_paths == ["/0/public/Assets", "/0/private/BalanceEx"]
+
+    async def test_second_get_balances_does_not_refetch_assets(self) -> None:
+        """Metadata cache is one-shot — Assets only hits the network once per adapter."""
+        request_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            request_paths.append(request.url.path)
+            if request.url.path == "/0/public/Assets":
+                return httpx.Response(200, json=_CANNED_ASSETS_RESPONSE)
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {"XXBT": {"balance": "1.0", "hold_trade": "0"}},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            await adapter.get_balances()
+            await adapter.get_balances()
+            await adapter.get_balances()
+        finally:
+            await adapter.aclose()
+
+        assets_calls = [p for p in request_paths if p == "/0/public/Assets"]
+        balance_calls = [p for p in request_paths if p == "/0/private/BalanceEx"]
+        assert len(assets_calls) == 1, f"Assets refetched: {request_paths}"
+        assert len(balance_calls) == 3
+
+    async def test_concurrent_first_calls_share_one_fetch(self) -> None:
+        """asyncio.Lock serializes the first-call population — no parallel fetches."""
+        import asyncio as _asyncio
+
+        request_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            request_paths.append(request.url.path)
+            if request.url.path == "/0/public/Assets":
+                return httpx.Response(200, json=_CANNED_ASSETS_RESPONSE)
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"ZUSD": {"balance": "0", "hold_trade": "0"}}},
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            await _asyncio.gather(
+                adapter.get_balances(),
+                adapter.get_balances(),
+                adapter.get_balances(),
+            )
+        finally:
+            await adapter.aclose()
+
+        assets_calls = [p for p in request_paths if p == "/0/public/Assets"]
+        assert len(assets_calls) == 1, f"Multiple Assets fetches under contention: {request_paths}"
+
+    async def test_xxdg_translates_to_doge_via_cache(self) -> None:
+        """The dynamic cache + colloquial dict together produce XXDG -> XDG -> DOGE."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {"XXDG": {"balance": "1000.0", "hold_trade": "0"}},
+                },
+            )
+
+        adapter = _make_adapter_with_metadata(handler)
+        try:
+            balances = await adapter.get_balances()
+        finally:
+            await adapter.aclose()
+
+        assert len(balances) == 1
+        assert balances[0].asset == "DOGE"
+        assert balances[0].total == Decimal("1000.0")
+
+    async def test_unknown_kraken_code_falls_through_identity(self) -> None:
+        """A code Kraken adds that we don't know about should still work — identity fallback."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/0/public/Assets":
+                # Canned response includes a fictional new asset "FOO" with altname "FOO".
+                payload = {
+                    "error": [],
+                    "result": dict(_CANNED_ASSETS_RESPONSE["result"]),
+                }
+                payload["result"]["FOO"] = {
+                    "altname": "FOO",
+                    "decimals": 8,
+                    "display_decimals": 4,
+                    "status": "enabled",
+                }
+                return httpx.Response(200, json=payload)
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {"FOO": {"balance": "42.0", "hold_trade": "0"}},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            balances = await adapter.get_balances()
+        finally:
+            await adapter.aclose()
+
+        assert len(balances) == 1
+        assert balances[0].asset == "FOO"
+
+    async def test_assets_entry_missing_altname_raises(self) -> None:
+        """Malformed Assets entries fail fast rather than silently dropping the asset."""
+        bad_assets = {
+            "error": [],
+            "result": {"XXBT": {"decimals": 10}},  # no altname
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/0/public/Assets":
+                return httpx.Response(200, json=bad_assets)
+            return httpx.Response(200, json={"error": [], "result": {}})
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="missing altname"):
+                await adapter.get_balances()
+        finally:
+            await adapter.aclose()
 
 
 @pytest.mark.asyncio
