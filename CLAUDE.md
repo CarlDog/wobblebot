@@ -11,9 +11,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: loads credentials from `.env`, wires `KrakenAdapter` + `DataCollector`, prints current price + balances against real Kraken. Read-only — places nothing, moves nothing.
 
-162 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.91/10 on `src/`.
+204 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.92/10 on `src/`.
 
-**Next:** Stage 2.2 — Micro-Grid Engine. Design doc + slicing plan + 5 ratified decisions live at `docs/planning/stage-2.2-design.md`. Begin by writing ADR-006 capturing those decisions, then slice 2.2.1 (config schemas). Stage 2.2 is significantly larger than 2.1 — ~6-10 hours of focused work across 5 implementation slices, money-touching code, **deserves daylight rather than midnight pushes.**
+**Stage 2.2 (Micro-Grid Engine) is in progress.** Design + slicing + 6 ratified decisions live at `docs/planning/stage-2.2-design.md` and `docs/architecture/decisions.md` ADR-006. Slice progress:
+- ✅ ADR-006 — grid engine architecture decisions ratified.
+- ✅ Slice 2.2.1 — `GridConfig` / `SafetyConfig` Pydantic schemas + `load_config()` YAML loader (`src/wobblebot/config/`).
+- ⏳ Slice 2.2.2 — pure grid math in `src/wobblebot/domain/grid.py` (`compute_grid_levels`, `next_counter_action`, `GridSlot` model).
+- ⏳ Slice 2.2.3 — `GridEngine` service (the largest slice, ~2-3 hours).
+- ⏳ Slice 2.2.4 — safety cap enforcement inside the engine.
+- ⏳ Slice 2.2.5 — end-to-end integration test against `MockExchangeAdapter`.
+
+Stage 2.2 is money-touching code — **deserves daylight rather than midnight pushes.** Slices are independently committable; pause cleanly between them.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
