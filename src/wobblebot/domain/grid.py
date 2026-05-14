@@ -27,9 +27,33 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.domain.value_objects import OrderSide, Symbol, Timestamp
+
+
+class GridState(BaseModel):
+    """Per-symbol persistent grid anchor.
+
+    Captures the parameters needed to reconstitute the grid layout each
+    tick. Created once when the engine first sees a symbol (anchored to
+    the price observed at that moment) and never re-anchored — per
+    ADR-006 decision 1, the grid stays parked.
+
+    Per ADR-006 decision 4, this is the *only* grid-related entity that
+    persists. ``GridSlot`` is derived each tick from
+    :func:`compute_grid_levels` plus a query of open orders.
+    """
+
+    symbol: Symbol
+    reference_price: Decimal = Field(gt=Decimal("0"))
+    spacing_percentage: Decimal = Field(gt=Decimal("0"))
+    levels_above: int = Field(gt=0)
+    levels_below: int = Field(gt=0)
+    created_at: Timestamp
+
+    class Config:
+        frozen = True
 
 
 class GridLevel(BaseModel):

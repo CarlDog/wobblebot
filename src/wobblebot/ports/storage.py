@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
+from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Symbol
 
@@ -140,5 +141,41 @@ class StoragePort(ABC):
 
         Raises:
             StorageError: If retrieval fails
+        """
+        pass
+
+    # Grid state operations (Stage 2.2)
+    @abstractmethod
+    async def save_grid_state(self, state: GridState) -> None:
+        """Persist or replace the grid anchor for a symbol.
+
+        Per ADR-006 decision 4, only ``GridState`` is persisted —
+        ``GridSlot`` is a derived view computed each tick from
+        ``compute_grid_levels`` plus a query of open orders.
+
+        Idempotent: saving the same ``state`` twice leaves storage in
+        the same shape (one row per symbol, last writer wins).
+
+        Args:
+            state: Grid anchor to persist.
+
+        Raises:
+            StorageError: If save fails.
+        """
+        pass
+
+    @abstractmethod
+    async def get_grid_state(self, symbol: Symbol) -> GridState | None:
+        """Retrieve the grid anchor for a symbol.
+
+        Args:
+            symbol: Trading pair.
+
+        Returns:
+            ``GridState`` if the engine has previously initialized one
+            for this symbol; ``None`` otherwise.
+
+        Raises:
+            StorageError: If retrieval fails.
         """
         pass

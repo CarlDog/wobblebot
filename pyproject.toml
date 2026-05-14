@@ -160,5 +160,7 @@ disable = [
     "C0103",  # invalid-name
     "R0903",  # too-few-public-methods (common in domain models)
     "W0107",  # unnecessary-pass — abstract-method bodies use docstring + pass idiomatically
+    "R0801",  # duplicate-code — same idiom (`@abstractmethod` + Args/Returns/Raises docstring + `pass`)
+              # trips this across every port; structurally unavoidable in a hex architecture
 ]
 good-names = ["i", "j", "k", "ex", "db", "id"]

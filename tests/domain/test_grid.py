@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -11,12 +12,13 @@ from pydantic import ValidationError
 from wobblebot.domain.grid import (
     GridLevel,
     GridSlot,
+    GridState,
     compute_grid_levels,
     grid_spacing,
     is_offside,
     next_counter_action,
 )
-from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.domain.value_objects import OrderSide, Symbol, Timestamp
 
 pytestmark = pytest.mark.unit
 
@@ -252,3 +254,60 @@ class TestIsOffside:
 
     def test_empty_grid_always_offside(self) -> None:
         assert is_offside(Decimal("100"), []) is True
+
+
+# ---------------------------------------------------------------------------
+# GridState (the persisted anchor)
+# ---------------------------------------------------------------------------
+
+
+def _state(**overrides: object) -> GridState:
+    defaults: dict[str, object] = {
+        "symbol": Symbol(base="BTC", quote="USD"),
+        "reference_price": Decimal("50000"),
+        "spacing_percentage": Decimal("1.0"),
+        "levels_above": 5,
+        "levels_below": 5,
+        "created_at": Timestamp(dt=datetime.now(UTC)),
+    }
+    defaults.update(overrides)
+    return GridState(**defaults)  # type: ignore[arg-type]
+
+
+class TestGridState:
+    def test_construction(self) -> None:
+        s = _state()
+        assert s.reference_price == Decimal("50000")
+        assert s.levels_above == 5
+
+    def test_frozen(self) -> None:
+        s = _state()
+        with pytest.raises(ValidationError):
+            s.reference_price = Decimal("60000")  # type: ignore[misc]
+
+    @pytest.mark.parametrize("field", ["reference_price", "spacing_percentage"])
+    def test_zero_decimal_fields_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            _state(**{field: Decimal("0")})
+
+    @pytest.mark.parametrize("field", ["reference_price", "spacing_percentage"])
+    def test_negative_decimal_fields_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            _state(**{field: Decimal("-1")})
+
+    @pytest.mark.parametrize("field", ["levels_above", "levels_below"])
+    def test_zero_level_counts_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            _state(**{field: 0})
+
+    def test_missing_created_at_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="created_at"):
+            GridState.model_validate(
+                {
+                    "symbol": {"base": "BTC", "quote": "USD"},
+                    "reference_price": "50000",
+                    "spacing_percentage": "1",
+                    "levels_above": 5,
+                    "levels_below": 5,
+                }
+            )

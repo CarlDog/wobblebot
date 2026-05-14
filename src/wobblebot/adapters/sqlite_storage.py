@@ -17,6 +17,7 @@ from uuid import UUID
 
 import aiosqlite
 
+from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
@@ -78,6 +79,17 @@ CREATE TABLE IF NOT EXISTS balance_entries (
     locked          TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, asset)
+);
+
+CREATE TABLE IF NOT EXISTS grid_state (
+    symbol_base         TEXT NOT NULL,
+    symbol_quote        TEXT NOT NULL,
+    reference_price     TEXT NOT NULL,
+    spacing_percentage  TEXT NOT NULL,
+    levels_above        INTEGER NOT NULL,
+    levels_below        INTEGER NOT NULL,
+    created_at          TEXT NOT NULL,
+    PRIMARY KEY (symbol_base, symbol_quote)
 );
 """
 
@@ -313,6 +325,62 @@ class SQLiteStorageAdapter(StoragePort):
             )
             for row in rows
         ]
+
+    async def save_grid_state(self, state: GridState) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO grid_state (
+                    symbol_base, symbol_quote,
+                    reference_price, spacing_percentage,
+                    levels_above, levels_below, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol_base, symbol_quote) DO UPDATE SET
+                    reference_price = excluded.reference_price,
+                    spacing_percentage = excluded.spacing_percentage,
+                    levels_above = excluded.levels_above,
+                    levels_below = excluded.levels_below,
+                    created_at = excluded.created_at
+                """,
+                (
+                    state.symbol.base,
+                    state.symbol.quote,
+                    str(state.reference_price),
+                    str(state.spacing_percentage),
+                    state.levels_above,
+                    state.levels_below,
+                    state.created_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save grid state for {state.symbol}: {exc}") from exc
+
+    async def get_grid_state(self, symbol: Symbol) -> GridState | None:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """
+                SELECT * FROM grid_state
+                WHERE symbol_base = ? AND symbol_quote = ?
+                """,
+                (symbol.base, symbol.quote),
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load grid state for {symbol}: {exc}") from exc
+        if row is None:
+            return None
+        return GridState(
+            symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+            reference_price=Decimal(row["reference_price"]),
+            spacing_percentage=Decimal(row["spacing_percentage"]),
+            levels_above=row["levels_above"],
+            levels_below=row["levels_below"],
+            created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        )
 
 
 def _row_to_order(row: aiosqlite.Row) -> Order:

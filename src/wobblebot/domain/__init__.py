@@ -18,6 +18,7 @@ from wobblebot.domain.exceptions import (
 from wobblebot.domain.grid import (
     GridLevel,
     GridSlot,
+    GridState,
     compute_grid_levels,
     grid_spacing,
     is_offside,
@@ -47,9 +48,10 @@ __all__ = [
     "Amount",
     "OrderSide",
     "Timestamp",
-    # Grid math
+    # Grid
     "GridLevel",
     "GridSlot",
+    "GridState",
     "compute_grid_levels",
     "grid_spacing",
     "is_offside",
