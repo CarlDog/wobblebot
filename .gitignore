@@ -107,3 +107,6 @@ temp/
 # OS-specific
 Thumbs.db
 .DS_Store
+
+# Per-developer tool state (not source of truth for anyone else)
+.serena/

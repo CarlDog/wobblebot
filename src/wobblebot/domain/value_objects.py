@@ -7,7 +7,6 @@ concepts without identity. They enforce domain invariants at creation time.
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -134,7 +133,12 @@ class Timestamp(BaseModel):
         return int(self.dt.timestamp() * 1000)
 
     def to_unix_seconds(self) -> float:
-        """Convert to Unix timestamp in seconds (Kraken API format)."""
+        """Convert to Unix timestamp in seconds (epoch).
+
+        Common wire format for exchange APIs that timestamp with
+        second granularity. Use ``to_unix_ms`` when sub-second
+        precision matters.
+        """
         return self.dt.timestamp()
 
     class Config:

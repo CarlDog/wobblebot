@@ -1,7 +1,10 @@
 """HarvesterPort - Abstract interface for fund transfer management.
 
-This port defines the contract for treasury management (Kraken ↔ bank).
-The Harvester module implements this port (Phase 4+).
+This port defines the contract for treasury management
+(exchange ↔ bank). The Harvester module implements this port for the
+configured exchange (Phase 4+); per ADR-004 the Kraken implementation
+uses Kraken's withdrawal API via ``ExchangePort`` rather than a
+separate banking adapter.
 
 CRITICAL: Harvester is the ONLY module with withdrawal permissions.
 All transfers must respect strict thresholds and safety caps.
@@ -23,12 +26,12 @@ class TransferProposal(BaseModel):
     """
 
     proposal_id: str = Field(..., description="Unique proposal ID")
-    direction: Literal["kraken_to_bank", "bank_to_kraken"]
+    direction: Literal["exchange_to_bank", "bank_to_exchange"]
     asset: str = Field(..., min_length=1, max_length=10)
     amount: Decimal = Field(..., gt=0)
     rationale: str = Field(..., description="Why this transfer is proposed")
-    current_kraken_balance: Decimal = Field(..., ge=0)
-    target_kraken_balance: Decimal = Field(..., ge=0)
+    current_exchange_balance: Decimal = Field(..., ge=0)
+    target_exchange_balance: Decimal = Field(..., ge=0)
 
 
 class TransferResult(BaseModel):
@@ -44,10 +47,11 @@ class TransferResult(BaseModel):
 class HarvesterPort(ABC):
     """Abstract interface for fund transfer management.
 
-    Phase 4+ feature - manages Kraken ↔ bank transfers.
+    Phase 4+ feature — manages exchange ↔ bank transfers.
 
     Implementations:
-    - Harvester module (uses Kraken withdrawal API per ADR-004)
+    - Harvester module (uses the configured exchange's withdrawal API;
+      per ADR-004, Kraken's `Withdraw` endpoint via ``ExchangePort``)
 
     Error convention:
     - "No transfer needed" returns ``None`` from
