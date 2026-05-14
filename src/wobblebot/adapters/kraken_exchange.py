@@ -34,9 +34,41 @@ import httpx
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Price, Symbol
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
 _API_VERSION = "0"
+
+# Asset-code aliases between our domain vocabulary and Kraken's.
+#
+# Kraken uses legacy short-names ("XBT" for BTC, "XDG" for DOGE) in altname
+# pair strings, and X/Z-prefixed forms ("XXBT", "ZUSD") in response keys.
+# Newer assets (ADA, SOL, MATIC, etc.) use identity codes — no entry needed.
+#
+# Slice 2 hand-maintained these dicts. Slice 2.5 will replace them with a
+# startup AssetPairs fetch + cache, so the lists stay tight.
+_INTERNAL_TO_KRAKEN_ALTNAME: dict[str, str] = {
+    "BTC": "XBT",
+    "DOGE": "XDG",
+}
+
+# Kraken response/canonical asset codes → internal vocabulary.
+# The Balance/BalanceEx endpoints return these prefixed forms.
+_KRAKEN_TO_INTERNAL_ASSET: dict[str, str] = {
+    "XXBT": "BTC",
+    "XETH": "ETH",
+    "XXDG": "DOGE",
+    "XLTC": "LTC",
+    "XXRP": "XRP",
+    "XXLM": "XLM",
+    "ZUSD": "USD",
+    "ZEUR": "EUR",
+    "ZGBP": "GBP",
+    "ZJPY": "JPY",
+    "ZCAD": "CAD",
+    "ZAUD": "AUD",
+    "ZCHF": "CHF",
+}
 
 
 class KrakenAdapter(ExchangePort):
@@ -79,24 +111,58 @@ class KrakenAdapter(ExchangePort):
     # ------------------------------------------------ ExchangePort: read paths
 
     async def get_current_price(self, symbol: Symbol) -> Price:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        """Fetch the last-trade price for ``symbol`` via ``/0/public/Ticker``.
+
+        Kraken's Ticker response keys by the X/Z-prefixed pair name
+        (``XXBTZUSD``) regardless of which form the caller used to
+        query. Since each request asks for exactly one pair, we don't
+        need to translate the response key — we take the single entry.
+        """
+        altname = _symbol_to_kraken_altname(symbol)
+        result = await self._public_get("/0/public/Ticker", {"pair": altname})
+        if not result:
+            raise ExchangeError(f"Kraken returned no ticker data for pair {altname!r}")
+        ticker = next(iter(result.values()))
+        # ``c`` is [last_trade_price, lot_volume]. c[0] is the canonical
+        # "current price" per docs/reference/kraken-api-reference.md.
+        last_price_str = ticker["c"][0]
+        return Price(amount=Decimal(last_price_str), currency=symbol.quote)
 
     async def get_balances(self) -> list[Balance]:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        """Fetch all account balances via ``/0/private/BalanceEx``.
+
+        BalanceEx (not Balance) is the canonical endpoint: it returns
+        ``hold_trade`` per asset, which our ``Balance.locked`` field
+        mirrors directly. The plain ``Balance`` endpoint omits hold
+        info and forces clients to cross-reference OpenOrders.
+        """
+        result = await self._private_post("/0/private/BalanceEx")
+        return [self._parse_balance_entry(code, entry) for code, entry in result.items()]
 
     async def get_balance(self, asset: str) -> Balance | None:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        """Fetch the balance for ``asset`` (e.g., "BTC", "USD") or ``None``.
+
+        BalanceEx has no per-asset filter parameter, so we fetch the
+        full set and filter locally. The set is small (one entry per
+        held asset) and this method is rarely called in a tight loop.
+        """
+        normalized = asset.upper()
+        balances = await self.get_balances()
+        for b in balances:
+            if b.asset == normalized:
+                return b
+        return None
 
     async def get_order_status(self, order: Order) -> Order:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        raise NotImplementedError("Order tracking deferred to Stage 2.3")
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        raise NotImplementedError("Order tracking deferred to Stage 2.3")
 
     async def get_trade_history(
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]:
-        raise NotImplementedError("Implemented in Stage 2.1 slice 2 (read paths)")
+        raise NotImplementedError("Trade history deferred to Stage 2.3")
 
     # ------------------------------------------------ ExchangePort: write paths
 
@@ -111,7 +177,94 @@ class KrakenAdapter(ExchangePort):
             "Withdrawals are exclusive to the Phase 4 Harvester key (ADR-003)"
         )
 
+    # ------------------------------------------------ Response parsing
+
+    @staticmethod
+    def _parse_balance_entry(kraken_code: str, entry: dict[str, str]) -> Balance:
+        """Translate one BalanceEx entry into our domain ``Balance``.
+
+        BalanceEx entry shape: ``{"balance": "<decimal>", "hold_trade": "<decimal>"}``.
+        ``balance`` is the total holding (Kraken's source of truth);
+        ``hold_trade`` is the portion locked by open orders.
+        """
+        internal_code = _KRAKEN_TO_INTERNAL_ASSET.get(kraken_code, kraken_code)
+        total = Decimal(entry["balance"])
+        hold = Decimal(entry["hold_trade"])
+        return Balance(
+            asset=internal_code,
+            total=total,
+            available=total - hold,
+            locked=hold,
+        )
+
     # ------------------------------------------------ Kraken HTTP plumbing
+
+    async def _public_get(self, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+        """Issue a GET to a public Kraken endpoint and return ``result``.
+
+        Raises:
+            ExchangeError: On HTTP error, malformed envelope, or
+                non-empty ``error`` array in the response.
+        """
+        try:
+            response = await self._http.get(path, params=params)
+        except httpx.HTTPError as exc:
+            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+        return self._unwrap_envelope(response, path)
+
+    async def _private_post(
+        self, path: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Issue a signed POST to a private Kraken endpoint and return ``result``.
+
+        Builds the nonce, signs the request, and sets ``API-Key`` /
+        ``API-Sign`` headers. The body is form-encoded
+        (``application/x-www-form-urlencoded``), which is what Kraken
+        signs over.
+
+        Raises:
+            ExchangeError: On HTTP error, malformed envelope, or
+                non-empty ``error`` array in the response.
+        """
+        body = dict(params or {})
+        nonce = self._make_nonce()
+        body["nonce"] = nonce
+        signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
+        headers = {
+            "API-Key": self._config.api_key,
+            "API-Sign": signature,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        try:
+            response = await self._http.post(path, data=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+        return self._unwrap_envelope(response, path)
+
+    @staticmethod
+    def _unwrap_envelope(response: httpx.Response, path: str) -> dict[str, Any]:
+        """Validate Kraken's ``{"error": [...], "result": {...}}`` envelope.
+
+        Kraken returns HTTP 200 even on application errors — the
+        ``error`` array is the signal. A non-empty array means "the
+        endpoint understood your request and rejected it for business
+        reasons" (invalid nonce, insufficient permissions, etc.).
+        """
+        if response.status_code >= 400:
+            raise ExchangeError(f"Kraken {path} HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            envelope = response.json()
+        except ValueError as exc:
+            raise ExchangeError(f"Kraken {path} returned non-JSON body") from exc
+        if not isinstance(envelope, dict):
+            raise ExchangeError(f"Kraken {path} returned non-object JSON envelope")
+        errors = envelope.get("error", [])
+        if errors:
+            raise ExchangeError(f"Kraken {path} returned errors: {errors}")
+        result = envelope.get("result")
+        if not isinstance(result, dict):
+            raise ExchangeError(f"Kraken {path} response missing 'result' object")
+        return result
 
     def _make_nonce(self) -> int:
         """Generate a strictly increasing nonce (milliseconds since epoch).
@@ -165,3 +318,20 @@ class KrakenAdapter(ExchangePort):
         secret_bytes = base64.b64decode(self._config.api_secret)
         signature = hmac.new(secret_bytes, mac_input, hashlib.sha512).digest()
         return base64.b64encode(signature).decode("utf-8")
+
+
+def _symbol_to_kraken_altname(symbol: Symbol) -> str:
+    """Translate ``Symbol(base, quote)`` to a Kraken altname pair string.
+
+    Examples (assuming the alias maps above):
+        Symbol("BTC", "USD")  -> "XBTUSD"
+        Symbol("ETH", "USD")  -> "ETHUSD"
+        Symbol("DOGE", "USD") -> "XDGUSD"
+        Symbol("ADA", "USD")  -> "ADAUSD"
+
+    Returns the altname (no X/Z prefixes), which Kraken accepts in the
+    ``pair=`` query parameter of every public endpoint.
+    """
+    base_alt = _INTERNAL_TO_KRAKEN_ALTNAME.get(symbol.base, symbol.base)
+    quote_alt = _INTERNAL_TO_KRAKEN_ALTNAME.get(symbol.quote, symbol.quote)
+    return f"{base_alt}{quote_alt}"

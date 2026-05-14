@@ -6,6 +6,13 @@ used across the entire test suite.
 """
 
 import pytest
+from dotenv import load_dotenv
+
+# Load .env once at session start so live integration tests can read
+# KRAKEN_API_KEY / KRAKEN_API_SECRET. Idempotent — no-op if .env is
+# absent. Unit tests use ``monkeypatch.setenv/delenv`` and remain
+# isolated from whatever .env happens to set.
+load_dotenv()
 
 
 @pytest.fixture
