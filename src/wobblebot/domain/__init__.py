@@ -15,6 +15,14 @@ from wobblebot.domain.exceptions import (
     InvalidPriceRange,
     WobbleBotDomainError,
 )
+from wobblebot.domain.grid import (
+    GridLevel,
+    GridSlot,
+    compute_grid_levels,
+    grid_spacing,
+    is_offside,
+    next_counter_action,
+)
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 
@@ -39,4 +47,11 @@ __all__ = [
     "Amount",
     "OrderSide",
     "Timestamp",
+    # Grid math
+    "GridLevel",
+    "GridSlot",
+    "compute_grid_levels",
+    "grid_spacing",
+    "is_offside",
+    "next_counter_action",
 ]
