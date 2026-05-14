@@ -4,21 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-**Source of truth:** `docs/planning/roadmap.md`. Each stage in Phase 1 carries a ✅ completion date.
+**Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Phase 1 (Foundation & Sandbox) is complete as of 2026-05-13.** The integration check passes end-to-end — `python -m wobblebot.cli.simulate` runs a buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter` + `configure_logging` and persists orders, trades, and a balance snapshot into SQLite. 112 tests passing, mypy clean, black clean.
+**Stage 2.1 (Kraken Adapter Read-Only + DataCollector v1) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13. Two operator entry points work end-to-end:
 
-**Next:** Phase 2 — real Kraken integration, micro-grid engine, tiny-size live trading with no withdrawals. Start at Stage 2.1 (Kraken read-only adapter + minimal `DataCollector v1`). The hex pattern is set up specifically for this — the new `KrakenAdapter` should slot into the same `ExchangePort` contract `MockExchangeAdapter` already satisfies, with no domain or service-layer changes needed.
+- `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
+- `python -m wobblebot.cli.check` — Stage 2.1 live read check: loads credentials from `.env`, wires `KrakenAdapter` + `DataCollector`, prints current price + balances against real Kraken. Read-only — places nothing, moves nothing.
 
-**Design decisions ratified during Phase 1 closeout (do not relitigate without an ADR):**
-- `Balance` is an immutable snapshot (`frozen=True`). Funds "locked for an order" are derived at read time from the open-order set, not maintained in-memory.
+162 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.91/10 on `src/`.
+
+**Next:** Stage 2.2 — Micro-Grid Engine. Design doc + slicing plan + 5 ratified decisions live at `docs/planning/stage-2.2-design.md`. Begin by writing ADR-006 capturing those decisions, then slice 2.2.1 (config schemas). Stage 2.2 is significantly larger than 2.1 — ~6-10 hours of focused work across 5 implementation slices, money-touching code, **deserves daylight rather than midnight pushes.**
+
+**Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
+
+*Domain / safety:*
+- `Balance` is an immutable snapshot (`frozen=True`). Funds "locked for an order" come from Kraken's `hold_trade` (live) or are derived from the open-order set (mock).
 - `OrderSide` is a `StrEnum` (`OrderSide.BUY`, `OrderSide.SELL`), not a Pydantic model. SQL drivers and JSON serialize it as the plain string value.
-- Port error convention: domain-data miss returns `T | None`, protocol/transport failure raises the port's error type (`ExchangeError`, `StorageError`, etc. — all in `wobblebot.ports.exceptions`).
+- Port error convention: domain-data miss returns `T | None`, protocol/transport failure raises the port's error type (`ExchangeError`, `StorageError`, `DataCollectorError`, etc. — all in `wobblebot.ports.exceptions`).
 - `StoragePort` callers must serialize per-entity writes themselves (no optimistic concurrency control in the adapter).
 - `Timestamp` normalizes all tz-aware inputs to UTC so ISO 8601 string ordering matches chronological ordering.
 - Pydantic mypy plugin is enabled in `pyproject.toml` and load-bearing — do not remove.
 
-Before responding to any non-trivial request, read `docs/planning/roadmap.md` and cross-check that the requested work matches the current stage. If the user asks for Phase N+1 work while Phase N is in progress, name the drift before starting.
+*Kraken adapter (Stage 2.1):*
+- **DIY HMAC signing on `httpx`, not `python-kraken-sdk`.** SDK was considered and rejected: its only abstraction over httpx is signing + nonce + WebSocket; REST interface is generic `client.request("POST", path)`, same manual parsing burden. ~20 lines of crypto, gold-cased against Kraken's published example signature.
+- **`/0/private/BalanceEx`, not `/0/private/Balance`.** BalanceEx returns `hold_trade` per asset, mapping straight to `Balance.locked`.
+- **Asset/symbol aliasing lives in the adapter, not the domain.** Module-level `_INTERNAL_TO_KRAKEN_ALTNAME` for colloquial conventions (BTC↔XBT, DOGE↔XDG). Legacy X/Z-prefixed response codes (XXBT, ZUSD) resolve via a lazy `/0/public/Assets` cache. `Symbol.to_kraken_format()` removed from the domain — it violated hex-layer rules and was broken.
+- **`pytest -m 'not integration'` is the default** via pyproject `addopts`. Integration tests opt in with `pytest -m integration`.
+- **`.env` loaded session-wide via `python-dotenv` in `tests/conftest.py`.** Unit tests still use `monkeypatch.setenv` for isolation.
+
+Before responding to any non-trivial request, read `docs/planning/roadmap.md` and cross-check that the requested work matches the current stage. If the user asks for Stage N+1 work while Stage N is in progress, name the drift before starting.
 
 ## Commands
 
@@ -132,7 +146,7 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 
 - **Architecture:** `docs/architecture/` (start with `README.md`, then `architecture-components.md`, `constraints.md`, `decisions.md`)
 - **Implementation:** `docs/implementation/coding-guidelines.md`, `module-specs.md`, `development-workflow.md`
-- **Planning:** `docs/planning/roadmap.md` (current phase), `requirements.md`, `testing-plan.md`
+- **Planning:** `docs/planning/roadmap.md` (current phase), `requirements.md`, `testing-plan.md`, `stage-2.2-design.md` (next stage's slicing + ratified decisions)
 - **Kraken API reference:** `docs/reference/kraken-api-reference.md`
 - **Config example:** `config/wobblebot.example.yml` (real `config/wobblebot.yml` is gitignored)
 - **Docker env example:** `docker/env.example` (Phase 2+ deployment)
@@ -140,9 +154,9 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 ## Project-Specific Conventions
 
 - **Python 3.13+ required** (`requires-python = ">=3.13"`). Use `str | None`, `list[X]`, `match` statements — no `Optional`/`List` imports needed.
-- **Never use `print()`.** Use project logging (once added — currently scaffolding).
+- **Never use `print()`.** Use the project logger (`wobblebot.config.logging.configure_logging`). Plain format renders message-only; put operator-facing data in the message string and structured fields in the `extra=` dict so JSON consumers see them too.
 - **Pydantic v2 models** for structured data (domain entities, config schemas).
 - **Async ports:** `ExchangePort` and other I/O-bound ports are `async`. Use `pytest-asyncio` for tests of async code.
 - **Line length 100** (black + isort + pylint all configured to this).
 - **Keep files under ~300-400 lines.** Split modules that turn into junk drawers.
-- **No `print()`, no swallowed exceptions, no real network calls in unit tests.** Use mocks/stubs; integration tests carry the `integration` marker and are not run by default.
+- **No `print()`, no swallowed exceptions, no real network calls in unit tests.** Use mocks/stubs (`httpx.MockTransport` is the test seam for `KrakenAdapter`). Integration tests carry the `integration` marker and are excluded from the default `pytest` run via `addopts`; run them explicitly with `pytest -m integration`.
