@@ -38,6 +38,7 @@ dev = [
     "isort>=5.12.0",
     "mypy>=1.5.0",
     "pylint>=2.17.0",
+    "pylint-pydantic>=0.3.0",
     "types-pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
 ]
@@ -153,9 +154,11 @@ exclude_lines = [
 
 [tool.pylint.main]
 max-line-length = 100
+load-plugins = ["pylint_pydantic"]
 disable = [
     "C0111",  # missing-docstring
     "C0103",  # invalid-name
     "R0903",  # too-few-public-methods (common in domain models)
+    "W0107",  # unnecessary-pass — abstract-method bodies use docstring + pass idiomatically
 ]
 good-names = ["i", "j", "k", "ex", "db", "id"]

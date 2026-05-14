@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from wobblebot.domain.exceptions import InvalidOrderState
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 
 
@@ -105,8 +106,6 @@ class Order(BaseModel):
         Raises:
             InvalidOrderState: If order is already closed or expired
         """
-        from wobblebot.domain.exceptions import InvalidOrderState
-
         if self.status in ("closed", "expired"):
             raise InvalidOrderState(current_state=self.status, attempted_transition="cancel")
         self.status = "canceled"

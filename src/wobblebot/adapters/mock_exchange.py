@@ -206,7 +206,7 @@ class MockExchangeAdapter(ExchangePort):
             if order.symbol != symbol:
                 continue
             if self._crosses(order, market_price):
-                fills.append(self._fill_order(order, market_price))
+                fills.append(self._fill_order(order))
         return fills
 
     @staticmethod
@@ -215,12 +215,15 @@ class MockExchangeAdapter(ExchangePort):
             return market_price <= order.price.amount
         return market_price >= order.price.amount
 
-    def _fill_order(self, order: Order, market_price: Decimal) -> Trade:
+    def _fill_order(self, order: Order) -> Trade:
         """Execute a full fill at the order's limit price.
 
-        Real exchanges may give price improvement (fill the buy below
-        the limit when the book has it cheaper); we match at the limit
-        for determinism. Phase 2+ can add slippage if needed.
+        Deliberately ignores the market price that triggered the fill:
+        real exchanges may give price improvement (fill a buy below the
+        limit when the book has it cheaper), but matching at the limit
+        keeps the mock deterministic. Phase 2+ can add slippage when
+        ``MockExchangeAdapter`` needs to model it (the market price is
+        available via ``self._prices[order.symbol]`` if so).
         """
         cost = order.price.amount * order.amount.value
         fee = cost * self._fee_rate
