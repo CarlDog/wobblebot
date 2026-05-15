@@ -124,7 +124,7 @@ Key docs to reference:
 
 - Deployed via **Docker Compose** on Synology NAS (or locally)
 - **SQLite** for persistence (Phase 1-2)
-- Secrets in `.env` (never committed) – see `docker/env.example`
+- Secrets in `.env` (never committed) – see `.env.example` at the repo root
 - Main config in `config/settings.yml` (coins, grids, safety caps)
 
 ### Environment Modes

@@ -178,7 +178,7 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Planning:** `docs/planning/roadmap.md` (current phase), `requirements.md`, `testing-plan.md`, `stage-2.2-design.md` (next stage's slicing + ratified decisions)
 - **Kraken API reference:** `docs/reference/kraken-api-reference.md`
 - **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored)
-- **Docker env example:** `docker/env.example` (Phase 2+ deployment)
+- **Env vars example:** `.env.example` at the repo root (single source of truth — schema-drift tests verify operator `.env` files stay in sync)
 
 ## Project-Specific Conventions
 

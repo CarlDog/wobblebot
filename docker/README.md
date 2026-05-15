@@ -9,7 +9,10 @@ This directory will contain Docker and Docker Compose configurations for deployi
 - `Dockerfile` – Multi-stage build for production deployment
 - `docker-compose.yml` – Service orchestration (app, database, optional LLM)
 - `docker-compose.dev.yml` – Development override with volume mounts
-- `.env.example` – Template for environment variables and secrets
+
+The environment-variables template lives at the repo root as
+`.env.example` (single source of truth — the schema-drift tests verify
+operator `.env` files stay in sync with it).
 
 ## Phase Dependencies
 
