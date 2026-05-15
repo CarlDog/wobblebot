@@ -6,22 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Stage 2.1 (Kraken Adapter Read-Only + DataCollector v1) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13. Two operator entry points work end-to-end:
+**Stage 2.2 (Micro-Grid Engine) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stage 2.1 closed 2026-05-14 earlier the same day. Three operator entry points work end-to-end:
 
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: loads credentials from `.env`, wires `KrakenAdapter` + `DataCollector`, prints current price + balances against real Kraken. Read-only — places nothing, moves nothing.
+- `GridEngine.step(symbol)` — Stage 2.2 micro-grid orchestrator. No CLI yet (deferred to Stage 2.3 per the design doc); exercised end-to-end by `tests/integration/test_grid_engine_e2e.py` (1000-tick oscillation against the mock, 500 complete cycles, positive realized P&L).
 
-228 unit tests pass by default; 10 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator) on opt-in. mypy clean, black/isort clean, pylint 9.93/10 on `src/`.
+265 unit tests pass by default; 12 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator + 2 grid engine e2e) on opt-in. mypy clean (31 src files), black/isort clean, pylint 9.98/10 on `src/`.
 
-**Stage 2.2 (Micro-Grid Engine) is in progress.** Design + slicing + 6 ratified decisions live at `docs/planning/stage-2.2-design.md` and `docs/architecture/decisions.md` ADR-006. Slice progress:
-- ✅ ADR-006 — grid engine architecture decisions ratified.
-- ✅ Slice 2.2.1 — `GridConfig` / `SafetyConfig` Pydantic schemas + `load_config()` YAML loader (`src/wobblebot/config/`).
-- ✅ Slice 2.2.2 — pure grid math in `src/wobblebot/domain/grid.py` (`GridLevel`, `GridSlot`, `compute_grid_levels`, `next_counter_action`, `is_offside`, `grid_spacing`).
-- ⏳ Slice 2.2.3 — `GridEngine` service (the largest slice, ~2-3 hours). Persists `GridState` (per-symbol anchor) only; `GridSlot` is a derived view from `compute_grid_levels` + the existing `orders` table — see ADR-006 decision 4.
-- ⏳ Slice 2.2.4 — safety cap enforcement inside the engine.
-- ⏳ Slice 2.2.5 — end-to-end integration test against `MockExchangeAdapter`.
+**Stage 2.2 design decisions ratified (do not relitigate without an ADR — see ADR-006):**
 
-Stage 2.2 is money-touching code — **deserves daylight rather than midnight pushes.** Slices are independently committable; pause cleanly between them.
+- **Stay parked.** Grid does not re-center when price exits the window; emit "offside" log signal and wait.
+- **Counter sized to filled portion.** When a level fills, the counter-order matches the filled base amount (not re-derived from order_size_usd at the counter price), or each cycle's BUY/SELL legs would mismatch and bleed value through the spread.
+- **DB primary, exchange ultimate.** Engine reads `GridState` from SQLite each tick; periodic reconciliation against `get_open_orders` is deferred (no slice has needed it yet).
+- **`GridSlot` is a derived view.** Only `GridState` (per-symbol anchor) is persisted; slots are reconstituted each tick from `compute_grid_levels` + queries against the existing `orders` table. No separate `grid_slot` table.
+- **Single asyncio task per coin.** Per-symbol `asyncio.Lock` serializes `step()` calls for the same symbol; different symbols run in parallel.
+- **Operational defaults:** 5s tick rate, no order TTL, log+persist per cycle.
+
+**Next:** Stage 2.3 — Live Paper Mode / Tiny-Size Mode. **First real money on the table.** Swap `MockExchangeAdapter` for `KrakenAdapter` in the `GridEngine` wiring; engine code is unchanged. Order placement + fill tracking against the live API key. Per the project's standing guardrail, this slice **deserves daylight** even more than Stage 2.2 did — money-touching code at midnight is the failure mode the design explicitly tried to prevent. Do not start without runway.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
