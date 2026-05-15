@@ -6,11 +6,23 @@ manage application lifecycle, scheduling, and cross-cutting concerns.
 """
 
 from wobblebot.services.grid_engine import GridEngine, StepResult
+from wobblebot.services.metrics import (
+    CycleStats,
+    compute_cycle_stats,
+    compute_flatness,
+    compute_max_drawdown,
+    compute_volatility,
+)
 from wobblebot.services.simulator import SimulationResult, run_buy_dip_sell_rebound_cycle
 
 __all__ = [
+    "CycleStats",
     "GridEngine",
     "SimulationResult",
     "StepResult",
+    "compute_cycle_stats",
+    "compute_flatness",
+    "compute_max_drawdown",
+    "compute_volatility",
     "run_buy_dip_sell_rebound_cycle",
 ]
