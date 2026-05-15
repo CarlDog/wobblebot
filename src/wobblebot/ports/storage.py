@@ -82,6 +82,34 @@ class StoragePort(ABC):
         """
         pass
 
+    @abstractmethod
+    async def get_orders(
+        self,
+        symbol: Symbol | None = None,
+        side: str | None = None,
+        created_after: datetime | None = None,
+    ) -> list[Order]:
+        """Query orders by symbol / side / creation time. No status filter —
+        returns orders in any status.
+
+        Used by the safety cap layer (Stage 2.2.4) to compute committed
+        daily-spend across all order outcomes (open, closed, canceled).
+        Per-coin and total exposure caps use ``get_open_orders`` instead.
+
+        Args:
+            symbol: Optional symbol filter.
+            side: Optional ``"buy"`` or ``"sell"`` filter.
+            created_after: Optional lower bound on ``created_at`` (UTC,
+                tz-aware required).
+
+        Returns:
+            Matching orders. Empty list if none match. ORDER BY created_at.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+        pass
+
     # Trade operations
     @abstractmethod
     async def save_trade(self, trade: Trade) -> None:

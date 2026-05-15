@@ -7,7 +7,8 @@ One ``step(symbol)`` call advances the engine by one tick:
 2. Read the current market price.
 3. Load (or initialize-and-persist) the symbol's :class:`GridState`.
    On first tick, the reference price is anchored to the price observed
-   right now, then the initial grid layout is placed in full.
+   right now, then the initial grid layout is placed in full (subject
+   to safety caps).
 4. On subsequent ticks, detect fills by diffing the storage's
    open-orders set against the exchange's, then place a counter-order
    one ``spacing`` away on the opposite side for each fill (per ADR-006
@@ -15,18 +16,18 @@ One ``step(symbol)`` call advances the engine by one tick:
 5. If the current price is outside the grid window, log an "offside"
    event but place no new orders (per ADR-006 decision 1, "stay parked").
 
+Safety caps (slice 2.2.4) gate every placement: per-coin order count,
+per-coin USD exposure, total USD exposure across all coins, and
+committed daily spend on the BUY side. Refusals are logged as events
+and counted in :class:`StepResult`; they never raise.
+
 Per-symbol concurrency is gated by an ``asyncio.Lock``: re-entrant
 calls for the same symbol serialize, while different symbols can
 proceed in parallel (per ADR-006 decision 5).
 
-Safety cap enforcement (per-coin / global / daily-spend) lands in
-slice 2.2.4. This module places orders without those guards yet — the
-mock adapter still surfaces ``InsufficientBalance`` if the account
-runs dry.
-
 Reconciliation against orders that exist on the exchange but not in
 storage (manual operator intervention, prior crash mid-placement) is
-deferred to slice 2.2.4 along with the periodic-N-tick cadence
+deferred to a later slice along with the periodic-N-tick cadence
 described in ADR-006 decision 3.
 """
 
@@ -35,11 +36,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from decimal import Decimal
 from typing import Literal
 
 from wobblebot.config.grid import CoinGridConfig, GridConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.grid import (
     GridLevel,
     GridState,
@@ -66,12 +68,14 @@ class StepResult:
     ``action`` distinguishes the three outcomes:
 
     - ``"initialized"`` — first tick for this symbol; the grid was
-      anchored and the initial layout placed. ``placed`` reports the
-      number of orders placed.
+      anchored and the initial layout placed (subject to safety caps).
+      ``placed`` reports orders placed; ``refusals`` reports orders
+      blocked by a safety cap.
     - ``"stepped"`` — normal tick. ``fills`` is the count of orders
-      detected as filled this tick; ``counters_placed`` is the count of
-      counter-orders placed in response. ``offside`` is the ADR-006
-      "stay parked" signal.
+      detected as filled this tick; ``counters_placed`` is the count
+      of counter-orders placed in response; ``refusals`` is the count
+      blocked by a safety cap. ``offside`` is the ADR-006 "stay parked"
+      signal.
     - ``"skipped_disabled"`` — the per-coin config has ``enabled: false``;
       no exchange or storage interaction occurred.
     """
@@ -81,8 +85,18 @@ class StepResult:
     fills: int = 0
     counters_placed: int = 0
     placed: int = 0
+    refusals: int = 0
     offside: bool = False
     trade_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _SafetyDecision:
+    """Result of one ``_check_safety`` evaluation. Carried as a value
+    so callers can log the refusal reason without re-deriving it."""
+
+    ok: bool
+    reason: str | None = None
 
 
 class GridEngine:
@@ -97,11 +111,13 @@ class GridEngine:
         self,
         exchange: ExchangePort,
         storage: StoragePort,
-        config: GridConfig,
+        grid_config: GridConfig,
+        safety_config: SafetyConfig,
     ) -> None:
         self._exchange = exchange
         self._storage = storage
-        self._config = config
+        self._config = grid_config
+        self._safety = safety_config
         self._coin_locks: dict[str, asyncio.Lock] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
@@ -158,18 +174,28 @@ class GridEngine:
             levels_below=state.levels_below,
         )
         placed = 0
+        refusals = 0
         for level in levels:
-            await self._place_level(symbol, level, coin_cfg)
-            placed += 1
+            placed_ok = await self._try_place(symbol, level, coin_cfg)
+            if placed_ok:
+                placed += 1
+            else:
+                refusals += 1
         _LOGGER.info(
             "grid initialized",
             extra={
                 "symbol": str(symbol),
                 "reference_price": str(state.reference_price),
-                "levels": placed,
+                "levels_placed": placed,
+                "refusals": refusals,
             },
         )
-        return StepResult(symbol=symbol, action="initialized", placed=placed)
+        return StepResult(
+            symbol=symbol,
+            action="initialized",
+            placed=placed,
+            refusals=refusals,
+        )
 
     # ------------------------------------------------------------------ subsequent ticks
 
@@ -190,12 +216,16 @@ class GridEngine:
 
         fills, trade_ids = await self._detect_fills(symbol)
         counters_placed = 0
+        refusals = 0
         if not offside:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
             for filled in fills:
                 target = next_counter_action(filled.side, filled.price.amount, spacing)
-                await self._place_level(symbol, target, coin_cfg)
-                counters_placed += 1
+                placed_ok = await self._try_place(symbol, target, coin_cfg)
+                if placed_ok:
+                    counters_placed += 1
+                else:
+                    refusals += 1
         elif fills:
             _LOGGER.warning(
                 "fills detected while offside; counters suppressed",
@@ -222,6 +252,7 @@ class GridEngine:
             action="stepped",
             fills=len(fills),
             counters_placed=counters_placed,
+            refusals=refusals,
             offside=offside,
             trade_ids=trade_ids,
         )
@@ -272,6 +303,37 @@ class GridEngine:
                 )
         return filled, saved_trade_ids
 
+    async def _try_place(
+        self,
+        symbol: Symbol,
+        level: GridLevel,
+        coin_cfg: CoinGridConfig,
+    ) -> bool:
+        """Run safety checks then place. Returns True if placed, False if
+        refused. Refusals are logged and never raise.
+
+        Storage is fully up-to-date between successive ``_try_place``
+        calls within one ``step`` (the per-symbol lock prevents
+        concurrent step calls; ``save_order`` commits before the next
+        iteration begins). So each safety check sees the cumulative
+        result of every prior placement in the same tick — no
+        in-memory delta tracking needed.
+        """
+        decision = await self._check_safety(symbol, level, coin_cfg)
+        if not decision.ok:
+            _LOGGER.warning(
+                "order refused by safety cap",
+                extra={
+                    "symbol": str(symbol),
+                    "side": level.side.value,
+                    "price": str(level.price),
+                    "reason": decision.reason,
+                },
+            )
+            return False
+        await self._place_level(symbol, level, coin_cfg)
+        return True
+
     async def _place_level(
         self,
         symbol: Symbol,
@@ -294,3 +356,47 @@ class GridEngine:
         )
         placed = await self._exchange.place_order(order)
         await self._storage.save_order(placed)
+
+    # ------------------------------------------------------------------ safety caps
+
+    async def _check_safety(
+        self,
+        symbol: Symbol,
+        level: GridLevel,
+        coin_cfg: CoinGridConfig,
+    ) -> _SafetyDecision:
+        """Evaluate all four safety caps for a proposed order.
+
+        ``proposed`` is ``coin_cfg.order_size_usd`` — the configured
+        per-order USD budget. Existing-order sums use
+        ``price.amount * amount.value``, which equals ``order_size_usd``
+        modulo Decimal-division rounding (acceptable: cap thresholds
+        are operator-set in whole dollars, far above any rounding
+        artifact).
+        """
+        proposed = coin_cfg.order_size_usd
+        cap = self._safety
+
+        coin_open = await self._storage.get_open_orders(symbol=symbol)
+        if len(coin_open) + 1 > cap.max_orders_per_coin:
+            return _SafetyDecision(ok=False, reason="max_orders_per_coin")
+
+        coin_exposure = sum((o.price.amount * o.amount.value for o in coin_open), Decimal("0"))
+        if coin_exposure + proposed > cap.max_per_coin_exposure_usd:
+            return _SafetyDecision(ok=False, reason="max_per_coin_exposure_usd")
+
+        all_open = await self._storage.get_open_orders()
+        total_exposure = sum((o.price.amount * o.amount.value for o in all_open), Decimal("0"))
+        if total_exposure + proposed > cap.max_total_exposure_usd:
+            return _SafetyDecision(ok=False, reason="max_total_exposure_usd")
+
+        if level.side is OrderSide.BUY:
+            today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
+            todays_buys = await self._storage.get_orders(
+                side=OrderSide.BUY.value, created_after=today_start
+            )
+            daily_spend = sum((o.price.amount * o.amount.value for o in todays_buys), Decimal("0"))
+            if daily_spend + proposed > cap.max_daily_spend_usd:
+                return _SafetyDecision(ok=False, reason="max_daily_spend_usd")
+
+        return _SafetyDecision(ok=True)

@@ -68,6 +68,74 @@ def _make_trade(
     )
 
 
+class TestGetOrders:
+    """Tests for the filtered ``get_orders`` (Stage 2.2.4 — used by safety caps)."""
+
+    async def test_no_filters_returns_all(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_order(_make_order(side="buy"))
+        await storage.save_order(_make_order(side="sell"))
+        results = await storage.get_orders()
+        assert len(results) == 2
+
+    async def test_symbol_filter(self, storage: SQLiteStorageAdapter) -> None:
+        btc = Symbol(base="BTC", quote="USD")
+        eth = Symbol(base="ETH", quote="USD")
+        await storage.save_order(_make_order(symbol=btc))
+        await storage.save_order(_make_order(symbol=eth))
+        btc_only = await storage.get_orders(symbol=btc)
+        assert len(btc_only) == 1
+        assert btc_only[0].symbol == btc
+
+    async def test_side_filter(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_order(_make_order(side="buy"))
+        await storage.save_order(_make_order(side="sell"))
+        await storage.save_order(_make_order(side="buy"))
+        buys = await storage.get_orders(side="buy")
+        assert len(buys) == 2
+        assert all(o.side is OrderSide.BUY for o in buys)
+
+    async def test_created_after_filter_excludes_older(self, storage: SQLiteStorageAdapter) -> None:
+        old_order = Order(
+            symbol=Symbol(base="BTC", quote="USD"),
+            side=OrderSide.BUY,
+            price=Price(amount=Decimal("50000"), currency="USD"),
+            amount=Amount(value=Decimal("0.1"), asset="BTC"),
+            status="pending",
+            created_at=Timestamp(dt=datetime.now(UTC) - timedelta(days=1)),
+        )
+        new_order = _make_order()
+        await storage.save_order(old_order)
+        await storage.save_order(new_order)
+        cutoff = datetime.now(UTC) - timedelta(hours=1)
+        recent = await storage.get_orders(created_after=cutoff)
+        assert len(recent) == 1
+        assert recent[0].id == new_order.id
+
+    async def test_combined_filters(self, storage: SQLiteStorageAdapter) -> None:
+        # Set up: 2 BTC BUYs (one old, one new), 1 ETH BUY (new), 1 BTC SELL (new).
+        btc = Symbol(base="BTC", quote="USD")
+        eth = Symbol(base="ETH", quote="USD")
+        old_btc_buy = Order(
+            symbol=btc,
+            side=OrderSide.BUY,
+            price=Price(amount=Decimal("50000"), currency="USD"),
+            amount=Amount(value=Decimal("0.1"), asset="BTC"),
+            status="canceled",
+            created_at=Timestamp(dt=datetime.now(UTC) - timedelta(days=2)),
+        )
+        await storage.save_order(old_btc_buy)
+        await storage.save_order(_make_order(symbol=btc, side="buy"))  # new BTC BUY
+        await storage.save_order(_make_order(symbol=eth, side="buy"))  # new ETH BUY
+        await storage.save_order(_make_order(symbol=btc, side="sell"))  # new BTC SELL
+
+        cutoff = datetime.now(UTC) - timedelta(hours=1)
+        results = await storage.get_orders(symbol=btc, side="buy", created_after=cutoff)
+        # Only the new BTC BUY matches all three filters.
+        assert len(results) == 1
+        assert results[0].symbol == btc
+        assert results[0].side is OrderSide.BUY
+
+
 class TestConnectionLifecycle:
     async def test_operations_fail_before_connect(self) -> None:
         adapter = SQLiteStorageAdapter(":memory:")

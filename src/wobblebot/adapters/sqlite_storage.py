@@ -207,6 +207,33 @@ class SQLiteStorageAdapter(StoragePort):
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load open orders: {exc}") from exc
 
+    async def get_orders(
+        self,
+        symbol: Symbol | None = None,
+        side: str | None = None,
+        created_after: datetime | None = None,
+    ) -> list[Order]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if symbol is not None:
+            clauses.append("symbol_base = ? AND symbol_quote = ?")
+            params.extend([symbol.base, symbol.quote])
+        if side is not None:
+            clauses.append("side = ?")
+            params.append(side)
+        if created_after is not None:
+            clauses.append("created_at >= ?")
+            params.append(created_after.astimezone(UTC).isoformat())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM orders{where} ORDER BY created_at"
+        try:
+            async with conn.execute(sql, tuple(params)) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_order(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load orders: {exc}") from exc
+
     async def save_trade(self, trade: Trade) -> None:
         conn = self._require_conn()
         try:
