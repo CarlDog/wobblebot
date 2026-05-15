@@ -228,12 +228,8 @@ class GridEngine:
                 # so the BUY/SELL BTC amounts would mismatch and the
                 # cycle would slowly accumulate or shed inventory and
                 # bleed value through the spread.
-                counter_amount = Amount(
-                    value=filled.filled_amount, asset=filled.amount.asset
-                )
-                placed_ok = await self._try_place(
-                    symbol, target, coin_cfg, amount=counter_amount
-                )
+                counter_amount = Amount(value=filled.filled_amount, asset=filled.amount.asset)
+                placed_ok = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
                 if placed_ok:
                     counters_placed += 1
                 else:

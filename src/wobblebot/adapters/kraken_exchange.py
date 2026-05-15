@@ -1,9 +1,11 @@
 """KrakenAdapter — concrete ``ExchangePort`` implementation backed by the Kraken REST API.
 
-Phase 2.1 scope is read-only: ticker / balances / open orders / trade
-history. Order placement, cancellation, and withdrawals raise
-``NotImplementedError`` and are filled in by later stages (2.3 for
-orders, 4.x for withdrawals via the separate Harvester key).
+Phase 2.1 added read paths (ticker / balances). Stage 2.3 adds the
+trading and bookkeeping methods (``place_order``, ``cancel_order``,
+``get_order_status``, ``get_open_orders``, ``get_trade_history``) plus
+a per-pair precision cache so submitted prices/volumes match Kraken's
+``pair_decimals`` / ``lot_decimals`` and pass ``ordermin`` /
+``costmin`` checks.
 
 **Authentication.** Kraken signs private endpoints with HMAC-SHA512
 over ``URI path + SHA256(nonce + POST body)``, keyed by the
@@ -12,11 +14,22 @@ the ``API-Sign`` header. The nonce is sent as a POST field and must
 strictly increase per API key. Public endpoints (Ticker, AssetPairs)
 are unsigned.
 
-**Read-only invariant.** The API key passed at construction time is
-expected to have only "Query Funds" / "Query Open Orders & Trades"
-permissions — no trading, no withdrawals. Phase 4's Harvester key
-lives separately and is wired through a different ``ExchangePort``
-instance (per ADR-003).
+**Permissions required** (per the Stage 2.3 trading scope):
+- ``Query Funds`` for ``BalanceEx``
+- ``Query Open Orders & Trades`` for ``OpenOrders`` / ``QueryOrders``
+- ``Query Closed Orders & Trades`` for ``TradesHistory``
+- ``Create & Modify Orders`` (Kraken's "Trade" scope) for
+  ``AddOrder`` / ``CancelOrder`` — even when called with
+  ``validate=true``
+- **No** ``Withdraw Funds`` — that scope lives on the separate
+  Harvester key per ADR-003.
+
+**Dry-run mode.** ``KrakenAdapter(config, dry_run=True)`` sets
+``validate=true`` on every ``AddOrder`` request. Kraken validates the
+order params (auth, serialization, pair, precision, balance,
+ordermin) and returns a confirmation **without placing** the order.
+The adapter synthesizes a ``DRYRUN-<order.id>`` exchange_id so the
+engine's bookkeeping path still works for diagnostic runs.
 """
 
 from __future__ import annotations
@@ -27,14 +40,18 @@ import hashlib
 import hmac
 import time
 import urllib.parse
-from decimal import Decimal
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
 from wobblebot.config.kraken import KrakenConfig
+from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Price, Symbol
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
@@ -56,6 +73,32 @@ _INTERNAL_TO_KRAKEN_ALTNAME: dict[str, str] = {
 _KRAKEN_ALTNAME_TO_INTERNAL: dict[str, str] = {v: k for k, v in _INTERNAL_TO_KRAKEN_ALTNAME.items()}
 
 
+@dataclass(frozen=True)
+class _PairMetadata:
+    """Subset of ``/0/public/AssetPairs`` fields the trading code uses.
+
+    All four are required for safe order submission. Kraken rejects an
+    AddOrder whose price has more digits past the decimal than
+    ``pair_decimals``, or whose volume has more than ``lot_decimals``,
+    or whose volume is below ``ordermin``, or whose cost is below
+    ``costmin``.
+    """
+
+    pair_key: str  # canonical Kraken pair key, e.g. "XXBTZUSD"
+    base_code: str  # Kraken response code for base, e.g. "XXBT"
+    quote_code: str  # Kraken response code for quote, e.g. "ZUSD"
+    pair_decimals: int
+    lot_decimals: int
+    ordermin: Decimal
+    costmin: Decimal
+
+
+# Kraken errors that should map to InsufficientBalance rather than the
+# generic ExchangeError. Substring match — Kraken's error strings are
+# stable enough for this.
+_INSUFFICIENT_FUNDS_MARKERS = ("EOrder:Insufficient funds",)
+
+
 class KrakenAdapter(ExchangePort):
     """Concrete ``ExchangePort`` for the Kraken REST API.
 
@@ -71,8 +114,10 @@ class KrakenAdapter(ExchangePort):
         self,
         config: KrakenConfig,
         http_client: httpx.AsyncClient | None = None,
+        dry_run: bool = False,
     ) -> None:
         self._config = config
+        self._dry_run = dry_run
         if http_client is None:
             self._http = httpx.AsyncClient(
                 base_url=config.base_url,
@@ -87,6 +132,11 @@ class KrakenAdapter(ExchangePort):
         # ZUSD -> USD). Populated from /0/public/Assets on first need.
         self._asset_altnames: dict[str, str] | None = None
         self._asset_metadata_lock = asyncio.Lock()
+        # Lazy cache of per-pair precision + minimums. Indexed by both
+        # the pair key (XXBTZUSD) and the altname (XBTUSD) for ergonomic
+        # lookup from either side. Populated from /0/public/AssetPairs.
+        self._pair_metadata: dict[str, _PairMetadata] | None = None
+        self._pair_metadata_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if the adapter created it.
@@ -149,23 +199,147 @@ class KrakenAdapter(ExchangePort):
         return None
 
     async def get_order_status(self, order: Order) -> Order:
-        raise NotImplementedError("Order tracking deferred to Stage 2.3")
+        """Fetch fresh status of ``order`` from Kraken via QueryOrders.
+
+        Preserves the input ``order``'s internal UUID — only updates
+        ``status``, ``filled_amount``, and ``updated_at`` from Kraken's
+        view. The engine relies on UUID stability for storage tracking.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot query an order with no exchange_id")
+        if order.exchange_id.startswith("DRYRUN-"):
+            # Dry-run orders never made it to Kraken; mirror back as-is.
+            return order
+        result = await self._private_post("/0/private/QueryOrders", {"txid": order.exchange_id})
+        entry = result.get(order.exchange_id)
+        if not isinstance(entry, dict):
+            raise ExchangeError(f"Kraken QueryOrders missing entry for {order.exchange_id!r}")
+        return _apply_kraken_order_update(order, entry)
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
-        raise NotImplementedError("Order tracking deferred to Stage 2.3")
+        """Fetch all open orders from Kraken; client-side filter by symbol.
+
+        Kraken's ``OpenOrders`` endpoint takes no pair filter. The
+        result set per account is small (single-digit per coin in a
+        well-behaved grid), so client-side filtering is fine.
+        Constructed Orders carry fresh UUIDs — the engine matches by
+        ``exchange_id``, not UUID, when diffing against storage.
+        """
+        await self._ensure_pair_metadata()
+        result = await self._private_post("/0/private/OpenOrders")
+        open_map = result.get("open", {})
+        if not isinstance(open_map, dict):
+            raise ExchangeError("Kraken OpenOrders response missing 'open' object")
+        orders: list[Order] = []
+        for txid, entry in open_map.items():
+            order = self._build_order_from_kraken(txid, entry)
+            if symbol is None or order.symbol == symbol:
+                orders.append(order)
+        return orders
 
     async def get_trade_history(
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]:
-        raise NotImplementedError("Trade history deferred to Stage 2.3")
+        """Fetch recent trades from Kraken; client-side filter by symbol.
+
+        Kraken's ``TradesHistory`` returns up to 50 entries per page by
+        default. We pass no time filter — the most recent ``limit``
+        trades after symbol filtering are returned. Larger ``limit``
+        callers should paginate; Stage 2.2's engine asks for at most
+        200 trades after detecting a small fill batch, so a single page
+        suffices in normal operation.
+        """
+        await self._ensure_pair_metadata()
+        result = await self._private_post("/0/private/TradesHistory")
+        trades_map = result.get("trades", {})
+        if not isinstance(trades_map, dict):
+            raise ExchangeError("Kraken TradesHistory response missing 'trades' object")
+        trades: list[Trade] = []
+        for txid, entry in trades_map.items():
+            trade = self._build_trade_from_kraken(txid, entry)
+            if symbol is None or trade.symbol == symbol:
+                trades.append(trade)
+        # Most-recent first to match the ExchangePort convention.
+        trades.sort(key=lambda t: t.executed_at.dt, reverse=True)
+        return trades[:limit]
 
     # ------------------------------------------------ ExchangePort: write paths
 
     async def place_order(self, order: Order) -> Order:
-        raise NotImplementedError("Order placement deferred to Stage 2.3")
+        """Submit ``order`` via AddOrder. Honors ``self._dry_run``.
+
+        With ``dry_run=True``, sets ``validate=true`` in the request —
+        Kraken validates auth + serialization + pair + precision +
+        balance + ordermin without placing the order. The returned
+        ``Order`` carries a synthesized ``DRYRUN-<order.id>``
+        ``exchange_id`` so storage tracking still functions.
+
+        Per-pair precision quantization (``pair_decimals`` for price,
+        ``lot_decimals`` for volume, both rounded DOWN — never round up
+        into more spend than the engine intended) is applied before
+        submission. ``ordermin`` and ``costmin`` are checked client-side
+        too; failing either raises ``ExchangeError`` rather than letting
+        Kraken reject and waste a nonce.
+        """
+        await self._ensure_pair_metadata()
+        meta = self._pair_metadata_for(order.symbol)
+        price_q = _quantize_decimal(order.price.amount, meta.pair_decimals)
+        volume_q = _quantize_decimal(order.amount.value, meta.lot_decimals)
+        if volume_q < meta.ordermin:
+            raise ExchangeError(
+                f"Order volume {volume_q} below ordermin {meta.ordermin} for {order.symbol}"
+            )
+        cost = price_q * volume_q
+        if cost < meta.costmin:
+            raise ExchangeError(
+                f"Order cost {cost} below costmin {meta.costmin} for {order.symbol}"
+            )
+
+        params: dict[str, Any] = {
+            "pair": meta.pair_key,
+            "type": order.side.value,
+            "ordertype": "limit",
+            "price": str(price_q),
+            "volume": str(volume_q),
+        }
+        if self._dry_run:
+            params["validate"] = "true"
+
+        try:
+            result = await self._private_post("/0/private/AddOrder", params)
+        except ExchangeError as exc:
+            if any(marker in str(exc) for marker in _INSUFFICIENT_FUNDS_MARKERS):
+                raise InsufficientBalance(
+                    required=cost,
+                    available=Decimal("0"),  # Kraken doesn't tell us
+                    asset=order.symbol.quote if order.side is OrderSide.BUY else order.symbol.base,
+                ) from exc
+            raise
+
+        if self._dry_run:
+            order.mark_open(exchange_id=f"DRYRUN-{order.id}")
+            return order
+
+        txids = result.get("txid")
+        if not isinstance(txids, list) or not txids:
+            raise ExchangeError(f"Kraken AddOrder returned no txid: result={result!r}")
+        order.mark_open(exchange_id=str(txids[0]))
+        return order
 
     async def cancel_order(self, order: Order) -> Order:
-        raise NotImplementedError("Order cancellation deferred to Stage 2.3")
+        """Cancel ``order`` via CancelOrder. No dry-run path on Kraken's side.
+
+        Dry-run mode short-circuits locally so cancellations during a
+        diagnostic run don't try to cancel orders that never existed.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot cancel an order with no exchange_id")
+        if self._dry_run or order.exchange_id.startswith("DRYRUN-"):
+            order.mark_canceled()
+            return order
+        await self._private_post("/0/private/CancelOrder", {"txid": order.exchange_id})
+        order.mark_canceled()
+        return order
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError(
@@ -203,6 +377,126 @@ class KrakenAdapter(ExchangePort):
                     )
                 altnames[kraken_code] = altname
             self._asset_altnames = altnames
+
+    async def _ensure_pair_metadata(self) -> None:
+        """Populate the per-pair precision + minimums cache from AssetPairs.
+
+        Lazy + one-shot. Concurrent first-call invocations serialize on
+        ``_pair_metadata_lock``. The cache is indexed by both pair key
+        (XXBTZUSD) and altname (XBTUSD) — Kraken accepts either form in
+        AddOrder's ``pair`` parameter, but OpenOrders responses key by
+        the canonical pair key, so we need bidirectional lookup.
+        """
+        if self._pair_metadata is not None:
+            return
+        async with self._pair_metadata_lock:
+            if self._pair_metadata is not None:
+                return
+            await self._ensure_asset_metadata()
+            pairs = await self._public_get("/0/public/AssetPairs")
+            metadata: dict[str, _PairMetadata] = {}
+            for pair_key, info in pairs.items():
+                if not isinstance(info, dict):
+                    continue
+                try:
+                    meta = _PairMetadata(
+                        pair_key=pair_key,
+                        base_code=info["base"],
+                        quote_code=info["quote"],
+                        pair_decimals=int(info["pair_decimals"]),
+                        lot_decimals=int(info["lot_decimals"]),
+                        ordermin=Decimal(info.get("ordermin", "0")),
+                        costmin=Decimal(info.get("costmin", "0")),
+                    )
+                except (KeyError, ValueError) as exc:
+                    raise ExchangeError(
+                        f"Kraken AssetPairs entry {pair_key!r} malformed: {exc}"
+                    ) from exc
+                metadata[pair_key] = meta
+                altname = info.get("altname")
+                if isinstance(altname, str) and altname != pair_key:
+                    metadata[altname] = meta
+            self._pair_metadata = metadata
+
+    def _pair_metadata_for(self, symbol: Symbol) -> _PairMetadata:
+        """Look up pair metadata by ``Symbol``. Tries altname first
+        (XBTUSD), then falls back to pair key (XXBTZUSD)."""
+        if self._pair_metadata is None:
+            raise ExchangeError(
+                "Pair metadata cache not initialized; call _ensure_pair_metadata first"
+            )
+        altname = _symbol_to_kraken_altname(symbol)
+        meta = self._pair_metadata.get(altname)
+        if meta is not None:
+            return meta
+        # Fallback for pairs whose altname differs from pair key.
+        for candidate in self._pair_metadata.values():
+            if (
+                self._kraken_code_to_internal(candidate.base_code) == symbol.base
+                and self._kraken_code_to_internal(candidate.quote_code) == symbol.quote
+            ):
+                return candidate
+        raise ExchangeError(f"No Kraken pair metadata found for {symbol}")
+
+    def _symbol_for_pair_key(self, pair_key: str) -> Symbol:
+        """Reverse: Kraken pair key (XXBTZUSD) → ``Symbol(BTC, USD)``."""
+        if self._pair_metadata is None:
+            raise ExchangeError("Pair metadata cache not initialized")
+        meta = self._pair_metadata.get(pair_key)
+        if meta is None:
+            # Try altname → meta
+            for candidate in self._pair_metadata.values():
+                if pair_key in (candidate.pair_key,):
+                    meta = candidate
+                    break
+            if meta is None:
+                raise ExchangeError(f"Unknown Kraken pair key {pair_key!r}")
+        return Symbol(
+            base=self._kraken_code_to_internal(meta.base_code),
+            quote=self._kraken_code_to_internal(meta.quote_code),
+        )
+
+    def _build_order_from_kraken(self, txid: str, entry: dict[str, Any]) -> Order:
+        """Construct an ``Order`` from a Kraken OpenOrders/QueryOrders entry.
+
+        Generated UUID — engine matches by ``exchange_id`` (the txid),
+        not by UUID, so a fresh one here is harmless.
+        """
+        descr = entry.get("descr") or {}
+        pair_key = descr.get("pair", "")
+        symbol = self._symbol_for_pair_key(pair_key)
+        side = OrderSide(descr.get("type", "buy"))
+        price_amount = Decimal(descr.get("price", "0"))
+        volume = Decimal(entry.get("vol", "0"))
+        vol_exec = Decimal(entry.get("vol_exec", "0"))
+        opentm = float(entry.get("opentm", 0.0))
+        return Order(
+            id=uuid4(),
+            exchange_id=txid,
+            symbol=symbol,
+            side=side,
+            price=Price(amount=price_amount, currency=symbol.quote),
+            amount=Amount(value=volume, asset=symbol.base),
+            status=entry.get("status", "open"),
+            filled_amount=vol_exec,
+            created_at=Timestamp(dt=datetime.fromtimestamp(opentm, tz=UTC)),
+        )
+
+    def _build_trade_from_kraken(self, txid: str, entry: dict[str, Any]) -> Trade:
+        """Construct a ``Trade`` from a Kraken TradesHistory entry."""
+        pair_key = entry.get("pair", "")
+        symbol = self._symbol_for_pair_key(pair_key)
+        return Trade(
+            id=txid,
+            order_id=entry.get("ordertxid", ""),
+            symbol=symbol,
+            side=OrderSide(entry.get("type", "buy")),
+            price=Price(amount=Decimal(entry.get("price", "0")), currency=symbol.quote),
+            amount=Amount(value=Decimal(entry.get("vol", "0")), asset=symbol.base),
+            fee=Decimal(entry.get("fee", "0")),
+            cost=Decimal(entry.get("cost", "0")),
+            executed_at=Timestamp(dt=datetime.fromtimestamp(float(entry.get("time", 0.0)), tz=UTC)),
+        )
 
     def _kraken_code_to_internal(self, kraken_code: str) -> str:
         """Translate a Kraken response code (``XXBT``) to internal vocabulary (``BTC``).
@@ -364,6 +658,38 @@ class KrakenAdapter(ExchangePort):
         secret_bytes = base64.b64decode(self._config.api_secret)
         signature = hmac.new(secret_bytes, mac_input, hashlib.sha512).digest()
         return base64.b64encode(signature).decode("utf-8")
+
+
+def _quantize_decimal(value: Decimal, decimals: int) -> Decimal:
+    """Quantize ``value`` to ``decimals`` digits past the decimal point.
+
+    ROUND_DOWN — never round up, since rounding up a price/volume could
+    push spending past the engine's intended order_size_usd budget.
+    Kraken rejects any decimal with more digits than its per-pair
+    precision allows, so quantization is mandatory for AddOrder.
+    """
+    quantum = Decimal(10) ** -decimals
+    return value.quantize(quantum, rounding=ROUND_DOWN)
+
+
+def _apply_kraken_order_update(order: Order, entry: dict[str, Any]) -> Order:
+    """Update ``order`` in-place with Kraken's QueryOrders/OpenOrders fields.
+
+    Preserves the input ``order``'s UUID, ``symbol``, ``side``, original
+    price/amount, and ``created_at``. Updates ``status``,
+    ``filled_amount``, and ``updated_at``. Mutation rather than
+    reconstruction so the engine's storage UUID linkage survives.
+    """
+    new_status = entry.get("status", order.status)
+    vol_exec = Decimal(entry.get("vol_exec", str(order.filled_amount)))
+    # Bypass the Order.record_fill / mark_canceled invariants — they
+    # assume forward-only transitions and we're applying an external
+    # source-of-truth snapshot. Use direct assignment with
+    # validate_assignment to keep field-level validation.
+    order.status = new_status
+    order.filled_amount = vol_exec
+    order.updated_at = Timestamp(dt=datetime.now(UTC))
+    return order
 
 
 def _symbol_to_kraken_altname(symbol: Symbol) -> str:
