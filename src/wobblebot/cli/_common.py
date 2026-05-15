@@ -36,7 +36,28 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+from dotenv import find_dotenv, load_dotenv
+
 T = TypeVar("T")
+
+
+def load_operator_env() -> None:
+    """Load ``.env`` from the operator's working directory (or ancestors).
+
+    Calls ``find_dotenv(usecwd=True)`` so python-dotenv walks UP from
+    the operator's cwd rather than from this source file's location.
+    The default behavior surprised the deprived-env walkthrough: a CLI
+    run from ``/tmp/`` was still picking up the dev repo's ``.env``
+    because python-dotenv defaults to traversing the call-frame's
+    source-file directory. Explicit cwd-based discovery matches what
+    most operators expect ("I'm in this dir, look for .env from here").
+
+    Safe to call multiple times; ``load_dotenv`` is idempotent and
+    won't override env vars already set.
+    """
+    found = find_dotenv(usecwd=True)
+    if found:
+        load_dotenv(dotenv_path=found)
 
 
 def add_config_args(parser: argparse.ArgumentParser) -> None:

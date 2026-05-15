@@ -59,12 +59,16 @@ import time
 from decimal import Decimal
 from typing import Any
 
-from dotenv import load_dotenv
-
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, parse_symbol_csv
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    parse_symbol_csv,
+)
 from wobblebot.config.cli import ShadowConfig
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -360,7 +364,7 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
-    load_dotenv()
+    load_operator_env()
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
 

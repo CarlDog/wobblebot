@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -151,6 +152,27 @@ class TestConnectionLifecycle:
     async def test_close_without_connect_is_noop(self) -> None:
         adapter = SQLiteStorageAdapter(":memory:")
         await adapter.close()
+
+    async def test_connect_creates_missing_parent_dirs(self, tmp_path: Path) -> None:
+        # Verifies the deprived-env fix: an operator who hasn't run
+        # `mkdir data/` shouldn't get a raw sqlite3.OperationalError.
+        nested = tmp_path / "missing_dir" / "deeper" / "wobblebot.db"
+        assert not nested.parent.exists()
+        adapter = SQLiteStorageAdapter(nested)
+        try:
+            await adapter.connect()
+            assert nested.parent.exists()
+            assert nested.exists()
+        finally:
+            await adapter.close()
+
+    async def test_connect_with_in_memory_path_unchanged(self) -> None:
+        # ":memory:" is a sentinel — it must not trigger filesystem writes.
+        adapter = SQLiteStorageAdapter(":memory:")
+        try:
+            await adapter.connect()
+        finally:
+            await adapter.close()
 
 
 class TestOrders:

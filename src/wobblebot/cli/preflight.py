@@ -41,11 +41,9 @@ import sys
 from decimal import Decimal
 from typing import Any
 
-from dotenv import load_dotenv
-
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity
+from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -214,7 +212,7 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
-    load_dotenv()
+    load_operator_env()
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
     parser.add_argument(

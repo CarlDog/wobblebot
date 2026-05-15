@@ -126,9 +126,20 @@ class SQLiteStorageAdapter(StoragePort):
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
-        """Open the database and ensure schema exists."""
+        """Open the database and ensure schema exists.
+
+        Creates any missing parent directories on the db path so a fresh
+        operator who hasn't run ``mkdir data/`` yet doesn't hit a raw
+        sqlite traceback. Special paths (``:memory:`` and the empty
+        string Python uses for an anonymous on-disk DB) are passed
+        through unchanged.
+        """
         if self._conn is not None:
             return
+        if self._db_path not in (":memory:", ""):
+            parent = Path(self._db_path).expanduser().parent
+            if parent and not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
         try:
             self._conn = await aiosqlite.connect(self._db_path)
             # Setting row_factory on the connection makes cursors inherit
