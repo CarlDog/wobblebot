@@ -22,12 +22,12 @@ from pydantic import BaseModel, Field
 
 from wobblebot.config.advisor import AdvisorConfig
 from wobblebot.config.cli import (
-    StatusConfig,
     LiveConfig,
     ObserveConfig,
-    ShadowConfig,
-    SandboxConfig,
     PreflightConfig,
+    SandboxConfig,
+    ShadowConfig,
+    StatusConfig,
 )
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
