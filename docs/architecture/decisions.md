@@ -303,3 +303,123 @@ Concurrently, ADR-007 introduced the Mixture-of-Experts advisor with provider-pl
 - ADR-007 — Advisor architecture (the schema this ADR encodes).
 - ADR-008 — Observer + Shadow Mode (the CLIs this ADR audits).
 - `feedback_keep_example_files_in_sync.md` — the operator's standing rule motivating the drift detection tests.
+
+## ADR-010 — News Source Pivot: Paid (CryptoPanic + Whale-alert) → Free (RSS + CryptoCompare)
+**Status:** Accepted
+**Date:** 2026-05-15
+
+**Context:** ADR-007's Mixture-of-Experts advisor architecture named CryptoPanic and Whale-alert as the news-ingestion sources for the dedicated news-role expert. Between ADR-007 (early 2026) and Stage 3.2.5 implementation (2026-05-15), both providers shifted to paid-only tiers:
+
+- **CryptoPanic Pro:** ~$210/month (~$2,520/year). Was free at ADR-007 write time.
+- **Whale-alert:** ~$25/month (~$300/year). Was free at ADR-007 write time.
+
+For a hobby trading bot the operator has spent $0.08 of real money on across an entire phase, $2,820/year in news-data subscription is structurally wrong.
+
+**Decision:** Pivot the Stage 3.2.5 news sources to free alternatives without changing the architecture:
+
+1. **`NewsPort` stays abstract.** ADR-007's port definition is unchanged. The paid sources can plug in later as additional `NewsPort` implementations if the operator ever decides the marginal data is worth the cost.
+2. **`RssNewsAdapter`** (one instance per feed) covers the news headline surface. Default feeds: CoinDesk, Decrypt, The Block (enabled by default in `settings.example.yml`); CoinTelegraph available but disabled (noisier signal). Library: `feedparser` (battle-tested, MIT, 15+ years).
+3. **`CryptoCompareAdapter`** for cross-aggregator coverage. `/data/v2/news/` endpoint is free with an API key. `sentiment_score=None` is set explicitly — CryptoCompare's upvotes/downvotes aren't a reliable sentiment signal (verified empirically; the news expert derives tone from body text). Mentioned-coins from the structured `categories` field.
+4. **90-day evaluation queued (2026-08-13).** CryptoCompare's source coverage overlaps substantially with RSS; re-evaluate whether the additional aggregation earns its place vs. just running more RSS feeds.
+
+**Alternatives Considered:**
+- **Pay for CryptoPanic + Whale-alert as originally specified.** Rejected: subscription cost out of proportion with project scope. The whale-watching signal Whale-alert provided was specifically called out in ADR-007, but at the actual real-money risk Phase 3 carries ($0.08 across the entire phase, advisor never executes per ADR-002), it's a poor cost-value trade.
+- **Free tier of CryptoPanic only** (no Whale-alert). Rejected: CryptoPanic's free tier is now read-rate-limited to a level that doesn't sustain the advisor's polling cadence. Effectively no free option.
+- **Roll our own scraper against each source's web UI.** Rejected: brittle, ToS-violating, ongoing maintenance.
+- **Skip news ingestion entirely** until/unless the operator pays for it. Rejected: ADR-007's MoE architecture has the news expert as one of three; deferring breaks the architectural completeness for Stage 3.4a.
+
+**Consequences:**
+- **Positive:** Phase 3 ships with zero recurring cost beyond Ollama running locally (free).
+- **Positive:** RSS+CryptoCompare deliver headline coverage and approximate mentioned-coin extraction; the news expert's job is "is the headline tone risk-on or risk-off?" — which doesn't need whale-alert-style on-chain flow signals to function. The aggregated MoE confidence catches the case where news disagrees with quant/risk anyway.
+- **Positive:** Keeping `NewsPort` abstract preserves the upgrade path — adding `CryptoPanicAdapter` later is a single-file add.
+- **Negative:** The whale-flow signal ADR-007 specifically valued isn't covered. We lose visibility into large-wallet movements that often precede major price action.
+- **Negative:** RSS feeds carry latency (some publish 15-30 min after the source event) and dedup overhead (multiple outlets covering the same story). Mitigated by `news_items.UNIQUE(source, external_id)` and the advisor consuming a narrowed `NewsItemSummary` view (drops body, fetched_at).
+- **Negative:** CryptoCompare adds a third-party API key the operator manages. Mitigated by the existing `.env.example` documentation pattern.
+
+**Compliance:** Refines ADR-007 (same MoE architecture, different concrete news sources). No conflict with ADR-002 (advisor still cannot execute) or ADR-001 (NewsPort lives in `ports/`, adapters in `adapters/`, layer separation intact).
+
+**References:**
+- ADR-007 — original Mixture-of-Experts architecture naming CryptoPanic + Whale-alert.
+- `tests/adapters/test_rss_news.py` and `tests/adapters/test_cryptocompare_news.py` for adapter contract tests.
+- `config/settings.example.yml` `news:` section for the live default feed list.
+
+
+## ADR-011 — MoE Composition Without an Expert Abstract Base Class
+**Status:** Accepted
+**Date:** 2026-05-15
+
+**Context:** During Stage 3.4a implementation, the initial sketch introduced a new `Expert` ABC in `ports/expert.py` to formalize "things the MoE adapter can compose." The intent was to give `MoEAdvisorAdapter` a typed list of expert instances distinct from raw `AdvisorPort` instances.
+
+The operator pushed back: "remind me again why we need ollamaexpert?" — recognizing premature abstraction. `AdvisorPort` already defines `get_recommendation(summary) -> AdvisorRecommendation`, which is exactly what the MoE adapter needs from each contributor. A separate `Expert` interface would have been a re-statement of the same contract under a new name.
+
+**Decision:** Compose MoE experts directly as `AdvisorPort` instances. No `Expert` ABC.
+
+1. **`MoEExpertEntry` is a frozen dataclass**, not a new port. It wraps `(name, role, advisor: AdvisorPort)` to carry the operator-chosen identifier (used in audit logs) and the canonical role (used by the auto-apply news-blocking rule) alongside the `AdvisorPort` instance.
+2. **`MoEAdvisorAdapter` accepts `list[MoEExpertEntry]`** and dispatches each entry's `advisor.get_recommendation(summary)` via `asyncio.gather`. No `isinstance(expert, Expert)` check anywhere.
+3. **`OllamaAdapter` plugs in directly.** Future cloud adapters (AnthropicAdapter, OpenAIAdapter, GoogleAdapter) will plug in the same way — they implement `AdvisorPort`, period.
+4. **Arbitrator support uses a Protocol, not the ABC.** The arbitrator path needs `extra_context` injection beyond the base port; `services/aggregators.ArbitratorAdvisor` Protocol formalizes the structural type (any class with the right method shape satisfies it). OllamaAdapter gained an `extra_context: str = ""` kwarg keeping the base `AdvisorPort` interface unchanged.
+
+**Alternatives Considered:**
+- **Define an `Expert` ABC** matching `AdvisorPort` exactly. Rejected: same contract under a different name; pure abstraction churn.
+- **Define an `Expert` ABC extending `AdvisorPort`** with `name` and `role` as abstract properties. Rejected: forces every adapter to grow getter properties for fields that are operator config, not adapter state. `MoEExpertEntry` carrying that data alongside the adapter is the simpler shape.
+- **Make `extra_context` a method on `AdvisorPort`** so arbitrators can call it uniformly. Rejected: pollutes the single-LLM path which never needs the extra context; threads a meaningless kwarg through `cli/advise`. The structural Protocol is the right tool for "this concrete adapter has an extra capability."
+
+**Consequences:**
+- **Positive:** Less code, less indirection. New cloud adapter is "implement `AdvisorPort`" — no second interface to satisfy.
+- **Positive:** Single-LLM (`cli/advise --profile <single>`) and MoE (`cli/advise --profile moe-advisor`) paths share the exact same `AdvisorPort` contract; `cli/advise._build_advisor` dispatches on `advisor.type` and returns one of two concrete shapes both typed as `AdvisorPort`.
+- **Positive:** Tests stay light — no `MockExpert` separate from `MockAdvisor`.
+- **Negative:** `MoEAdvisorAdapter` cannot statically guarantee that the wrapped `AdvisorPort` it receives is "real" (any AdvisorPort works, including a no-op stub). Operator-side validation in `AdvisorConfig` is the safety net (3-expert minimum, name uniqueness).
+- **Negative:** Adding an MoE-only behavior to every adapter (e.g. "report your own model name") would now require an extension Protocol per behavior. Acceptable cost given how rarely such a feature is needed.
+
+**Compliance:** Aligns with ADR-001 (no new layer; `MoEExpertEntry` is a service-layer dataclass; `MoEAdvisorAdapter` is in `adapters/`). Aligns with ADR-007 (same MoE architecture).
+
+**References:**
+- `src/wobblebot/adapters/moe_advisor.py` — implementation.
+- `src/wobblebot/services/aggregators.py` — `ArbitratorAdvisor` Protocol pattern.
+- The operator's literal pushback during the Stage 3.4a session.
+
+
+## ADR-012 — Auto-Apply via `cli/apply --commit`, Not a Hot-Tune Daemon
+**Status:** Accepted
+**Date:** 2026-05-15
+
+**Context:** Stage 3.4b implements bounded auto-tuning of the running grid config based on advisor suggestions. The question: which process applies the change?
+
+Three plausible designs surfaced during the planning:
+
+1. **`cli/advise` rewrites `settings.yml`** when a suggestion clears its own gate. Bundles emit + apply into one daemon.
+2. **`cli/live` polls `advisor_suggestions` mid-run** on a new `schedules.auto_apply` cadence, hot-updates the in-memory `GridConfig`. Faster feedback loop.
+3. **New `cli/apply` one-shot tool** gates the latest suggestion, prints a unified diff (dry-run), and with `--commit` rewrites `settings.yml` + persists an `AppliedSuggestion` audit row. Operator restarts `cli/live` to pick up the change.
+
+The operator (and ADR-002 + ADR-007's "advisor is advisory-only" stance) clearly favored the most conservative, operator-in-the-loop posture available.
+
+**Decision:** Build `cli/apply` as option 3.
+
+1. **The `cli/apply` CLI is the only path by which advisor output mutates running config.** No daemon does it autonomously.
+2. **Dry-run is the default.** `cli/apply` (no flag) reads the latest `AdvisorSuggestion`, runs it through the gate, and prints APPLIED / REJECTED with reasons. No file writes, no DB writes.
+3. **`--commit` is opt-in.** Rewrites `settings.yml` via `ruamel.yaml` (atomic .tmp + rename, comment + numeric-style preservation) and persists an `AppliedSuggestion` audit row to `advise.db`. Stdouts the unified diff.
+4. **`AutoApplyConfig.enabled=False` by default.** Even with `--commit`, the gate refuses every key unless the operator explicitly enables auto-apply in `settings.yml`. Defaults-off is the load-bearing safety property.
+5. **`cli/live` is restarted by the operator** to pick up the new config. The engine does not poll for config changes mid-session.
+
+**Alternatives Considered:**
+- **Option 1: `cli/advise` rewrites settings.yml.** Rejected: bundles two concerns (think + apply) into the same daemon; if the apply path has a bug, the advisor daemon takes it down. Separation of concerns matters more here than convenience.
+- **Option 2: hot-tune daemon polling advisor_suggestions.** Rejected: introduces shared-state coupling between `cli/advise` (writer) and `cli/live` (reader); complicates the engine's idempotency story; mid-run config changes confuse the audit trail ("which spacing was in effect at trade T?"). The operator-in-the-loop posture from ADR-002 + ADR-007 prefers explicit restart over silent in-flight adjustment.
+- **No auto-apply at all** (operator hand-edits settings.yml after reading suggestions). Rejected: defeats the point of having the gate. The audit row + diff preview deliver the same operator visibility with less manual error potential.
+- **`cli/apply` with a `--watch` mode** continuously applying suggestions as they arrive. Deferred: same problems as option 2 once you turn it on; can be added later as a wrapper script if the operator ever wants it.
+
+**Consequences:**
+- **Positive:** Sharp boundary between "produce recommendation" (cli/advise) and "apply recommendation" (cli/apply). One can fail without taking down the other.
+- **Positive:** Operator always sees the diff before --commit. No silent config drift.
+- **Positive:** `AppliedSuggestion` audit table provides full forensic history — operator can always answer "what changed when based on which model's recommendation?"
+- **Positive:** News-role blanket-rejection (per ADR-007) is implemented inside the gate, so it applies to every code path that uses `evaluate_auto_apply` — not just `cli/apply`.
+- **Negative:** Requires `cli/live` restart to pick up the change. For a long-running production deploy this is a real cost; for a hobby bot the operator is hands-on anyway.
+- **Negative:** Two daemons (`cli/advise` writes suggestions; `cli/apply` reads them) plus the live engine adds operational complexity vs a single all-in-one daemon. Mitigated by the per-CLI `--help` + the shared `settings.yml` config surface.
+- **Negative:** New `ruamel.yaml` runtime dep (PyYAML loses comments on round-trip; non-starter for the operator's heavily-commented file).
+
+**Compliance:** Aligns with ADR-001 (cli/apply is an entry point; gate is in `services/`; rewriter is in `services/`; clean layer separation). Aligns with ADR-002 (advisor never executes; cli/apply is operator-triggered). Aligns with ADR-007 (news-role-never-auto-applies enforced in the gate).
+
+**References:**
+- `src/wobblebot/cli/apply.py` — the CLI.
+- `src/wobblebot/services/auto_apply.py` — the gate.
+- `src/wobblebot/services/settings_rewriter.py` — the ruamel.yaml-backed rewriter.
+- `src/wobblebot/ports/advisor.py::AppliedSuggestion` — audit row schema.
