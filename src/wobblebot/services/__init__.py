@@ -5,6 +5,10 @@ This layer contains services that orchestrate between domain logic and adapters,
 manage application lifecycle, scheduling, and cross-cutting concerns.
 """
 
+from wobblebot.services.aggregators import (
+    aggregate_voting,
+    aggregate_weighted_confidence,
+)
 from wobblebot.services.grid_engine import GridEngine, StepResult
 from wobblebot.services.metrics import (
     CycleStats,
@@ -22,6 +26,8 @@ __all__ = [
     "SimulationResult",
     "StepResult",
     "SummaryBuilder",
+    "aggregate_voting",
+    "aggregate_weighted_confidence",
     "compute_cycle_stats",
     "compute_flatness",
     "compute_max_drawdown",

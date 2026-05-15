@@ -1,0 +1,284 @@
+"""Aggregator strategies for the Stage 3.4a MoE advisor.
+
+Pure functions: take a list of per-expert ``AdvisorRecommendation``
+opinions, return one combined ``AdvisorRecommendation``. No I/O, no
+HTTP, no LLM calls — that's the MoE adapter's job. These functions
+are how multiple opinions become a single answer.
+
+Two strategies live here:
+
+- ``aggregate_voting`` — per-key majority. For each key seen in any
+  opinion's ``recommendations`` dict, count proposed values; the
+  value with the most votes wins. Ties or no-majority cases omit the
+  key from the output (the MoE returns "no consensus on X" rather
+  than fabricating one).
+
+- ``aggregate_weighted_confidence`` — per-key weighted average. Each
+  expert's vote is weighted by their self-reported confidence
+  (``high=3``, ``medium=2``, ``low=1``). Numeric keys produce a
+  weighted mean; non-numeric keys fall back to majority among
+  highest-confidence opinions.
+
+The third strategy, ``aggregate_arbitrator``, lives in a separate
+slice — it needs an LLM round trip, so it can't be a pure function.
+
+**News-role inclusion:** Per ADR-007, news-derived recommendations
+"contribute to the aggregated reasoning but cannot drive an
+auto-applied parameter change." That auto-apply restriction lives in
+Stage 3.4b's gate — here we include news opinions in the math because
+they DO inform the aggregated reasoning.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.advisor import AdvisorRecommendation, ConfidenceLevel
+
+_CONFIDENCE_WEIGHT: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
+_AGGREGATED_ROLE = "aggregated"
+
+
+def aggregate_voting(opinions: list[AdvisorRecommendation]) -> AdvisorRecommendation:
+    """Per-key majority vote across experts.
+
+    For each key seen in any opinion's ``recommendations``, the value
+    with the strictly-most votes wins. Ties or below-majority cases
+    omit the key from the output — the MoE returns "no consensus on
+    X" rather than choosing one of two equally-popular values.
+
+    Confidence on the aggregate:
+    - All opinions agree on every key (unanimous) → ``high``.
+    - At least one key has a clear winner → ``medium``.
+    - No key reaches consensus → ``low``.
+
+    Args:
+        opinions: At least one expert's recommendation.
+
+    Returns:
+        Aggregated ``AdvisorRecommendation`` with ``role="aggregated"``.
+
+    Raises:
+        ValueError: If ``opinions`` is empty.
+    """
+    if not opinions:
+        raise ValueError("aggregate_voting requires at least one opinion")
+
+    all_keys = {k for op in opinions for k in op.recommendations}
+    consensus: dict[str, Any] = {}
+    per_key_counts: dict[str, Counter[Any]] = {}
+    threshold = len(opinions) // 2 + 1  # strict majority
+
+    for key in all_keys:
+        # Only count opinions that actually expressed a view on this key.
+        votes: Counter[Any] = Counter()
+        for op in opinions:
+            if key in op.recommendations:
+                votes[_hashable(op.recommendations[key])] += 1
+        per_key_counts[key] = votes
+        if not votes:
+            continue
+        top_value, top_count = votes.most_common(1)[0]
+        # Strict majority on the keys that were actually expressed.
+        if top_count >= threshold and _no_tie(votes, top_count):
+            consensus[key] = _from_hashable(top_value)
+
+    confidence: ConfidenceLevel = _voting_confidence(opinions, consensus, all_keys)
+    rationale = _voting_rationale(opinions, per_key_counts, consensus)
+
+    return AdvisorRecommendation(
+        recommendation_id=str(uuid4()),
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+        role=_AGGREGATED_ROLE,
+        recommendations=consensus,
+        rationale=rationale,
+        confidence=confidence,
+    )
+
+
+def aggregate_weighted_confidence(
+    opinions: list[AdvisorRecommendation],
+) -> AdvisorRecommendation:
+    """Per-key confidence-weighted average / mode.
+
+    Numeric keys produce a weighted arithmetic mean using
+    ``high=3, medium=2, low=1`` weights. Integer-shaped inputs are
+    rounded to the nearest int after weighting (e.g. ``levels_above``
+    stays integer). Non-numeric keys fall back to a confidence-weighted
+    mode — the value with the highest accumulated weight wins; ties
+    omit the key (same discipline as voting).
+
+    Aggregate confidence: weighted average of input confidence levels
+    mapped back through ``high>=2.5 / medium>=1.5 / low``.
+
+    Args:
+        opinions: At least one expert's recommendation.
+
+    Returns:
+        Aggregated ``AdvisorRecommendation`` with ``role="aggregated"``.
+
+    Raises:
+        ValueError: If ``opinions`` is empty.
+    """
+    if not opinions:
+        raise ValueError("aggregate_weighted_confidence requires at least one opinion")
+
+    all_keys = {k for op in opinions for k in op.recommendations}
+    weighted: dict[str, Any] = {}
+
+    for key in all_keys:
+        contributing = [op for op in opinions if key in op.recommendations]
+        if not contributing:
+            continue
+        values = [op.recommendations[key] for op in contributing]
+        weights = [_CONFIDENCE_WEIGHT[op.confidence] for op in contributing]
+        if _all_numeric(values):
+            avg = sum(v * w for v, w in zip(values, weights)) / sum(weights)
+            if _all_int(values):
+                weighted[key] = round(avg)
+            else:
+                weighted[key] = round(avg, 4)
+        else:
+            picked = _weighted_mode(values, weights)
+            if picked is not None:
+                weighted[key] = picked
+
+    confidence = _weighted_confidence(opinions)
+    rationale = _weighted_rationale(opinions, weighted)
+
+    return AdvisorRecommendation(
+        recommendation_id=str(uuid4()),
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+        role=_AGGREGATED_ROLE,
+        recommendations=weighted,
+        rationale=rationale,
+        confidence=confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _hashable(value: Any) -> Any:
+    """Convert dicts/lists to hashable forms so Counter can count them."""
+    if isinstance(value, dict):
+        return ("__dict__", tuple(sorted(value.items())))
+    if isinstance(value, list):
+        return ("__list__", tuple(value))
+    return value
+
+
+def _from_hashable(value: Any) -> Any:
+    """Reverse :func:`_hashable` for output."""
+    if isinstance(value, tuple) and len(value) == 2:
+        tag, payload = value
+        if tag == "__dict__":
+            return dict(payload)
+        if tag == "__list__":
+            return list(payload)
+    return value
+
+
+def _no_tie(votes: Counter[Any], top_count: int) -> bool:
+    """True iff exactly one value has ``top_count`` votes."""
+    return sum(1 for c in votes.values() if c == top_count) == 1
+
+
+def _all_numeric(values: list[Any]) -> bool:
+    return all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
+
+
+def _all_int(values: list[Any]) -> bool:
+    return all(isinstance(v, int) and not isinstance(v, bool) for v in values)
+
+
+def _weighted_mode(values: list[Any], weights: list[int]) -> Any | None:
+    """Return the value with the highest accumulated weight; None on tie."""
+    totals: Counter[Any] = Counter()
+    for v, w in zip(values, weights):
+        totals[_hashable(v)] += w
+    if not totals:
+        return None
+    top_value, top_total = totals.most_common(1)[0]
+    if sum(1 for t in totals.values() if t == top_total) != 1:
+        return None
+    return _from_hashable(top_value)
+
+
+def _voting_confidence(
+    opinions: list[AdvisorRecommendation],
+    consensus: dict[str, Any],
+    all_keys: set[str],
+) -> ConfidenceLevel:
+    if not all_keys:
+        return "low"
+    # Unanimous on every key that anyone proposed: high.
+    if _is_unanimous(opinions, all_keys):
+        return "high"
+    if consensus:
+        return "medium"
+    return "low"
+
+
+def _is_unanimous(opinions: list[AdvisorRecommendation], all_keys: set[str]) -> bool:
+    """True iff every expert that proposed a key agreed on its value."""
+    for key in all_keys:
+        seen: set[Any] = set()
+        for op in opinions:
+            if key in op.recommendations:
+                seen.add(_hashable(op.recommendations[key]))
+        if len(seen) > 1:
+            return False
+    return True
+
+
+def _weighted_confidence(opinions: list[AdvisorRecommendation]) -> ConfidenceLevel:
+    weights = [_CONFIDENCE_WEIGHT[op.confidence] for op in opinions]
+    avg = sum(weights) / len(weights)
+    if avg >= 2.5:
+        return "high"
+    if avg >= 1.5:
+        return "medium"
+    return "low"
+
+
+def _voting_rationale(
+    opinions: list[AdvisorRecommendation],
+    per_key_counts: dict[str, Counter[Any]],
+    consensus: dict[str, Any],
+) -> str:
+    n = len(opinions)
+    if not per_key_counts:
+        return f"Voting aggregation across {n} experts. No keys proposed."
+    parts = [f"Voting aggregation across {n} experts."]
+    for key, votes in sorted(per_key_counts.items()):
+        if key in consensus:
+            top_value, top_count = votes.most_common(1)[0]
+            parts.append(f"{key}: {_from_hashable(top_value)} ({top_count}/{n})")
+        else:
+            distribution = ", ".join(f"{_from_hashable(v)}x{c}" for v, c in votes.most_common())
+            parts.append(f"{key}: no consensus [{distribution}]")
+    return " ".join(parts)
+
+
+def _weighted_rationale(
+    opinions: list[AdvisorRecommendation],
+    weighted: dict[str, Any],
+) -> str:
+    n = len(opinions)
+    if not weighted:
+        return f"Weighted-confidence aggregation across {n} experts. No keys produced."
+    confidence_dist = Counter(op.confidence for op in opinions)
+    parts = [
+        f"Weighted-confidence aggregation across {n} experts "
+        f"(confidence mix: {dict(confidence_dist)})."
+    ]
+    for key, value in sorted(weighted.items()):
+        parts.append(f"{key}: {value}")
+    return " ".join(parts)
