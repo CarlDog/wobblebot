@@ -190,3 +190,70 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Line length 100** (black + isort + pylint all configured to this).
 - **Keep files under ~300-400 lines.** Split modules that turn into junk drawers.
 - **No `print()`, no swallowed exceptions, no real network calls in unit tests.** Use mocks/stubs (`httpx.MockTransport` is the test seam for `KrakenAdapter`). Integration tests carry the `integration` marker and are excluded from the default `pytest` run via `addopts`; run them explicitly with `pytest -m integration`.
+
+## Phase-End Audit Checklist
+
+Run a phase-end audit at every phase close (Phase 1 → Phase 2,
+Phase 2 → Phase 3, etc.) before starting the next phase. The
+**global rule lives at `~/.claude/rules/phase-end-audit.md`** —
+read that first; the cadence table and process discipline apply
+to every project. The wobblebot-specific items below extend it:
+
+### Every phase end (wobblebot extras)
+
+- **All 7 CLIs handle deprived envs cleanly.** Cycle each CLI
+  through: no `.env`, no `config/settings.yml`, no `config/`
+  directory at all, missing per-CLI section, empty credentials,
+  bad `--config` path, bad `--profile` name. Expected: clean exit
+  codes (2 for missing creds / config / section), no raw
+  tracebacks. Verification #24 established the baseline 2026-05-15;
+  add new entry points to the walkthrough as they ship.
+- **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
+  runs without warnings (or with documented justification).
+  Operator `.env` and `settings.yml` keys are a subset of their
+  example counterparts; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` for
+  bidirectional strict mode in CI.
+- **Per-stage receipts have completion dates.** Every closed stage
+  in `docs/planning/roadmap.md` carries a ✅ date. Phase summary
+  document exists if the phase had real-money or architectural
+  significance (per `docs/planning/phase-2-summary.md` precedent).
+- **OC project memory current.** `mcp__openchronicle__project_list`
+  → match repo URL → `mcp__openchronicle__onboard_git` to pick up
+  any commits made outside Claude sessions. Project state memory
+  reflects current phase + health metrics.
+- **Ratified design decisions section in this file is accurate.**
+  Don't relitigate; do flag if a new ADR superseded one. New ADRs
+  added during the phase get a one-line mention.
+- **Real-money cost ledger updated.** If any live-money operations
+  ran, the running total in the "Project Status" section reflects
+  reality (currently $0.08).
+
+### Quarterly (wobblebot extras)
+
+- **Pre-commit hook reference comparison.** Diff
+  `.githooks/pre-commit` against the canonical reference at
+  `https://github.com/CarlDog/plex-mcp/blob/main/.githooks/pre-commit`
+  (cited in the global `security.md` rule). If the reference gained
+  checks, port them. The reference's PII patterns and
+  author-identity guard are the load-bearing parts.
+- **Live taker fee re-verification.** The live Kraken fee schedule
+  could shift over time. If a tiny live trade (`tools/first_real_trade.py`)
+  runs during the audit window, capture the actual fee rate from
+  the receipt and confirm it still matches the **0.40% taker / 0.26%
+  maker** assumption documented in Stage 2.3 design decisions.
+
+### Pre-1.0 one-shot (wobblebot extras, run when applicable)
+
+- **Phase 4 Harvester key separation verified.** When Phase 4 lands
+  and the Harvester is operational, audit-confirm that the Harvester
+  key is genuinely separate from the trade key, has Withdraw scope
+  on, and that the trade key has Withdraw scope OFF. This is
+  ADR-003's load-bearing invariant.
+
+### Tracking
+
+Each audit pass opens a tracked task ("Phase N close audit") with
+findings as sub-tasks. Findings get fixed in separate commits per
+category (per the global rule's process discipline). Audit-fatigue
+mitigation: if a category goes three audits with no findings, drop
+its cadence per the global rule.
