@@ -42,6 +42,7 @@ from typing import Literal
 
 from wobblebot.config.grid import CoinGridConfig, GridConfig
 from wobblebot.config.safety import SafetyConfig
+from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.grid import (
     GridLevel,
     GridState,
@@ -329,6 +330,16 @@ class GridEngine:
         for counter orders, which must match the filled order's base
         amount (ADR-006 decision 2).
 
+        Two refusal paths, both treated identically (log + return False):
+        - **Internal safety cap.** ``_check_safety`` returns ok=False.
+        - **Exchange-side refusal.** ``InsufficientBalance`` from the
+          adapter (Kraken returns ``EOrder:Insufficient funds``). This
+          happens routinely on the SELL side when the account doesn't
+          hold the base asset yet — common during initial layout
+          before any cycles have run. Treating it as a refusal lets the
+          BUY side still place; once a BUY fills and produces base
+          inventory, subsequent SELL counters at that level will succeed.
+
         Storage is fully up-to-date between successive ``_try_place``
         calls within one ``step`` (the per-symbol lock prevents
         concurrent step calls; ``save_order`` commits before the next
@@ -348,7 +359,21 @@ class GridEngine:
                 },
             )
             return False
-        await self._place_level(symbol, level, coin_cfg, amount=amount)
+        try:
+            await self._place_level(symbol, level, coin_cfg, amount=amount)
+        except InsufficientBalance as exc:
+            _LOGGER.warning(
+                "order refused by exchange: insufficient balance",
+                extra={
+                    "symbol": str(symbol),
+                    "side": level.side.value,
+                    "price": str(level.price),
+                    "asset": exc.asset,
+                    "required": str(exc.required),
+                    "available": str(exc.available),
+                },
+            )
+            return False
         return True
 
     async def _place_level(

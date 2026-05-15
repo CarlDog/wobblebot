@@ -596,6 +596,34 @@ class TestMultiSymbol:
         assert eth_r.action == "initialized"
         assert len(await storage.get_open_orders()) == 12  # 6 + 6
 
+    async def test_insufficient_base_for_sell_treated_as_refusal(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Operator's account commonly holds USD but no base inventory at
+        first run; the engine must NOT crash when SELL placements raise
+        InsufficientBalance — it must log + treat each as a refusal so
+        the BUY side still places. Once a BUY fills, base inventory
+        appears and subsequent SELL counters at that level succeed."""
+        # USD-only balance — every SELL in the layout will raise
+        # InsufficientBalance from the mock. (Mock and live behave
+        # identically here: Kraken returns EOrder:Insufficient funds
+        # which the adapter translates to InsufficientBalance.)
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "initialized"
+        # 3 BUYs placed (USD-funded), 3 SELLs refused for insufficient BTC.
+        assert result.placed == 3
+        assert result.refusals == 3
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        assert all(o.side is OrderSide.BUY for o in opens)
+        assert len(opens) == 3
+
     async def test_one_symbol_failing_does_not_corrupt_other(
         self, storage: SQLiteStorageAdapter
     ) -> None:
