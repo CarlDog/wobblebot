@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Stage 2.4 (Multi-Asset Support) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stages 2.1, 2.2, 2.3, 2.4 all closed 2026-05-14 — same evening session. Five operator entry points work end-to-end:
+**Phase 2 is complete as of 2026-05-14.** All five stages (2.1, 2.2, 2.3, 2.4, 2.5) closed in a single evening session. Closing summary lives at `docs/planning/phase-2-summary.md`. Total real-money cost across both live verifications: **$0.08** (the $0.08 first-trade test in `tools/first_real_trade.py` + the $0.00 multi-coin grid run in Stage 2.5). Five operator entry points work end-to-end:
 
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: read-only Kraken price + balance fetch.
@@ -38,9 +38,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Caps split: total/daily are global, per-coin is per-symbol.** `max_total_exposure_usd` and `max_daily_spend_usd` count across every coin (computed via unfiltered `storage.get_open_orders()` / `storage.get_orders(side="buy", created_after=today)`). `max_per_coin_exposure_usd` and `max_orders_per_coin` are scoped to one symbol via the symbol filter. Same SafetyConfig instance passed to GridEngine; the engine's `_check_safety` was already symbol-aware.
 - **`--symbols` deduplicates and preserves order.** Comma-separated input. Trailing/leading whitespace tolerated. Empty entries from trailing commas silently dropped.
 
-**Next:** Stage 2.5 — Phase 2 Integration Check. Final stage of Phase 2; the spec is "demonstrate a full pipeline: configuration → live Kraken adapter + DataCollector → micro-grid engine → logs and database entries; all withdrawals remain disabled at the API key level." Two ways to satisfy:
-1. **Documentation deliverable:** `docs/planning/phase-2-summary.md` consolidating what works, the operator runbook, the $0.08 evidence — pure docs, no new code.
-2. **Live multi-coin run:** invoke `cli/grid --symbols BTC/USD,ETH/USD --max-runtime-minutes 5 --max-session-loss-usd 5` and capture receipts. Real money, second commitment of the session. Bounded by the same $5 cap.
+**Next:** Phase 3 — Strategy Advisor & Analytics. Engine and adapter layers do not change; Phase 3 sits on top:
+- **Stage 3.1:** Data Collector v2 — extend the existing `DataCollector` to compute volatility, cycle counts, win rates, drawdown over the trades/orders/balance_snapshots history.
+- **Stage 3.2:** `AdvisorPort` + local LLM (Ollama) adapter producing JSON-schema-validated recommendations. Per ADR-002, advisor is advisory-only — no execution authority.
+- **Stage 3.3:** Passive advisory workflow — periodically send summarized performance to advisor; persist suggestions; do not auto-apply.
+- **Stage 3.4:** Optional auto-tuning, bounded by configured min/max ranges.
+- **Stage 3.5:** Phase 3 integration check.
+
+Phase 3 introduces no new live-money risk over Phase 2 — the advisor layer can't execute. Suitable for fresh-eyes daylight work.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
