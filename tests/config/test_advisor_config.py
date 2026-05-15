@@ -41,16 +41,58 @@ def _arbitrator() -> ArbitratorConfig:
 # ---------------------------------------------------------------------------
 
 
+def _single_kwargs(**overrides: object) -> dict[str, object]:
+    """Build the minimum kwarg set for a valid type=single AdvisorConfig."""
+    base: dict[str, object] = {
+        "type": "single",
+        "provider": "ollama",
+        "model": "deepseek-r1:7b",
+        "prompt_file": "config/prompts/quant.md",
+    }
+    base.update(overrides)
+    return base
+
+
 class TestSingleMode:
     def test_minimal_single(self) -> None:
-        cfg = AdvisorConfig(type="single")
+        cfg = AdvisorConfig(**_single_kwargs())  # type: ignore[arg-type]
         assert cfg.type == "single"
+        assert cfg.provider == "ollama"
+        assert cfg.model == "deepseek-r1:7b"
+        assert cfg.prompt_file == "config/prompts/quant.md"
         assert cfg.experts == []
 
     def test_single_with_experts_rejected(self) -> None:
         """Loaded experts in single mode is operator confusion."""
         with pytest.raises(ValidationError, match="must not have experts"):
-            AdvisorConfig(type="single", experts=[_expert("quant")])
+            AdvisorConfig(**_single_kwargs(experts=[_expert("quant")]))  # type: ignore[arg-type]
+
+    def test_single_missing_provider_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="provider"):
+            AdvisorConfig(**_single_kwargs(provider=None))  # type: ignore[arg-type]
+
+    def test_single_missing_model_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="model"):
+            AdvisorConfig(**_single_kwargs(model=None))  # type: ignore[arg-type]
+
+    def test_single_missing_prompt_file_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="prompt_file"):
+            AdvisorConfig(**_single_kwargs(prompt_file=None))  # type: ignore[arg-type]
+
+    def test_single_missing_all_three_lists_all(self) -> None:
+        # All three fields named in the error so operator sees the full diff.
+        with pytest.raises(ValidationError) as exc_info:
+            AdvisorConfig(type="single")
+        msg = str(exc_info.value)
+        assert "provider" in msg
+        assert "model" in msg
+        assert "prompt_file" in msg
+
+    def test_single_inference_params_optional(self) -> None:
+        """inference_params has defaults; not required at the operator level."""
+        cfg = AdvisorConfig(**_single_kwargs())  # type: ignore[arg-type]
+        assert cfg.inference_params.temperature == Decimal("0.5")
+        assert cfg.inference_params.max_tokens == 512
 
 
 # ---------------------------------------------------------------------------

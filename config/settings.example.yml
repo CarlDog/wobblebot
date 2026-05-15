@@ -184,11 +184,13 @@ sandbox:
 # ============================================================================
 # Two modes:
 #   type: single  - one LLM, no aggregation. Simple; fast to iterate.
-#   type: moe     - mixture of experts (≥3 LLMs) + aggregator. Per the
-#                   project rule. Each expert points to a prompt file
-#                   in config/prompts/ that the operator can edit.
+#                   This is the Stage 3.2 default; MoE ships in 3.4a.
+#   type: moe     - mixture of experts (≥3 LLMs) + aggregator. The
+#                   `profiles.moe-advisor` block below shows the full
+#                   MoE shape; activate it with `--profile moe-advisor`
+#                   once the MoE adapter lands.
 #
-# Aggregation strategies:
+# Aggregation strategies (MoE only):
 #   voting              - discrete-direction votes; majority wins
 #   weighted_confidence - numeric proposals × self-reported confidence
 #   arbitrator          - a fourth model reads expert opinions, picks
@@ -197,48 +199,16 @@ sandbox:
 # freely. Per ADR-007 the upside of genuinely different training priors
 # outweighs per-call data exposure for a hobby trading bot.
 advisor:
-  type: moe
+  type: single                        # Stage 3.2 default. Flip to `moe` via profile.
   cadence_hours: 4                    # how often to run the advisor
-  aggregator: arbitrator
 
-  # Required only when aggregator == arbitrator.
-  arbitrator:
-    provider: anthropic               # anthropic | openai | google | ollama
-    model: claude-sonnet-4-6
-    prompt_file: "config/prompts/arbitrator.md"
-    inference_params:
-      temperature: 0.3                # arbitrator is more deterministic than experts
-      max_tokens: 1024
-
-  # Variable-length expert list. Min 3 when type=moe (Pydantic
-  # validator); no upper limit. Mix providers freely.
-  experts:
-    - name: quant
-      provider: ollama
-      model: deepseek-r1:7b
-      role: quant                     # quant | risk | news | custom
-      prompt_file: "config/prompts/quant.md"
-      inference_params:
-        temperature: 0.5
-        max_tokens: 512
-
-    - name: risk
-      provider: anthropic
-      model: claude-sonnet-4-6
-      role: risk
-      prompt_file: "config/prompts/risk.md"
-      inference_params:
-        temperature: 0.4
-        max_tokens: 512
-
-    - name: news
-      provider: google
-      model: gemini-2.0-flash
-      role: news
-      prompt_file: "config/prompts/news.md"
-      inference_params:
-        temperature: 0.6
-        max_tokens: 512
+  # Single-mode LLM target. Required when type=single.
+  provider: ollama                    # ollama | anthropic | openai | google
+  model: deepseek-r1:7b
+  prompt_file: "config/prompts/quant.md"
+  inference_params:
+    temperature: 0.5
+    max_tokens: 512
 
   # Bounded auto-tuning. Off by default. Per ADR-007, news-derived
   # recommendations NEVER auto-apply regardless of these bounds —
@@ -315,10 +285,65 @@ profiles:
         BTC: 1
         ETH: 5
 
-  # Cloud-only MoE: replaces the local Ollama experts with cloud
-  # equivalents. Useful when running on a machine without GPU.
+  # Mixture-of-experts advisor. Activate via `--profile moe-advisor`
+  # once the MoE adapter ships in Stage 3.4a. Local Ollama for the
+  # quant expert + cloud LLMs for risk and news. The arbitrator
+  # block is the fourth model that reads the experts' opinions and
+  # picks the final recommendation.
+  moe-advisor:
+    advisor:
+      type: moe
+      aggregator: arbitrator
+
+      arbitrator:
+        provider: anthropic
+        model: claude-sonnet-4-6
+        prompt_file: "config/prompts/arbitrator.md"
+        inference_params:
+          temperature: 0.3
+          max_tokens: 1024
+
+      experts:
+        - name: quant
+          provider: ollama
+          model: deepseek-r1:7b
+          role: quant
+          prompt_file: "config/prompts/quant.md"
+          inference_params:
+            temperature: 0.5
+            max_tokens: 512
+        - name: risk
+          provider: anthropic
+          model: claude-sonnet-4-6
+          role: risk
+          prompt_file: "config/prompts/risk.md"
+          inference_params:
+            temperature: 0.4
+            max_tokens: 512
+        - name: news
+          provider: google
+          model: gemini-2.0-flash
+          role: news
+          prompt_file: "config/prompts/news.md"
+          inference_params:
+            temperature: 0.6
+            max_tokens: 512
+
+  # Cloud-only MoE: replaces the local Ollama quant expert with a
+  # cloud equivalent. Useful when running on a machine without GPU.
   cloud-only-moe:
     advisor:
+      type: moe
+      aggregator: arbitrator
+
+      arbitrator:
+        provider: anthropic
+        model: claude-sonnet-4-6
+        prompt_file: "config/prompts/arbitrator.md"
+        inference_params:
+          temperature: 0.3
+          max_tokens: 1024
+
       experts:
         - name: claude
           provider: anthropic

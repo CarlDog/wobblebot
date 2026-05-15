@@ -117,10 +117,29 @@ class AdvisorConfig(BaseModel):
     advisor. The advisor's recommendations always persist to the
     ``advisor_suggestions`` table; whether they auto-apply is gated
     by ``auto_apply.enabled`` (and the news-role exclusion above).
+
+    **Mode-specific fields:**
+    - ``type=single`` requires ``provider``, ``model``, and
+      ``prompt_file`` to be set (the single LLM has no
+      ``ExpertConfig`` block to hide in). ``inference_params``
+      defaults apply if not overridden.
+    - ``type=moe`` populates ``experts`` (≥3) and ignores the
+      single-mode fields. The MoE invariants (expert count, name
+      uniqueness, arbitrator coupling) are enforced below.
     """
 
     type: AdvisorType = "single"
     cadence_hours: float = Field(default=4.0, gt=0)
+
+    # Single-mode LLM target. Required when type=single; ignored
+    # when type=moe. Mirrors the ExpertConfig fields so the operator
+    # can lift-and-shift between modes without re-learning the
+    # vocabulary.
+    provider: LLMProvider | None = None
+    model: str | None = Field(default=None, min_length=1)
+    prompt_file: str | None = Field(default=None, min_length=1)
+    inference_params: InferenceParams = Field(default_factory=InferenceParams)
+
     aggregator: AggregatorStrategy = "voting"
     arbitrator: ArbitratorConfig | None = None
     experts: list[ExpertConfig] = Field(default_factory=list)
@@ -130,7 +149,7 @@ class AdvisorConfig(BaseModel):
         frozen = True
 
     @model_validator(mode="after")
-    def _validate_moe_constraints(self) -> AdvisorConfig:
+    def _validate_mode_constraints(self) -> AdvisorConfig:
         """Enforce ADR-007 + ADR-009 advisor invariants."""
         if self.type == "moe":
             if len(self.experts) < 3:
@@ -142,12 +161,28 @@ class AdvisorConfig(BaseModel):
             if len(set(names)) != len(names):
                 duplicates = sorted({n for n in names if names.count(n) > 1})
                 raise ValueError(f"expert names must be unique; duplicates: {duplicates}")
-        elif self.type == "single" and self.experts:
-            # Single-LLM mode shouldn't carry a populated experts list —
-            # operator likely confused themselves
-            raise ValueError(
-                "advisor.type=single must not have experts (use type=moe for multi-expert setups)"
-            )
+        elif self.type == "single":
+            if self.experts:
+                # Single-LLM mode shouldn't carry a populated experts list —
+                # operator likely confused themselves
+                raise ValueError(
+                    "advisor.type=single must not have experts "
+                    "(use type=moe for multi-expert setups)"
+                )
+            missing = [
+                name
+                for name, value in (
+                    ("provider", self.provider),
+                    ("model", self.model),
+                    ("prompt_file", self.prompt_file),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"advisor.type=single requires {missing} to be set "
+                    "(provider, model, prompt_file are the single-LLM target)"
+                )
 
         if self.aggregator == "arbitrator" and self.arbitrator is None:
             raise ValueError(
