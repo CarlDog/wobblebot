@@ -157,10 +157,11 @@ Both are extensions to the existing `AdvisorPort` contract — they don't change
 
 1. **`AdvisorPort` stays unchanged.** Single abstract method that returns a `Recommendation`. Engine remains advisor-implementation-agnostic — the same code path works for single-LLM, MoE, or any future advisor.
 
-2. **MoE adapter is one possible `AdvisorPort` implementation.** `MoEAdvisorAdapter(experts, aggregator)` orchestrates 2-3 specialist Ollama models. Each expert has:
-   - A distinct base model (e.g. DeepSeek for quant, Mistral for news, Qwen for risk) — chosen for genuinely different training priors.
+2. **MoE adapter is one possible `AdvisorPort` implementation.** `MoEAdvisorAdapter(experts, aggregator)` orchestrates 2-3 specialist LLMs. Each expert has:
+   - A distinct base model — chosen for genuinely different training priors. **Mix freely between local Ollama and cloud APIs**: a `LocalOllamaExpert(model="deepseek-r1:7b")` for quant, an `AnthropicClaudeExpert(model="claude-sonnet-4-6")` for risk, a `GoogleGeminiExpert(model="gemini-2.0-flash")` for news. The `Expert` interface abstracts provider; the MoE adapter doesn't care where each expert runs.
    - A specialized system prompt (quant gets only metrics; news gets only news headlines; risk gets caps/balances).
    - A bounded inference budget (no expert reasons forever).
+   - Graceful failure handling — if a cloud expert times out or returns an API error, the MoE adapter logs it and proceeds with the remaining experts' opinions. One vendor outage does not stop the advisor.
 
    Three aggregation strategies supported, all interchangeable behind the `Aggregator` abstraction:
    - **Voting** — discrete-direction proposals; majority wins.
@@ -184,7 +185,7 @@ Both are extensions to the existing `AdvisorPort` contract — they don't change
 
 - **Stick with single LLM, no news.** Rejected: less interpretable as the model gets larger; no way to know whether a recommendation came from "the metrics look bad" or "the LLM is having a moment." MoE forces structural separation.
 - **Single LLM with news as additional prompt context.** Rejected: indistinguishable opinions ("metrics says X, news says Y, so my answer is Z"). MoE keeps the inputs auditable per-source.
-- **Vendor advisor API (Anthropic, OpenAI, etc.).** Rejected: defeats the local-LLM principle established in Phase 1 ("everything runs on operator hardware, no third-party data exposure"). Ollama on the operator's NAS or workstation, not a cloud API.
+- **Vendor advisor API as the SOLE provider.** Rejected for the same reason Phase 1 chose local Ollama: removes operator independence, exposes data to a third party, fails when the vendor does. **However, vendor APIs are explicitly ALLOWED as individual experts in the MoE** (above) — the upside of mixing genuinely different priors (Anthropic Claude vs OpenAI GPT vs Google Gemini vs local DeepSeek) outweighs the per-call data exposure for a hobby trading bot. Operator chooses per-expert; the adapter abstracts the provider. Caveats acknowledged: each cloud expert sends some market state to its provider, vendor outages reduce the MoE to whichever experts remain reachable, and per-call cost (~$0.01) accumulates if the operator runs the advisor frequently. At advisor cadence (every N hours), pennies per month.
 - **Streaming news firehose (Twitter/X, webhooks).** Rejected for v1: complex auth, rate limits, latency-vs-cost tradeoff doesn't justify itself for a 5s-tick grid bot. Polling 15-30 min covers the relevant signal cadence.
 - **Auto-apply news-derived suggestions within bounds.** Rejected: news LLMs are too easily fooled by stale or noisy content. Keep the human in the loop for news-driven actions.
 
@@ -202,3 +203,49 @@ Both are extensions to the existing `AdvisorPort` contract — they don't change
 **References:**
 - [Phase 2 closing summary](../planning/phase-2-summary.md) — context for Phase 3's entry conditions.
 - ADR-002 — LLM is advisory-only (the invariant this ADR refines).
+- ADR-008 — Observer & Shadow Mode (the Phase 3 sandbox the MoE advisor will iterate against).
+
+## ADR-008 — Observer & Shadow Mode (Phase 3 Sandbox)
+**Status:** Accepted (planned for Phase 3 Stage 3.0)
+**Date:** 2026-05-14
+**Context:** Phase 3's advisor work (single LLM → MoE → news ingestion → bounded auto-tuning) needs a sandbox to iterate against. Iterating against `cli/live` is too expensive (real fees on every test cycle) and slow (real fills happen at market cadence, not test cadence). Iterating against pure `MockExchangeAdapter` is too synthetic — the engine's behavior against deterministic mock prices doesn't surface the regime shifts and price-action nuance that real markets produce. We need a third option: real market behavior, simulated execution.
+
+The operator also wants a "lurker mode" — observe the market 24/7 without trading, build a dataset, watch the LLM commentate on real events as they unfold. This is broadly useful beyond Phase 3 (e.g. for backtesting, for building intuition about the bot's responses to specific market conditions, for collecting evidence to tune the safety caps).
+
+**Decision:** Land two new entry points and one new adapter as Phase 3 Stage 3.0, before any of the advisor work begins.
+
+1. **`cli/observe`** — pure data collection. Polls Kraken's public Ticker on a configurable interval (default 30s) for one or more symbols; periodically fetches `BalanceEx` via the read-only key. Persists to existing SQLite tables (`prices` would be new; `balance_snapshots` already exists). No engine, no LLM, no orders. Runs until killed via SIGINT. Useful for: building a multi-week price dataset for offline analysis, cheap continuous monitoring, baseline data the advisor's metrics layer can compute against.
+
+2. **`ShadowExchangeAdapter`** — concrete `ExchangePort` implementation that composes a live `KrakenAdapter` (for `get_current_price`) with `MockExchangeAdapter`'s matching engine (for `place_order` / `get_open_orders` / `get_order_status` / `get_trade_history`). Uses a synthetic balance ledger initialized at construction time. Critically:
+   - Maker vs taker fee assignment: when `place_order` is called, compare the limit price to current live market price. If the limit sits ON the book (BUY below market or SELL above), tag for maker fee (0.26%). If marketable (BUY above ask or SELL below bid), tag for taker fee (0.40%). This honestly models the fee schedule observed live in Phase 2's $0.08 receipt.
+   - Live price ticks pump into the mock matcher; fills happen when the live tape crosses a shadow order's limit, with timestamps recorded at the moment of crossing (not at the next `get_order_status` poll, to keep the simulation honest).
+   - Synthetic balance ledger tracks USD/BTC/ETH/etc. exactly as the mock does, but starting from operator-configured initial values (`--initial-shadow-usd 10000`, etc.) rather than real Kraken balances.
+
+3. **`cli/shadow`** — same CLI surface as `cli/live`, but wires the engine to `ShadowExchangeAdapter` instead of `KrakenAdapter`. All other flags (`--symbols`, `--max-runtime-minutes`, `--max-session-loss-usd`, the SafetyConfig caps) work identically. Storage path defaults to `wobblebot-shadow.db` (separate from `wobblebot-live.db`).
+
+4. **Rename `cli/grid` to `cli/live`.** The original name doesn't shout "this is real money." `cli/live` and `cli/shadow` make the distinction loud — muscle memory at 11pm should not be able to trip the operator into trading real funds when they meant to simulate. One-commit rename, all references updated.
+
+5. **Defer Flavor B (`cli/lurker` = observer + advisor commentary, no trading).** Once Stage 3.2 lands the single-LLM advisor, `cli/lurker` becomes a thin wrapper: run `cli/observe`'s polling loop and periodically invoke the advisor against the collected metrics (and news, post-3.2.5). Defer until then because there's nothing to wrap yet.
+
+**Alternatives Considered:**
+
+- **Skip Stage 3.0 entirely; iterate on the advisor against `MockExchangeAdapter` with hand-crafted price scenarios.** Rejected: the mock's deterministic price walks won't surface the regime shifts that make the advisor useful (or break it). The advisor needs real market noise to be worth tuning against.
+- **Add a `--shadow` flag to `cli/live` instead of a separate `cli/shadow` command.** Rejected: muscle-memory failure mode. A flag is too easy to forget; a separate command name forces the operator to consciously choose which mode they're invoking. The cost (one extra entry point) is trivial vs the safety upside.
+- **Make `ShadowExchangeAdapter` use the operator's REAL Kraken balances as initial shadow balances.** Rejected: too easy to confuse "shadow has $99.92" with "real account has $99.92" in logs, especially when both processes are running side by side. Force operator to specify `--initial-shadow-usd` explicitly.
+- **Defer Stage 3.0 to after Phase 3.5.** Rejected: by then the advisor work is done; the sandbox would have been most useful WHILE that work was happening. Land it first.
+
+**Consequences:**
+
+- **Positive:** Phase 3.1-3.5 gets a 24/7 sandbox to iterate against. The MoE advisor can be tested against real market behavior with synthetic execution costs.
+- **Positive:** Operator gains a long-running "watch the market" tool independent of any trading work. Builds intuition; collects data.
+- **Positive:** `ShadowExchangeAdapter` is a useful addition to the test seam family — integration tests can use it to assert engine behavior against deterministic-but-live-sourced price tapes, going beyond what the existing `MockExchangeAdapter` covers.
+- **Positive:** The `cli/grid → cli/live` rename eliminates a real safety footgun (muscle memory at midnight typing `cli/grid` when meaning `cli/shadow`). Tiny up-front cost, permanent benefit.
+- **Negative:** Stage 3.0 adds ~1 evening of work before the "real" Phase 3 stages start. Net schedule impact: minimal, since the sandbox saves time later.
+- **Negative:** Maker/taker fee modeling in the shadow is approximate — real Kraken accounts can have volume-based fee tiers; the shadow uses fixed rates. Acceptable: at hobby trading volumes the operator stays at the lowest tier indefinitely, so fixed rates match reality.
+- **Negative:** Shadow simulation cannot model order-book depth or partial fills due to thin liquidity. Acceptable for $10-$100 order sizes; would matter for larger.
+
+**Compliance:** Aligns with ADR-001 (`ShadowExchangeAdapter` is just another `ExchangePort` impl; engine is unchanged) and the Phase 2 cleanup discipline (the shadow's `cli/shadow` inherits `cli/live`'s SIGINT cleanup + safety caps — same engine code, same finally block). Strengthens the "no LLM execution authority" invariant indirectly: the MoE advisor's auto-tuning behaviors can be validated against shadow traffic before being trusted with live traffic.
+
+**References:**
+- ADR-007 — MoE advisor + news ingestion (the Phase 3 work this sandbox supports).
+- [Phase 2 closing summary](../planning/phase-2-summary.md) — `cli/grid` is the entry point being renamed to `cli/live` as part of this ADR.

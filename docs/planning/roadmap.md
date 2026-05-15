@@ -24,7 +24,9 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 
 ## Phase 3 – Strategy Advisor & Analytics
 
-**Goal:** Add intelligence and observability without giving the LLM any power over execution.
+**Goal:** Add intelligence and observability without giving any LLM power over execution.
+
+**Stage 3.0 – Observer & Shadow Mode** *(precursor)* – Land two non-money-touching entry points before the advisor work begins, per ADR-008. `cli/observe` polls live Kraken Ticker on a configurable interval and persists prices + balance snapshots to SQLite — pure data collection, no engine, no LLM. `cli/shadow` swaps `KrakenAdapter` for a new `ShadowExchangeAdapter` that uses live Kraken for prices but matches orders against a synthetic balance ledger; same engine code as `cli/live`, no real money. Together: a 24/7 sandbox for everything in 3.1–3.5 to play in, plus a live-tape backtest framework. (Flavor B — `cli/lurker` = observer + advisor commentary on the live market without trading — is a natural follow-on once Stage 3.2 lands; deferred until then since it's a thin wrapper over Stage 3.0's observer + Stage 3.2's advisor.)
 
 1. **Stage 3.1 – Data Collector & Metrics (v2)** – Extend the data collector to centralize historical pricing and compute derived metrics (volatility, cycle counts, win rates, flatness, drawdown, etc.).
 2. **Stage 3.2 – Advisor Port & Single-Model Integration** – Implement an `AdvisorPort` and a baseline single-LLM adapter (Ollama). Define and enforce a JSON schema for recommendations. Get the loop working end-to-end before adding complexity.
