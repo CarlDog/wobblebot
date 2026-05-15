@@ -27,10 +27,12 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 **Goal:** Add intelligence and observability without giving the LLM any power over execution.
 
 1. **Stage 3.1 – Data Collector & Metrics (v2)** – Extend the data collector to centralize historical pricing and compute derived metrics (volatility, cycle counts, win rates, flatness, drawdown, etc.).
-2. **Stage 3.2 – Advisor Port & Local LLM Integration** – Implement an `AdvisorPort` and an LLM adapter (e.g., via Ollama).  Define and enforce a JSON schema for recommendations.
-3. **Stage 3.3 – Advisory Workflows (Passive)** – Periodically send summarized performance data to the Advisor.  Store LLM‑produced JSON suggestions in the database; do not auto‑apply yet.
-4. **Stage 3.4 – Optional Auto‑Tuning (Guarded)** – Provide a configuration option to auto‑apply safe, bounded recommendations (e.g., adjust grid spacing within pre‑configured limits).  Enforce strict range checks and safety rules.
-5. **Stage 3.5 – Phase 3 Integration Check** – Demonstrate an “advisor‑in‑the‑loop” run: trading engine runs, advisor produces suggestions, operator reviews them.  Auto‑application is optional.
+2. **Stage 3.2 – Advisor Port & Single-Model Integration** – Implement an `AdvisorPort` and a baseline single-LLM adapter (Ollama). Define and enforce a JSON schema for recommendations. Get the loop working end-to-end before adding complexity.
+3. **Stage 3.2.5 – News Ingestion** – Implement a `NewsPort` and adapters for CryptoPanic + Whale-alert (free-tier polling, every 15-30 min). Persist to a `news_items` SQLite table. No LLM consumption yet; just structured collection. Per ADR-007.
+4. **Stage 3.3 – Passive Advisory Workflow** – Engine periodically sends metrics + recent news to the advisor; advisor’s JSON suggestions persist to an `advisor_suggestions` table. Operator reviews; nothing auto-applies.
+5. **Stage 3.4a – Mixture of Experts (MoE)** – Replace the single-LLM advisor with a MoE adapter that orchestrates 2–3 specialist Ollama models (quant, risk, news) and aggregates their opinions via voting / weighted-confidence / arbitrator strategy. Per-expert raw opinions logged alongside the aggregated recommendation. Per ADR-007.
+6. **Stage 3.4b – Optional Auto‑Tuning (Guarded)** – Provide a configuration option to auto-apply safe, bounded recommendations (e.g., adjust grid spacing within pre-configured limits). Enforce strict range checks and safety rules. **News-derived suggestions never auto-apply** — they remain advisory-only per ADR-007.
+7. **Stage 3.5 – Phase 3 Integration Check** – Demonstrate an “advisor‑in‑the‑loop” run with MoE + news: trading engine runs, advisor produces aggregated suggestions, operator reviews, optionally auto-applies bounded ones.
 
 ## Phase 4 – Harvester & Treasury Management
 
