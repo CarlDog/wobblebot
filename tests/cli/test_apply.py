@@ -133,14 +133,19 @@ def _args(
     recommendation_id: str | None = None,
     db: str | None = None,
     search_limit: int = 50,
+    commit: bool = False,
+    settings_path: str | None = None,
+    config_path: str | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         symbol=symbol,
         recommendation_id=recommendation_id,
         db=db,
         search_limit=search_limit,
+        commit=commit,
+        settings_path=settings_path,
         log_format=None,
-        config=None,
+        config=config_path,
         profile=None,
     )
 
@@ -343,3 +348,150 @@ class TestNewsRoleSafetyEndToEnd:
         assert not applied, "news-role suggestion must not apply"
         assert rejected
         assert any("ADR-007" in r.message for r in rejected)
+
+
+_COMMIT_FIXTURE_SETTINGS = """\
+# header comment
+grid:
+  default:
+    spacing_percentage: 1.0
+    levels_above: 3
+    levels_below: 3
+    order_size_usd: 10
+  coins:
+    BTC:
+      enabled: true
+      spacing_percentage: 1.0
+      levels_above: 3
+      levels_below: 3
+      order_size_usd: 10
+safety:
+  emergency_stop:
+    enabled: true
+"""
+
+
+@pytest.mark.asyncio
+class TestCommit:
+    async def test_commit_rewrites_settings_and_writes_audit(
+        self,
+        advise_db: str,
+        tmp_path: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """--commit on a clean apply must: rewrite settings.yml,
+        persist an AppliedSuggestion audit row, and log the path."""
+        settings_path = tmp_path / "settings.yml"
+        settings_path.write_text(_COMMIT_FIXTURE_SETTINGS, encoding="utf-8")
+
+        storage = SQLiteStorageAdapter(advise_db)
+        await storage.connect()
+        try:
+            await storage.save_advisor_suggestion(
+                _suggestion(
+                    rec_id="rec-commit",
+                    recommendations={"spacing_percentage": 1.1},
+                ),
+            )
+        finally:
+            await storage.close()
+
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.apply"):
+            rc = await _run(
+                _args(commit=True, settings_path=str(settings_path)),
+                config,
+            )
+        assert rc == 0
+
+        # settings.yml was rewritten.
+        contents = settings_path.read_text(encoding="utf-8")
+        assert "spacing_percentage: 1.1" in contents
+        # Audit row persisted.
+        audit_storage = SQLiteStorageAdapter(advise_db)
+        await audit_storage.connect()
+        try:
+            applied_rows = await audit_storage.get_applied_suggestions()
+        finally:
+            await audit_storage.close()
+        assert len(applied_rows) == 1
+        row = applied_rows[0]
+        assert row.recommendation_id == "rec-commit"
+        assert row.symbol == "BTC"
+        assert row.applied_keys[0]["key"] == "spacing_percentage"
+        # Log emitted the "commit complete" event.
+        assert any("commit complete" in r.message for r in caplog.records)
+
+    async def test_commit_without_applied_keys_exits_1(
+        self,
+        advise_db: str,
+        tmp_path: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A suggestion where every key got rejected (e.g. all level
+        keys) should NOT rewrite settings.yml or write an audit row —
+        exit 1 with a clear log line."""
+        settings_path = tmp_path / "settings.yml"
+        settings_path.write_text(_COMMIT_FIXTURE_SETTINGS, encoding="utf-8")
+        before = settings_path.read_text(encoding="utf-8")
+
+        storage = SQLiteStorageAdapter(advise_db)
+        await storage.connect()
+        try:
+            await storage.save_advisor_suggestion(
+                _suggestion(recommendations={"levels_above": 5}),  # not whitelisted
+            )
+        finally:
+            await storage.close()
+
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.apply"):
+            rc = await _run(
+                _args(commit=True, settings_path=str(settings_path)),
+                config,
+            )
+        assert rc == 1
+        assert settings_path.read_text(encoding="utf-8") == before
+        # No audit row written.
+        audit_storage = SQLiteStorageAdapter(advise_db)
+        await audit_storage.connect()
+        try:
+            applied_rows = await audit_storage.get_applied_suggestions()
+        finally:
+            await audit_storage.close()
+        assert applied_rows == []
+        assert any("no keys cleared" in r.message for r in caplog.records)
+
+    async def test_commit_handles_missing_settings_file(
+        self,
+        advise_db: str,
+        tmp_path: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        storage = SQLiteStorageAdapter(advise_db)
+        await storage.connect()
+        try:
+            await storage.save_advisor_suggestion(
+                _suggestion(recommendations={"spacing_percentage": 1.1}),
+            )
+        finally:
+            await storage.close()
+        bad_path = tmp_path / "does-not-exist.yml"
+
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.apply"):
+            rc = await _run(
+                _args(commit=True, settings_path=str(bad_path)),
+                config,
+            )
+        assert rc == 1
+        assert any("rewrite failed" in r.message for r in caplog.records)
+        # No audit row written when the rewrite fails — the audit
+        # represents what hit disk, and nothing hit disk.
+        audit_storage = SQLiteStorageAdapter(advise_db)
+        await audit_storage.connect()
+        try:
+            applied_rows = await audit_storage.get_applied_suggestions()
+        finally:
+            await audit_storage.close()
+        assert applied_rows == []

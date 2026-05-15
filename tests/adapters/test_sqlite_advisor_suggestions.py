@@ -11,7 +11,11 @@ import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
+from wobblebot.ports.advisor import (
+    AdvisorRecommendation,
+    AdvisorSuggestion,
+    AppliedSuggestion,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -326,3 +330,83 @@ async def test_expert_opinions_migration_on_pre_3_4a_db(tmp_path: object) -> Non
         assert len(got2) == 1
     finally:
         await adapter.close()
+
+
+def _applied(
+    *,
+    rec_id: str = "rec-1",
+    symbol: str = "BTC",
+    model_name: str = "phi4:14b",
+    rationale: str = "test",
+    minutes_ago: int = 1,
+    applied_keys: list[dict[str, object]] | None = None,
+    rejected_keys: list[dict[str, object]] | None = None,
+) -> AppliedSuggestion:
+    when = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    return AppliedSuggestion(
+        recommendation_id=rec_id,
+        applied_at=Timestamp(dt=when),
+        symbol=symbol,
+        applied_keys=applied_keys
+        or [{"key": "spacing_percentage", "before": 1.0, "after": 1.1, "delta_pct": 10.0}],
+        rejected_keys=rejected_keys or [],
+        model_name=model_name,
+        rationale=rationale,
+    )
+
+
+async def test_applied_suggestion_round_trip(storage: SQLiteStorageAdapter) -> None:
+    await storage.save_applied_suggestion(_applied())
+    got = await storage.get_applied_suggestions()
+    assert len(got) == 1
+    row = got[0]
+    assert row.recommendation_id == "rec-1"
+    assert row.symbol == "BTC"
+    assert row.applied_keys[0]["key"] == "spacing_percentage"
+    assert row.applied_keys[0]["delta_pct"] == 10.0
+    assert row.rejected_keys == []
+
+
+async def test_applied_suggestion_with_rejections(storage: SQLiteStorageAdapter) -> None:
+    """Both sides of the gate's outcome persist — operators auditing
+    historical applies need to see what the LLM proposed AND what
+    didn't clear."""
+    rejected = [
+        {"key": "levels_above", "proposed": 5, "reason": "no magnitude cap configured"},
+    ]
+    await storage.save_applied_suggestion(_applied(rejected_keys=rejected))
+    row = (await storage.get_applied_suggestions())[0]
+    assert len(row.rejected_keys) == 1
+    assert row.rejected_keys[0]["key"] == "levels_above"
+    assert "no magnitude cap" in row.rejected_keys[0]["reason"]
+
+
+async def test_applied_suggestion_filters(storage: SQLiteStorageAdapter) -> None:
+    await storage.save_applied_suggestion(_applied(symbol="BTC", model_name="phi4:14b"))
+    await storage.save_applied_suggestion(
+        _applied(rec_id="rec-2", symbol="ETH", model_name="qwen3:8b")
+    )
+    await storage.save_applied_suggestion(
+        _applied(rec_id="rec-3", symbol="BTC", model_name="qwen3:8b")
+    )
+
+    by_symbol = await storage.get_applied_suggestions(symbol="BTC")
+    assert {r.recommendation_id for r in by_symbol} == {"rec-1", "rec-3"}
+
+    by_model = await storage.get_applied_suggestions(model_name="qwen3:8b")
+    assert {r.recommendation_id for r in by_model} == {"rec-2", "rec-3"}
+
+
+async def test_applied_suggestion_desc_order(storage: SQLiteStorageAdapter) -> None:
+    """Newest first; matches the get_advisor_suggestions ordering convention."""
+    for offset, rec_id in [(30, "old"), (10, "mid"), (1, "new")]:
+        await storage.save_applied_suggestion(_applied(rec_id=rec_id, minutes_ago=offset))
+    got = await storage.get_applied_suggestions()
+    assert [r.recommendation_id for r in got] == ["new", "mid", "old"]
+
+
+async def test_applied_suggestion_limit(storage: SQLiteStorageAdapter) -> None:
+    for i in range(5):
+        await storage.save_applied_suggestion(_applied(rec_id=f"r-{i}", minutes_ago=i))
+    got = await storage.get_applied_suggestions(limit=2)
+    assert len(got) == 2

@@ -32,6 +32,12 @@ dependencies = [
     # MIT, handles RSS 0.9/1.0/2.0 + Atom 0.3/1.0 + malformed feeds
     # without us hand-rolling ~100 lines of XML edge-case handling.
     "feedparser>=6.0.0",
+    # Stage 3.4b — cli/apply --commit rewrites the operator's
+    # settings.yml in place. PyYAML round-tripping strips comments
+    # and reorders keys; ruamel.yaml preserves both, which matters
+    # because the example settings file is heavily commented with
+    # operator-facing explanations.
+    "ruamel.yaml>=0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -124,6 +130,14 @@ ignore_missing_imports = true
 # before exposing it to callers, so the typing weakness is contained.
 [[tool.mypy.overrides]]
 module = "feedparser"
+ignore_missing_imports = true
+
+# ruamel.yaml ships partial stubs but the surface we use (round-tripping
+# the YAML document) is permissively typed. Same containment posture as
+# frontmatter: services/settings_rewriter wraps the library inside a
+# typed function, so the Any-ness doesn't propagate.
+[[tool.mypy.overrides]]
+module = "ruamel.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

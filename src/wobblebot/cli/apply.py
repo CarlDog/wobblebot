@@ -2,26 +2,28 @@
 
 Operator-in-the-loop application of advisor suggestions to the running
 grid config. Reads the latest ``AdvisorSuggestion`` from ``advise.db``,
-runs it through the ``evaluate_auto_apply`` gate, and prints a
-breakdown of which keys would land and which won't (with reasons).
+runs it through the ``evaluate_auto_apply`` gate, prints a breakdown
+of which keys would land and which won't (with reasons), and — with
+``--commit`` — rewrites ``settings.yml`` and writes a forensic
+``AppliedSuggestion`` audit row.
 
-**Dry-run only in Slice B** — no file writes, no DB writes. Slice C
-adds ``--commit`` (settings.yml rewriter + AppliedSuggestion audit
-row).
+Without ``--commit`` the CLI is read-only: no file writes, no DB
+writes. The dry-run mode is the operator's feedback loop before
+mutating any state.
 
 Usage::
 
-    python -m wobblebot.cli.apply
+    python -m wobblebot.cli.apply                          # dry-run
+    python -m wobblebot.cli.apply --commit                 # apply
     python -m wobblebot.cli.apply --symbol ETH/USD
     python -m wobblebot.cli.apply --recommendation-id rec-abc-123
     python -m wobblebot.cli.apply --config /path/to/custom.yml
 
 Per ADR-002 + ADR-007 this CLI is the only path by which advisor
-output mutates running config. Operators read the dry-run output,
-decide if it's sane, then re-run with ``--commit`` (Slice C). News-
-role suggestions are blanket-rejected here regardless of the
-operator's auto_apply.* bounds — that's the load-bearing safety
-property the gate exists to enforce.
+output mutates running config. News-role suggestions are blanket-
+rejected at the gate regardless of the operator's auto_apply.*
+bounds — the load-bearing safety property the gate exists to
+enforce.
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -37,10 +41,11 @@ from wobblebot.cli._common import add_config_args, collect_overrides, identity, 
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Symbol
-from wobblebot.ports.advisor import AdvisorSuggestion
+from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.auto_apply import AutoApplyResult, evaluate_auto_apply
+from wobblebot.services.settings_rewriter import SettingsRewriteError, apply_grid_overrides
 
 _LOGGER = logging.getLogger("wobblebot.cli.apply")
 
@@ -175,14 +180,106 @@ async def _run(args: argparse.Namespace, config: WobbleBotConfig) -> int:
     )
     _log_result(suggestion, result)
 
+    if not args.commit:
+        _LOGGER.info(
+            "dry-run complete (no file writes; pass --commit to apply)",
+            extra={
+                "would_apply": [a.key for a in result.applied_keys],
+                "would_skip": [r.key for r in result.rejected_keys],
+            },
+        )
+        return 0
+
+    return await _commit_apply(
+        suggestion=suggestion,
+        result=result,
+        settings_path=Path(args.settings_path or _resolved_settings_path(args)),
+        advise_db=advise_db,
+    )
+
+
+async def _commit_apply(
+    *,
+    suggestion: AdvisorSuggestion,
+    result: AutoApplyResult,
+    settings_path: Path,
+    advise_db: str,
+) -> int:
+    """Persist a clean apply: rewrite settings.yml + write audit row.
+
+    Refuses to write if no keys applied (nothing to do).
+    """
+    if not result.applied_keys:
+        _LOGGER.warning(
+            "no keys cleared the gate; settings.yml NOT modified",
+            extra={"recommendation_id": suggestion.recommendation.recommendation_id},
+        )
+        return 1
+
+    overrides: dict[str, Any] = {a.key: a.after for a in result.applied_keys}
+    try:
+        diff = apply_grid_overrides(
+            settings_path,
+            symbol=result.symbol,
+            overrides=overrides,
+        )
+    except (SettingsRewriteError, FileNotFoundError) as exc:
+        _LOGGER.error(
+            "settings.yml rewrite failed; no audit row written",
+            extra={"path": str(settings_path), "error": str(exc)},
+        )
+        return 1
+    if diff:
+        # Multi-line print path: log line for the operator, full diff to stdout.
+        _LOGGER.info(
+            "settings.yml updated",
+            extra={"path": str(settings_path), "lines_changed": diff.count("\n")},
+        )
+        sys.stdout.write(diff)
+        sys.stdout.flush()
+    else:
+        _LOGGER.info(
+            "settings.yml unchanged (overrides matched existing values)",
+            extra={"path": str(settings_path)},
+        )
+
+    storage = SQLiteStorageAdapter(advise_db)
+    await storage.connect()
+    try:
+        applied_row = AppliedSuggestion(
+            recommendation_id=suggestion.recommendation.recommendation_id,
+            applied_at=Timestamp(dt=datetime.now(UTC)),
+            symbol=result.symbol,
+            applied_keys=[a.model_dump() for a in result.applied_keys],
+            rejected_keys=[r.model_dump() for r in result.rejected_keys],
+            model_name=suggestion.model_name,
+            rationale=suggestion.recommendation.rationale,
+        )
+        await storage.save_applied_suggestion(applied_row)
+    finally:
+        await storage.close()
+
     _LOGGER.info(
-        "dry-run complete (no file writes; pass --commit in Slice C to apply)",
+        "commit complete",
         extra={
-            "would_apply": [a.key for a in result.applied_keys],
-            "would_skip": [r.key for r in result.rejected_keys],
+            "recommendation_id": suggestion.recommendation.recommendation_id,
+            "applied_keys": [a.key for a in result.applied_keys],
+            "symbol": result.symbol,
         },
     )
     return 0
+
+
+def _resolved_settings_path(args: argparse.Namespace) -> str:
+    """Resolve which settings.yml path the rewriter should target.
+
+    Mirrors the load_resolved_config discovery order: explicit
+    --config wins; otherwise the conventional location.
+    """
+    if args.config is not None:
+        return str(args.config)
+    default = Path("config") / "settings.yml"
+    return str(default)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
@@ -222,6 +319,19 @@ def main() -> int:
         default=50,
         help="How many recent suggestions to scan when matching "
         "--recommendation-id. Default 50.",
+    )
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Apply the change: rewrite settings.yml in place and "
+        "persist an AppliedSuggestion audit row. Without this flag "
+        "the CLI runs in dry-run mode (read-only).",
+    )
+    parser.add_argument(
+        "--settings-path",
+        default=None,
+        help="Path to settings.yml to rewrite on --commit. Defaults to "
+        "--config if provided, else config/settings.yml.",
     )
     parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()

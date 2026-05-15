@@ -11,7 +11,7 @@ from uuid import UUID
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorSuggestion
+from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 
 
 class StoragePort(ABC):
@@ -288,6 +288,47 @@ class StoragePort(ABC):
         Returns:
             Matching suggestions ordered by ``created_at`` DESC
             (newest first). Empty list if none match.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def save_applied_suggestion(self, applied: AppliedSuggestion) -> None:
+        """Persist an audit row for a Stage 3.4b auto-applied suggestion.
+
+        ``cli/apply --commit`` calls this once after the gate clears
+        AND the settings.yml rewrite succeeds. The row carries
+        per-key before/after deltas, the rejected keys (with reasons),
+        and the originating model/rationale — so the operator can
+        always answer "what did the bot change, why, and based on
+        whose recommendation?"
+
+        Args:
+            applied: AppliedSuggestion audit row.
+
+        Raises:
+            StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def get_applied_suggestions(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        model_name: str | None = None,
+        limit: int | None = None,
+    ) -> list[AppliedSuggestion]:
+        """Query auto-applied suggestion history.
+
+        Args:
+            since: Lower bound on ``applied_at`` (inclusive, tz-aware).
+            symbol: Coin filter (e.g. ``"BTC"``).
+            model_name: Filter to one producing model.
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching audit rows ordered by ``applied_at`` DESC.
 
         Raises:
             StorageError: If retrieval fails.

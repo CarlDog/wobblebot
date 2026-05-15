@@ -21,7 +21,7 @@ import aiosqlite
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
+from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 
@@ -145,6 +145,22 @@ CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created
     ON advisor_suggestions(created_at);
 CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_model
     ON advisor_suggestions(model_name, created_at);
+
+CREATE TABLE IF NOT EXISTS applied_suggestions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    recommendation_id   TEXT NOT NULL,
+    applied_at          TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    applied_keys        TEXT NOT NULL DEFAULT '[]',
+    rejected_keys       TEXT NOT NULL DEFAULT '[]',
+    model_name          TEXT NOT NULL,
+    rationale           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_applied_suggestions_applied
+    ON applied_suggestions(applied_at);
+CREATE INDEX IF NOT EXISTS idx_applied_suggestions_symbol
+    ON applied_suggestions(symbol, applied_at);
 """
 
 
@@ -567,6 +583,65 @@ class SQLiteStorageAdapter(StoragePort):
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load advisor suggestions: {exc}") from exc
 
+    async def save_applied_suggestion(self, applied: AppliedSuggestion) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO applied_suggestions (
+                    recommendation_id, applied_at, symbol,
+                    applied_keys, rejected_keys, model_name, rationale
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    applied.recommendation_id,
+                    applied.applied_at.dt.isoformat(),
+                    applied.symbol,
+                    json.dumps(applied.applied_keys),
+                    json.dumps(applied.rejected_keys),
+                    applied.model_name,
+                    applied.rationale,
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to save applied suggestion for {applied.recommendation_id}: {exc}"
+            ) from exc
+
+    async def get_applied_suggestions(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        model_name: str | None = None,
+        limit: int | None = None,
+    ) -> list[AppliedSuggestion]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if since is not None:
+            clauses.append("applied_at >= ?")
+            params.append(since.astimezone(UTC).isoformat())
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            params.append(symbol)
+        if model_name is not None:
+            clauses.append("model_name = ?")
+            params.append(model_name)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM applied_suggestions{where} ORDER BY applied_at DESC"
+        bound: tuple[str | int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound = (*bound, limit)
+        try:
+            async with conn.execute(sql, bound) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_applied_suggestion(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load applied suggestions: {exc}") from exc
+
     async def get_news_items(
         self,
         source: str | None = None,
@@ -780,6 +855,18 @@ def _deserialize_expert_opinions(
         )
         for idx, entry in enumerate(payload)
     ]
+
+
+def _row_to_applied_suggestion(row: aiosqlite.Row) -> AppliedSuggestion:
+    return AppliedSuggestion(
+        recommendation_id=row["recommendation_id"],
+        applied_at=Timestamp(dt=datetime.fromisoformat(row["applied_at"])),
+        symbol=row["symbol"],
+        applied_keys=json.loads(row["applied_keys"]),
+        rejected_keys=json.loads(row["rejected_keys"]),
+        model_name=row["model_name"],
+        rationale=row["rationale"],
+    )
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

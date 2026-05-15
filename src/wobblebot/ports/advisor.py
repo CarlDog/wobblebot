@@ -196,6 +196,54 @@ class AdvisorSuggestion(BaseModel):
         frozen = True
 
 
+class AppliedSuggestion(BaseModel):
+    """Audit row for a Stage 3.4b auto-applied advisor suggestion.
+
+    Lives in storage's ``applied_suggestions`` table. ``cli/apply
+    --commit`` writes one of these every time the gate clears at least
+    one key and the operator confirms the rewrite. The row captures
+    *what* changed (per-key before/after), *why* (the originating
+    suggestion's id + rationale), and *when* (applied_at).
+
+    Pairs with the source ``AdvisorSuggestion`` via ``recommendation_id``
+    so the forensic chain is: prices/news → input_summary →
+    AdvisorRecommendation → AdvisorSuggestion → AppliedSuggestion →
+    settings.yml diff.
+
+    Attributes:
+        recommendation_id: FK-style reference to the source
+            ``AdvisorRecommendation.recommendation_id``. No actual
+            FK constraint — the audit row stands on its own even if
+            the source suggestion gets pruned.
+        applied_at: When ``cli/apply --commit`` wrote the change.
+        symbol: Coin whose grid was modified (``"BTC"``).
+        applied_keys: Each key that landed, with before / after / delta.
+            Stored as JSON dicts in SQLite — empty list means the
+            audit row records a "considered but no-op" event (currently
+            unused; --commit only writes the row when something
+            applied).
+        rejected_keys: Keys that were proposed but blocked by the gate.
+            Persisting these gives the operator forensic visibility
+            into "what the LLM wanted vs what the bounds allowed."
+        model_name: Producing model identifier from the source
+            suggestion. Lets the operator filter applied-suggestions
+            history by model.
+        rationale: Free-text rationale from the source recommendation,
+            denormalized so the audit row reads standalone.
+    """
+
+    recommendation_id: str = Field(min_length=1)
+    applied_at: Timestamp
+    symbol: str = Field(min_length=1)
+    applied_keys: list[dict[str, Any]] = Field(default_factory=list)
+    rejected_keys: list[dict[str, Any]] = Field(default_factory=list)
+    model_name: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+
 class AdvisorPort(ABC):
     """Abstract interface for strategy advisor.
 

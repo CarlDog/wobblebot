@@ -168,6 +168,18 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def save_applied_suggestion(self, applied):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_applied_suggestions(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        model_name: str | None = None,
+        limit: int | None = None,
+    ):
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
