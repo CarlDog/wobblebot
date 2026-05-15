@@ -8,8 +8,8 @@ This directory contains runtime configuration files for WobbleBot. Configuration
 
 ```
 config/
-  wobblebot.example.yml   # Template configuration with documentation
-  wobblebot.yml           # Actual configuration (gitignored, created by operator)
+  settings.example.yml   # Template configuration with documentation
+  settings.yml           # Actual configuration (gitignored, created by operator)
 ```
 
 ## Configuration Approach
@@ -20,9 +20,9 @@ config/
 
 ## Usage
 
-1. Copy `wobblebot.example.yml` to `wobblebot.yml`
+1. Copy `settings.example.yml` to `settings.yml`
 2. Adjust grid parameters, safety caps, and coin settings
-3. Never commit `wobblebot.yml` (it's gitignored)
+3. Never commit `settings.yml` (it's gitignored)
 
 ## Phase Dependencies
 

@@ -81,7 +81,7 @@ cython_debug/
 
 # Project-specific
 # Secrets and configuration
-config/wobblebot.yml
+config/settings.yml
 .env
 .env.local
 *.secret

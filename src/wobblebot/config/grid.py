@@ -10,7 +10,7 @@ parameters define the layout, not behavior under trend regimes.
 
 Per-coin override semantics are deliberately strict (every field must be
 specified) rather than partial-merge. The example YAML
-(``config/wobblebot.example.yml``) follows this pattern.
+(``config/settings.example.yml``) follows this pattern.
 """
 
 from __future__ import annotations

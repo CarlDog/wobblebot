@@ -42,7 +42,7 @@ safety:
 
 class TestLoadConfig:
     def test_loads_minimal_valid_yaml(self, tmp_path: Path) -> None:
-        cfg_path = tmp_path / "wobblebot.yml"
+        cfg_path = tmp_path / "settings.yml"
         cfg_path.write_text(_MINIMAL_VALID_YAML, encoding="utf-8")
 
         cfg = load_config(cfg_path)
@@ -56,7 +56,7 @@ class TestLoadConfig:
     def test_loads_committed_example(self) -> None:
         # The repo's example file should always parse. If this breaks,
         # the example and the schema have drifted apart.
-        example = Path(__file__).resolve().parents[2] / "config" / "wobblebot.example.yml"
+        example = Path(__file__).resolve().parents[2] / "config" / "settings.example.yml"
         cfg = load_config(example)
         assert cfg.grid.default.levels_above == 5
         assert cfg.safety.max_total_exposure_usd == Decimal("1000.0")
@@ -64,7 +64,7 @@ class TestLoadConfig:
     def test_extra_top_level_keys_ignored(self, tmp_path: Path) -> None:
         # The example YAML has application/exchange/logging/database
         # sections that Stage 2.2 doesn't model. They must not break loading.
-        cfg_path = tmp_path / "wobblebot.yml"
+        cfg_path = tmp_path / "settings.yml"
         cfg_path.write_text(
             _MINIMAL_VALID_YAML + "\nlogging:\n  level: INFO\nfuture_section:\n  unknown: value\n",
             encoding="utf-8",

@@ -98,7 +98,7 @@ def grid_spacing(reference_price: Decimal, spacing_percentage: Decimal) -> Decim
     """Absolute price delta between adjacent grid levels.
 
     ``spacing_percentage`` is interpreted as a percentage of the
-    reference price (per ``config/wobblebot.example.yml``: "Grid
+    reference price (per ``config/settings.example.yml``: "Grid
     spacing as percentage of base price"), so the result has units of
     the quote currency.
     """

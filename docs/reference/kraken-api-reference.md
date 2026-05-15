@@ -69,7 +69,7 @@ their colloquial ticker symbol:
 | DOGE       | `XXDG`            | `XDGUSD`   | `XDG` |
 | (others)   | mostly identity   | varies     | identity              |
 
-The DOGE/XDG asymmetry matters: our config (`config/wobblebot.example.yml`)
+The DOGE/XDG asymmetry matters: our config (`config/settings.example.yml`)
 lists `DOGE` as a grid coin. The `Symbol → Kraken` translator needs a
 small alias table or it'll request a non-existent `DOGEUSD` pair.
 Build the alias table from `/0/public/AssetPairs` at startup rather

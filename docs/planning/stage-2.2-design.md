@@ -34,7 +34,7 @@ walk." No real Kraken orders are placed in 2.2.
 
 ## What's already in place
 
-- **Config skeleton.** `config/wobblebot.example.yml` declares `grid:`
+- **Config skeleton.** `config/settings.example.yml` declares `grid:`
   (default + per-coin overrides) and `safety:` sections with the right
   fields. Slice 2.2.1 binds these to Pydantic schemas.
 - **Port contracts.** `ExchangePort.place_order`,

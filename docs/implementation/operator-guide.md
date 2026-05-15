@@ -19,7 +19,7 @@ Each subsystem can be independently turned on, put into passive mode, or fully d
 
 ## Configuration Basics
 
-All runtime behavior is driven by configuration files, primarily `config/wobblebot.yml`.  Key sections include:
+All runtime behavior is driven by configuration files, primarily `config/settings.yml`.  Key sections include:
 
 - `assets` – List of coins to trade and their grid parameters.  Example:
 

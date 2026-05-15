@@ -125,7 +125,7 @@ Key docs to reference:
 - Deployed via **Docker Compose** on Synology NAS (or locally)
 - **SQLite** for persistence (Phase 1-2)
 - Secrets in `.env` (never committed) – see `docker/env.example`
-- Main config in `config/wobblebot.yml` (coins, grids, safety caps)
+- Main config in `config/settings.yml` (coins, grids, safety caps)
 
 ### Environment Modes
 - **Sandbox/Dev** – Paper trading, fake banking, verbose logging

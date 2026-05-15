@@ -22,7 +22,7 @@ A typical WobbleBot repository contains:
   - `docker-compose.yml` – defines the services (core, LLM, dashboard, etc.).
   - `env.example` – example environment variables (API keys, model names).  Copy this to `.env` and fill in actual values.
 - `config/`
-  - `wobblebot.yml` – the main configuration file (which coins, grid settings, safety caps, etc.).
+  - `settings.yml` – the main configuration file (which coins, grid settings, safety caps, etc.).
   - `logging.yml` – optional logging configuration.
 
 ## Basic Flow
@@ -34,7 +34,7 @@ A typical WobbleBot repository contains:
      - `KRAKEN_API_KEY` and `KRAKEN_API_SECRET` (read‑only for trading core).
      - `KRAKEN_WITHDRAW_KEY` and `KRAKEN_WITHDRAW_SECRET` (for the Harvester when active withdrawals are enabled).
      - `LLM_ENDPOINT` if using a local LLM service.
-   - Adjust `config/wobblebot.yml` for your coins, grid settings, safety caps, and enabled modules.
+   - Adjust `config/settings.yml` for your coins, grid settings, safety caps, and enabled modules.
 
 2. **Run Locally (Development)**
 
