@@ -107,7 +107,7 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
         return 0
 
 
-async def _run_loop(  # pylint: disable=too-many-arguments
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     adapter: KrakenAdapter,
     storage: SQLiteStorageAdapter,
     observe: ObserveConfig,

@@ -263,7 +263,45 @@ class NewsConfig(BaseModel):
         frozen = True
 
 
+# ---------------------------------------------------------------------------
+# Advise CLI (Stage 3.3 — Passive Advisory Workflow)
+# ---------------------------------------------------------------------------
+
+
+class AdviseConfig(BaseModel):
+    """Settings for ``cli/advise``.
+
+    Reads prices from ``observe_db`` and news from ``news_db`` (project
+    convention keeps the per-CLI DBs separated). Persists advisor
+    suggestions to its own ``db``. Cadence lives in
+    ``schedules.advise``.
+
+    ``symbol`` is singular — one advise daemon per symbol. Operators
+    who want multi-coin advisor coverage run multiple processes,
+    matching how cli/live's multi-symbol grid is already per-process.
+    """
+
+    symbol: Symbol
+    db: str = "data/wobblebot-advise.db"
+    observe_db: str = "data/wobblebot-observe.db"
+    news_db: str = "data/wobblebot-news.db"
+    metrics_lookback_hours: float = Field(default=6.0, gt=0)
+    news_lookback_hours: float = Field(default=24.0, ge=0)  # 0 disables news context
+    news_match_coin: bool = False
+    news_limit: int = Field(default=20, ge=0)
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _parse_symbol(cls, v: object) -> Symbol:
+        return _coerce_symbol(v)
+
+
 __all__ = [
+    "AdviseConfig",
     "CryptoCompareSpec",
     "LiveConfig",
     "LogFormat",

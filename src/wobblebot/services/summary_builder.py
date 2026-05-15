@@ -41,12 +41,26 @@ class SummaryBuilder:
     """Composes a ``PerformanceSummary`` from persisted history.
 
     Args:
-        storage: The ``StoragePort`` holding price snapshots, trades,
-            and news items.
+        storage: The ``StoragePort`` holding price snapshots and
+            trades. In production this is the live/shadow/observe DB,
+            depending on which the operator wants the advisor to
+            reason about.
+        news_storage: Optional separate ``StoragePort`` for news
+            items. Project convention keeps observe / news / live in
+            separate SQLite files, so the news adapter must point at
+            the news DB. Defaults to ``storage`` when ``None`` —
+            useful for tests and for setups where everything lives
+            in one DB.
     """
 
-    def __init__(self, storage: StoragePort) -> None:
+    def __init__(
+        self,
+        storage: StoragePort,
+        *,
+        news_storage: StoragePort | None = None,
+    ) -> None:
         self._storage = storage
+        self._news_storage = news_storage if news_storage is not None else storage
 
     async def build(  # pylint: disable=too-many-arguments,too-many-locals
         self,
@@ -126,7 +140,7 @@ class SummaryBuilder:
         if news_lookback is None:
             return []
         since = datetime.now(UTC) - news_lookback
-        items = await self._storage.get_news_items(since=since, limit=news_limit)
+        items = await self._news_storage.get_news_items(since=since, limit=news_limit)
         result: list[NewsItemSummary] = []
         for item in items:
             if news_match_coin and symbol.base not in item.mentioned_coins:
