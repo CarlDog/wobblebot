@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD --price-interval-seconds 30` — Stage 3.0 pure data collection. Read-only. Polls Ticker per symbol, persists to `price_snapshots` table; optionally polls BalanceEx on a slower cadence. Build a multi-week price dataset.
 - `python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD --initial-shadow-usd 10000` — Stage 3.0 shadow trading. Same engine code as `cli/live` but with `ShadowExchangeAdapter`: live Kraken prices, synthetic balance ledger, honest maker/taker fee modeling. Real-time backtest framework + Phase 3 advisor sandbox.
 
-296 unit tests pass by default; 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (33 src files), black/isort clean, pylint **9.98/10** on `src/`.
+399 unit tests pass by default (up from 296 after the config consolidation audit added 100+ tests for per-CLI schemas, prompt loader, profile resolver, and schema-drift detection); 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (42 src files), black/isort clean, pylint **10.00/10** on `src/`.
 
 ### Operator handoff: from dry-run to live trading
 
@@ -40,9 +40,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Caps split: total/daily are global, per-coin is per-symbol.** `max_total_exposure_usd` and `max_daily_spend_usd` count across every coin (computed via unfiltered `storage.get_open_orders()` / `storage.get_orders(side="buy", created_after=today)`). `max_per_coin_exposure_usd` and `max_orders_per_coin` are scoped to one symbol via the symbol filter. Same SafetyConfig instance passed to GridEngine; the engine's `_check_safety` was already symbol-aware.
 - **`--symbols` deduplicates and preserves order.** Comma-separated input. Trailing/leading whitespace tolerated. Empty entries from trailing commas silently dropped.
 
-**Next:** Config consolidation audit (queued before Stage 3.1) — every CLI currently takes its config via argparse with hardcoded defaults; the YAML loader (slice 2.2.1) is built but unused. The audit migrates operator-tunable defaults into `config/settings.example.yml`, wires CLIs to read it, adds schema-drift detection tests for the example-vs-operator file pair (and for `.env`), and refreshes the stale `docker/env.example`. Pure infrastructure; no live-money risk.
+**Config consolidation audit ✅ closed 2026-05-14** (queued before Stage 3.1, landed in eight slices). Every CLI now loads its config via `wobblebot.config.runtime.load_resolved_config(...)` with three-layer precedence (base YAML → `--profile` deep-merge → CLI flag overrides). Per-CLI sections (`live`, `shadow`, `observe`, `preflight`, `status`, `sandbox`) live in `config/settings.example.yml` alongside engine sections (`grid`, `safety`) and the Phase-3 `advisor:` block (MoE schema, ≥3 experts validator, prompt-file references). Profiles `conservative` / `aggressive` cover both `live` and `shadow`; `cloud-only-moe` swaps Ollama experts for cloud equivalents. Stale `docker/env.example` moved to repo-root `.env.example` and refreshed for Phase 2.3 reality. Schema-drift tests in `tests/config/test_schema_drift.py` keep the example/operator pairs aligned for both `settings.yml` and `.env`; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` promotes warnings to hard failures. Prompt-file infrastructure (`config/prompts/{quant,risk,news,arbitrator}.md` + `wobblebot.config.prompts.load_prompt`) is in place for Stage 3.4a to consume. New runtime dep: `python-frontmatter`.
 
-Then Phase 3 stages 3.1 → 3.5 per the roadmap (Data Collector v2 → AdvisorPort + Ollama → Passive workflow → MoE adapter with cloud-LLM experts → bounded auto-tuning → integration check). Per ADR-002 + ADR-007 the advisor cannot execute, so no new live-money risk over Phase 2.
+**Next:** Phase 3 stages 3.1 → 3.5 per the roadmap (Data Collector v2 → AdvisorPort + Ollama → Passive workflow → MoE adapter with cloud-LLM experts → bounded auto-tuning → integration check). Per ADR-002 + ADR-007 the advisor cannot execute, so no new live-money risk over Phase 2.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
@@ -177,7 +177,8 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Implementation:** `docs/implementation/coding-guidelines.md`, `module-specs.md`, `development-workflow.md`
 - **Planning:** `docs/planning/roadmap.md` (current phase), `requirements.md`, `testing-plan.md`, `stage-2.2-design.md` (next stage's slicing + ratified decisions)
 - **Kraken API reference:** `docs/reference/kraken-api-reference.md`
-- **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored)
+- **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored). Per-CLI sections + grid/safety + advisor + profiles. Operators copy this to `settings.yml` and adjust values; comments and structure stay in sync per the schema-drift tests.
+- **Prompt files:** `config/prompts/{quant,risk,news,arbitrator}.md` (committed defaults; operators edit freely). YAML frontmatter + Markdown body; loader in `wobblebot.config.prompts`.
 - **Env vars example:** `.env.example` at the repo root (single source of truth — schema-drift tests verify operator `.env` files stay in sync)
 
 ## Project-Specific Conventions
