@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorRecommendation,
+    AdvisorSuggestion,
     CurrentGridParams,
     PerformanceSummary,
 )
@@ -140,3 +141,53 @@ class TestCurrentGridParams:
         params = CurrentGridParams(spacing_percentage=1.0)
         with pytest.raises(ValidationError):
             params.spacing_percentage = 2.0  # type: ignore[misc]
+
+
+class TestAdvisorSuggestion:
+    def _make_rec(self) -> AdvisorRecommendation:
+        return AdvisorRecommendation(
+            recommendation_id="rec-1",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="single",
+            recommendations={"spacing_percentage": 1.0},
+            rationale="Test rationale.",
+            confidence="medium",
+        )
+
+    def test_minimal_valid(self) -> None:
+        s = AdvisorSuggestion(
+            recommendation=self._make_rec(),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={"symbol": "BTC/USD"},
+            model_name="phi4:14b",
+        )
+        assert s.model_name == "phi4:14b"
+
+    def test_frozen(self) -> None:
+        s = AdvisorSuggestion(
+            recommendation=self._make_rec(),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={},
+            model_name="phi4:14b",
+        )
+        with pytest.raises(ValidationError):
+            s.model_name = "qwq:32b"  # type: ignore[misc]
+
+    def test_empty_model_name_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdvisorSuggestion(
+                recommendation=self._make_rec(),
+                created_at=Timestamp(dt=datetime.now(UTC)),
+                input_summary={},
+                model_name="",
+            )
+
+    def test_input_summary_accepts_arbitrary_dict(self) -> None:
+        """Forensic store — schema not enforced on read."""
+        s = AdvisorSuggestion(
+            recommendation=self._make_rec(),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={"legacy_field": 42, "nested": {"x": [1, 2]}},
+            model_name="phi4:14b",
+        )
+        assert s.input_summary["legacy_field"] == 42

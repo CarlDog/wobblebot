@@ -8,6 +8,7 @@ depend on. Adapters implement these ports to provide concrete functionality.
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
+    AdvisorSuggestion,
     ConfidenceLevel,
     CurrentGridParams,
     PerformanceSummary,
@@ -39,6 +40,7 @@ __all__ = [
     "PerformanceSummary",
     "CurrentGridParams",
     "AdvisorRecommendation",
+    "AdvisorSuggestion",
     "ConfidenceLevel",
     # Phase 4+ ports
     "HarvesterPort",

@@ -21,6 +21,7 @@ import aiosqlite
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 
@@ -122,6 +123,23 @@ CREATE INDEX IF NOT EXISTS idx_news_items_published
     ON news_items(published_at);
 CREATE INDEX IF NOT EXISTS idx_news_items_source_time
     ON news_items(source, published_at);
+
+CREATE TABLE IF NOT EXISTS advisor_suggestions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    recommendation_id   TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    role                TEXT NOT NULL,
+    recommendations     TEXT NOT NULL,
+    rationale           TEXT NOT NULL,
+    confidence          TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+    input_summary       TEXT NOT NULL,
+    model_name          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created
+    ON advisor_suggestions(created_at);
+CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_model
+    ON advisor_suggestions(model_name, created_at);
 """
 
 
@@ -481,6 +499,67 @@ class SQLiteStorageAdapter(StoragePort):
             await conn.rollback()
             raise StorageError(f"Failed to save news item from {item.source}: {exc}") from exc
 
+    async def save_advisor_suggestion(self, suggestion: AdvisorSuggestion) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO advisor_suggestions (
+                    recommendation_id, created_at, role,
+                    recommendations, rationale, confidence,
+                    input_summary, model_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    suggestion.recommendation.recommendation_id,
+                    suggestion.created_at.dt.isoformat(),
+                    suggestion.recommendation.role,
+                    json.dumps(suggestion.recommendation.recommendations),
+                    suggestion.recommendation.rationale,
+                    suggestion.recommendation.confidence,
+                    json.dumps(suggestion.input_summary),
+                    suggestion.model_name,
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to save advisor suggestion from {suggestion.model_name}: {exc}"
+            ) from exc
+
+    async def get_advisor_suggestions(
+        self,
+        since: datetime | None = None,
+        model_name: str | None = None,
+        role: str | None = None,
+        limit: int | None = None,
+    ) -> list[AdvisorSuggestion]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since.astimezone(UTC).isoformat())
+        if model_name is not None:
+            clauses.append("model_name = ?")
+            params.append(model_name)
+        if role is not None:
+            clauses.append("role = ?")
+            params.append(role)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM advisor_suggestions{where} ORDER BY created_at DESC"
+        bound: tuple[str | int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound = (*bound, limit)
+        try:
+            async with conn.execute(sql, bound) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_advisor_suggestion(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load advisor suggestions: {exc}") from exc
+
     async def get_news_items(
         self,
         source: str | None = None,
@@ -619,4 +698,20 @@ def _row_to_news_item(row: aiosqlite.Row) -> NewsItem:
         sentiment_score=row["sentiment_score"],
         mentioned_coins=json.loads(row["mentioned_coins"]),
         fetched_at=Timestamp(dt=datetime.fromisoformat(row["fetched_at"])),
+    )
+
+
+def _row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
+    return AdvisorSuggestion(
+        recommendation=AdvisorRecommendation(
+            recommendation_id=row["recommendation_id"],
+            timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+            role=row["role"],
+            recommendations=json.loads(row["recommendations"]),
+            rationale=row["rationale"],
+            confidence=row["confidence"],
+        ),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        input_summary=json.loads(row["input_summary"]),
+        model_name=row["model_name"],
     )

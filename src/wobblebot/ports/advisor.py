@@ -125,6 +125,42 @@ class AdvisorRecommendation(BaseModel):
         frozen = True
 
 
+class AdvisorSuggestion(BaseModel):
+    """A persisted advisor recommendation augmented with audit context.
+
+    Lives in storage's ``advisor_suggestions`` table. ``cli/advise``
+    constructs one of these on every cadence-tick: it receives an
+    ``AdvisorRecommendation`` from the advisor, wraps it with the
+    ``PerformanceSummary`` that produced it and the model name that
+    generated it, then persists.
+
+    The input summary is stored as a raw ``dict[str, Any]`` rather
+    than re-validated against the current ``PerformanceSummary``
+    schema on read — historical summaries may carry fields that
+    later versions remove or rename, and we want the forensic record
+    intact. Operator inspection tools and Stage 3.4a's MoE history
+    review both read this back as-is.
+
+    Attributes:
+        recommendation: The LLM's recommendation (as produced).
+        created_at: When the suggestion was persisted.
+        input_summary: Serialized PerformanceSummary the LLM saw, as
+            a plain dict. Stored as JSON in SQLite.
+        model_name: Operator-facing identifier of the producing model
+            (e.g. ``"phi4:14b"``, ``"qwen3.6:latest"``). Forensic.
+    """
+
+    recommendation: AdvisorRecommendation
+    created_at: Timestamp
+    input_summary: dict[str, Any]
+    model_name: str = Field(min_length=1)
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 class AdvisorPort(ABC):
     """Abstract interface for strategy advisor.
 

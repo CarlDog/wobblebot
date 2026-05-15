@@ -11,6 +11,7 @@ from uuid import UUID
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.ports.advisor import AdvisorSuggestion
 
 
 class StoragePort(ABC):
@@ -249,6 +250,47 @@ class StoragePort(ABC):
         Raises:
             StorageError: If save fails for reasons other than dedup
                 (e.g. database unreachable).
+        """
+
+    # Advisor suggestion operations (Stage 3.3 — Passive Advisory Workflow)
+    @abstractmethod
+    async def save_advisor_suggestion(self, suggestion: AdvisorSuggestion) -> None:
+        """Persist an advisor suggestion (recommendation + audit context).
+
+        Per ADR-002 + ADR-007: nothing in this method or its readers
+        auto-applies the recommendation. Persistence is for operator
+        review (Stage 3.3) and future MoE aggregator history (3.4a).
+
+        Args:
+            suggestion: Complete persisted artifact.
+
+        Raises:
+            StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def get_advisor_suggestions(
+        self,
+        since: datetime | None = None,
+        model_name: str | None = None,
+        role: str | None = None,
+        limit: int | None = None,
+    ) -> list[AdvisorSuggestion]:
+        """Query persisted advisor suggestions with optional filters.
+
+        Args:
+            since: Lower bound on ``created_at`` (inclusive, tz-aware).
+            model_name: Filter to one producing model (e.g.
+                ``"phi4:14b"``).
+            role: Filter to one role (``"single"``, ``"quant"``, etc.).
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching suggestions ordered by ``created_at`` DESC
+            (newest first). Empty list if none match.
+
+        Raises:
+            StorageError: If retrieval fails.
         """
 
     @abstractmethod
