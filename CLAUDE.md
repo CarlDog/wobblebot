@@ -6,13 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Phase 2 is complete as of 2026-05-14.** All five stages (2.1, 2.2, 2.3, 2.4, 2.5) closed in a single evening session. Closing summary lives at `docs/planning/phase-2-summary.md`. Total real-money cost across both live verifications: **$0.08** (the $0.08 first-trade test in `tools/first_real_trade.py` + the $0.00 multi-coin grid run in Stage 2.5). Five operator entry points work end-to-end:
+**Phase 2 closed 2026-05-14; Phase 3 Stage 3.0 (Observer & Shadow Mode) followed in the same session.** Closing summary for Phase 2 at `docs/planning/phase-2-summary.md`. Total real-money cost across both live verifications: **$0.08** (the $0.08 first-trade test in `tools/first_real_trade.py` + the $0.00 multi-coin grid run in Stage 2.5). **Six** operator entry points work end-to-end (Stage 3.0 added `cli/observe` and `cli/shadow`):
 
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: read-only Kraken price + balance fetch.
 - `python -m wobblebot.cli.validate` — Stage 2.3 diagnostic: runs ONE engine step against live Kraken with `KrakenAdapter(dry_run=True)`. Every order goes through Kraken's `validate=true` flag — request is signed, sent, validated end-to-end (auth / pair / precision / balance / ordermin / costmin) without placing. **Use this before every live run to confirm the config is acceptable to Kraken.**
 - `python -m wobblebot.cli.live` — Stage 2.3 operational loop, **multi-asset since Stage 2.4**. Real-money trading. `--symbols BTC/USD,ETH/USD,DOGE/USD` accepts a comma-separated list; each tick steps every symbol in series. Hard caps (max session loss, max runtime, per-coin / total / daily-spend exposure) — total/daily caps are global across symbols, per-coin caps are per-symbol. Clean SIGINT/SIGTERM shutdown cancels every open order on every symbol. Exit codes: 0 clean stop, 1 loss-cap tripped, 2 missing creds. *(Originally `cli/grid`; renamed during Phase 3 sandbox prep per ADR-008 to make the live-money distinction loud vs the planned `cli/shadow`.)*
 - `python tools/first_real_trade.py` — one-shot diagnostic: places a far-from-market BUY (cancels it) + a marketable BUY/SELL round-trip with hard caps. Forensic JSONL log to `data/`. Used 2026-05-15 00:51 UTC against the operator's account; total cost $0.08 (two 0.40% taker fees on a $10 round-trip; spread effectively zero).
+- `python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD --price-interval-seconds 30` — Stage 3.0 pure data collection. Read-only. Polls Ticker per symbol, persists to `price_snapshots` table; optionally polls BalanceEx on a slower cadence. Build a multi-week price dataset.
+- `python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD --initial-shadow-usd 10000` — Stage 3.0 shadow trading. Same engine code as `cli/live` but with `ShadowExchangeAdapter`: live Kraken prices, synthetic balance ledger, honest maker/taker fee modeling. Real-time backtest framework + Phase 3 advisor sandbox.
 
 296 unit tests pass by default; 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (33 src files), black/isort clean, pylint **9.98/10** on `src/`.
 
@@ -38,14 +40,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Caps split: total/daily are global, per-coin is per-symbol.** `max_total_exposure_usd` and `max_daily_spend_usd` count across every coin (computed via unfiltered `storage.get_open_orders()` / `storage.get_orders(side="buy", created_after=today)`). `max_per_coin_exposure_usd` and `max_orders_per_coin` are scoped to one symbol via the symbol filter. Same SafetyConfig instance passed to GridEngine; the engine's `_check_safety` was already symbol-aware.
 - **`--symbols` deduplicates and preserves order.** Comma-separated input. Trailing/leading whitespace tolerated. Empty entries from trailing commas silently dropped.
 
-**Next:** Phase 3 — Strategy Advisor & Analytics. Engine and adapter layers do not change; Phase 3 sits on top:
-- **Stage 3.1:** Data Collector v2 — extend the existing `DataCollector` to compute volatility, cycle counts, win rates, drawdown over the trades/orders/balance_snapshots history.
-- **Stage 3.2:** `AdvisorPort` + local LLM (Ollama) adapter producing JSON-schema-validated recommendations. Per ADR-002, advisor is advisory-only — no execution authority.
-- **Stage 3.3:** Passive advisory workflow — periodically send summarized performance to advisor; persist suggestions; do not auto-apply.
-- **Stage 3.4:** Optional auto-tuning, bounded by configured min/max ranges.
-- **Stage 3.5:** Phase 3 integration check.
+**Next:** Config consolidation audit (queued before Stage 3.1) — every CLI currently takes its config via argparse with hardcoded defaults; the YAML loader (slice 2.2.1) is built but unused. The audit migrates operator-tunable defaults into `config/settings.example.yml`, wires CLIs to read it, adds schema-drift detection tests for the example-vs-operator file pair (and for `.env`), and refreshes the stale `docker/env.example`. Pure infrastructure; no live-money risk.
 
-Phase 3 introduces no new live-money risk over Phase 2 — the advisor layer can't execute. Suitable for fresh-eyes daylight work.
+Then Phase 3 stages 3.1 → 3.5 per the roadmap (Data Collector v2 → AdvisorPort + Ollama → Passive workflow → MoE adapter with cloud-LLM experts → bounded auto-tuning → integration check). Per ADR-002 + ADR-007 the advisor cannot execute, so no new live-money risk over Phase 2.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
