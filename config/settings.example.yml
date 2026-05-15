@@ -99,6 +99,27 @@ safety:
     min_exchange_balance_usd: 0       # informational; not yet wired
 
 # ============================================================================
+# Scheduled task cadences (Stage 3.3 Slice C.0)
+# ============================================================================
+# Every long-running daemon reads its polling interval from here.
+# Duration format: a number with a unit suffix.
+#   30s   = 30 seconds
+#   10m   = 10 minutes
+#   4h    = 4 hours
+#   7d    = 7 days
+# A bare number is treated as seconds (e.g. `30` == `30s`). Use `0s`
+# to disable a schedule whose consumer supports it (only observe's
+# balance polling does today).
+#
+# Adding a new periodic task: add a key here and have the consuming
+# CLI look it up via config.schedules.get("<name>").
+schedules:
+  observe_prices: 30s                 # cli/observe: public Ticker poll cadence
+  observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
+  news: 30m                           # cli/news: poll every enabled source
+  advise: 4h                          # cli/advise (Stage 3.3): advisor invocation cadence
+
+# ============================================================================
 # Per-CLI: live (cli/live)
 # ============================================================================
 # Knobs specific to the operational loop against real Kraken.
@@ -142,13 +163,12 @@ shadow:
 # ============================================================================
 # Per-CLI: observe (cli/observe)
 # ============================================================================
-# Pure data collection; no engine, no LLM, no orders.
+# Pure data collection; no engine, no LLM, no orders. Polling cadences
+# live in the `schedules:` block at the bottom of this file.
 observe:
   symbols:
     - BTC/USD
   db: "data/wobblebot-observe.db"
-  price_interval_seconds: 30          # public Ticker poll cadence
-  balance_interval_seconds: 600       # private BalanceEx poll cadence; 0 disables
   log_format: plain
 
 # ============================================================================
@@ -200,7 +220,6 @@ sandbox:
 # Disabling a noisy outlet is a single `enabled: false` flip.
 news:
   db: "data/wobblebot-news.db"
-  poll_interval_minutes: 30           # default 30 min; tighten for active markets
 
   rss_feeds:
     - source_id: rss:coindesk
@@ -248,7 +267,9 @@ news:
 # outweighs per-call data exposure for a hobby trading bot.
 advisor:
   type: single                        # Stage 3.2 default. Flip to `moe` via profile.
-  cadence_hours: 4                    # how often to run the advisor
+
+  # Cadence lives in the `schedules:` block at the bottom of this file
+  # (key: `advise`), alongside every other periodic-task interval.
 
   # Single-mode LLM target. Required when type=single.
   provider: ollama                    # ollama | anthropic | openai | google

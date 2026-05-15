@@ -32,6 +32,7 @@ from wobblebot.config.cli import (
 )
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
+from wobblebot.config.schedules import SchedulesConfig
 
 
 class WobbleBotConfig(BaseModel):
@@ -46,6 +47,7 @@ class WobbleBotConfig(BaseModel):
 
     grid: GridConfig
     safety: SafetyConfig
+    schedules: SchedulesConfig = Field(default_factory=lambda: SchedulesConfig(root={}))
     live: LiveConfig | None = None
     shadow: ShadowConfig | None = None
     observe: ObserveConfig | None = None

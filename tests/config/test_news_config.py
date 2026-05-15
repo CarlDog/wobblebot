@@ -58,16 +58,13 @@ class TestCryptoCompareSpec:
 
 class TestNewsConfig:
     def test_empty_valid_with_defaults(self) -> None:
+        """NewsConfig no longer carries interval; cadence lives in
+        the top-level `schedules.news` per Stage 3.3 Slice C.0."""
         cfg = NewsConfig()
         assert cfg.db == "data/wobblebot-news.db"
-        assert cfg.poll_interval_minutes == 30.0
         assert cfg.rss_feeds == []
         assert cfg.cryptocompare.enabled is False
         assert cfg.log_format == "plain"
-
-    def test_poll_interval_must_be_positive(self) -> None:
-        with pytest.raises(ValidationError):
-            NewsConfig(poll_interval_minutes=0)
 
     def test_with_multiple_feeds(self) -> None:
         cfg = NewsConfig(

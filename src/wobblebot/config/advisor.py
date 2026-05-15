@@ -124,10 +124,11 @@ class AutoApplyConfig(BaseModel):
 class AdvisorConfig(BaseModel):
     """Top-level advisor settings.
 
-    ``cadence_hours`` controls how often the engine invokes the
-    advisor. The advisor's recommendations always persist to the
-    ``advisor_suggestions`` table; whether they auto-apply is gated
-    by ``auto_apply.enabled`` (and the news-role exclusion above).
+    Advisor invocation cadence lives in the top-level ``schedules:``
+    block as ``schedules.advise``. This block holds only the
+    *what* of advisor configuration (which model, what prompt,
+    aggregator, bounds); the *when* is unified with every other
+    schedule.
 
     **Mode-specific fields:**
     - ``type=single`` requires ``provider``, ``model``, and
@@ -140,7 +141,6 @@ class AdvisorConfig(BaseModel):
     """
 
     type: AdvisorType = "single"
-    cadence_hours: float = Field(default=4.0, gt=0)
 
     # Single-mode LLM target. Required when type=single; ignored
     # when type=moe. Mirrors the ExpertConfig fields so the operator

@@ -4,13 +4,18 @@ Run as a module::
 
     python -m wobblebot.cli.observe
     python -m wobblebot.cli.observe --profile conservative
-    python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD --price-interval-seconds 30
-    python -m wobblebot.cli.observe --balance-interval-seconds 0
+    python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD
 
 **Read-only.** Uses ``KRAKEN_API_KEY`` (not the trade key). Polls
 public Ticker per symbol on the price interval and persists each
 observation. Optionally polls private BalanceEx on a slower cadence.
 Per ADR-008, this is the data-collection half of Stage 3.0.
+
+Polling cadences live in the top-level ``schedules:`` block of
+``settings.yml``: ``schedules.observe_prices`` and
+``schedules.observe_balances`` (use ``0s`` to disable the balance
+poll). Stage 3.3 Slice C.0 moved all interval fields out of per-CLI
+sections into the unified schedules block.
 
 Configuration layering (per ADR-009):
 1. Base config — ``config/settings.yml`` (or ``--config`` /
@@ -31,7 +36,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
@@ -102,22 +107,26 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
         return 0
 
 
-async def _run_loop(
+async def _run_loop(  # pylint: disable=too-many-arguments
     adapter: KrakenAdapter,
     storage: SQLiteStorageAdapter,
     observe: ObserveConfig,
+    price_interval: timedelta,
+    balance_interval: timedelta,
     stop_event: asyncio.Event,
 ) -> int:
     started_at = time.monotonic()
     last_balance_poll = 0.0
     price_polls = 0
     balance_polls = 0
+    price_interval_seconds = price_interval.total_seconds()
+    balance_interval_seconds = balance_interval.total_seconds()
     _LOGGER.info(
         "observe session start",
         extra={
             "symbols": [str(s) for s in observe.symbols],
-            "price_interval_seconds": observe.price_interval_seconds,
-            "balance_interval_seconds": observe.balance_interval_seconds,
+            "price_interval_seconds": price_interval_seconds,
+            "balance_interval_seconds": balance_interval_seconds,
             "db_path": observe.db,
         },
     )
@@ -126,16 +135,16 @@ async def _run_loop(
             persisted = await _poll_prices(adapter, storage, list(observe.symbols))
             price_polls += persisted
 
-            if observe.balance_interval_seconds > 0:
+            if balance_interval_seconds > 0:
                 elapsed_since_balance = time.monotonic() - last_balance_poll
-                if elapsed_since_balance >= observe.balance_interval_seconds:
+                if elapsed_since_balance >= balance_interval_seconds:
                     persisted_b = await _poll_balances(adapter, storage)
                     if persisted_b > 0:
                         balance_polls += 1
                     last_balance_poll = time.monotonic()
 
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=observe.price_interval_seconds)
+                await asyncio.wait_for(stop_event.wait(), timeout=price_interval_seconds)
             except asyncio.TimeoutError:
                 pass
     finally:
@@ -168,6 +177,13 @@ async def _main_async(config: WobbleBotConfig) -> int:
         return 2
 
     try:
+        price_interval = config.schedules.get("observe_prices")
+    except KeyError as exc:
+        _LOGGER.error("missing schedule", extra={"error": str(exc)})
+        return 2
+    balance_interval = config.schedules.get_or_default("observe_balances", timedelta(seconds=0))
+
+    try:
         kraken_config = KrakenConfig.from_env()  # default vars: read-only key
     except ValueError as exc:
         _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
@@ -181,7 +197,9 @@ async def _main_async(config: WobbleBotConfig) -> int:
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
     try:
-        return await _run_loop(adapter, storage, config.observe, stop_event)
+        return await _run_loop(
+            adapter, storage, config.observe, price_interval, balance_interval, stop_event
+        )
     finally:
         await adapter.aclose()
         await storage.close()
@@ -194,8 +212,6 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         {
             "symbols": ("symbols", parse_symbol_csv),
             "db": ("db", identity),
-            "price_interval_seconds": ("price_interval_seconds", identity),
-            "balance_interval_seconds": ("balance_interval_seconds", identity),
             "log_format": ("log_format", identity),
         },
     )
@@ -209,13 +225,6 @@ def main() -> int:
         "--symbols", default=None, help="Comma-separated trading pairs (e.g. BTC/USD,ETH/USD)."
     )
     parser.add_argument("--db", default=None)
-    parser.add_argument("--price-interval-seconds", type=float, default=None)
-    parser.add_argument(
-        "--balance-interval-seconds",
-        type=float,
-        default=None,
-        help="0 disables balance polling entirely.",
-    )
     parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 

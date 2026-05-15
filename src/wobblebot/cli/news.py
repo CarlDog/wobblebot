@@ -36,6 +36,7 @@ import os
 import signal
 import sys
 import time
+from datetime import timedelta
 from typing import Any
 
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
@@ -119,17 +120,18 @@ async def _run_loop(
     sources: list[NewsPort],
     storage: SQLiteStorageAdapter,
     news: NewsConfig,
+    interval: timedelta,
     stop_event: asyncio.Event,
 ) -> int:
     started_at = time.monotonic()
     total_fetched = 0
     total_saved = 0
-    interval_seconds = news.poll_interval_minutes * 60.0
+    interval_seconds = interval.total_seconds()
     _LOGGER.info(
         "news session start",
         extra={
             "sources": [s.source_id for s in sources],
-            "poll_interval_minutes": news.poll_interval_minutes,
+            "interval_seconds": interval_seconds,
             "db_path": news.db,
         },
     )
@@ -176,6 +178,12 @@ async def _main_async(config: WobbleBotConfig) -> int:
         return 2
 
     try:
+        interval = config.schedules.get("news")
+    except KeyError as exc:
+        _LOGGER.error("missing schedule", extra={"error": str(exc)})
+        return 2
+
+    try:
         sources = _build_sources(config.news)
     except RuntimeError as exc:
         _LOGGER.error("news setup failed", extra={"error": str(exc)})
@@ -192,7 +200,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
     try:
-        return await _run_loop(sources, storage, config.news, stop_event)
+        return await _run_loop(sources, storage, config.news, interval, stop_event)
     finally:
         for source in sources:
             aclose = getattr(source, "aclose", None)
@@ -213,7 +221,6 @@ def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "news",
         {
             "db": ("db", identity),
-            "poll_interval_minutes": ("poll_interval_minutes", identity),
             "log_format": ("log_format", identity),
         },
     )
@@ -224,12 +231,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
     parser.add_argument("--db", default=None)
-    parser.add_argument(
-        "--poll-interval-minutes",
-        type=float,
-        default=None,
-        help="How often to poll every source (minutes).",
-    )
     parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 

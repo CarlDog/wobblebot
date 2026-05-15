@@ -129,14 +129,13 @@ class ShadowConfig(BaseModel):
 class ObserveConfig(BaseModel):
     """Settings for ``cli/observe``.
 
-    ``balance_interval_seconds == 0`` disables the balance polling
-    branch entirely; only price snapshots will be collected.
+    Polling cadences live in the top-level ``schedules:`` block:
+    ``schedules.observe_prices`` and ``schedules.observe_balances``.
+    The balance schedule may be ``0s`` to disable balance polling.
     """
 
     symbols: list[Symbol]
     db: str = "data/wobblebot-observe.db"
-    price_interval_seconds: float = Field(default=30.0, gt=0)
-    balance_interval_seconds: float = Field(default=600.0, ge=0)  # 0 = disabled
     log_format: LogFormat = "plain"
 
     class Config:
@@ -249,13 +248,13 @@ class NewsConfig(BaseModel):
     sources are parsed but not constructed at runtime — one toggle
     to silence a noisy outlet without removing it from the YAML.
 
-    ``poll_interval_minutes`` applies uniformly to every enabled
-    source. Per ADR-007 we don't need per-source cadence at this
-    stage — news is hours-cycle anyway.
+    Polling cadence lives in the top-level ``schedules:`` block as
+    ``schedules.news`` (applies uniformly to every enabled source).
+    Per ADR-007 we don't need per-source cadence at this stage —
+    news is hours-cycle anyway.
     """
 
     db: str = "data/wobblebot-news.db"
-    poll_interval_minutes: float = Field(default=30.0, gt=0)
     rss_feeds: list[RssFeedSpec] = Field(default_factory=list)
     cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
     log_format: LogFormat = "plain"

@@ -126,17 +126,12 @@ class TestShadowConfig:
 
 class TestObserveConfig:
     def test_minimal(self) -> None:
+        """ObserveConfig no longer carries interval fields — those live
+        in the top-level `schedules:` block per Stage 3.3 Slice C.0."""
         cfg = ObserveConfig(symbols=["BTC/USD"])
-        assert cfg.price_interval_seconds == 30.0
-        assert cfg.balance_interval_seconds == 600.0
-
-    def test_balance_interval_zero_allowed(self) -> None:
-        cfg = ObserveConfig(symbols=["BTC/USD"], balance_interval_seconds=0)
-        assert cfg.balance_interval_seconds == 0
-
-    def test_price_interval_zero_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="price_interval_seconds"):
-            ObserveConfig(symbols=["BTC/USD"], price_interval_seconds=0)
+        assert [str(s) for s in cfg.symbols] == ["BTC/USD"]
+        assert cfg.db == "data/wobblebot-observe.db"
+        assert cfg.log_format == "plain"
 
 
 # ---------------------------------------------------------------------------
