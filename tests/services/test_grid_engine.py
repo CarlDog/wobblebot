@@ -482,3 +482,145 @@ class TestSafetyCaps:
         result = await engine.step(BTC_USD)
         assert result.placed == 0
         assert result.refusals == 6
+
+
+# ---------------------------------------------------------------------------
+# Multi-symbol behavior (Stage 2.4)
+# ---------------------------------------------------------------------------
+
+
+ETH_USD = Symbol(base="ETH", quote="USD")
+
+
+def _multi_exchange(
+    btc_price: str = "50000",
+    eth_price: str = "3000",
+    balance_usd: str = "100000",
+    balance_btc: str = "10",
+    balance_eth: str = "100",
+) -> MockExchangeAdapter:
+    """Mock with prices and balances for both BTC and ETH."""
+    return MockExchangeAdapter(
+        starting_balances={
+            "USD": Decimal(balance_usd),
+            "BTC": Decimal(balance_btc),
+            "ETH": Decimal(balance_eth),
+        },
+        starting_prices={
+            BTC_USD: Decimal(btc_price),
+            ETH_USD: Decimal(eth_price),
+        },
+    )
+
+
+class TestMultiSymbol:
+    async def test_independent_grid_state_per_symbol(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(
+            _multi_exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(),
+        )
+        # First tick for BTC initializes its grid
+        await engine.step(BTC_USD)
+        # First tick for ETH initializes a separate grid
+        await engine.step(ETH_USD)
+
+        btc_state = await storage.get_grid_state(BTC_USD)
+        eth_state = await storage.get_grid_state(ETH_USD)
+        assert btc_state is not None and eth_state is not None
+        assert btc_state.reference_price == Decimal("50000")
+        assert eth_state.reference_price == Decimal("3000")
+        # Each symbol got its own 6-order layout
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+        assert len(await storage.get_open_orders(symbol=ETH_USD)) == 6
+
+    async def test_global_total_exposure_cap_counts_across_symbols(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # 6 orders × $10 per coin = $60. Two coins = $120. Cap at $80
+        # should fit BTC's 6 layout orders ($60) plus only 2 ETH ones
+        # ($20 cumulative, hitting the cap at the third).
+        engine = GridEngine(
+            _multi_exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_total="80"),
+        )
+        btc_result = await engine.step(BTC_USD)
+        eth_result = await engine.step(ETH_USD)
+
+        assert btc_result.placed == 6
+        assert btc_result.refusals == 0
+        # ETH gets 2 placed before total ($60 + 2*$10 = $80, the cap),
+        # then the 3rd through 6th refuse because they'd push past.
+        assert eth_result.placed == 2
+        assert eth_result.refusals == 4
+
+    async def test_per_coin_caps_are_independent(self, storage: SQLiteStorageAdapter) -> None:
+        # Per-coin cap of 4 means each symbol can only place 4 of its 6
+        # layout orders. With two symbols this gives 8 placements total,
+        # not constrained by per-coin counting them together.
+        engine = GridEngine(
+            _multi_exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_orders=4),
+        )
+        btc_result = await engine.step(BTC_USD)
+        eth_result = await engine.step(ETH_USD)
+
+        assert btc_result.placed == 4
+        assert btc_result.refusals == 2
+        # ETH's per-coin order count starts fresh
+        assert eth_result.placed == 4
+        assert eth_result.refusals == 2
+
+    async def test_concurrent_steps_for_different_symbols_dont_block(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # Per ADR-006 decision 5, per-symbol locks let different symbols
+        # step in parallel. asyncio.gather should not deadlock and both
+        # should complete with action="initialized".
+        engine = GridEngine(
+            _multi_exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(),
+        )
+        btc_r, eth_r = await asyncio.gather(
+            engine.step(BTC_USD),
+            engine.step(ETH_USD),
+        )
+        assert btc_r.action == "initialized"
+        assert eth_r.action == "initialized"
+        assert len(await storage.get_open_orders()) == 12  # 6 + 6
+
+    async def test_one_symbol_failing_does_not_corrupt_other(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # An exchange where ETH price is missing (raises in get_current_price)
+        # but BTC works. Stepping BTC should succeed; stepping ETH should
+        # raise but leave BTC's GridState intact.
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},  # ETH absent
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        btc_result = await engine.step(BTC_USD)
+        assert btc_result.action == "initialized"
+
+        # ETH step raises because no price is set; the engine doesn't
+        # silently swallow this — adapter contract says raise on missing
+        # price. Caller (cli/grid) is the layer that catches per-symbol.
+        with pytest.raises(
+            Exception
+        ):  # ExchangeError; broad catch keeps the test focused on isolation
+            await engine.step(ETH_USD)
+
+        # BTC's state is untouched by ETH's failure
+        btc_state = await storage.get_grid_state(BTC_USD)
+        assert btc_state is not None
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+        assert await storage.get_grid_state(ETH_USD) is None
