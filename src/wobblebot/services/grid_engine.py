@@ -221,7 +221,19 @@ class GridEngine:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
             for filled in fills:
                 target = next_counter_action(filled.side, filled.price.amount, spacing)
-                placed_ok = await self._try_place(symbol, target, coin_cfg)
+                # Per ADR-006 decision 2 the counter is sized to the filled
+                # portion, not re-derived from order_size_usd. This keeps
+                # cycles base-amount-balanced — without it, each cycle's
+                # SELL would be sized in USD at the higher counter price,
+                # so the BUY/SELL BTC amounts would mismatch and the
+                # cycle would slowly accumulate or shed inventory and
+                # bleed value through the spread.
+                counter_amount = Amount(
+                    value=filled.filled_amount, asset=filled.amount.asset
+                )
+                placed_ok = await self._try_place(
+                    symbol, target, coin_cfg, amount=counter_amount
+                )
                 if placed_ok:
                     counters_placed += 1
                 else:
@@ -308,9 +320,14 @@ class GridEngine:
         symbol: Symbol,
         level: GridLevel,
         coin_cfg: CoinGridConfig,
+        amount: Amount | None = None,
     ) -> bool:
         """Run safety checks then place. Returns True if placed, False if
         refused. Refusals are logged and never raise.
+
+        ``amount`` overrides the default USD-budget-derived sizing — used
+        for counter orders, which must match the filled order's base
+        amount (ADR-006 decision 2).
 
         Storage is fully up-to-date between successive ``_try_place``
         calls within one ``step`` (the per-symbol lock prevents
@@ -331,7 +348,7 @@ class GridEngine:
                 },
             )
             return False
-        await self._place_level(symbol, level, coin_cfg)
+        await self._place_level(symbol, level, coin_cfg, amount=amount)
         return True
 
     async def _place_level(
@@ -339,19 +356,27 @@ class GridEngine:
         symbol: Symbol,
         level: GridLevel,
         coin_cfg: CoinGridConfig,
+        amount: Amount | None = None,
     ) -> None:
         """Build, place, and persist a single limit order at ``level``.
 
-        Order amount in base currency = ``order_size_usd / level.price``,
-        treating the configured size as a quote-currency budget per
-        order (matches the YAML's ``order_size_usd`` semantics).
+        Default sizing: amount in base currency = ``order_size_usd /
+        level.price``, treating the configured size as a quote-currency
+        budget per order (matches the YAML's ``order_size_usd``
+        semantics). Pass an explicit ``amount`` to override — counter
+        orders use this to match the filled order's base amount so
+        cycles balance.
         """
-        amount_value = coin_cfg.order_size_usd / level.price
+        if amount is None:
+            amount = Amount(
+                value=coin_cfg.order_size_usd / level.price,
+                asset=symbol.base,
+            )
         order = Order(
             symbol=symbol,
             side=level.side,
             price=Price(amount=level.price, currency=symbol.quote),
-            amount=Amount(value=amount_value, asset=symbol.base),
+            amount=amount,
             created_at=Timestamp(dt=datetime.now(UTC)),
         )
         placed = await self._exchange.place_order(order)
