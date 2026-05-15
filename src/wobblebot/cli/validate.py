@@ -14,7 +14,7 @@ end-to-end (auth / pair / precision / balance / ordermin / costmin)
 **without placing the order**.
 
 Exits 0 if every order validated, non-zero on any failure. Operator
-runs this before flipping to ``cli/grid`` (which actually trades).
+runs this before flipping to ``cli/live`` (which actually trades).
 
 Loads credentials from ``KRAKEN_TRADE_API_KEY`` /
 ``KRAKEN_TRADE_API_SECRET`` (separate from the read-only key per
@@ -47,7 +47,7 @@ from wobblebot.services.grid_engine import GridEngine, StepResult
 @dataclass(frozen=True)
 class _ValidateConfig:
     """All knobs for one ``cli/validate`` run, bundled per the same
-    pattern as ``cli/grid``'s ``_SessionConfig``."""
+    pattern as ``cli/live``'s ``_SessionConfig``."""
 
     symbol: Symbol
     spacing_pct: Decimal

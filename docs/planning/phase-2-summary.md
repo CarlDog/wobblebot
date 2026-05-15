@@ -17,7 +17,7 @@ operator runbook, and the entry conditions for Phase 3.
 | 2.1 Kraken Adapter Read-Only + DataCollector v1 | 2026-05-14 | 4 | `cli/check` against live BTC/USD: real auth + signing + envelope parsing for `Ticker` / `BalanceEx` / `Assets` |
 | 2.2 Micro-Grid Engine | 2026-05-14 | 5 | 1000-tick e2e oscillation against `MockExchangeAdapter`: 500 cycles, +$25 realized P&L, restart-resume preserves state |
 | 2.3 Live Paper / Tiny-Size Mode | 2026-05-14 | 5 | `tools/first_real_trade.py` against live Kraken: zero-fill cancel + marketable round-trip; **−$0.08 actual cost**, 148ms fill latency |
-| 2.4 Multi-Asset Support | 2026-05-14 | 3 | `cli/grid --symbols BTC/USD,ETH/USD` validated against live Kraken (`cli/validate` for each pair); 5 new multi-coin engine tests green |
+| 2.4 Multi-Asset Support | 2026-05-14 | 3 | `cli/live --symbols BTC/USD,ETH/USD` validated against live Kraken (`cli/validate` for each pair); 5 new multi-coin engine tests green |
 | 2.5 Phase 2 Integration Check | 2026-05-14 | 1 (this doc) | 5-minute live multi-coin run: **$0.00 P&L**, 54 ticks per coin, 6/6 open orders cleanly cancelled on runtime-cap shutdown |
 
 ## Real-money receipts
@@ -40,7 +40,7 @@ operator runbook, and the entry conditions for Phase 3.
 
 ### Receipt 2 — live multi-coin grid run (2026-05-15 01:25 UTC)
 
-`cli/grid --symbols BTC/USD,ETH/USD --max-runtime-minutes 5
+`cli/live --symbols BTC/USD,ETH/USD --max-runtime-minutes 5
 --max-session-loss-usd 5`. Forensic JSONL at `data/phase2-grid.log`
 (gitignored).
 
@@ -107,7 +107,7 @@ pipeline without needing changes to the layers below it.
    symbol you intend to run.
 4. **Open Kraken Pro in a browser tab.** Orders + Trade History view.
    The first live run is the highest-risk session — watch it.
-5. **Run the live grid:** `python -m wobblebot.cli.grid --symbols
+5. **Run the live grid:** `python -m wobblebot.cli.live --symbols
    BTC/USD,ETH/USD --max-runtime-minutes 60 --max-session-loss-usd 5`.
    Defaults: 1% spacing, 3 above + 3 below = $60 layout exposure per
    coin. Hit Ctrl+C to stop early; the `finally` block always cancels

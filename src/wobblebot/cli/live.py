@@ -2,9 +2,9 @@
 
 Run as a module::
 
-    python -m wobblebot.cli.grid
-    python -m wobblebot.cli.grid --symbols BTC/USD,ETH/USD --tick-seconds 10
-    python -m wobblebot.cli.grid --max-session-loss-usd 2 --max-runtime-minutes 30
+    python -m wobblebot.cli.live
+    python -m wobblebot.cli.live --symbols BTC/USD,ETH/USD --tick-seconds 10
+    python -m wobblebot.cli.live --max-session-loss-usd 2 --max-runtime-minutes 30
 
 **Real money trading.** Every tick may place, cancel, or refresh real
 orders on Kraken. Use ``cli/validate`` first to verify Kraken accepts
@@ -71,7 +71,7 @@ from wobblebot.services.grid_engine import GridEngine
 
 @dataclass(frozen=True)
 class _SessionConfig:  # pylint: disable=too-many-instance-attributes
-    """All knobs for one ``cli/grid`` session, bundled to keep argument
+    """All knobs for one ``cli/live`` session, bundled to keep argument
     lists from growing into pylint warnings as flags accumulate.
 
     The R0902 (too-many-instance-attributes) disable is intentional: the
@@ -95,7 +95,7 @@ class _SessionConfig:  # pylint: disable=too-many-instance-attributes
     max_daily_spend_usd: Decimal
 
 
-_LOGGER = logging.getLogger("wobblebot.cli.grid")
+_LOGGER = logging.getLogger("wobblebot.cli.live")
 
 
 def _parse_symbol(raw: str) -> Symbol:
