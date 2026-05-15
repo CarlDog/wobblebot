@@ -253,7 +253,7 @@ The operator also wants a "lurker mode" — observe the market 24/7 without trad
 ## ADR-009 — Config Consolidation: YAML + Profiles + Prompt Files
 **Status:** Accepted (planned for the config audit slated between Stage 3.0 and Stage 3.1)
 **Date:** 2026-05-14
-**Context:** Slice 2.2.1 built `WobbleBotConfig` + `load_config()` to read `grid` and `safety` sections from YAML. Then Stages 2.3, 2.4, and 3.0 shipped five operator CLIs (`cli/check`, `cli/validate`, `cli/live`, `cli/shadow`, `cli/observe`) — every one of them takes its config via argparse with hardcoded defaults. **Nothing reads the YAML.** The two layers were built in different sessions and never connected. The operator surfaced this as a real architectural gap during the Stage 3.0 evening session.
+**Context:** Slice 2.2.1 built `WobbleBotConfig` + `load_config()` to read `grid` and `safety` sections from YAML. Then Stages 2.3, 2.4, and 3.0 shipped five operator CLIs (`cli/status`, `cli/preflight`, `cli/live`, `cli/shadow`, `cli/observe`) — every one of them takes its config via argparse with hardcoded defaults. **Nothing reads the YAML.** The two layers were built in different sessions and never connected. The operator surfaced this as a real architectural gap during the Stage 3.0 evening session.
 
 Concurrently, ADR-007 introduced the Mixture-of-Experts advisor with provider-pluggable expert configurations (Ollama + cloud LLMs mixed) and per-expert prompt files. ADR-007 was specified at the architecture level; ADR-009 is where the YAML schema, profile system, and prompt-file format land.
 

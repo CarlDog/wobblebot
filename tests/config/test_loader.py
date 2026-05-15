@@ -71,9 +71,9 @@ class TestLoadConfig:
         assert cfg.live is not None
         assert cfg.shadow is not None
         assert cfg.observe is not None
-        assert cfg.validate_cli is not None
-        assert cfg.check is not None
-        assert cfg.simulate is not None
+        assert cfg.preflight is not None
+        assert cfg.status is not None
+        assert cfg.sandbox is not None
         # Advisor + profiles — also documented
         assert cfg.advisor is not None
         assert cfg.advisor.type in ("single", "moe")

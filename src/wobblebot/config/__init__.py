@@ -17,13 +17,13 @@ from wobblebot.config.advisor import (
     LLMProvider,
 )
 from wobblebot.config.cli import (
-    CheckConfig,
     LiveConfig,
     LogFormat,
     ObserveConfig,
+    PreflightConfig,
+    SandboxConfig,
     ShadowConfig,
-    SimulateConfig,
-    ValidateConfig,
+    StatusConfig,
 )
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.loader import WobbleBotConfig, load_config
@@ -37,7 +37,6 @@ __all__ = [
     "AggregatorStrategy",
     "ArbitratorConfig",
     "AutoApplyConfig",
-    "CheckConfig",
     "CoinGridConfig",
     "EmergencyStopConfig",
     "ExpertConfig",
@@ -50,10 +49,11 @@ __all__ = [
     "LiveConfig",
     "LogFormat",
     "ObserveConfig",
+    "PreflightConfig",
     "SafetyConfig",
+    "SandboxConfig",
     "ShadowConfig",
-    "SimulateConfig",
-    "ValidateConfig",
+    "StatusConfig",
     "WobbleBotConfig",
     "configure_logging",
     "deep_merge",

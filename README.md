@@ -28,7 +28,7 @@ Built using **hexagonal architecture (Ports & Adapters)** for clean boundaries, 
 
 Try the Phase 1 integration check:
 ```bash
-python -m wobblebot.cli.simulate --log-format json
+python -m wobblebot.cli.sandbox --log-format json
 ```
 
 See [docs/planning/roadmap.md](docs/planning/roadmap.md) for the full development roadmap.

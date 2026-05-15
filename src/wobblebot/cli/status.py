@@ -2,8 +2,8 @@
 
 Run as a module::
 
-    python -m wobblebot.cli.check
-    python -m wobblebot.cli.check --symbol ETH/USD
+    python -m wobblebot.cli.status
+    python -m wobblebot.cli.status --symbol ETH/USD
 
 Loads Kraken credentials from environment variables
 (``KRAKEN_API_KEY`` / ``KRAKEN_API_SECRET``, picked up automatically
@@ -49,7 +49,7 @@ def _parse_symbol(raw: str) -> Symbol:
 
 async def _run(symbol: Symbol, log_format: LogFormat) -> int:
     configure_logging(log_format=log_format)
-    logger = logging.getLogger("wobblebot.cli.check")
+    logger = logging.getLogger("wobblebot.cli.status")
 
     try:
         config = KrakenConfig.from_env()

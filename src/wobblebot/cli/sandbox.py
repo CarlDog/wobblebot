@@ -2,7 +2,7 @@
 
 Run as a module::
 
-    python -m wobblebot.cli.simulate
+    python -m wobblebot.cli.sandbox
 
 Composes the MockExchangeAdapter + SQLiteStorageAdapter +
 configure_logging stack and walks through one hard-coded buy-low /
@@ -30,7 +30,7 @@ from wobblebot.services.simulator import run_buy_dip_sell_rebound_cycle
 
 async def _run(db_path: str, log_format: str) -> int:
     configure_logging(log_format=log_format)  # type: ignore[arg-type]
-    logger = logging.getLogger("wobblebot.cli.simulate")
+    logger = logging.getLogger("wobblebot.cli.sandbox")
 
     symbol = Symbol(base="BTC", quote="USD")
     exchange = MockExchangeAdapter(

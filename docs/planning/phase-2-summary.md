@@ -14,10 +14,10 @@ operator runbook, and the entry conditions for Phase 3.
 
 | Stage | Closed | Slices | Verification |
 |---|---|---|---|
-| 2.1 Kraken Adapter Read-Only + DataCollector v1 | 2026-05-14 | 4 | `cli/check` against live BTC/USD: real auth + signing + envelope parsing for `Ticker` / `BalanceEx` / `Assets` |
+| 2.1 Kraken Adapter Read-Only + DataCollector v1 | 2026-05-14 | 4 | `cli/status` against live BTC/USD: real auth + signing + envelope parsing for `Ticker` / `BalanceEx` / `Assets` |
 | 2.2 Micro-Grid Engine | 2026-05-14 | 5 | 1000-tick e2e oscillation against `MockExchangeAdapter`: 500 cycles, +$25 realized P&L, restart-resume preserves state |
 | 2.3 Live Paper / Tiny-Size Mode | 2026-05-14 | 5 | `tools/first_real_trade.py` against live Kraken: zero-fill cancel + marketable round-trip; **−$0.08 actual cost**, 148ms fill latency |
-| 2.4 Multi-Asset Support | 2026-05-14 | 3 | `cli/live --symbols BTC/USD,ETH/USD` validated against live Kraken (`cli/validate` for each pair); 5 new multi-coin engine tests green |
+| 2.4 Multi-Asset Support | 2026-05-14 | 3 | `cli/live --symbols BTC/USD,ETH/USD` validated against live Kraken (`cli/preflight` for each pair); 5 new multi-coin engine tests green |
 | 2.5 Phase 2 Integration Check | 2026-05-14 | 1 (this doc) | 5-minute live multi-coin run: **$0.00 P&L**, 54 ticks per coin, 6/6 open orders cleanly cancelled on runtime-cap shutdown |
 
 ## Real-money receipts
@@ -98,9 +98,9 @@ pipeline without needing changes to the layers below it.
    - Trade key: above scopes + `Create & modify orders` + `Cancel & close
      orders`. **No `Withdraw`.** IP-restricted is recommended. Stored as
      `KRAKEN_TRADE_API_KEY` / `KRAKEN_TRADE_API_SECRET` in `.env`.
-2. **Sanity check the read path:** `python -m wobblebot.cli.check`. Should
+2. **Sanity check the read path:** `python -m wobblebot.cli.status`. Should
    print live BTC/USD price + your balances. Read-only — moves nothing.
-3. **Validate the grid config:** `python -m wobblebot.cli.validate
+3. **Validate the grid config:** `python -m wobblebot.cli.preflight
    --symbol BTC/USD`. Runs ONE engine step against live Kraken with the
    adapter in dry-run mode (every AddOrder request adds `validate=true`).
    Exit 0 means Kraken accepts every order in the layout. Repeat per

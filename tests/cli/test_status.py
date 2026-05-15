@@ -1,4 +1,4 @@
-"""Unit tests for the ``wobblebot.cli.check`` entry point.
+"""Unit tests for the ``wobblebot.cli.status`` entry point.
 
 The CLI's end-to-end behavior is verified by manual smoke runs and by
 ``tests/integration/test_kraken_adapter_live.py`` (which exercises the
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from wobblebot.cli.check import _parse_symbol
+from wobblebot.cli.status import _parse_symbol
 from wobblebot.domain.value_objects import Symbol
 
 pytestmark = pytest.mark.unit

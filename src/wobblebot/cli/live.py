@@ -7,7 +7,7 @@ Run as a module::
     python -m wobblebot.cli.live --max-session-loss-usd 2 --max-runtime-minutes 30
 
 **Real money trading.** Every tick may place, cancel, or refresh real
-orders on Kraken. Use ``cli/validate`` first to verify Kraken accepts
+orders on Kraken. Use ``cli/preflight`` first to verify Kraken accepts
 your grid config without spending anything; only then run this.
 
 Multi-symbol (Stage 2.4): pass ``--symbols`` as a comma-separated list

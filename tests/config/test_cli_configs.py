@@ -8,12 +8,12 @@ import pytest
 from pydantic import ValidationError
 
 from wobblebot.config.cli import (
-    CheckConfig,
+    StatusConfig,
     LiveConfig,
     ObserveConfig,
     ShadowConfig,
-    SimulateConfig,
-    ValidateConfig,
+    SandboxConfig,
+    PreflightConfig,
 )
 from wobblebot.domain.value_objects import Symbol
 
@@ -146,29 +146,29 @@ class TestObserveConfig:
 
 class TestSingleSymbolConfigs:
     def test_validate_config(self) -> None:
-        cfg = ValidateConfig(symbol="BTC/USD")
+        cfg = PreflightConfig(symbol="BTC/USD")
         assert cfg.symbol == Symbol(base="BTC", quote="USD")
 
     def test_check_config(self) -> None:
-        cfg = CheckConfig(symbol="ETH/USD")
+        cfg = StatusConfig(symbol="ETH/USD")
         assert cfg.symbol == Symbol(base="ETH", quote="USD")
 
     def test_validate_rejects_malformed_symbol(self) -> None:
         with pytest.raises(ValidationError, match="BASE/QUOTE"):
-            ValidateConfig(symbol="BTCUSD")
+            PreflightConfig(symbol="BTCUSD")
 
 
 # ---------------------------------------------------------------------------
-# SimulateConfig
+# SandboxConfig
 # ---------------------------------------------------------------------------
 
 
-class TestSimulateConfig:
+class TestSandboxConfig:
     def test_defaults(self) -> None:
-        cfg = SimulateConfig()
+        cfg = SandboxConfig()
         assert cfg.db == "data/wobblebot-sim.db"
         assert cfg.log_format == "plain"
 
     def test_db_override(self) -> None:
-        cfg = SimulateConfig(db="custom.db")
+        cfg = SandboxConfig(db="custom.db")
         assert cfg.db == "custom.db"

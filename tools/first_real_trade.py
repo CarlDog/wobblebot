@@ -2,7 +2,7 @@
 
 **This script places real orders and moves real funds.** Never run it
 unless you mean to. There is no ``--dry-run`` flag — for that, use
-``python -m wobblebot.cli.validate``.
+``python -m wobblebot.cli.preflight``.
 
 Two sub-experiments back-to-back, each with a hard-cap abort path:
 

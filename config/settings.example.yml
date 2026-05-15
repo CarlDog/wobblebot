@@ -152,30 +152,30 @@ observe:
   log_format: plain
 
 # ============================================================================
-# Per-CLI: validate (cli/validate)
+# Per-CLI: preflight (cli/preflight)
 # ============================================================================
 # Diagnostic single-step against live Kraken with adapter in
 # validate=true mode. Reads grid + safety from the sections above.
-validate:
-  symbol: BTC/USD                     # singular — validate runs ONE step
+preflight:
+  symbol: BTC/USD                     # singular — preflight runs ONE step
   log_format: plain
 
 # ============================================================================
-# Per-CLI: check (cli/check)
+# Per-CLI: status (cli/status)
 # ============================================================================
 # Read-only one-shot Kraken fetch: current price + account balances.
 # No engine, no orders. Uses KRAKEN_API_KEY (read-only key).
-check:
+status:
   symbol: BTC/USD
   log_format: plain
 
 # ============================================================================
-# Per-CLI: simulate (cli/simulate)
+# Per-CLI: sandbox (cli/sandbox)
 # ============================================================================
 # Phase 1 sandbox: hard-coded buy-dip/sell-rebound cycle through
 # MockExchangeAdapter + SQLiteStorageAdapter. No real Kraken contact.
 # Useful for verifying the hex layers wire up after a fresh checkout.
-simulate:
+sandbox:
   db: "data/wobblebot-sim.db"
   log_format: plain
 

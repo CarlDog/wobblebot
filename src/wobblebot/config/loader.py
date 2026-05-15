@@ -22,12 +22,12 @@ from pydantic import BaseModel, Field
 
 from wobblebot.config.advisor import AdvisorConfig
 from wobblebot.config.cli import (
-    CheckConfig,
+    StatusConfig,
     LiveConfig,
     ObserveConfig,
     ShadowConfig,
-    SimulateConfig,
-    ValidateConfig,
+    SandboxConfig,
+    PreflightConfig,
 )
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
@@ -48,15 +48,14 @@ class WobbleBotConfig(BaseModel):
     live: LiveConfig | None = None
     shadow: ShadowConfig | None = None
     observe: ObserveConfig | None = None
-    validate_cli: ValidateConfig | None = Field(default=None, alias="validate")
-    check: CheckConfig | None = None
-    simulate: SimulateConfig | None = None
+    preflight: PreflightConfig | None = None
+    status: StatusConfig | None = None
+    sandbox: SandboxConfig | None = None
     advisor: AdvisorConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     class Config:
         frozen = True
-        populate_by_name = True
         # Pydantic v2: this is the equivalent of populate_by_name plus
         # accepting alias on input.
 

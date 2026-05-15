@@ -1,7 +1,7 @@
 """Pydantic schemas for the per-CLI sections of settings.yml.
 
 One model per CLI entry point (cli/live, cli/shadow, cli/observe,
-cli/validate, cli/check, cli/simulate). Each holds only the knobs
+cli/preflight, cli/status, cli/sandbox). Each holds only the knobs
 that CLI cares about; engine knobs (grid, safety) and advisor knobs
 live in their own sections.
 
@@ -153,8 +153,8 @@ class ObserveConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ValidateConfig(BaseModel):
-    """Settings for ``cli/validate``. Single ``symbol`` (singular)
+class PreflightConfig(BaseModel):
+    """Settings for ``cli/preflight``. Single ``symbol`` (singular)
     because validate runs ONE engine step."""
 
     symbol: Symbol
@@ -174,8 +174,8 @@ class ValidateConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CheckConfig(BaseModel):
-    """Settings for ``cli/check`` — live read-only sanity check."""
+class StatusConfig(BaseModel):
+    """Settings for ``cli/status`` — live read-only sanity check."""
 
     symbol: Symbol
     log_format: LogFormat = "plain"
@@ -194,8 +194,8 @@ class CheckConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SimulateConfig(BaseModel):
-    """Settings for ``cli/simulate`` — mock-only paper cycle.
+class SandboxConfig(BaseModel):
+    """Settings for ``cli/sandbox`` — mock-only paper cycle.
     No symbols list; the simulator hard-codes BTC/USD scenarios."""
 
     db: str = "data/wobblebot-sim.db"
@@ -206,11 +206,11 @@ class SimulateConfig(BaseModel):
 
 
 __all__ = [
-    "CheckConfig",
+    "StatusConfig",
     "LiveConfig",
     "LogFormat",
     "ObserveConfig",
     "ShadowConfig",
-    "SimulateConfig",
-    "ValidateConfig",
+    "SandboxConfig",
+    "PreflightConfig",
 ]

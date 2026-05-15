@@ -2,9 +2,9 @@
 
 Run as a module::
 
-    python -m wobblebot.cli.validate
-    python -m wobblebot.cli.validate --symbol ETH/USD
-    python -m wobblebot.cli.validate --order-size 5 --spacing 0.5
+    python -m wobblebot.cli.preflight
+    python -m wobblebot.cli.preflight --symbol ETH/USD
+    python -m wobblebot.cli.preflight --order-size 5 --spacing 0.5
 
 Builds a ``GridEngine`` wired to ``KrakenAdapter(dry_run=True)`` plus
 an in-memory SQLite, then runs **one** ``step(symbol)`` against live
@@ -45,8 +45,8 @@ from wobblebot.services.grid_engine import GridEngine, StepResult
 
 
 @dataclass(frozen=True)
-class _ValidateConfig:
-    """All knobs for one ``cli/validate`` run, bundled per the same
+class _PreflightConfig:
+    """All knobs for one ``cli/preflight`` run, bundled per the same
     pattern as ``cli/live``'s ``_SessionConfig``."""
 
     symbol: Symbol
@@ -131,9 +131,9 @@ def _check_step_result(
     return None
 
 
-async def _run(config: _ValidateConfig) -> int:
+async def _run(config: _PreflightConfig) -> int:
     configure_logging(log_format=config.log_format)
-    logger = logging.getLogger("wobblebot.cli.validate")
+    logger = logging.getLogger("wobblebot.cli.preflight")
 
     try:
         kraken_config = KrakenConfig.from_env(
@@ -262,7 +262,7 @@ def main() -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    config = _ValidateConfig(
+    config = _PreflightConfig(
         symbol=symbol,
         spacing_pct=args.spacing,
         above=args.above,
