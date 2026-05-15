@@ -225,6 +225,51 @@ class PriceSnapshot(BaseModel):
         frozen = True
 
 
+class NewsItem(BaseModel):
+    """A single news item ingested from a NewsPort adapter.
+
+    Append-only fact. ``source`` identifies the producing adapter
+    (e.g. ``"rss:coindesk"``, ``"cryptocompare"``) and pairs with
+    ``external_id`` to form a dedup key — re-fetching the same item
+    on a later poll is a no-op at the storage layer.
+
+    ``sentiment_score`` is normalized to ``[-1, 1]`` when the source
+    provides sentiment; ``None`` for sources that don't (most RSS
+    feeds). ``mentioned_coins`` is the set of currency codes the
+    adapter extracted from the headline / body / source-provided
+    tags. Stored as a JSON list in the DB; exposed as a list here.
+
+    Attributes:
+        source: Short stable identifier for the producing adapter.
+        external_id: Source-specific ID for deduplication (RSS GUID,
+            CryptoCompare article id, etc.). ``None`` only when the
+            source genuinely has no stable ID — then duplicates are
+            possible.
+        published_at: When the item was published at the source.
+        headline: Item title / headline (required, non-empty).
+        body: Body text / summary. Empty string when none available.
+        sentiment_score: Normalized sentiment in ``[-1, 1]``, or
+            ``None`` if the source doesn't provide one.
+        mentioned_coins: Currency codes (e.g. ``["BTC", "ETH"]``)
+            mentioned in the item, ordered as the adapter found them.
+        fetched_at: When the polling adapter pulled the item.
+    """
+
+    source: str = Field(min_length=1)
+    external_id: str | None = None
+    published_at: Timestamp
+    headline: str = Field(min_length=1)
+    body: str = ""
+    sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    mentioned_coins: list[str] = Field(default_factory=list)
+    fetched_at: Timestamp = Field(default_factory=lambda: Timestamp(dt=datetime.now(UTC)))
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 class CycleStats(BaseModel):
     """Realized cycle statistics derived from trade history.
 

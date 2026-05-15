@@ -9,7 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from wobblebot.domain.grid import GridState
-from wobblebot.domain.models import Balance, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 
 
@@ -231,6 +231,53 @@ class StoragePort(ABC):
             StorageError: If save fails.
         """
         pass
+
+    # News item operations (Stage 3.2.5 — News Ingestion)
+    @abstractmethod
+    async def save_news_item(self, item: NewsItem) -> None:
+        """Persist a news item; idempotent on ``(source, external_id)``.
+
+        Re-fetching the same item across polls is a no-op at the
+        storage layer — the UNIQUE constraint on
+        ``(source, external_id)`` causes a duplicate insert to be
+        silently ignored. Items with ``external_id=None`` are always
+        inserted (no dedup possible).
+
+        Args:
+            item: NewsItem to persist.
+
+        Raises:
+            StorageError: If save fails for reasons other than dedup
+                (e.g. database unreachable).
+        """
+
+    @abstractmethod
+    async def get_news_items(
+        self,
+        source: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[NewsItem]:
+        """Query news items with optional filters.
+
+        Args:
+            source: Optional source filter (e.g. ``"rss:coindesk"``).
+            since: Optional lower bound on ``published_at``
+                (inclusive). Tz-aware required.
+            until: Optional upper bound on ``published_at``
+                (inclusive). Tz-aware required.
+            limit: Maximum number of rows to return. ``None`` means
+                unbounded.
+
+        Returns:
+            Matching items ordered by ``published_at`` DESC (newest
+            first — matches how advisor consumers want the data).
+            Empty list if none match.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
 
     @abstractmethod
     async def get_price_snapshots(

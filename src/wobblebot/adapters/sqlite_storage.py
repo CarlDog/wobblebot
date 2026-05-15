@@ -10,6 +10,7 @@ and a nullable Kraken txid for cross-system identification.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,7 +19,7 @@ from uuid import UUID
 import aiosqlite
 
 from wobblebot.domain.grid import GridState
-from wobblebot.domain.models import Balance, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
@@ -103,6 +104,24 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
     ON price_snapshots(symbol_base, symbol_quote, observed_at);
+
+CREATE TABLE IF NOT EXISTS news_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL,
+    external_id     TEXT,
+    published_at    TEXT NOT NULL,
+    headline        TEXT NOT NULL,
+    body            TEXT NOT NULL DEFAULT '',
+    sentiment_score REAL,
+    mentioned_coins TEXT NOT NULL DEFAULT '[]',
+    fetched_at      TEXT NOT NULL,
+    UNIQUE (source, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_items_published
+    ON news_items(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_items_source_time
+    ON news_items(source, published_at);
 """
 
 
@@ -436,6 +455,64 @@ class SQLiteStorageAdapter(StoragePort):
             await conn.rollback()
             raise StorageError(f"Failed to save price snapshot for {symbol}: {exc}") from exc
 
+    async def save_news_item(self, item: NewsItem) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO news_items (
+                    source, external_id, published_at, headline,
+                    body, sentiment_score, mentioned_coins, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.source,
+                    item.external_id,
+                    item.published_at.dt.isoformat(),
+                    item.headline,
+                    item.body,
+                    item.sentiment_score,
+                    json.dumps(item.mentioned_coins),
+                    item.fetched_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save news item from {item.source}: {exc}") from exc
+
+    async def get_news_items(
+        self,
+        source: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[NewsItem]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        if since is not None:
+            clauses.append("published_at >= ?")
+            params.append(since.astimezone(UTC).isoformat())
+        if until is not None:
+            clauses.append("published_at <= ?")
+            params.append(until.astimezone(UTC).isoformat())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM news_items{where} ORDER BY published_at DESC"
+        bound_params: tuple[str | int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound_params = (*bound_params, limit)
+        try:
+            async with conn.execute(sql, bound_params) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_news_item(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load news items: {exc}") from exc
+
     async def get_price_snapshots(
         self,
         symbol: Symbol | None = None,
@@ -529,4 +606,17 @@ def _row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
         symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
         price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
         observed_at=Timestamp(dt=datetime.fromisoformat(row["observed_at"])),
+    )
+
+
+def _row_to_news_item(row: aiosqlite.Row) -> NewsItem:
+    return NewsItem(
+        source=row["source"],
+        external_id=row["external_id"],
+        published_at=Timestamp(dt=datetime.fromisoformat(row["published_at"])),
+        headline=row["headline"],
+        body=row["body"] or "",
+        sentiment_score=row["sentiment_score"],
+        mentioned_coins=json.loads(row["mentioned_coins"]),
+        fetched_at=Timestamp(dt=datetime.fromisoformat(row["fetched_at"])),
     )

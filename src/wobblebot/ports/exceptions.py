@@ -73,3 +73,12 @@ class DataCollectorError(WobbleBotPortError):
     Examples: upstream price feed unreachable, derived metric
     calculation fails, cache stampede.
     """
+
+
+class NewsError(WobbleBotPortError):
+    """Raised when a ``NewsPort`` operation fails.
+
+    Examples: RSS feed unreachable, news API returns 5xx, response
+    body is malformed XML/JSON, the feed exists but is empty in a way
+    that suggests an upstream change rather than legitimate quiet.
+    """

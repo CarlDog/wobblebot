@@ -18,12 +18,14 @@ from wobblebot.ports.exceptions import (
     DataCollectorError,
     ExchangeError,
     HarvesterError,
+    NewsError,
     NotifierError,
     StorageError,
     WobbleBotPortError,
 )
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import HarvesterPort, TransferProposal, TransferResult
+from wobblebot.ports.news import NewsPort
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
 
@@ -45,6 +47,8 @@ __all__ = [
     # Future ports
     "NotifierPort",
     "Notification",
+    # Phase 3.2.5 — news ingestion
+    "NewsPort",
     # Data Collector types
     "MarketSnapshot",
     # Port-layer exceptions
@@ -55,4 +59,5 @@ __all__ = [
     "HarvesterError",
     "NotifierError",
     "DataCollectorError",
+    "NewsError",
 ]
