@@ -18,7 +18,7 @@ from uuid import UUID
 import aiosqlite
 
 from wobblebot.domain.grid import GridState
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
@@ -436,6 +436,38 @@ class SQLiteStorageAdapter(StoragePort):
             await conn.rollback()
             raise StorageError(f"Failed to save price snapshot for {symbol}: {exc}") from exc
 
+    async def get_price_snapshots(
+        self,
+        symbol: Symbol | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[PriceSnapshot]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if symbol is not None:
+            clauses.append("symbol_base = ? AND symbol_quote = ?")
+            params.extend([symbol.base, symbol.quote])
+        if start_time is not None:
+            clauses.append("observed_at >= ?")
+            params.append(start_time.astimezone(UTC).isoformat())
+        if end_time is not None:
+            clauses.append("observed_at <= ?")
+            params.append(end_time.astimezone(UTC).isoformat())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM price_snapshots{where} ORDER BY observed_at"
+        bound_params: tuple[str | int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound_params = (*bound_params, limit)
+        try:
+            async with conn.execute(sql, bound_params) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_price_snapshot(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load price snapshots: {exc}") from exc
+
     async def get_grid_state(self, symbol: Symbol) -> GridState | None:
         conn = self._require_conn()
         try:
@@ -489,4 +521,12 @@ def _row_to_trade(row: aiosqlite.Row) -> Trade:
         fee=Decimal(row["fee"]),
         cost=Decimal(row["cost"]),
         executed_at=Timestamp(dt=datetime.fromisoformat(row["executed_at"])),
+    )
+
+
+def _row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
+    return PriceSnapshot(
+        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
+        observed_at=Timestamp(dt=datetime.fromisoformat(row["observed_at"])),
     )

@@ -9,7 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from wobblebot.domain.grid import GridState
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 
 
@@ -229,5 +229,40 @@ class StoragePort(ABC):
 
         Raises:
             StorageError: If save fails.
+        """
+        pass
+
+    @abstractmethod
+    async def get_price_snapshots(
+        self,
+        symbol: Symbol | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[PriceSnapshot]:
+        """Read price-snapshot history with optional filters (Stage 3.1).
+
+        ``DataCollector v2`` calls this to compute rolling metrics off
+        the tape that ``cli/observe`` has been writing.
+
+        Args:
+            symbol: Optional symbol filter. When ``None``, returns
+                snapshots for every symbol mixed together — rarely
+                useful, but matches the ``get_trades`` pattern.
+            start_time: Optional lower bound on ``observed_at``
+                (inclusive). Must be tz-aware.
+            end_time: Optional upper bound on ``observed_at``
+                (inclusive). Must be tz-aware.
+            limit: Maximum number of rows to return. ``None`` means
+                unbounded — appropriate for windowed reads where the
+                window itself caps the volume.
+
+        Returns:
+            Matching snapshots ordered by ``observed_at`` ascending
+            (oldest first), so callers can pipe directly into a
+            chronological series. Empty list if none match.
+
+        Raises:
+            StorageError: If retrieval fails.
         """
         pass

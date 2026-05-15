@@ -194,3 +194,32 @@ class Balance(BaseModel):
         """Pydantic config."""
 
         frozen = True
+
+
+class PriceSnapshot(BaseModel):
+    """Single observed price for a symbol at a point in time.
+
+    Append-only row in the ``price_snapshots`` table. ``cli/observe``
+    writes one per poll; ``DataCollector v2`` (Stage 3.1) reads them
+    back to compute volatility, drawdown, and other rolling metrics.
+
+    Kept distinct from ``ports.data_collector.MarketSnapshot``: this
+    model is the storage row shape and stays narrow, while
+    ``MarketSnapshot`` is the DataCollector return shape and is
+    expected to grow (volume, indicators, etc.) without disturbing
+    the on-disk format.
+
+    Attributes:
+        symbol: Trading pair the price is for.
+        price: The observed price.
+        observed_at: When the observation was made.
+    """
+
+    symbol: Symbol
+    price: Price
+    observed_at: Timestamp
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
