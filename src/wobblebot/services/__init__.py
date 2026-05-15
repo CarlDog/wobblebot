@@ -9,6 +9,12 @@ from wobblebot.services.aggregators import (
     aggregate_voting,
     aggregate_weighted_confidence,
 )
+from wobblebot.services.auto_apply import (
+    AppliedKey,
+    AutoApplyResult,
+    RejectedKey,
+    evaluate_auto_apply,
+)
 from wobblebot.services.grid_engine import GridEngine, StepResult
 from wobblebot.services.metrics import (
     CycleStats,
@@ -21,8 +27,11 @@ from wobblebot.services.simulator import SimulationResult, run_buy_dip_sell_rebo
 from wobblebot.services.summary_builder import SummaryBuilder
 
 __all__ = [
+    "AppliedKey",
+    "AutoApplyResult",
     "CycleStats",
     "GridEngine",
+    "RejectedKey",
     "SimulationResult",
     "StepResult",
     "SummaryBuilder",
@@ -32,5 +41,6 @@ __all__ = [
     "compute_flatness",
     "compute_max_drawdown",
     "compute_volatility",
+    "evaluate_auto_apply",
     "run_buy_dip_sell_rebound_cycle",
 ]
