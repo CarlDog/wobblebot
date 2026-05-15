@@ -96,6 +96,9 @@ config/wobblebot.yml
 logs/
 *.log
 
+# Forensic records from live trade tools (txids + timestamps; per-session)
+data/
+
 # Docker
 docker-compose.override.yml
 
