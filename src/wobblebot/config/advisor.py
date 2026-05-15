@@ -42,10 +42,21 @@ class InferenceParams(BaseModel):
 
     Defaults are conservative; experts override per-role (the news
     expert might want higher temperature than the quant expert).
+
+    ``timeout_seconds`` is the HTTP read timeout for the underlying
+    provider call. 60s is plenty for 14B-class models. Bump to 180+
+    for 70B+ models or thinking-style models (R1, o1, etc.) where
+    the chain-of-thought phase adds latency.
+
+    ``max_tokens`` bounds the model's output budget. For thinking
+    models the budget must cover both the ``<think>...</think>``
+    reasoning AND the JSON answer — 2048 is a sensible floor; 512
+    is fine for non-thinking models.
     """
 
     temperature: Decimal = Field(default=Decimal("0.5"), ge=Decimal("0"), le=Decimal("2"))
     max_tokens: int = Field(default=512, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0)
 
     class Config:
         frozen = True

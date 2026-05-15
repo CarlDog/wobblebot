@@ -208,7 +208,10 @@ advisor:
   prompt_file: "config/prompts/quant.md"
   inference_params:
     temperature: 0.5
-    max_tokens: 512
+    max_tokens: 512                   # bump to 2048 for thinking models (R1, o1) —
+                                      # they need room for <think> + the JSON answer
+    timeout_seconds: 60               # bump to 180+ for 70B-class models or any
+                                      # thinking model whose chain-of-thought is long
 
   # Bounded auto-tuning. Off by default. Per ADR-007, news-derived
   # recommendations NEVER auto-apply regardless of these bounds —

@@ -133,6 +133,7 @@ def _build_adapter(advisor: AdvisorConfig) -> OllamaAdapter:
         base_url=base_url,
         temperature=float(advisor.inference_params.temperature),
         max_tokens=advisor.inference_params.max_tokens,
+        timeout_seconds=advisor.inference_params.timeout_seconds,
     )
 
 

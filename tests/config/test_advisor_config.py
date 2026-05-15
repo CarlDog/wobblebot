@@ -228,10 +228,20 @@ class TestSubConfigDefaults:
         p = InferenceParams()
         assert p.temperature == Decimal("0.5")
         assert p.max_tokens == 512
+        assert p.timeout_seconds == 60.0
 
     def test_inference_params_temperature_clamped(self) -> None:
         with pytest.raises(ValidationError, match="temperature"):
             InferenceParams(temperature=Decimal("2.5"))
+
+    def test_inference_params_timeout_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError, match="timeout_seconds"):
+            InferenceParams(timeout_seconds=0)
+
+    def test_inference_params_timeout_override(self) -> None:
+        # 70B-class or thinking models need a bigger budget
+        p = InferenceParams(timeout_seconds=180.0)
+        assert p.timeout_seconds == 180.0
 
     def test_auto_apply_off_by_default(self) -> None:
         p = AutoApplyConfig()
