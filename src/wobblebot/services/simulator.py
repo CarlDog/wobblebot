@@ -34,7 +34,10 @@ class SimulationResult:
     final_balances: list[Balance] = field(default_factory=list)
 
 
-async def run_buy_dip_sell_rebound_cycle(
+async def run_buy_dip_sell_rebound_cycle(  # pylint: disable=too-many-arguments
+    # R0913 disable: this is a Phase 1 sandbox helper called from one
+    # place (cli/sandbox). Bundling the keyword args into a config
+    # dataclass would just be ceremony for a hard-coded scenario.
     exchange: MockExchangeAdapter,
     storage: StoragePort,
     *,

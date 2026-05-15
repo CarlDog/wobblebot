@@ -149,6 +149,8 @@ class ShadowExchangeAdapter(ExchangePort):
             # composition end-to-end and per-call swap is intentional —
             # the alternative (forking the mock or duplicating its
             # matching engine) is much worse.
+            # pylint: disable=protected-access  # composed adapter; per-call
+            # fee swap is intentional (see class docstring's fee model).
             self._mock._fee_rate = (  # noqa: SLF001
                 self._taker_fee_rate if is_taker else self._maker_fee_rate
             )

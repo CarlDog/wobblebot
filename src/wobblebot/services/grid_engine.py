@@ -204,7 +204,12 @@ class GridEngine:
 
     # ------------------------------------------------------------------ subsequent ticks
 
-    async def _tick(
+    async def _tick(  # pylint: disable=too-many-locals
+        # R0914 disable: every local here represents a distinct
+        # tick-stage signal (levels, offside, fills, trade_ids,
+        # counters_placed, refusals, spacing, target, counter_amount,
+        # placed_ok, ...). Splitting into helpers would obscure the
+        # tick's linear flow without removing complexity.
         self,
         symbol: Symbol,
         current_price: Decimal,
