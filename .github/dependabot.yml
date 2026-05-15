@@ -1,0 +1,54 @@
+# Dependabot configuration — https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Watches dependency manifests and opens PRs when updates are available.
+# Pip ecosystem reads pyproject.toml + .[dev] extras.
+#
+# Cadence is weekly to keep PR noise manageable for a hobby project.
+# Security updates land regardless of schedule (Dependabot's separate
+# security-alerts pipeline). open-pull-requests-limit caps how many
+# upgrade PRs can be in flight per ecosystem at once.
+#
+# Commit message prefix matches the convention already used in this
+# repo (lowercase verb-of-action: deps, fix, refactor, etc.).
+
+version: 2
+updates:
+  # Python dependencies (pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    # Group minor + patch updates together; major upgrades remain
+    # individual PRs because they typically require code review.
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions workflows (none yet, but reserved — when CI lands,
+  # action versions will need updates too)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
