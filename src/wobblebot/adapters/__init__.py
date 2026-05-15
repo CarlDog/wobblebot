@@ -13,6 +13,12 @@ separate banking adapter.
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama import OllamaAdapter
+from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 
-__all__ = ["MockExchangeAdapter", "OllamaAdapter", "SQLiteStorageAdapter"]
+__all__ = [
+    "MockExchangeAdapter",
+    "OllamaAdapter",
+    "RssNewsAdapter",
+    "SQLiteStorageAdapter",
+]
