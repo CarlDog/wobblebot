@@ -42,21 +42,36 @@ class KrakenConfig(BaseModel):
         frozen = True
 
     @classmethod
-    def from_env(cls) -> KrakenConfig:
+    def from_env(
+        cls,
+        key_var: str = _KEY_ENV,
+        secret_var: str = _SECRET_ENV,
+        base_url_var: str = _BASE_URL_ENV,
+    ) -> KrakenConfig:
         """Load credentials from environment variables.
 
-        Required: ``KRAKEN_API_KEY``, ``KRAKEN_API_SECRET``.
-        Optional: ``KRAKEN_BASE_URL`` (overrides default; useful for
-        pointing tests at a local mock).
+        Default vars: ``KRAKEN_API_KEY``, ``KRAKEN_API_SECRET``,
+        ``KRAKEN_BASE_URL``. Per ADR-003-style separation, callers can
+        load a *different* key (e.g. the Stage 2.3 trading key) by
+        passing alternate var names — this lets the project keep
+        multiple Kraken keys in ``.env`` without overwriting each
+        other.
+
+        Args:
+            key_var: Env var holding the public API key. Default
+                ``KRAKEN_API_KEY``.
+            secret_var: Env var holding the base64-encoded API secret.
+                Default ``KRAKEN_API_SECRET``.
+            base_url_var: Env var holding the API base URL. Default
+                ``KRAKEN_BASE_URL`` (falls back to the public Kraken
+                endpoint when unset).
 
         Raises:
             ValueError: If either credential env var is unset or empty.
         """
-        api_key = os.environ.get(_KEY_ENV)
-        api_secret = os.environ.get(_SECRET_ENV)
-        missing = [
-            name for name, val in ((_KEY_ENV, api_key), (_SECRET_ENV, api_secret)) if not val
-        ]
+        api_key = os.environ.get(key_var)
+        api_secret = os.environ.get(secret_var)
+        missing = [name for name, val in ((key_var, api_key), (secret_var, api_secret)) if not val]
         if missing:
             raise ValueError(f"Missing required Kraken credential env vars: {', '.join(missing)}")
         # mypy: the comprehension above proves api_key/api_secret are truthy here.
@@ -65,5 +80,5 @@ class KrakenConfig(BaseModel):
         return cls(
             api_key=api_key,
             api_secret=api_secret,
-            base_url=os.environ.get(_BASE_URL_ENV, _DEFAULT_BASE_URL),
+            base_url=os.environ.get(base_url_var, _DEFAULT_BASE_URL),
         )
