@@ -180,6 +180,54 @@ sandbox:
   log_format: plain
 
 # ============================================================================
+# News ingestion (Stage 3.2.5 — see ADR-007)
+# ============================================================================
+# Long-running daemon (`python -m wobblebot.cli.news`) that polls every
+# enabled source and persists items to news_items. Storage dedup is
+# UNIQUE(source, external_id), so re-fetching across polls is a no-op.
+#
+# Two source types ship in v1:
+#   - RSS feeds (no auth, any feed URL works)
+#   - CryptoCompare News (free tier; requires CRYPTOCOMPARE_API_KEY)
+#
+# The original ADR-007 plan named CryptoPanic + Whale-alert; both went
+# paid-only after the ADR was written, so v1 pivots to RSS +
+# CryptoCompare. NewsPort stays abstract — operators can plug in paid
+# sources later if they want.
+#
+# Per-source dedup means leaving overlapping feeds enabled is safe;
+# the storage layer keeps one row per (source, external_id) pair.
+# Disabling a noisy outlet is a single `enabled: false` flip.
+news:
+  db: "data/wobblebot-news.db"
+  poll_interval_minutes: 30           # default 30 min; tighten for active markets
+
+  rss_feeds:
+    - source_id: rss:coindesk
+      url: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      enabled: true
+    - source_id: rss:decrypt
+      url: "https://decrypt.co/feed"
+      enabled: true
+    - source_id: rss:theblock
+      url: "https://www.theblock.co/rss.xml"
+      enabled: true
+    - source_id: rss:cointelegraph
+      url: "https://cointelegraph.com/rss"
+      enabled: false                  # noisier; flip on if you want broader coverage
+
+  # CryptoCompare News (aggregator; free tier requires API key).
+  # Substantially overlaps with RSS coverage. Keep enabled for 90 days
+  # then evaluate whether the additional source diversity earns its
+  # place vs. simply running more RSS feeds.
+  cryptocompare:
+    enabled: true
+    lang: EN
+    # categories: "BTC|ETH"            # optional pipe-separated filter
+
+  log_format: plain
+
+# ============================================================================
 # Strategy Advisor (Phase 3 — see ADR-007 + ADR-009)
 # ============================================================================
 # Two modes:

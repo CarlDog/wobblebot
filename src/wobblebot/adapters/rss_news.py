@@ -141,7 +141,11 @@ class RssNewsAdapter(NewsPort):
         self._feed_url = feed_url
         self._user_agent = user_agent
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        # follow_redirects=True is essential — RSS feeds frequently
+        # redirect (http→https, vanity URLs to CDN paths, etc.).
+        self._client = client or httpx.AsyncClient(
+            timeout=timeout_seconds, follow_redirects=True
+        )
 
     @property
     def source_id(self) -> str:
