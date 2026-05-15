@@ -6,15 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Stage 2.3 (Live Paper / Tiny-Size Mode) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stages 2.1 and 2.2 both closed 2026-05-14 earlier the same day. Five operator entry points work end-to-end:
+**Stage 2.4 (Multi-Asset Support) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stages 2.1, 2.2, 2.3, 2.4 all closed 2026-05-14 — same evening session. Five operator entry points work end-to-end:
 
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.check` — Stage 2.1 live read check: read-only Kraken price + balance fetch.
 - `python -m wobblebot.cli.validate` — Stage 2.3 diagnostic: runs ONE engine step against live Kraken with `KrakenAdapter(dry_run=True)`. Every order goes through Kraken's `validate=true` flag — request is signed, sent, validated end-to-end (auth / pair / precision / balance / ordermin / costmin) without placing. **Use this before every live run to confirm the config is acceptable to Kraken.**
-- `python -m wobblebot.cli.grid` — Stage 2.3 operational loop. Real-money trading. Tick loop at the configured rate, hard caps (max session loss, max runtime, per-coin / total / daily-spend exposure), clean SIGINT/SIGTERM shutdown that cancels every open order. Exit codes: 0 clean stop, 1 loss-cap tripped, 2 missing creds.
+- `python -m wobblebot.cli.grid` — Stage 2.3 operational loop, **multi-asset since Stage 2.4**. Real-money trading. `--symbols BTC/USD,ETH/USD,DOGE/USD` accepts a comma-separated list; each tick steps every symbol in series. Hard caps (max session loss, max runtime, per-coin / total / daily-spend exposure) — total/daily caps are global across symbols, per-coin caps are per-symbol. Clean SIGINT/SIGTERM shutdown cancels every open order on every symbol. Exit codes: 0 clean stop, 1 loss-cap tripped, 2 missing creds.
 - `python tools/first_real_trade.py` — one-shot diagnostic: places a far-from-market BUY (cancels it) + a marketable BUY/SELL round-trip with hard caps. Forensic JSONL log to `data/`. Used 2026-05-15 00:51 UTC against the operator's account; total cost $0.08 (two 0.40% taker fees on a $10 round-trip; spread effectively zero).
 
-291 unit tests pass by default; 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (33 src files), black/isort clean, pylint **9.98/10** on `src/`.
+296 unit tests pass by default; 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (33 src files), black/isort clean, pylint **9.98/10** on `src/`.
 
 ### Operator handoff: from dry-run to live trading
 
@@ -31,7 +31,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Live taker fee is 0.40%, not the mock's 0.26%.** Discovered during the 2026-05-15 first-trade test: $0.04 fee on each $9.99 leg of a marketable round-trip = 0.40%. The mock uses 0.26% (Kraken maker rate, conservative). The grid engine in normal operation places limit orders that sit on the book — those collect MAKER fees, so the mock's assumption is right *for the engine's normal mode*; the gap only shows up on marketable orders (which the engine doesn't normally place).
 - **Cleanup discipline in the loop.** `cli/grid`'s shutdown path cancels every open order for the symbol in a `finally` block, regardless of why the loop ended (signal, runtime cap, loss cap, exception). The session-end log records before/after USD balance, session PnL, cancellations succeeded/failed.
 
-**Next:** Stage 2.4 — Multi-Asset Support. Extend the engine wiring to run grids for multiple coins from the whitelist (`GridConfig.coins` already supports this; `cli/grid` currently takes a single `--symbol`). Then Stage 2.5 — Phase 2 Integration Check (full pipeline demo with multiple assets, live Kraken, withdrawals still disabled at the API-key level). Both can land code-only without escalating live-trading risk.
+### Stage 2.4 design decisions ratified
+
+- **Symbols step in series within a tick.** Per ADR-006 decision 5, the per-symbol asyncio.Lock makes parallelization safe — but at measured ~150ms per-symbol latency vs the 5s tick budget, even a 30-coin serial sweep finishes in well under one tick. Parallelization (asyncio.gather) deferred to Phase 5 hardening if profiling ever shows the master-task throughput is a bottleneck.
+- **Per-symbol step errors are swallowed at the CLI layer.** One bad coin (network blip, Kraken returning EService:Unavailable) cannot kill the tick or the session. The engine surfaces the error; `_run_one_tick` logs it with structured fields and continues to the next symbol.
+- **Caps split: total/daily are global, per-coin is per-symbol.** `max_total_exposure_usd` and `max_daily_spend_usd` count across every coin (computed via unfiltered `storage.get_open_orders()` / `storage.get_orders(side="buy", created_after=today)`). `max_per_coin_exposure_usd` and `max_orders_per_coin` are scoped to one symbol via the symbol filter. Same SafetyConfig instance passed to GridEngine; the engine's `_check_safety` was already symbol-aware.
+- **`--symbols` deduplicates and preserves order.** Comma-separated input. Trailing/leading whitespace tolerated. Empty entries from trailing commas silently dropped.
+
+**Next:** Stage 2.5 — Phase 2 Integration Check. Final stage of Phase 2; the spec is "demonstrate a full pipeline: configuration → live Kraken adapter + DataCollector → micro-grid engine → logs and database entries; all withdrawals remain disabled at the API key level." Two ways to satisfy:
+1. **Documentation deliverable:** `docs/planning/phase-2-summary.md` consolidating what works, the operator runbook, the $0.08 evidence — pure docs, no new code.
+2. **Live multi-coin run:** invoke `cli/grid --symbols BTC/USD,ETH/USD --max-runtime-minutes 5 --max-session-loss-usd 5` and capture receipts. Real money, second commitment of the session. Bounded by the same $5 cap.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
