@@ -67,6 +67,26 @@ def _ollama_response(inner_json: dict[str, object] | str) -> dict[str, object]:
     }
 
 
+def _ollama_split_response(
+    *,
+    response: str = "",
+    thinking: str = "",
+) -> dict[str, object]:
+    """Envelope shape for newer Ollama versions that split thinking + response.
+
+    Some models (qwen3, nemotron3) emit the actual JSON answer into the
+    `thinking` field, leaving `response` empty even when ``format: "json"``
+    was requested.
+    """
+    return {
+        "model": "test-model",
+        "created_at": "2026-05-15T12:00:00Z",
+        "response": response,
+        "thinking": thinking,
+        "done": True,
+    }
+
+
 def _build_adapter(
     transport: httpx.MockTransport,
     *,
@@ -222,7 +242,7 @@ class TestGetRecommendationErrorPaths:
 
         adapter = _build_adapter(httpx.MockTransport(handler))
         try:
-            with pytest.raises(AdvisorError, match="missing or empty 'response' field"):
+            with pytest.raises(AdvisorError, match="empty across both"):
                 await adapter.get_recommendation(_make_summary())
         finally:
             await adapter.aclose()
@@ -552,3 +572,156 @@ class TestThinkingModelGetRecommendation:
         body = captured["body"]
         assert isinstance(body, dict)
         assert body["format"] == "json"
+
+
+@pytest.mark.asyncio
+class TestSplitResponseEnvelope:
+    """Newer Ollama versions emit `{response, thinking}` as separate envelope
+    fields. Some models (qwen3 / nemotron3) put the actual JSON answer into
+    `thinking` and leave `response` empty even when format=json was requested.
+    The adapter must extract from `thinking` in that case."""
+
+    async def test_empty_response_with_json_in_thinking(self) -> None:
+        """qwen3-style: response empty, thinking has the JSON answer."""
+        answer_json = json.dumps(
+            {
+                "role": "quant",
+                "recommendations": {"spacing_percentage": 1.3},
+                "rationale": "Vol tight; widen.",
+                "confidence": "medium",
+            }
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_split_response(response="", thinking=answer_json),
+            )
+
+        # Non-thinking model name on purpose — qwen3.6 doesn't match our
+        # name-pattern detection but still emits split-response. The
+        # response-empty path must handle this regardless of model name.
+        adapter = OllamaAdapter(
+            model="qwen3.6:latest",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+        assert rec.recommendations == {"spacing_percentage": 1.3}
+        assert rec.confidence == "medium"
+
+    async def test_empty_response_with_thinking_preamble_and_json(self) -> None:
+        """Thinking field contains both the chain-of-thought AND the answer JSON."""
+        thinking_blob = (
+            "Let me analyze the metrics.\n"
+            "Volatility is low at 0.04%. Drawdown is moderate.\n"
+            "I should widen the grid slightly.\n\n"
+            + json.dumps(
+                {
+                    "role": "quant",
+                    "recommendations": {"spacing_percentage": 1.2},
+                    "rationale": "Low vol; widen.",
+                    "confidence": "high",
+                }
+            )
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_split_response(response="", thinking=thinking_blob),
+            )
+
+        adapter = OllamaAdapter(
+            model="nemotron3:33b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+        assert rec.recommendations == {"spacing_percentage": 1.2}
+        assert rec.confidence == "high"
+
+    async def test_response_populated_takes_precedence(self) -> None:
+        """When response is populated, the thinking field is ignored on the
+        non-thinking path (existing behaviour preserved)."""
+        answer_json = json.dumps(
+            {
+                "role": "quant",
+                "recommendations": {},
+                "rationale": "ok",
+                "confidence": "low",
+            }
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_split_response(
+                    response=answer_json, thinking="stray reasoning that should be ignored"
+                ),
+            )
+
+        adapter = OllamaAdapter(
+            model="phi4:14b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+        # Non-thinking model + populated response → standard json.loads path.
+        assert rec.rationale == "ok"
+
+    async def test_both_fields_empty_raises_clean_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_ollama_split_response(response="", thinking=""))
+
+        adapter = OllamaAdapter(
+            model="qwen3.6:latest",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            with pytest.raises(AdvisorError, match="empty across both"):
+                await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+
+    async def test_thinking_mode_model_combines_response_and_thinking(self) -> None:
+        """Thinking-mode model (R1) on newer Ollama: combined extraction
+        catches the answer regardless of which field holds it."""
+        answer_json = json.dumps(
+            {
+                "role": "single",
+                "recommendations": {"order_size_usd": 8},
+                "rationale": "Combined-text extraction works.",
+                "confidence": "medium",
+            }
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_split_response(
+                    response="",  # Ollama parked the answer in thinking
+                    thinking="<think>chain of thought</think>\n" + answer_json,
+                ),
+            )
+
+        adapter = OllamaAdapter(
+            model="deepseek-r1:14b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+        assert rec.recommendations == {"order_size_usd": 8}

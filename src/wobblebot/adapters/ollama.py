@@ -157,7 +157,9 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         if self._owns_client:
             await self._client.aclose()
 
-    async def get_recommendation(self, summary: PerformanceSummary) -> AdvisorRecommendation:
+    async def get_recommendation(  # pylint: disable=too-many-locals
+        self, summary: PerformanceSummary
+    ) -> AdvisorRecommendation:
         user_message = (
             "Current engine state (JSON):\n\n"
             f"{summary.model_dump_json(indent=2)}\n\n"
@@ -188,17 +190,34 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         except httpx.HTTPError as exc:
             raise AdvisorError(f"Ollama request failed: {exc}") from exc
 
-        raw_response = ollama_envelope.get("response")
-        if not isinstance(raw_response, str) or not raw_response.strip():
+        raw_response_field = ollama_envelope.get("response")
+        raw_thinking_field = ollama_envelope.get("thinking")
+        raw_response = raw_response_field if isinstance(raw_response_field, str) else ""
+        raw_thinking = raw_thinking_field if isinstance(raw_thinking_field, str) else ""
+        response_empty = not raw_response.strip()
+        thinking_present = bool(raw_thinking.strip())
+
+        if response_empty and not thinking_present:
             raise AdvisorError(
-                "Ollama response missing or empty 'response' field; "
+                "Ollama response empty across both 'response' and 'thinking' fields; "
                 f"envelope keys: {sorted(ollama_envelope)}"
             )
 
         inner: dict[str, Any]
-        if thinking_mode:
-            # _extract_last_json_object raises AdvisorError on no-match.
-            inner = _extract_last_json_object(raw_response)
+        # Two routes into the extractor:
+        # 1. thinking_mode is set by name pattern (R1, o1, "thinking", etc.) —
+        #    the model emits CoT + final JSON in one stream, free-text extract.
+        # 2. response_empty + thinking_present — newer Ollama versions split
+        #    the model's output into separate `thinking` and `response` fields.
+        #    Some models (qwen3, nemotron3) emit the actual answer into
+        #    `thinking` even when format=json is requested. Treat the
+        #    combined text as a thinking-mode response and extract.
+        if thinking_mode or response_empty:
+            combined = raw_response
+            if thinking_present:
+                joined = (combined + "\n" + raw_thinking).strip()
+                combined = joined
+            inner = _extract_last_json_object(combined)
         else:
             try:
                 inner = json.loads(raw_response)
