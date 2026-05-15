@@ -21,6 +21,27 @@ from wobblebot.domain.value_objects import Timestamp
 ConfidenceLevel = Literal["high", "medium", "low"]
 
 
+class NewsItemSummary(BaseModel):
+    """Narrowed view of a ``NewsItem`` for inclusion in advisor prompts.
+
+    Drops the fields the LLM doesn't need to reason about (body,
+    external_id, fetched_at). Keeps source attribution, the time of
+    publication, the headline, optional sentiment, and the coins the
+    item mentions. The advisor consumes this; the news expert in
+    Stage 3.4a may receive a richer view including the body via a
+    separate channel.
+    """
+
+    source: str = Field(min_length=1)
+    published_at: Timestamp
+    headline: str = Field(min_length=1)
+    sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    mentioned_coins: list[str] = Field(default_factory=list)
+
+    class Config:
+        frozen = True
+
+
 class CurrentGridParams(BaseModel):
     """Snapshot of the grid params the advisor's recommendations
     would modify. Sent alongside metrics so the LLM can reason about
@@ -65,6 +86,10 @@ class PerformanceSummary(BaseModel):
         active_orders: How many orders are currently on the book.
         current_grid: Current grid params for context (delta-aware
             recommendations).
+        recent_news: Optional list of recent news items the advisor
+            should consider. Empty list = metrics-only summary. The
+            Stage 3.2 single-LLM advisor may or may not consume it;
+            the Stage 3.4a news expert needs it.
     """
 
     symbol: str = Field(min_length=3)
@@ -79,6 +104,7 @@ class PerformanceSummary(BaseModel):
     total_pnl: float = 0.0
     active_orders: int = Field(ge=0, default=0)
     current_grid: CurrentGridParams = Field(default_factory=CurrentGridParams)
+    recent_news: list[NewsItemSummary] = Field(default_factory=list)
 
     class Config:
         frozen = True

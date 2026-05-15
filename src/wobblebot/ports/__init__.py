@@ -11,6 +11,7 @@ from wobblebot.ports.advisor import (
     AdvisorSuggestion,
     ConfidenceLevel,
     CurrentGridParams,
+    NewsItemSummary,
     PerformanceSummary,
 )
 from wobblebot.ports.data_collector import DataCollectorPort, MarketSnapshot
@@ -39,6 +40,7 @@ __all__ = [
     "AdvisorPort",
     "PerformanceSummary",
     "CurrentGridParams",
+    "NewsItemSummary",
     "AdvisorRecommendation",
     "AdvisorSuggestion",
     "ConfidenceLevel",

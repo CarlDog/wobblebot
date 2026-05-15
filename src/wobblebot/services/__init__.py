@@ -14,12 +14,14 @@ from wobblebot.services.metrics import (
     compute_volatility,
 )
 from wobblebot.services.simulator import SimulationResult, run_buy_dip_sell_rebound_cycle
+from wobblebot.services.summary_builder import SummaryBuilder
 
 __all__ = [
     "CycleStats",
     "GridEngine",
     "SimulationResult",
     "StepResult",
+    "SummaryBuilder",
     "compute_cycle_stats",
     "compute_flatness",
     "compute_max_drawdown",
