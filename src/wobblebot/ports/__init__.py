@@ -9,6 +9,7 @@ from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
     AdvisorSuggestion,
+    AppliedSuggestion,
     ConfidenceLevel,
     CurrentGridParams,
     NewsItemSummary,
@@ -43,6 +44,7 @@ __all__ = [
     "NewsItemSummary",
     "AdvisorRecommendation",
     "AdvisorSuggestion",
+    "AppliedSuggestion",
     "ConfidenceLevel",
     # Phase 4+ ports
     "HarvesterPort",
