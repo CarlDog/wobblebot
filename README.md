@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-401%20unit%20%2B%2021%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
+[![Tests](https://img.shields.io/badge/tests-792%20unit%20%2B%2021%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
 ---
@@ -34,17 +34,23 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 2** — Real Kraken adapter, micro-grid, multi-asset | ✅ closed 2026-05-14 (total real-money cost: **$0.08**) |
 | **Phase 3 / Stage 3.0** — Observer & Shadow Mode | ✅ closed 2026-05-14 |
 | **Config consolidation audit** (8 slices, no live-money risk) | ✅ closed 2026-05-14 |
-| **Phase 3 / Stages 3.1 → 3.5** — Strategy Advisor & MoE | next up |
+| **Phase 3 / Stage 3.1** — Data Collector & Metrics v2 | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.2** — Advisor Port + single-LLM Ollama | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.2.5** — News Ingestion (RSS + CryptoCompare) | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.3** — Passive Advisory Workflow (`cli/advise`) | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.4a** — Mixture of Experts (MoE) | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.4b** — Bounded Auto-Tuning Gate (`cli/apply`) | ✅ closed 2026-05-15 |
+| **Phase 3 / Stage 3.5** — Phase 3 integration check | next up |
 | **Phase 4** — Harvester & treasury management | gated on Phase 3 |
 | **Phase 5** — UX, dashboard, hardening, v1.0 | gated on Phase 4 |
 
-**Health:** 401 unit tests pass by default; 21 integration tests opt-in. mypy clean (42 src files), black/isort clean, pylint **10.00/10**.
+**Health:** 792 unit tests pass by default; 21 integration tests opt-in. mypy clean (57 src files), black/isort clean, pylint **10.00/10**.
 
 ---
 
 ## Operator Entry Points
 
-Seven CLIs cover the full operational surface. Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Nine CLIs cover the full operational surface. Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
@@ -54,6 +60,9 @@ Seven CLIs cover the full operational surface. Every CLI accepts `--config PATH`
 | `python -m wobblebot.cli.shadow` | 3.0 | ❌ | Same engine as `cli/live` against a synthetic balance ledger with live Kraken prices. Honest maker/taker fee modeling. |
 | `python -m wobblebot.cli.preflight` | 2.3 | ❌ | Diagnostic: runs ONE engine step against live Kraken with `validate=true`. Verifies Kraken accepts the config without spending. **Run this before every live session.** |
 | `python -m wobblebot.cli.live` | 2.3+2.4 | **✅ REAL MONEY** | Multi-asset operational loop. Hard caps: max session loss, max runtime, per-coin / total / daily-spend exposure. Clean SIGINT cancels all open orders. |
+| `python -m wobblebot.cli.news` | 3.2.5 | ❌ | Long-running news poller (RSS feeds + CryptoCompare). Persists items to `news_items` with `(source, external_id)` dedup. Per-source fault isolation. |
+| `python -m wobblebot.cli.advise` | 3.3 / 3.4a | ❌ | Long-running advisor daemon. Builds a `PerformanceSummary` from observe + news on a `schedules.advise` cadence, calls the configured advisor (single-LLM Ollama OR MoE with 2+ experts + optional arbitrator), persists `AdvisorSuggestion` rows for operator review. **Never mutates running config** — that's `cli/apply`'s job. |
+| `python -m wobblebot.cli.apply` | 3.4b | ❌ (config writes) | Operator-in-the-loop auto-apply gate. Dry-run by default; `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving) and persists an `AppliedSuggestion` audit row. Gate defaults OFF (`auto_apply.enabled=False`); news-role suggestions never auto-apply per ADR-007. |
 | `python tools/first_real_trade.py` | 2.3 | **✅ REAL MONEY** | One-shot diagnostic: marketable round-trip with hard caps. Used 2026-05-15 against the operator's account; total cost $0.08. |
 
 ---
@@ -85,7 +94,7 @@ pip install -e ".[dev]"
 # scripts\install-hooks.ps1     # Windows PowerShell
 
 # 5. Verify the install
-pytest                          # 401 unit tests; takes ~3s
+pytest                          # 792 unit tests; takes ~3s
 black --check src/ tests/
 mypy src/
 ```
@@ -125,7 +134,7 @@ wobblebot/
 │   ├── services/          # Orchestrators wiring ports to flows
 │   ├── cli/               # Operator entry points
 │   └── config/            # Pydantic schemas + YAML loader + profile resolver
-├── tests/                 # 401 unit + 21 integration; mirrors src/
+├── tests/                 # 792 unit + 21 integration; mirrors src/
 ├── docs/                  # Architecture, planning, implementation, reference
 │   ├── architecture/      # System design, constraints, ADRs
 │   ├── implementation/    # Coding guidelines, module specs, deployment guide
@@ -142,7 +151,7 @@ wobblebot/
 ### Running Tests
 
 ```bash
-pytest                       # default — 401 unit tests, integration excluded
+pytest                       # default — 792 unit tests, integration excluded
 pytest -m unit               # explicitly unit only
 pytest -m integration        # opt-in: 21 integration tests (some hit live Kraken)
 pytest tests/path/to/test_file.py::TestClass::test_name   # one test
