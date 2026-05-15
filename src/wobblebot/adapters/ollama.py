@@ -45,6 +45,71 @@ from wobblebot.ports.exceptions import AdvisorError
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
+# Substrings (matched case-insensitively against the model tag) that
+# identify "thinking" models — those that emit chain-of-thought
+# reasoning before the answer. Ollama's ``format: "json"`` constraint
+# forces the very first emitted token to start a valid JSON value, so
+# these models degenerate to ``{}`` under that mode. We drop the
+# constraint and pull the final JSON object out of the free-text body
+# instead. ``qwq`` is reasoning-tuned but emits JSON directly under
+# format=json — it does NOT need this path and is deliberately not
+# listed here.
+_THINKING_MODEL_PATTERNS = (
+    "deepseek-r1",
+    ":r1",
+    "o1-",
+    "thinker",
+    "thinking",
+    "reasoning",
+)
+
+
+def _is_thinking_model(model_tag: str) -> bool:
+    """Return True iff the Ollama model tag matches a known thinking-style model."""
+    name = model_tag.lower()
+    return any(pattern in name for pattern in _THINKING_MODEL_PATTERNS)
+
+
+def _extract_last_json_object(text: str) -> dict[str, Any]:
+    """Walk ``text`` and return the last ``{...}`` block that parses as a JSON object.
+
+    Thinking models emit a long reasoning preamble (``<think>...</think>``,
+    bullet lists, code-fenced examples) before the final answer.
+    ``json.JSONDecoder.raw_decode`` lets us advance from each ``{`` and
+    try to parse a complete value from there — successful parses are
+    collected and the last one wins.
+
+    Args:
+        text: The raw response body from the LLM.
+
+    Returns:
+        The parsed JSON object.
+
+    Raises:
+        AdvisorError: If no parseable JSON object is present.
+    """
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    i = 0
+    while i < len(text):
+        if text[i] == "{":
+            try:
+                obj, end_idx = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                i += 1
+                continue
+            if isinstance(obj, dict):
+                candidates.append(obj)
+            i = end_idx
+        else:
+            i += 1
+    if not candidates:
+        raise AdvisorError(
+            f"Thinking-mode model returned no parseable JSON object "
+            f"in {len(text)} chars of output"
+        )
+    return candidates[-1]
+
 
 class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attributes
     """Ollama-backed single-LLM ``AdvisorPort`` implementation.
@@ -98,16 +163,24 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
             f"{summary.model_dump_json(indent=2)}\n\n"
             "Respond with JSON conforming to advisor_recommendation_v1."
         )
-        payload = {
+        thinking_mode = _is_thinking_model(self._model)
+        payload: dict[str, Any] = {
             "model": self._model,
             "prompt": f"{self._prompt.body}\n\n{user_message}",
-            "format": "json",
             "stream": False,
             "options": {
                 "temperature": self._temperature,
                 "num_predict": self._max_tokens,
             },
         }
+        # Non-thinking models honor Ollama's `format: "json"` constraint,
+        # which forces the response body to be a parseable JSON value.
+        # Thinking models (R1, o1-style) emit a reasoning preamble first,
+        # so we drop the constraint and extract the trailing JSON from
+        # free text instead — see `_extract_last_json_object`.
+        if not thinking_mode:
+            payload["format"] = "json"
+
         try:
             response = await self._client.post(f"{self._base_url}/api/generate", json=payload)
             response.raise_for_status()
@@ -122,12 +195,17 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
                 f"envelope keys: {sorted(ollama_envelope)}"
             )
 
-        try:
-            inner: dict[str, Any] = json.loads(raw_response)
-        except json.JSONDecodeError as exc:
-            raise AdvisorError(
-                f"Ollama 'response' is not valid JSON despite format=json request: {exc}"
-            ) from exc
+        inner: dict[str, Any]
+        if thinking_mode:
+            # _extract_last_json_object raises AdvisorError on no-match.
+            inner = _extract_last_json_object(raw_response)
+        else:
+            try:
+                inner = json.loads(raw_response)
+            except json.JSONDecodeError as exc:
+                raise AdvisorError(
+                    f"Ollama 'response' is not valid JSON despite format=json request: {exc}"
+                ) from exc
 
         try:
             return AdvisorRecommendation(
