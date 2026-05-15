@@ -8,12 +8,12 @@ import pytest
 from pydantic import ValidationError
 
 from wobblebot.config.cli import (
-    StatusConfig,
     LiveConfig,
     ObserveConfig,
-    ShadowConfig,
-    SandboxConfig,
     PreflightConfig,
+    SandboxConfig,
+    ShadowConfig,
+    StatusConfig,
 )
 from wobblebot.domain.value_objects import Symbol
 

@@ -1,25 +1,29 @@
-"""Stage 2.1 integration check — wire KrakenAdapter + DataCollector end-to-end.
+"""Status CLI — read-only Kraken price + balance fetch.
 
 Run as a module::
 
     python -m wobblebot.cli.status
     python -m wobblebot.cli.status --symbol ETH/USD
+    python -m wobblebot.cli.status --config /path/to/custom-settings.yml
 
-Loads Kraken credentials from environment variables
-(``KRAKEN_API_KEY`` / ``KRAKEN_API_SECRET``, picked up automatically
-from a project-root ``.env`` file via ``python-dotenv``), builds a
-``KrakenAdapter`` and wraps it in ``DataCollector``, then fetches:
+**Read-only.** Loads ``KRAKEN_API_KEY`` (the read-only key, not the
+trade key), builds a ``KrakenAdapter`` + ``DataCollector``, and
+prints:
 
 - The current price for ``--symbol`` (default BTC/USD).
 - All account balances.
 
-Output goes through the project logger (``configure_logging``) — no
-``print()`` calls. The ``--log-format json`` flag is useful for piping
-into log aggregators in the Phase 2+ deployment.
+Output goes through the project logger; ``--log-format json`` emits
+one JSON object per record. Useful as a first sanity check after
+configuring credentials, and for any "is the read path still working
+end-to-end" verification.
 
-This is the Stage 2.1 integration check: it proves the read-only path
-through the whole hex stack works against real Kraken. It does not
-place orders or move funds.
+Configuration layering (per ADR-009):
+1. Base config — ``config/settings.yml`` (or ``--config`` /
+   ``settings.example.yml`` fallback).
+2. Profile overrides — ``--profile name`` (no operational
+   distinction for status, but supported for consistency).
+3. CLI flag overrides — explicit flags below.
 """
 
 from __future__ import annotations
@@ -28,54 +32,48 @@ import argparse
 import asyncio
 import logging
 import sys
+from typing import Any
 
 from dotenv import load_dotenv
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.cli._common import add_config_args, collect_overrides, identity
 from wobblebot.config.kraken import KrakenConfig
-from wobblebot.config.logging import LogFormat, configure_logging
-from wobblebot.domain.value_objects import Symbol
+from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.config.logging import configure_logging
+from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.data_collector import DataCollector
 
-
-def _parse_symbol(raw: str) -> Symbol:
-    """Parse ``BASE/QUOTE`` into a ``Symbol``. Raises ``ValueError`` on bad input."""
-    parts = raw.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise ValueError(f"--symbol must be in BASE/QUOTE form (e.g. BTC/USD); got {raw!r}")
-    return Symbol(base=parts[0], quote=parts[1])
+_LOGGER = logging.getLogger("wobblebot.cli.status")
 
 
-async def _run(symbol: Symbol, log_format: LogFormat) -> int:
-    configure_logging(log_format=log_format)
-    logger = logging.getLogger("wobblebot.cli.status")
-
-    try:
-        config = KrakenConfig.from_env()
-    except ValueError as exc:
-        logger.error("missing Kraken credentials", extra={"error": str(exc)})
+async def _run(config: WobbleBotConfig) -> int:
+    if config.status is None:
+        _LOGGER.error("settings.yml is missing the `status:` section")
         return 2
 
-    adapter = KrakenAdapter(config=config)
+    try:
+        kraken_config = KrakenConfig.from_env()
+    except ValueError as exc:
+        _LOGGER.error("missing Kraken credentials", extra={"error": str(exc)})
+        return 2
+
+    adapter = KrakenAdapter(config=kraken_config)
     collector = DataCollector(exchange=adapter)
     try:
-        snapshot = await collector.get_market_snapshot(symbol)
+        snapshot = await collector.get_market_snapshot(config.status.symbol)
         balances = await collector.get_balances()
     except WobbleBotPortError as exc:
-        logger.error(
-            "stage 2.1 check failed",
+        _LOGGER.error(
+            "status check failed",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1
     finally:
         await adapter.aclose()
 
-    # The plain log format only renders the message string. We put the
-    # operator-facing data inline (via lazy %s args so pylint W1203 is
-    # happy); the ``extra`` dict still surfaces in the JSON format for
-    # log aggregators.
-    logger.info(
+    _LOGGER.info(
         "%s price: %s %s (fetched at %s)",
         snapshot.symbol,
         snapshot.price.amount,
@@ -89,7 +87,7 @@ async def _run(symbol: Symbol, log_format: LogFormat) -> int:
         },
     )
     if not balances:
-        logger.info(
+        _LOGGER.info(
             "account balances: (empty)",
             extra={"balances": {}, "count": 0},
         )
@@ -97,7 +95,7 @@ async def _run(symbol: Symbol, log_format: LogFormat) -> int:
         summary = ", ".join(
             f"{b.asset}={b.total} (avail {b.available} / locked {b.locked})" for b in balances
         )
-        logger.info(
+        _LOGGER.info(
             "account balances (%d): %s",
             len(balances),
             summary,
@@ -116,33 +114,41 @@ async def _run(symbol: Symbol, log_format: LogFormat) -> int:
     return 0
 
 
-def main() -> int:
-    # Load .env so KRAKEN_API_KEY / KRAKEN_API_SECRET are available even
-    # when the user hasn't sourced the file into their shell. Idempotent
-    # no-op if .env is absent or already loaded by something else.
-    load_dotenv()
+def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    return collect_overrides(
+        args,
+        "status",
+        {
+            "symbol": ("symbol", identity),
+            "log_format": ("log_format", identity),
+        },
+    )
 
+
+def main() -> int:
+    load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
+    add_config_args(parser)
     parser.add_argument(
-        "--symbol",
-        default="BTC/USD",
-        help="Trading pair in BASE/QUOTE form (default: BTC/USD).",
+        "--symbol", default=None, help="Trading pair in BASE/QUOTE form (e.g. BTC/USD)."
     )
-    parser.add_argument(
-        "--log-format",
-        choices=("plain", "json"),
-        default="plain",
-        help="Log output format (default: plain).",
-    )
+    parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 
     try:
-        symbol = _parse_symbol(args.symbol)
-    except ValueError as exc:
+        config = load_resolved_config(
+            config_path=args.config,
+            profile_name=args.profile,
+            cli_overrides=_build_overrides(args),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    return asyncio.run(_run(symbol, args.log_format))
+    log_format = config.status.log_format if config.status else "plain"
+    configure_logging(log_format=log_format)
+
+    return asyncio.run(_run(config))
 
 
 if __name__ == "__main__":

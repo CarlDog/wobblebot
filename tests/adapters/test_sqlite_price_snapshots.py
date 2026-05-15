@@ -89,12 +89,8 @@ async def test_independent_per_symbol(storage: SQLiteStorageAdapter) -> None:
     """Snapshots for different symbols coexist; symbol filter works."""
     eth = Symbol(base="ETH", quote="USD")
     now = Timestamp(dt=datetime.now(UTC))
-    await storage.save_price_snapshot(
-        BTC_USD, Price(amount=Decimal("81558"), currency="USD"), now
-    )
-    await storage.save_price_snapshot(
-        eth, Price(amount=Decimal("2288"), currency="USD"), now
-    )
+    await storage.save_price_snapshot(BTC_USD, Price(amount=Decimal("81558"), currency="USD"), now)
+    await storage.save_price_snapshot(eth, Price(amount=Decimal("2288"), currency="USD"), now)
     conn = storage._require_conn()  # type: ignore[reportPrivateUsage]
     async with conn.execute(
         "SELECT COUNT(*) AS n FROM price_snapshots WHERE symbol_base = 'ETH'"

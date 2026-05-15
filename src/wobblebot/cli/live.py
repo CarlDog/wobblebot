@@ -51,8 +51,8 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, collect_overrides, identity, parse_symbol_csv
 from wobblebot.config.cli import LiveConfig
 from wobblebot.config.kraken import KrakenConfig
-from wobblebot.config.logging import configure_logging
 from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import WobbleBotPortError

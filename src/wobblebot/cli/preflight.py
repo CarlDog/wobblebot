@@ -1,10 +1,11 @@
-"""Stage 2.3 diagnostic CLI — validate the grid against live Kraken without moving money.
+"""Preflight CLI — validate the grid against live Kraken without moving money.
 
 Run as a module::
 
     python -m wobblebot.cli.preflight
     python -m wobblebot.cli.preflight --symbol ETH/USD
     python -m wobblebot.cli.preflight --order-size 5 --spacing 0.5
+    python -m wobblebot.cli.preflight --profile conservative
 
 Builds a ``GridEngine`` wired to ``KrakenAdapter(dry_run=True)`` plus
 an in-memory SQLite, then runs **one** ``step(symbol)`` against live
@@ -16,10 +17,19 @@ end-to-end (auth / pair / precision / balance / ordermin / costmin)
 Exits 0 if every order validated, non-zero on any failure. Operator
 runs this before flipping to ``cli/live`` (which actually trades).
 
+Configuration layering (per ADR-009):
+1. Base config — ``config/settings.yml`` (or fallback).
+2. Profile overrides — ``--profile name``.
+3. CLI flag overrides — explicit flags below.
+
+Reads grid + safety from the YAML; preflight uses generous internal
+caps (matched to the layout's expected exposure) regardless of the
+``safety:`` block, since its job is to verify Kraken validation
+passes not to enforce trading caps.
+
 Loads credentials from ``KRAKEN_TRADE_API_KEY`` /
 ``KRAKEN_TRADE_API_SECRET`` (separate from the read-only key per
-ADR-003-style separation; loaded session-wide via ``python-dotenv`` so
-the project's ``.env`` file works without manual sourcing).
+ADR-003-style separation).
 """
 
 from __future__ import annotations
@@ -28,56 +38,23 @@ import argparse
 import asyncio
 import logging
 import sys
-from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 from dotenv import load_dotenv
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import GridConfig, GridLevels
+from wobblebot.cli._common import add_config_args, collect_overrides, identity
 from wobblebot.config.kraken import KrakenConfig
-from wobblebot.config.logging import LogFormat, configure_logging
+from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.config.logging import configure_logging
+from wobblebot.config.runtime import load_resolved_config
 from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
-from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.grid_engine import GridEngine, StepResult
 
-
-@dataclass(frozen=True)
-class _PreflightConfig:
-    """All knobs for one ``cli/preflight`` run, bundled per the same
-    pattern as ``cli/live``'s ``_SessionConfig``."""
-
-    symbol: Symbol
-    spacing_pct: Decimal
-    above: int
-    below: int
-    order_size_usd: Decimal
-    log_format: LogFormat
-
-
-def _parse_symbol(raw: str) -> Symbol:
-    parts = raw.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise ValueError(f"--symbol must be BASE/QUOTE (e.g. BTC/USD); got {raw!r}")
-    return Symbol(base=parts[0], quote=parts[1])
-
-
-def _build_grid_config(
-    spacing_pct: Decimal,
-    above: int,
-    below: int,
-    order_size_usd: Decimal,
-) -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=spacing_pct,
-            levels_above=above,
-            levels_below=below,
-            order_size_usd=order_size_usd,
-        ),
-    )
+_LOGGER = logging.getLogger("wobblebot.cli.preflight")
 
 
 def _build_safety_config(max_total_usd: Decimal, max_orders: int) -> SafetyConfig:
@@ -99,21 +76,16 @@ def _build_safety_config(max_total_usd: Decimal, max_orders: int) -> SafetyConfi
     )
 
 
-def _check_step_result(
-    result: StepResult,
-    expected_layout: int,
-    logger: logging.Logger,
-) -> int | None:
-    """Validate one StepResult against expectations. Returns an error
-    exit code if anything is wrong, or ``None`` to indicate success."""
+def _check_step_result(result: StepResult, expected_layout: int) -> int | None:
+    """Validate one StepResult. Returns an error exit code or None."""
     if result.action != "initialized":
-        logger.error(
+        _LOGGER.error(
             "expected first-tick initialization; got something else",
             extra={"action": result.action},
         )
         return 1
     if result.refusals:
-        logger.error(
+        _LOGGER.error(
             "engine refused some placements via the safety cap layer",
             extra={
                 "placed": result.placed,
@@ -123,7 +95,7 @@ def _check_step_result(
         )
         return 1
     if result.placed != expected_layout:
-        logger.error(
+        _LOGGER.error(
             "placed count does not match expected layout",
             extra={"placed": result.placed, "expected": expected_layout},
         )
@@ -131,9 +103,10 @@ def _check_step_result(
     return None
 
 
-async def _run(config: _PreflightConfig) -> int:
-    configure_logging(log_format=config.log_format)
-    logger = logging.getLogger("wobblebot.cli.preflight")
+async def _run(config: WobbleBotConfig) -> int:
+    if config.preflight is None:
+        _LOGGER.error("settings.yml is missing the `preflight:` section")
+        return 2
 
     try:
         kraken_config = KrakenConfig.from_env(
@@ -141,17 +114,15 @@ async def _run(config: _PreflightConfig) -> int:
             secret_var="KRAKEN_TRADE_API_SECRET",
         )
     except ValueError as exc:
-        logger.error(
+        _LOGGER.error(
             "missing trade credentials",
             extra={"error": str(exc), "expected": "KRAKEN_TRADE_API_KEY/KRAKEN_TRADE_API_SECRET"},
         )
         return 2
 
-    grid_config = _build_grid_config(
-        config.spacing_pct, config.above, config.below, config.order_size_usd
-    )
-    layout_count = config.above + config.below
-    max_total = config.order_size_usd * layout_count
+    grid_config = config.grid
+    layout_count = grid_config.default.levels_above + grid_config.default.levels_below
+    max_total = grid_config.default.order_size_usd * layout_count
     safety_config = _build_safety_config(max_total_usd=max_total, max_orders=layout_count + 5)
 
     storage = SQLiteStorageAdapter(":memory:")
@@ -160,43 +131,43 @@ async def _run(config: _PreflightConfig) -> int:
     engine = GridEngine(adapter, storage, grid_config, safety_config)
 
     try:
-        ref_price = (await adapter.get_current_price(config.symbol)).amount
-        logger.info(
+        ref_price = (await adapter.get_current_price(config.preflight.symbol)).amount
+        _LOGGER.info(
             "validate run starting",
             extra={
-                "symbol": str(config.symbol),
+                "symbol": str(config.preflight.symbol),
                 "reference_price_live": str(ref_price),
-                "spacing_percentage": str(config.spacing_pct),
-                "levels_above": config.above,
-                "levels_below": config.below,
-                "order_size_usd": str(config.order_size_usd),
+                "spacing_percentage": str(grid_config.default.spacing_percentage),
+                "levels_above": grid_config.default.levels_above,
+                "levels_below": grid_config.default.levels_below,
+                "order_size_usd": str(grid_config.default.order_size_usd),
                 "expected_layout_orders": layout_count,
                 "max_total_exposure_usd": str(max_total),
             },
         )
 
-        result = await engine.step(config.symbol)
-        bad = _check_step_result(result, layout_count, logger)
+        result = await engine.step(config.preflight.symbol)
+        bad = _check_step_result(result, layout_count)
         if bad is not None:
             return bad
 
-        opens = await storage.get_open_orders(symbol=config.symbol)
+        opens = await storage.get_open_orders(symbol=config.preflight.symbol)
         non_dryrun = [
             o.exchange_id
             for o in opens
             if o.exchange_id and not o.exchange_id.startswith("DRYRUN-")
         ]
         if non_dryrun:
-            logger.error(
+            _LOGGER.error(
                 "dry-run produced non-DRYRUN exchange_ids — adapter not in dry_run mode?",
                 extra={"non_dryrun_ids": non_dryrun},
             )
             return 1
 
-        logger.info(
+        _LOGGER.info(
             "validate run completed successfully",
             extra={
-                "symbol": str(config.symbol),
+                "symbol": str(config.preflight.symbol),
                 "validated": result.placed,
                 "expected": layout_count,
                 "all_dry_run": True,
@@ -205,7 +176,7 @@ async def _run(config: _PreflightConfig) -> int:
         return 0
 
     except WobbleBotPortError as exc:
-        logger.error(
+        _LOGGER.error(
             "validate run failed against live Kraken",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
@@ -215,61 +186,60 @@ async def _run(config: _PreflightConfig) -> int:
         await storage.close()
 
 
+def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    preflight_overrides = collect_overrides(
+        args,
+        "preflight",
+        {
+            "symbol": ("symbol", identity),
+            "log_format": ("log_format", identity),
+        },
+    )
+
+    # grid.default overrides — built manually because nested
+    grid_default: dict[str, Any] = {}
+    if args.spacing is not None:
+        grid_default["spacing_percentage"] = args.spacing
+    if args.above is not None:
+        grid_default["levels_above"] = args.above
+    if args.below is not None:
+        grid_default["levels_below"] = args.below
+    if args.order_size is not None:
+        grid_default["order_size_usd"] = args.order_size
+
+    merged: dict[str, Any] = dict(preflight_overrides)
+    if grid_default:
+        merged["grid"] = {"default": grid_default}
+    return merged
+
+
 def main() -> int:
     load_dotenv()
-
     parser = argparse.ArgumentParser(description=__doc__)
+    add_config_args(parser)
     parser.add_argument(
-        "--symbol",
-        default="BTC/USD",
-        help="Trading pair in BASE/QUOTE form (default: BTC/USD).",
+        "--symbol", default=None, help="Trading pair in BASE/QUOTE form (e.g. BTC/USD)."
     )
-    parser.add_argument(
-        "--spacing",
-        type=Decimal,
-        default=Decimal("1.0"),
-        help="Grid spacing as percentage of reference price (default: 1.0).",
-    )
-    parser.add_argument(
-        "--above",
-        type=int,
-        default=3,
-        help="Number of grid levels above the reference (default: 3).",
-    )
-    parser.add_argument(
-        "--below",
-        type=int,
-        default=3,
-        help="Number of grid levels below the reference (default: 3).",
-    )
-    parser.add_argument(
-        "--order-size",
-        type=Decimal,
-        default=Decimal("10"),
-        help="USD per order (default: 10.0).",
-    )
-    parser.add_argument(
-        "--log-format",
-        choices=("plain", "json"),
-        default="plain",
-        help="Log output format (default: plain).",
-    )
+    parser.add_argument("--spacing", type=Decimal, default=None)
+    parser.add_argument("--above", type=int, default=None)
+    parser.add_argument("--below", type=int, default=None)
+    parser.add_argument("--order-size", type=Decimal, default=None)
+    parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 
     try:
-        symbol = _parse_symbol(args.symbol)
-    except ValueError as exc:
+        config = load_resolved_config(
+            config_path=args.config,
+            profile_name=args.profile,
+            cli_overrides=_build_overrides(args),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    config = _PreflightConfig(
-        symbol=symbol,
-        spacing_pct=args.spacing,
-        above=args.above,
-        below=args.below,
-        order_size_usd=args.order_size,
-        log_format=args.log_format,
-    )
+    log_format = config.preflight.log_format if config.preflight else "plain"
+    configure_logging(log_format=log_format)
+
     return asyncio.run(_run(config))
 
 

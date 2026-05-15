@@ -261,25 +261,40 @@ harvester:
 # ============================================================================
 # Profiles (named overrides)
 # ============================================================================
-# Operator runs `cli/live --profile conservative` to deep-merge the
-# named block over the base config. CLI flags override even profiles.
-# Apply only the keys you want to change; everything else inherits.
+# Operator runs `cli/live --profile conservative` (or `cli/shadow
+# --profile conservative`, etc.) to deep-merge the named block over
+# the base config. CLI flags override even profiles. Apply only the
+# keys you want to change; everything else inherits.
+#
+# Each profile covers EVERY mode the profile is meaningful for. The
+# read-only/diagnostic CLIs (observe, status, sandbox, preflight)
+# don't have risk knobs to tune by profile, so they don't appear
+# here — they always run with their base config + flag overrides.
 profiles:
 
   # Conservative: wide spacing, fewer orders, tight kill switches.
+  # Also caps shadow's max session loss + shrinks the synthetic
+  # starting balance so even simulated runs stay frugal-feeling.
   conservative:
     grid:
       default:
         spacing_percentage: 2.0
         levels_above: 2
         levels_below: 2
-    live:
-      max_session_loss_usd: 2.0
     safety:
       max_total_exposure_usd: 50.0
       max_daily_spend_usd: 30.0
+    live:
+      max_session_loss_usd: 2.0
+      max_runtime_minutes: 30.0
+    shadow:
+      max_session_loss_usd: 50.0
+      initial_balances:
+        USD: 1000
 
-  # Aggressive: tight spacing, more orders, looser caps.
+  # Aggressive: tight spacing, more orders, looser caps. Shadow
+  # gets a bigger synthetic pot so multi-cycle behavior has room
+  # to play out before hitting balance constraints.
   aggressive:
     grid:
       default:
@@ -287,11 +302,18 @@ profiles:
         levels_above: 5
         levels_below: 5
         order_size_usd: 20.0
-    live:
-      max_session_loss_usd: 10.0
     safety:
       max_total_exposure_usd: 500.0
       max_daily_spend_usd: 200.0
+    live:
+      max_session_loss_usd: 10.0
+      max_runtime_minutes: 120.0
+    shadow:
+      max_session_loss_usd: 200.0
+      initial_balances:
+        USD: 50000
+        BTC: 1
+        ETH: 5
 
   # Cloud-only MoE: replaces the local Ollama experts with cloud
   # equivalents. Useful when running on a machine without GPU.

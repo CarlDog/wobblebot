@@ -1,31 +1,31 @@
-"""Unit tests for the ``wobblebot.cli.status`` entry point.
+"""Unit tests for ``Symbol.from_string`` — the canonical symbol parser.
 
-The CLI's end-to-end behavior is verified by manual smoke runs and by
-``tests/integration/test_kraken_adapter_live.py`` (which exercises the
-same adapter + collector path). These unit tests cover the bits the
-integration test doesn't: argument parsing and symbol-string handling.
+This file used to test ``cli.status._parse_symbol``, an inline helper
+that was removed during the config-consolidation audit. Symbol
+parsing now lives on the value object itself (single canonical entry
+point used by every CLI's Pydantic field validator), so the same
+contract is verified here against ``Symbol.from_string``.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from wobblebot.cli.status import _parse_symbol
 from wobblebot.domain.value_objects import Symbol
 
 pytestmark = pytest.mark.unit
 
 
-class TestParseSymbol:
+class TestSymbolFromString:
     def test_btc_usd(self) -> None:
-        assert _parse_symbol("BTC/USD") == Symbol(base="BTC", quote="USD")
+        assert Symbol.from_string("BTC/USD") == Symbol(base="BTC", quote="USD")
 
     def test_eth_eur(self) -> None:
-        assert _parse_symbol("ETH/EUR") == Symbol(base="ETH", quote="EUR")
+        assert Symbol.from_string("ETH/EUR") == Symbol(base="ETH", quote="EUR")
 
     def test_lowercase_normalized_by_symbol_validator(self) -> None:
         # Symbol's validator uppercases automatically.
-        assert _parse_symbol("btc/usd") == Symbol(base="BTC", quote="USD")
+        assert Symbol.from_string("btc/usd") == Symbol(base="BTC", quote="USD")
 
     @pytest.mark.parametrize(
         "raw",
@@ -40,4 +40,4 @@ class TestParseSymbol:
     )
     def test_rejects_malformed(self, raw: str) -> None:
         with pytest.raises(ValueError, match="BASE/QUOTE"):
-            _parse_symbol(raw)
+            Symbol.from_string(raw)

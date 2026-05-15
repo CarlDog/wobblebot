@@ -2,9 +2,9 @@
 
 Run as a module::
 
-    python -m wobblebot.cli.shadow --initial-shadow-usd 10000
-    python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD \
-        --initial-shadow-usd 5000 --initial-shadow-btc 0.05
+    python -m wobblebot.cli.shadow
+    python -m wobblebot.cli.shadow --profile aggressive
+    python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD --tick-seconds 10
 
 **No real money.** This is the sister command to ``cli/live``: same
 engine code, same safety caps, same SIGINT cleanup — but the
@@ -16,29 +16,32 @@ for: iterating the Phase 3 advisor against real market behavior
 without burning fees, real-time backtesting against the live tape,
 calibrating safety caps before flipping to ``cli/live``.
 
-Loop:
-  1. For each ``symbol`` in ``--symbols``, call
-     ``GridEngine.step(symbol)``.
-  2. Check session-loss cap (synthetic USD-balance delta).
-  3. Sleep ``--tick-seconds`` (default 5).
-  4. Repeat until SIGINT/SIGTERM, runtime cap hit, or loss cap hit.
+Configuration layering (per ADR-009):
 
-Hard caps mirror ``cli/live`` (max session loss, max runtime, per-coin
-/ total / daily-spend exposure). They engage against synthetic
-state — useful for verifying the cap arithmetic without spending real
-money.
+1. **Base config** — ``config/settings.yml`` (or ``--config path``,
+   or ``config/settings.example.yml`` as a last-resort fallback).
+2. **Profile overrides** — ``--profile name`` deep-merges the named
+   block from ``profiles:`` over the base.
+3. **CLI flag overrides** — explicit flags below win over both YAML
+   and profile. Omitted flags inherit YAML values.
+
+Loop:
+  1. For each symbol in ``shadow.symbols``, call ``GridEngine.step(symbol)``.
+  2. Check session-loss cap (synthetic USD-balance delta).
+  3. Sleep ``shadow.tick_seconds`` (default 5).
+  4. Repeat until SIGINT/SIGTERM, runtime cap hit, or loss cap hit.
 
 On shutdown: cancels every open shadow order for every configured
 symbol in the ``finally`` block (same discipline as ``cli/live``).
 
-Storage: SQLite at ``--db`` (default ``wobblebot-shadow.db`` —
-deliberately distinct from ``wobblebot-live.db`` so shadow runs cannot
-contaminate live trading state or vice versa). Each symbol's
-``GridState`` persists across restarts, same as live.
+Storage: SQLite at ``shadow.db`` (default ``data/wobblebot-shadow.db``
+— deliberately distinct from ``wobblebot-live.db`` so shadow runs
+cannot contaminate live trading state or vice versa).
 
-**Initial synthetic balances are operator-supplied**, not inferred
-from the operator's real Kraken balances (per ADR-008): muscle-memory
-guard against confusing shadow state with live state.
+**Initial synthetic balances are operator-supplied** via
+``shadow.initial_balances`` in the YAML, not inferred from the
+operator's real Kraken balances (per ADR-008): muscle-memory guard
+against confusing shadow state with live state.
 
 Loads credentials from ``KRAKEN_API_KEY`` / ``KRAKEN_API_SECRET``
 (read-only — the shadow needs Kraken only for price discovery, never
@@ -53,103 +56,30 @@ import logging
 import signal
 import sys
 import time
-from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 from dotenv import load_dotenv
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import GridConfig, GridLevels
+from wobblebot.cli._common import add_config_args, collect_overrides, identity, parse_symbol_csv
+from wobblebot.config.cli import ShadowConfig
 from wobblebot.config.kraken import KrakenConfig
-from wobblebot.config.logging import LogFormat, configure_logging
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.config.logging import configure_logging
+from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.grid_engine import GridEngine
 
-
-@dataclass(frozen=True)
-class _ShadowConfig:  # pylint: disable=too-many-instance-attributes
-    """Bundle of every CLI flag for one shadow session.
-
-    R0902 disable: same rationale as cli/live's _SessionConfig — the
-    bundle is the point. Splitting into sub-bundles would obscure the
-    flow without removing any field."""
-
-    symbols: tuple[Symbol, ...]
-    initial_balances: dict[str, Decimal] = field(default_factory=dict)
-    spacing_pct: Decimal = Decimal("1.0")
-    above: int = 3
-    below: int = 3
-    order_size_usd: Decimal = Decimal("10")
-    db_path: str = "wobblebot-shadow.db"
-    tick_seconds: float = 5.0
-    max_runtime_seconds: float = 3600.0
-    max_session_loss_usd: Decimal = Decimal("100")  # synthetic — be generous
-    max_total_exposure_usd: Decimal = Decimal("100")
-    max_per_coin_exposure_usd: Decimal = Decimal("100")
-    max_orders_per_coin: int = 20
-    max_daily_spend_usd: Decimal = Decimal("100")
-    maker_fee_rate: Decimal = Decimal("0.0026")
-    taker_fee_rate: Decimal = Decimal("0.0040")
-
-
 _LOGGER = logging.getLogger("wobblebot.cli.shadow")
 
 
-def _parse_symbol(raw: str) -> Symbol:
-    parts = raw.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise ValueError(f"symbol must be BASE/QUOTE (e.g. BTC/USD); got {raw!r}")
-    return Symbol(base=parts[0], quote=parts[1])
-
-
-def _parse_symbols(raw: str) -> tuple[Symbol, ...]:
-    """Same dedupe + ordering as cli/live."""
-    seen: dict[str, Symbol] = {}
-    for raw_symbol in raw.split(","):
-        cleaned = raw_symbol.strip()
-        if not cleaned:
-            continue
-        symbol = _parse_symbol(cleaned)
-        seen.setdefault(str(symbol), symbol)
-    if not seen:
-        raise ValueError("--symbols requires at least one BASE/QUOTE pair")
-    return tuple(seen.values())
-
-
-def _build_grid_config(
-    spacing_pct: Decimal, above: int, below: int, order_size_usd: Decimal
-) -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=spacing_pct,
-            levels_above=above,
-            levels_below=below,
-            order_size_usd=order_size_usd,
-        ),
-    )
-
-
-def _build_safety_config(
-    max_total: Decimal,
-    max_per_coin: Decimal,
-    max_orders: int,
-    max_daily: Decimal,
-) -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=max_total,
-        max_daily_spend_usd=max_daily,
-        max_per_coin_exposure_usd=max_per_coin,
-        max_orders_per_coin=max_orders,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
-    )
+# ---------------------------------------------------------------------------
+# Loop helpers — mirror cli/live, consume ShadowConfig directly
+# ---------------------------------------------------------------------------
 
 
 async def _cancel_all_open(
@@ -198,14 +128,14 @@ async def _shadow_usd_balance(adapter: ShadowExchangeAdapter) -> Decimal:
 async def _run_one_tick(
     adapter: ShadowExchangeAdapter,
     engine: GridEngine,
-    config: _ShadowConfig,
+    shadow: ShadowConfig,
     tick: int,
     started_usd: Decimal,
 ) -> bool:
-    """Same shape as cli/live's _run_one_tick — symbols in series,
-    per-symbol errors swallowed, post-tick session-loss cap check.
+    """Mirror cli/live's _run_one_tick — symbols in series, per-symbol
+    errors swallowed, post-tick session-loss cap check.
     Returns True when the loss cap tripped."""
-    for symbol in config.symbols:
+    for symbol in shadow.symbols:
         try:
             result = await engine.step(symbol)
             _LOGGER.info(
@@ -234,12 +164,12 @@ async def _run_one_tick(
 
     current_usd = await _shadow_usd_balance(adapter)
     session_pnl = current_usd - started_usd
-    if session_pnl < -config.max_session_loss_usd:
+    if session_pnl < -shadow.max_session_loss_usd:
         _LOGGER.error(
             "shadow session loss cap exceeded; stopping",
             extra={
                 "session_pnl_usd": str(session_pnl),
-                "limit": str(config.max_session_loss_usd),
+                "limit": str(shadow.max_session_loss_usd),
                 "tick": tick,
             },
         )
@@ -250,22 +180,23 @@ async def _run_one_tick(
 async def _run_loop(
     adapter: ShadowExchangeAdapter,
     engine: GridEngine,
-    config: _ShadowConfig,
+    shadow: ShadowConfig,
     stop_event: asyncio.Event,
 ) -> int:
     started_usd = await _shadow_usd_balance(adapter)
     started_at = time.monotonic()
+    max_runtime_seconds = shadow.max_runtime_minutes * 60.0
     _LOGGER.info(
         "shadow session start",
         extra={
-            "symbols": [str(s) for s in config.symbols],
-            "initial_balances": {a: str(v) for a, v in config.initial_balances.items()},
-            "tick_seconds": config.tick_seconds,
-            "max_runtime_seconds": config.max_runtime_seconds,
-            "max_session_loss_usd": str(config.max_session_loss_usd),
+            "symbols": [str(s) for s in shadow.symbols],
+            "initial_balances": {a: str(v) for a, v in shadow.initial_balances.items()},
+            "tick_seconds": shadow.tick_seconds,
+            "max_runtime_seconds": max_runtime_seconds,
+            "max_session_loss_usd": str(shadow.max_session_loss_usd),
             "starting_usd_synthetic": str(started_usd),
-            "maker_fee_rate": str(config.maker_fee_rate),
-            "taker_fee_rate": str(config.taker_fee_rate),
+            "maker_fee_rate": str(shadow.maker_fee_rate),
+            "taker_fee_rate": str(shadow.taker_fee_rate),
         },
     )
 
@@ -274,7 +205,7 @@ async def _run_loop(
     try:
         while not stop_event.is_set():
             elapsed = time.monotonic() - started_at
-            if elapsed >= config.max_runtime_seconds:
+            if elapsed >= max_runtime_seconds:
                 _LOGGER.info(
                     "shadow max runtime reached; stopping",
                     extra={"elapsed_seconds": round(elapsed, 1)},
@@ -282,17 +213,17 @@ async def _run_loop(
                 break
 
             tick += 1
-            if await _run_one_tick(adapter, engine, config, tick, started_usd):
+            if await _run_one_tick(adapter, engine, shadow, tick, started_usd):
                 exit_code = 1
                 break
 
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=config.tick_seconds)
+                await asyncio.wait_for(stop_event.wait(), timeout=shadow.tick_seconds)
             except asyncio.TimeoutError:
                 pass
     finally:
         ended_usd = await _shadow_usd_balance(adapter)
-        cancelled, failed = await _cancel_all_open(adapter, config.symbols)
+        cancelled, failed = await _cancel_all_open(adapter, tuple(shadow.symbols))
         _LOGGER.info(
             "shadow session end",
             extra={
@@ -323,116 +254,168 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asynci
             return  # Windows fallback handled at the top-level KeyboardInterrupt
 
 
-async def _main_async(config: _ShadowConfig) -> int:
+# ---------------------------------------------------------------------------
+# Wiring
+# ---------------------------------------------------------------------------
+
+
+async def _main_async(config: WobbleBotConfig) -> int:
+    if config.shadow is None:
+        _LOGGER.error("settings.yml is missing the `shadow:` section")
+        return 2
+
     try:
         kraken_config = KrakenConfig.from_env()  # default vars: KRAKEN_API_KEY (read-only)
     except ValueError as exc:
         _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
         return 2
 
-    grid_config = _build_grid_config(
-        config.spacing_pct, config.above, config.below, config.order_size_usd
-    )
-    safety_config = _build_safety_config(
-        max_total=config.max_total_exposure_usd,
-        max_per_coin=config.max_per_coin_exposure_usd,
-        max_orders=config.max_orders_per_coin,
-        max_daily=config.max_daily_spend_usd,
-    )
-
-    storage = SQLiteStorageAdapter(config.db_path)
+    storage = SQLiteStorageAdapter(config.shadow.db)
     await storage.connect()
     live_adapter = KrakenAdapter(config=kraken_config)
     shadow_adapter = ShadowExchangeAdapter(
         live_exchange=live_adapter,
-        starting_balances=config.initial_balances,
-        maker_fee_rate=config.maker_fee_rate,
-        taker_fee_rate=config.taker_fee_rate,
+        starting_balances=dict(config.shadow.initial_balances),
+        maker_fee_rate=config.shadow.maker_fee_rate,
+        taker_fee_rate=config.shadow.taker_fee_rate,
     )
-    engine = GridEngine(shadow_adapter, storage, grid_config, safety_config)
+    engine = GridEngine(shadow_adapter, storage, config.grid, config.safety)
 
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
     try:
-        return await _run_loop(shadow_adapter, engine, config, stop_event)
+        return await _run_loop(
+            adapter=shadow_adapter,
+            engine=engine,
+            shadow=config.shadow,
+            stop_event=stop_event,
+        )
     finally:
         await shadow_adapter.aclose()
         await storage.close()
 
 
+def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """Translate explicit CLI flags into a YAML override dict."""
+    shadow_overrides = collect_overrides(
+        args,
+        "shadow",
+        {
+            "symbols": ("symbols", parse_symbol_csv),
+            "db": ("db", identity),
+            "tick_seconds": ("tick_seconds", identity),
+            "max_runtime_minutes": ("max_runtime_minutes", identity),
+            "max_session_loss_usd": ("max_session_loss_usd", identity),
+            "maker_fee_rate": ("maker_fee_rate", identity),
+            "taker_fee_rate": ("taker_fee_rate", identity),
+            "log_format": ("log_format", identity),
+        },
+    )
+
+    # grid.default is nested — build manually
+    grid_default: dict[str, Any] = {}
+    if args.spacing is not None:
+        grid_default["spacing_percentage"] = args.spacing
+    if args.above is not None:
+        grid_default["levels_above"] = args.above
+    if args.below is not None:
+        grid_default["levels_below"] = args.below
+    if args.order_size is not None:
+        grid_default["order_size_usd"] = args.order_size
+    grid_overrides = {"grid": {"default": grid_default}} if grid_default else {}
+
+    safety_overrides = collect_overrides(
+        args,
+        "safety",
+        {
+            "max_total_exposure_usd": ("max_total_exposure_usd", identity),
+            "max_per_coin_exposure_usd": ("max_per_coin_exposure_usd", identity),
+            "max_orders_per_coin": ("max_orders_per_coin", identity),
+            "max_daily_spend_usd": ("max_daily_spend_usd", identity),
+        },
+    )
+
+    # initial_balances: only override the per-asset entries the operator
+    # explicitly supplied; otherwise inherit the YAML/profile value
+    # entirely.
+    initial_balances: dict[str, Decimal] = {}
+    if args.initial_shadow_usd is not None:
+        initial_balances["USD"] = args.initial_shadow_usd
+    if args.initial_shadow_btc is not None:
+        initial_balances["BTC"] = args.initial_shadow_btc
+    if args.initial_shadow_eth is not None:
+        initial_balances["ETH"] = args.initial_shadow_eth
+    if initial_balances:
+        shadow_overrides.setdefault("shadow", {})["initial_balances"] = initial_balances
+
+    merged: dict[str, Any] = {}
+    for layer in (shadow_overrides, grid_overrides, safety_overrides):
+        for key, value in layer.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = value
+    return merged
+
+
 def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbols", default="BTC/USD")
-    parser.add_argument("--spacing", type=Decimal, default=Decimal("1.0"))
-    parser.add_argument("--above", type=int, default=3)
-    parser.add_argument("--below", type=int, default=3)
-    parser.add_argument("--order-size", type=Decimal, default=Decimal("10"))
-    parser.add_argument("--db", default="wobblebot-shadow.db")
-    parser.add_argument("--tick-seconds", type=float, default=5.0)
-    parser.add_argument("--max-runtime-minutes", type=float, default=60.0)
-    parser.add_argument("--max-session-loss-usd", type=Decimal, default=Decimal("100"))
-    parser.add_argument("--max-total-exposure-usd", type=Decimal, default=Decimal("100"))
-    parser.add_argument("--max-per-coin-exposure-usd", type=Decimal, default=Decimal("100"))
-    parser.add_argument("--max-orders-per-coin", type=int, default=20)
-    parser.add_argument("--max-daily-spend-usd", type=Decimal, default=Decimal("100"))
+    add_config_args(parser)
+
+    # All flag defaults are None — explicit-pass detection drives
+    # whether the value overrides YAML or inherits.
+    parser.add_argument(
+        "--symbols", default=None, help="Comma-separated trading pairs (e.g. BTC/USD,ETH/USD)."
+    )
+    parser.add_argument("--spacing", type=Decimal, default=None)
+    parser.add_argument("--above", type=int, default=None)
+    parser.add_argument("--below", type=int, default=None)
+    parser.add_argument("--order-size", type=Decimal, default=None)
+    parser.add_argument("--db", default=None)
+    parser.add_argument("--tick-seconds", type=float, default=None)
+    parser.add_argument("--max-runtime-minutes", type=float, default=None)
+    parser.add_argument("--max-session-loss-usd", type=Decimal, default=None)
+    parser.add_argument("--max-total-exposure-usd", type=Decimal, default=None)
+    parser.add_argument("--max-per-coin-exposure-usd", type=Decimal, default=None)
+    parser.add_argument("--max-orders-per-coin", type=int, default=None)
+    parser.add_argument("--max-daily-spend-usd", type=Decimal, default=None)
     parser.add_argument(
         "--initial-shadow-usd",
         type=Decimal,
-        required=True,
-        help="Synthetic starting USD balance. Required — no inference from real Kraken.",
+        default=None,
+        help="Override shadow.initial_balances.USD from the YAML.",
     )
     parser.add_argument(
         "--initial-shadow-btc",
         type=Decimal,
-        default=Decimal("0"),
-        help="Synthetic starting BTC balance (default 0 — most operators will only fund USD).",
+        default=None,
+        help="Override shadow.initial_balances.BTC from the YAML.",
     )
     parser.add_argument(
         "--initial-shadow-eth",
         type=Decimal,
-        default=Decimal("0"),
-        help="Synthetic starting ETH balance (default 0).",
+        default=None,
+        help="Override shadow.initial_balances.ETH from the YAML.",
     )
-    parser.add_argument("--maker-fee-rate", type=Decimal, default=Decimal("0.0026"))
-    parser.add_argument("--taker-fee-rate", type=Decimal, default=Decimal("0.0040"))
-    parser.add_argument("--log-format", choices=("plain", "json"), default="plain")
+    parser.add_argument("--maker-fee-rate", type=Decimal, default=None)
+    parser.add_argument("--taker-fee-rate", type=Decimal, default=None)
+    parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 
-    log_format: LogFormat = args.log_format
-    configure_logging(log_format=log_format)
-
     try:
-        symbols = _parse_symbols(args.symbols)
-    except ValueError as exc:
+        config = load_resolved_config(
+            config_path=args.config,
+            profile_name=args.profile,
+            cli_overrides=_build_overrides(args),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    initial_balances: dict[str, Decimal] = {"USD": args.initial_shadow_usd}
-    if args.initial_shadow_btc > 0:
-        initial_balances["BTC"] = args.initial_shadow_btc
-    if args.initial_shadow_eth > 0:
-        initial_balances["ETH"] = args.initial_shadow_eth
-
-    config = _ShadowConfig(
-        symbols=symbols,
-        initial_balances=initial_balances,
-        spacing_pct=args.spacing,
-        above=args.above,
-        below=args.below,
-        order_size_usd=args.order_size,
-        db_path=args.db,
-        tick_seconds=args.tick_seconds,
-        max_runtime_seconds=args.max_runtime_minutes * 60.0,
-        max_session_loss_usd=args.max_session_loss_usd,
-        max_total_exposure_usd=args.max_total_exposure_usd,
-        max_per_coin_exposure_usd=args.max_per_coin_exposure_usd,
-        max_orders_per_coin=args.max_orders_per_coin,
-        max_daily_spend_usd=args.max_daily_spend_usd,
-        maker_fee_rate=args.maker_fee_rate,
-        taker_fee_rate=args.taker_fee_rate,
-    )
+    log_format = config.shadow.log_format if config.shadow else "plain"
+    configure_logging(log_format=log_format)
 
     try:
         return asyncio.run(_main_async(config))
