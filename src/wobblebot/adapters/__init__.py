@@ -13,6 +13,7 @@ separate banking adapter.
 
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
+from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -20,6 +21,8 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 __all__ = [
     "CryptoCompareAdapter",
     "MockExchangeAdapter",
+    "MoEAdvisorAdapter",
+    "MoEExpertEntry",
     "OllamaAdapter",
     "RssNewsAdapter",
     "SQLiteStorageAdapter",

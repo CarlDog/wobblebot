@@ -130,7 +130,9 @@ class AdvisorRecommendation(BaseModel):
     Attributes:
         recommendation_id: Adapter-generated unique ID.
         timestamp: When the adapter received this recommendation.
-        role: Producing expert's role (``"single"`` outside MoE).
+        role: Producing expert's role (``"single"`` outside MoE,
+            ``"aggregated"`` for MoE outputs, ``"quant"`` / ``"risk"``
+            / ``"news"`` / ``"arbitrator"`` for individual experts).
         recommendations: Proposed param changes — keys are config
             field names (e.g. ``"spacing_percentage"``), values are
             the proposed new values. Empty dict = "no change".
@@ -138,6 +140,12 @@ class AdvisorRecommendation(BaseModel):
         confidence: LLM's self-reported confidence; the MoE
             aggregator (Stage 3.4a) translates the ordinal levels
             into weights.
+        expert_opinions: Per-expert opinions that contributed to this
+            recommendation. Empty for single-LLM advisor output;
+            populated by ``MoEAdvisorAdapter`` with the raw opinions
+            from each expert (role=``"quant"``/``"risk"``/``"news"``)
+            that fed the aggregator. Preserves the per-expert audit
+            trail required by ADR-007 without a side-channel API.
     """
 
     recommendation_id: str = Field(min_length=1)
@@ -146,6 +154,7 @@ class AdvisorRecommendation(BaseModel):
     recommendations: dict[str, Any] = Field(default_factory=dict)
     rationale: str = Field(min_length=1)
     confidence: ConfidenceLevel
+    expert_opinions: list[AdvisorRecommendation] = Field(default_factory=list)
 
     class Config:
         frozen = True
