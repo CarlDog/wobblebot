@@ -52,11 +52,12 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 
 **Goal:** Provide visibility, ergonomics, and resilience.
 
-1. **Stage 5.1 – Operational Dashboard** – Implement a web UI or Grafana dashboards to display balances, P&L, cycles, harvested funds, and advisor suggestions.
-2. **Stage 5.2 – Control Surface** – Provide controls to pause/resume per‑coin trading, toggle advisor/harvester modes, and adjust configurations via UI or CLI.
-3. **Stage 5.3 – Reliability & Recovery** – Implement robust startup/shutdown behavior.  Support recovery from restarts: reload positions, open orders, and pending transfers without duplicating actions.  Introduce reconciliation logic to match the database state with the exchange.
-4. **Stage 5.4 – Performance & Resource Tuning** – Tune polling intervals, batch operations, and database usage to fit Synology NAS resource constraints.  Optimize heavy processes (e.g., metrics computation) for responsiveness.
-5. **Stage 5.5 – Phase 5 / v1.0 Release Check** – Run an extended soak test (weeks) under a low‑risk configuration.  Finalize v1.0: update documentation (architecture, planning, implementation), tag the release, and produce a changelog.  Identify known limitations and areas for future improvements.
+1. **Stage 5.1 – Operational Dashboard** – Implement a web UI or Grafana dashboards to display balances, P&L, cycles, harvested funds, and advisor suggestions. The web UI option lives at `src/wobblebot/web/` (FastAPI app + routes + templates), sibling to `src/wobblebot/cli/` — both are presentation layers consuming the existing ports.
+2. **Stage 5.1.5 – Discord Notifier** – `NotifierPort` adapter at `src/wobblebot/adapters/discord_notifier.py`. Outbound only: posts fills, cap trips, session-start / session-end summaries, and Phase 4 transfer events to a Discord channel via webhook. Bot Core sends through the injected `NotifierPort`; the adapter never sees engine internals. One-evening scope; useful the moment `cli/live` is the daily-driver.
+3. **Stage 5.2 – Control Surface** – Provide controls to pause/resume per‑coin trading, toggle advisor/harvester modes, and adjust configurations via UI or CLI. Includes the **bidirectional** Discord integration: a new `OperatorPort` accepting commands like `/pause BTC`, `/status`, `/cancel-all`, with auth + command validation kept testable behind the port. Per the hex layout, Discord-specific infrastructure (embed builders, gateway management, command routing) clusters under `src/wobblebot/adapters/discord/` if it grows past a single file.
+4. **Stage 5.3 – Reliability & Recovery** – Implement robust startup/shutdown behavior.  Support recovery from restarts: reload positions, open orders, and pending transfers without duplicating actions.  Introduce reconciliation logic to match the database state with the exchange.
+5. **Stage 5.4 – Performance & Resource Tuning** – Tune polling intervals, batch operations, and database usage to fit Synology NAS resource constraints.  Optimize heavy processes (e.g., metrics computation) for responsiveness.
+6. **Stage 5.5 – Phase 5 / v1.0 Release Check** – Run an extended soak test (weeks) under a low‑risk configuration.  Finalize v1.0: update documentation (architecture, planning, implementation), tag the release, and produce a changelog.  Identify known limitations and areas for future improvements.
 
 ## Phase Dependencies
 
