@@ -50,7 +50,7 @@ Seven CLIs cover the full operational surface. Every CLI accepts `--config PATH`
 |---|---|---|---|
 | `python -m wobblebot.cli.sandbox` | 1 | ❌ | Mock-only paper buy-dip / sell-rebound cycle through `MockExchangeAdapter` + SQLite. |
 | `python -m wobblebot.cli.status` | 2.1 | ❌ | Live Kraken read check — fetches current price + account balances. Read-only API key. |
-| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots. Read-only API key. |
+| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots. Read-only API key. (`cli/lurker` is a one-line alias today; Stage 3.4-ish, lurker grows advisor commentary on top.) |
 | `python -m wobblebot.cli.shadow` | 3.0 | ❌ | Same engine as `cli/live` against a synthetic balance ledger with live Kraken prices. Honest maker/taker fee modeling. |
 | `python -m wobblebot.cli.preflight` | 2.3 | ❌ | Diagnostic: runs ONE engine step against live Kraken with `validate=true`. Verifies Kraken accepts the config without spending. **Run this before every live session.** |
 | `python -m wobblebot.cli.live` | 2.3+2.4 | **✅ REAL MONEY** | Multi-asset operational loop. Hard caps: max session loss, max runtime, per-coin / total / daily-spend exposure. Clean SIGINT cancels all open orders. |
