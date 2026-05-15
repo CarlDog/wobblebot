@@ -35,6 +35,7 @@ import sys
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -58,7 +59,12 @@ async def _run(config: WobbleBotConfig) -> int:
         return 2
 
     adapter = KrakenAdapter(config=kraken_config)
-    collector = DataCollector(exchange=adapter)
+    # status is a read-only diagnostic — no historical metrics — but the
+    # Stage 3.1 DataCollector requires a storage backing. An in-memory
+    # adapter satisfies the contract without touching disk.
+    storage = SQLiteStorageAdapter(":memory:")
+    await storage.connect()
+    collector = DataCollector(exchange=adapter, storage=storage)
     try:
         snapshot = await collector.get_market_snapshot(config.status.symbol)
         balances = await collector.get_balances()
@@ -70,6 +76,7 @@ async def _run(config: WobbleBotConfig) -> int:
         return 1
     finally:
         await adapter.aclose()
+        await storage.close()
 
     _LOGGER.info(
         "%s price: %s %s (fetched at %s)",

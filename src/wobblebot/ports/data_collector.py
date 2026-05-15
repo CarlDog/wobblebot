@@ -4,14 +4,18 @@ This port defines the contract for accessing aggregated market data and metrics.
 The Data Collector service implements this port and sits between Bot Core and ExchangePort.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from datetime import timedelta
 from decimal import Decimal
-from typing import Any
 
 from pydantic import BaseModel
 
-from wobblebot.domain.models import Balance
+from wobblebot.domain.models import Balance, CycleStats, PriceSnapshot
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+
+_DEFAULT_LOOKBACK = timedelta(hours=24)
 
 
 class MarketSnapshot(BaseModel):
@@ -58,7 +62,6 @@ class DataCollectorPort(ABC):
         Raises:
             DataCollectorError: If price cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_market_snapshot(self, symbol: Symbol) -> MarketSnapshot:
@@ -73,7 +76,6 @@ class DataCollectorPort(ABC):
         Raises:
             DataCollectorError: If snapshot cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_balances(self) -> list[Balance]:
@@ -85,35 +87,105 @@ class DataCollectorPort(ABC):
         Raises:
             DataCollectorError: If balances cannot be retrieved
         """
-        pass
 
-    # Phase 3+ methods (not yet implemented)
+    # Stage 3.1 — historical reads + derived metrics. Default implementations
+    # raise NotImplementedError so an alternative DataCollectorPort impl
+    # without a storage backend (e.g. a pure-live mock for unit-testing
+    # consumers) can opt in selectively.
 
-    async def get_volatility(self, symbol: Symbol, lookback_hours: int = 24) -> Decimal:
-        """Get volatility metric for a symbol.
-
-        Args:
-            symbol: Trading pair
-            lookback_hours: Historical period for calculation
-
-        Returns:
-            Volatility metric (implementation-defined)
-
-        Raises:
-            NotImplementedError: Phase 3+ feature
-        """
-        raise NotImplementedError("Phase 3+ feature")
-
-    async def get_cycle_stats(self, symbol: Symbol) -> dict[str, Any]:
-        """Get trading cycle statistics for a symbol.
+    async def get_price_history(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> list[PriceSnapshot]:
+        """Return persisted price snapshots within the lookback window.
 
         Args:
-            symbol: Trading pair
+            symbol: Trading pair.
+            lookback: How far back from ``now`` to include. Defaults to
+                24h.
 
         Returns:
-            Dict with cycle count, win rate, avg profit, etc.
+            Snapshots ordered by ``observed_at`` ASC (oldest first).
+            Empty list if no data in the window.
 
         Raises:
-            NotImplementedError: Phase 3+ feature
+            DataCollectorError: If retrieval fails.
+            NotImplementedError: If the implementation has no storage
+                backing (e.g. a pure-live test double).
         """
-        raise NotImplementedError("Phase 3+ feature")
+        raise NotImplementedError("Stage 3.1+ feature; requires storage backing")
+
+    async def get_volatility(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        """Sample stdev of simple period-over-period returns.
+
+        See ``services.metrics.compute_volatility`` for the exact
+        formula. Returns ``Decimal("0")`` when fewer than three
+        snapshots exist in the window (not enough for a defined
+        sample stdev) — callers can distinguish "no signal" from
+        "computed zero" by inspecting ``get_price_history`` length.
+
+        Args:
+            symbol: Trading pair.
+            lookback: Window to compute over. Defaults to 24h.
+
+        Raises:
+            DataCollectorError: If the underlying read fails.
+            NotImplementedError: If the implementation has no storage
+                backing.
+        """
+        raise NotImplementedError("Stage 3.1+ feature; requires storage backing")
+
+    async def get_max_drawdown(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        """Worst peak-to-trough decline over the window (``<= 0``).
+
+        See ``services.metrics.compute_max_drawdown``.
+
+        Raises:
+            DataCollectorError: If the underlying read fails.
+            NotImplementedError: If the implementation has no storage
+                backing.
+        """
+        raise NotImplementedError("Stage 3.1+ feature; requires storage backing")
+
+    async def get_flatness(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        """Tightness of price around the mean over the window (``[0, 1]``).
+
+        See ``services.metrics.compute_flatness``.
+
+        Raises:
+            DataCollectorError: If the underlying read fails.
+            NotImplementedError: If the implementation has no storage
+                backing.
+        """
+        raise NotImplementedError("Stage 3.1+ feature; requires storage backing")
+
+    async def get_cycle_stats(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> CycleStats:
+        """FIFO-matched buy-then-sell cycle stats over the window.
+
+        See ``services.metrics.compute_cycle_stats``. Returns a
+        ``CycleStats`` with all zeros if no cycles can be matched.
+
+        Raises:
+            DataCollectorError: If the underlying trade-history read
+                fails.
+            NotImplementedError: If the implementation has no storage
+                backing.
+        """
+        raise NotImplementedError("Stage 3.1+ feature; requires storage backing")

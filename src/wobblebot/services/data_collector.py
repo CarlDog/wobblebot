@@ -1,47 +1,68 @@
-"""DataCollector v1 — Phase 1-2 implementation of ``DataCollectorPort``.
+"""DataCollector v2 — Stage 3.1 implementation of ``DataCollectorPort``.
 
-Wraps a single ``ExchangePort`` and exposes the market-data surface
-Bot Core depends on:
+Wires together an ``ExchangePort`` (live ticker, balances) and a
+``StoragePort`` (persisted price/trade history) to expose:
 
-- ``get_current_price`` — passes through to the exchange.
-- ``get_market_snapshot`` — combines current price with a fresh
-  ``Timestamp``.
-- ``get_balances`` — passes through to the exchange.
+- Live read-through: ``get_current_price``, ``get_market_snapshot``,
+  ``get_balances`` pass through to the exchange.
+- Historical reads: ``get_price_history`` pulls from
+  ``StoragePort.get_price_snapshots`` over a configurable
+  ``timedelta`` lookback.
+- Derived metrics: ``get_volatility``, ``get_max_drawdown``,
+  ``get_flatness``, ``get_cycle_stats`` compose a window read with
+  the pure-math functions in ``services.metrics``.
 
-**No caching.** ``DataCollectorPort`` docstrings say methods are
-"potentially cached," but caching introduces freshness/invalidation
-questions that depend on the polling rate Bot Core ends up using.
-Phase 3's Stage 3.1 ("Data Collector v2") is where we'll add a
-caching layer along with the historical-pricing and derived-metrics
-work that needs it.
+**No caching.** Stage 3.2 introduces caching alongside the advisor
+loop, where the consumer's polling cadence drives a meaningful TTL.
 
-**Error wrapping.** Upstream ``ExchangeError`` instances are
-re-raised as ``DataCollectorError`` so callers depend on this
-layer's contract rather than the underlying exchange's. The
-exception chain (``raise ... from exc``) preserves the original
-error for diagnostics.
+**Error wrapping.** Upstream ``ExchangeError`` and ``StorageError``
+are re-raised as ``DataCollectorError`` so callers depend on this
+layer's contract rather than the underlying ports'. The exception
+chain (``raise ... from exc``) preserves the original error for
+diagnostics.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
-from wobblebot.domain.models import Balance
+from wobblebot.domain.models import Balance, PriceSnapshot
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.data_collector import DataCollectorPort, MarketSnapshot
-from wobblebot.ports.exceptions import DataCollectorError, ExchangeError
+from wobblebot.ports.exceptions import (
+    DataCollectorError,
+    ExchangeError,
+    StorageError,
+)
 from wobblebot.ports.exchange import ExchangePort
+from wobblebot.ports.storage import StoragePort
+from wobblebot.services.metrics import (
+    CycleStats,
+    compute_cycle_stats,
+    compute_flatness,
+    compute_max_drawdown,
+    compute_volatility,
+)
+
+_DEFAULT_LOOKBACK = timedelta(hours=24)
 
 
 class DataCollector(DataCollectorPort):
-    """Phase 1-2 DataCollector — thin composer over a single ``ExchangePort``.
+    """Stage 3.1 DataCollector v2 — composes an ``ExchangePort`` (live)
+    and a ``StoragePort`` (historical) into the consumer-facing
+    derived-metrics surface.
 
     Args:
-        exchange: The ``ExchangePort`` instance to query.
+        exchange: The ``ExchangePort`` instance to query for live data.
+        storage: The ``StoragePort`` instance backing historical reads
+            (price snapshots persisted by ``cli/observe`` and trades
+            persisted by ``cli/live`` / ``cli/shadow``).
     """
 
-    def __init__(self, exchange: ExchangePort) -> None:
+    def __init__(self, exchange: ExchangePort, storage: StoragePort) -> None:
         self._exchange = exchange
+        self._storage = storage
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         try:
@@ -62,3 +83,52 @@ class DataCollector(DataCollectorPort):
             return await self._exchange.get_balances()
         except ExchangeError as exc:
             raise DataCollectorError(f"Failed to retrieve balances: {exc}") from exc
+
+    async def get_price_history(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> list[PriceSnapshot]:
+        start_time = datetime.now(UTC) - lookback
+        try:
+            return await self._storage.get_price_snapshots(symbol=symbol, start_time=start_time)
+        except StorageError as exc:
+            raise DataCollectorError(f"Failed to load price history for {symbol}: {exc}") from exc
+
+    async def get_volatility(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        snapshots = await self.get_price_history(symbol, lookback)
+        return compute_volatility([snap.price.amount for snap in snapshots])
+
+    async def get_max_drawdown(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        snapshots = await self.get_price_history(symbol, lookback)
+        return compute_max_drawdown([snap.price.amount for snap in snapshots])
+
+    async def get_flatness(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> Decimal:
+        snapshots = await self.get_price_history(symbol, lookback)
+        return compute_flatness([snap.price.amount for snap in snapshots])
+
+    async def get_cycle_stats(
+        self,
+        symbol: Symbol,
+        lookback: timedelta = _DEFAULT_LOOKBACK,
+    ) -> CycleStats:
+        start_time = datetime.now(UTC) - lookback
+        try:
+            trades = await self._storage.get_trades(symbol=symbol, start_time=start_time)
+        except StorageError as exc:
+            raise DataCollectorError(f"Failed to load trade history for {symbol}: {exc}") from exc
+        # storage.get_trades returns DESC by executed_at; cycle matching needs ASC.
+        trades_ascending = list(reversed(trades))
+        return compute_cycle_stats(trades_ascending)

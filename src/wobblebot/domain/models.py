@@ -223,3 +223,42 @@ class PriceSnapshot(BaseModel):
         """Pydantic config."""
 
         frozen = True
+
+
+class CycleStats(BaseModel):
+    """Realized cycle statistics derived from trade history.
+
+    Lives in the domain layer (not services) so ``DataCollectorPort``
+    can name it as a return type without dragging the services package
+    into the ports import graph. The math that populates one of these
+    is in ``services.metrics.compute_cycle_stats``.
+
+    A "cycle" is a buy-then-sell pair matched FIFO within a symbol.
+    Open positions (unmatched buys, or sells with no preceding buy)
+    are excluded — they're not yet a completed cycle.
+
+    PnL is computed in quote currency using the executed ``cost``
+    fields (price × volume), minus both legs' ``fee``:
+
+        cycle_pnl = sell.cost - buy.cost - buy.fee - sell.fee
+
+    All zeros indicate no completed cycles in the input.
+
+    Attributes:
+        cycle_count: Number of matched buy-then-sell pairs.
+        win_count: Cycles with positive PnL after fees.
+        win_rate: ``win_count / cycle_count``, or ``0`` if no cycles.
+        total_pnl: Sum of all cycle PnLs in quote currency.
+        avg_profit_per_cycle: ``total_pnl / cycle_count``, or ``0``.
+    """
+
+    cycle_count: int
+    win_count: int
+    win_rate: Decimal
+    total_pnl: Decimal
+    avg_profit_per_cycle: Decimal
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True

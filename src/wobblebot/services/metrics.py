@@ -19,10 +19,16 @@ from collections.abc import Sequence
 from decimal import Decimal
 from statistics import stdev
 
-from pydantic import BaseModel
-
-from wobblebot.domain.models import Trade
+from wobblebot.domain.models import CycleStats, Trade
 from wobblebot.domain.value_objects import OrderSide
+
+__all__ = [
+    "CycleStats",
+    "compute_cycle_stats",
+    "compute_flatness",
+    "compute_max_drawdown",
+    "compute_volatility",
+]
 
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
@@ -118,40 +124,6 @@ def compute_flatness(prices: Sequence[Decimal]) -> Decimal:
     mean = sum(prices, _ZERO) / Decimal(len(prices))
     flatness = _ONE - (high - low) / mean
     return max(flatness, _ZERO)
-
-
-class CycleStats(BaseModel):
-    """Realized cycle statistics derived from trade history.
-
-    A "cycle" is a buy-then-sell pair matched FIFO within a symbol.
-    Open positions (unmatched buys, or sells with no preceding buy)
-    are excluded — they're not yet a completed cycle.
-
-    PnL is computed in quote currency using the executed ``cost``
-    fields (price × volume), minus both legs' ``fee``:
-
-        cycle_pnl = sell.cost - buy.cost - buy.fee - sell.fee
-
-    All zeros indicate no completed cycles in the input.
-
-    Attributes:
-        cycle_count: Number of matched buy-then-sell pairs.
-        win_count: Cycles with positive PnL after fees.
-        win_rate: ``win_count / cycle_count``, or ``0`` if no cycles.
-        total_pnl: Sum of all cycle PnLs in quote currency.
-        avg_profit_per_cycle: ``total_pnl / cycle_count``, or ``0``.
-    """
-
-    cycle_count: int
-    win_count: int
-    win_rate: Decimal
-    total_pnl: Decimal
-    avg_profit_per_cycle: Decimal
-
-    class Config:
-        """Pydantic config."""
-
-        frozen = True
 
 
 def compute_cycle_stats(trades: Sequence[Trade]) -> CycleStats:
