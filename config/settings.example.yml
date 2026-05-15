@@ -247,6 +247,27 @@ news:
   log_format: plain
 
 # ============================================================================
+# Per-CLI: advise (cli/advise — Stage 3.3 Passive Advisory Workflow)
+# ============================================================================
+# Long-running daemon that periodically builds a PerformanceSummary,
+# asks the configured advisor for a recommendation, and persists the
+# result to its own DB. Per ADR-002 + ADR-007 nothing here applies —
+# operator reviews via `tools/show_suggestions.py`.
+#
+# Cadence lives in `schedules.advise` above. One process per symbol;
+# operators wanting multi-coin advisor coverage run multiple instances.
+advise:
+  symbol: BTC/USD
+  db: "data/wobblebot-advise.db"
+  observe_db: "data/wobblebot-observe.db"   # where to read price history
+  news_db: "data/wobblebot-news.db"         # where to read news context
+  metrics_lookback_hours: 6                 # window for vol/drawdown/flatness/cycles
+  news_lookback_hours: 24                   # 0 disables news in the prompt
+  news_match_coin: false                    # true = only news mentioning the symbol's base
+  news_limit: 20                            # cap items per cycle (prompt-token budget)
+  log_format: plain
+
+# ============================================================================
 # Strategy Advisor (Phase 3 — see ADR-007 + ADR-009)
 # ============================================================================
 # Two modes:
