@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD --price-interval-seconds 30` — Stage 3.0 pure data collection. Read-only. Polls Ticker per symbol, persists to `price_snapshots` table; optionally polls BalanceEx on a slower cadence. Build a multi-week price dataset.
 - `python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD --initial-shadow-usd 10000` — Stage 3.0 shadow trading. Same engine code as `cli/live` but with `ShadowExchangeAdapter`: live Kraken prices, synthetic balance ledger, honest maker/taker fee modeling. Real-time backtest framework + Phase 3 advisor sandbox.
 
-399 unit tests pass by default (up from 296 after the config consolidation audit added 100+ tests for per-CLI schemas, prompt loader, profile resolver, and schema-drift detection); 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (42 src files), black/isort clean, pylint **10.00/10** on `src/`.
+401 unit tests pass by default (up from 296 after the config consolidation audit added 100+ tests for per-CLI schemas, prompt loader, profile resolver, and schema-drift detection; +2 from the deprived-env walkthrough fixes); 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (42 src files), black/isort clean, pylint **10.00/10** on `src/`.
 
 ### Operator handoff: from dry-run to live trading
 

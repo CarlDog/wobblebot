@@ -10,6 +10,54 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Post-audit infrastructure (2026-05-15)
+
+Follow-up landed in the same window as the config consolidation
+audit close. None of these change runtime behavior in a way that
+affects live trading; all are operator-experience and project-
+hygiene improvements.
+
+- **User-facing docs refresh.** README rewritten to reflect current
+  phase status and the full 7-CLI surface (which CLIs touch real
+  money, which don't, what each is for); fixed placeholder clone
+  URL; updated test commands to match the actual marker setup.
+  SECURITY.md replaced GitHub's stock placeholder template with a
+  real threat model + private-disclosure flow via GitHub Security
+  Advisories. New CONTRIBUTING.md (lightweight; delegates to
+  existing docs) and CODE_OF_CONDUCT.md (Contributor Covenant 2.1
+  by reference). CHANGELOG moved from
+  `docs/implementation/changelog.md` to repo-root `CHANGELOG.md`
+  per Keep-a-Changelog convention. LICENSE copyright updated to
+  `CarlDog`, year span `2025-2026`. GitHub repo description and
+  10 discoverability topics set via the API.
+- **Discord on the roadmap (ADR-pending).** Stage 5.1.5 added
+  for Discord notifier (`NotifierPort` adapter at
+  `src/wobblebot/adapters/discord_notifier.py`, outbound only,
+  one-evening scope). Stage 5.2 expanded to cover bidirectional
+  Discord control surface (slash commands, new `OperatorPort`).
+  Stage 5.1 documents the web UI option's structural placement
+  (`src/wobblebot/web/` as sibling of `src/wobblebot/cli/`, both
+  presentation layers consuming existing ports).
+- **Phase-end audit practice codified.** New global rule at
+  `~/.claude/rules/phase-end-audit.md` defines per-phase /
+  per-major-feature / quarterly / pre-1.0 audit cadences with
+  process discipline (punch list first, fixes in separate commits
+  per category, no scope creep into rewrites). Wobblebot's
+  `CLAUDE.md` adds a project-specific extension covering all-CLI
+  deprived-env walkthrough, schema-drift cleanliness, OC memory
+  currency, and Phase 4 Harvester key scope verification when that
+  phase lands.
+- **Dependabot cleanup.** Removed the speculative
+  `github-actions` ecosystem block from `.github/dependabot.yml`
+  (no `.github/workflows/` exists yet, so GitHub's Dependency
+  Graph was warning "Not all dependency manifest files were
+  successfully processed"). Re-add when CI lands. Pip ecosystem
+  unaffected — still 16 packages tracked, security alerts on,
+  weekly Monday Python update PRs scheduled.
+- **GitHub Sponsors + Ko-fi.** New `.github/FUNDING.yml` cloned
+  from `openchronicle-mcp`'s setup. Enables the "Sponsor" button
+  on the repo page.
+
 ### Phase 3 — Strategy Advisor & Analytics (in progress)
 
 - **Stage 3.0 — Observer & Shadow Mode** (2026-05-14, ADR-008). Two
