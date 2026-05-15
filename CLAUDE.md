@@ -6,24 +6,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Stage 2.2 (Micro-Grid Engine) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stage 2.1 closed 2026-05-14 earlier the same day. Three operator entry points work end-to-end:
+**Stage 2.3 (Live Paper / Tiny-Size Mode) is complete as of 2026-05-14.** Phase 1 closed 2026-05-13; Stages 2.1 and 2.2 both closed 2026-05-14 earlier the same day. Five operator entry points work end-to-end:
 
 - `python -m wobblebot.cli.simulate` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
-- `python -m wobblebot.cli.check` — Stage 2.1 live read check: loads credentials from `.env`, wires `KrakenAdapter` + `DataCollector`, prints current price + balances against real Kraken. Read-only — places nothing, moves nothing.
-- `GridEngine.step(symbol)` — Stage 2.2 micro-grid orchestrator. No CLI yet (deferred to Stage 2.3 per the design doc); exercised end-to-end by `tests/integration/test_grid_engine_e2e.py` (1000-tick oscillation against the mock, 500 complete cycles, positive realized P&L).
+- `python -m wobblebot.cli.check` — Stage 2.1 live read check: read-only Kraken price + balance fetch.
+- `python -m wobblebot.cli.validate` — Stage 2.3 diagnostic: runs ONE engine step against live Kraken with `KrakenAdapter(dry_run=True)`. Every order goes through Kraken's `validate=true` flag — request is signed, sent, validated end-to-end (auth / pair / precision / balance / ordermin / costmin) without placing. **Use this before every live run to confirm the config is acceptable to Kraken.**
+- `python -m wobblebot.cli.grid` — Stage 2.3 operational loop. Real-money trading. Tick loop at the configured rate, hard caps (max session loss, max runtime, per-coin / total / daily-spend exposure), clean SIGINT/SIGTERM shutdown that cancels every open order. Exit codes: 0 clean stop, 1 loss-cap tripped, 2 missing creds.
+- `python tools/first_real_trade.py` — one-shot diagnostic: places a far-from-market BUY (cancels it) + a marketable BUY/SELL round-trip with hard caps. Forensic JSONL log to `data/`. Used 2026-05-15 00:51 UTC against the operator's account; total cost $0.08 (two 0.40% taker fees on a $10 round-trip; spread effectively zero).
 
-265 unit tests pass by default; 12 integration tests (5 Kraken API drift check + 3 live adapter + 2 simulator + 2 grid engine e2e) on opt-in. mypy clean (31 src files), black/isort clean, pylint 9.98/10 on `src/`.
+291 unit tests pass by default; 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (33 src files), black/isort clean, pylint **9.98/10** on `src/`.
 
-**Stage 2.2 design decisions ratified (do not relitigate without an ADR — see ADR-006):**
+### Operator handoff: from dry-run to live trading
 
-- **Stay parked.** Grid does not re-center when price exits the window; emit "offside" log signal and wait.
-- **Counter sized to filled portion.** When a level fills, the counter-order matches the filled base amount (not re-derived from order_size_usd at the counter price), or each cycle's BUY/SELL legs would mismatch and bleed value through the spread.
-- **DB primary, exchange ultimate.** Engine reads `GridState` from SQLite each tick; periodic reconciliation against `get_open_orders` is deferred (no slice has needed it yet).
-- **`GridSlot` is a derived view.** Only `GridState` (per-symbol anchor) is persisted; slots are reconstituted each tick from `compute_grid_levels` + queries against the existing `orders` table. No separate `grid_slot` table.
-- **Single asyncio task per coin.** Per-symbol `asyncio.Lock` serializes `step()` calls for the same symbol; different symbols run in parallel.
-- **Operational defaults:** 5s tick rate, no order TTL, log+persist per cycle.
+1. **Mint a Kraken trading key**, separate from the read-only key (per ADR-003-style separation). Permissions: Query Funds + Query open & closed orders & trades + Create & modify orders + Cancel & close orders. **Withdraw must stay off** — that scope is exclusive to the future Phase 4 Harvester key. Recommended: enable IP address restriction.
+2. **Stash credentials in `.env`** as `KRAKEN_TRADE_API_KEY` / `KRAKEN_TRADE_API_SECRET` (separate from the existing `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` so the read-only key can keep being used for `cli/check`).
+3. **Run `cli/validate`** — confirm Kraken accepts the grid config without spending anything. Exit 0 means every layout order would be accepted by Kraken's matching engine.
+4. **Run `cli/grid`** with eyes on the Kraken Pro Orders + Trade History tab. Defaults: $10 per order, 1% spacing, 3 above + 3 below = $60 total exposure, $5 max session loss, 60 minute max runtime, 5s tick. The first session is the highest-risk session — watch it.
 
-**Next:** Stage 2.3 — Live Paper Mode / Tiny-Size Mode. **First real money on the table.** Swap `MockExchangeAdapter` for `KrakenAdapter` in the `GridEngine` wiring; engine code is unchanged. Order placement + fill tracking against the live API key. Per the project's standing guardrail, this slice **deserves daylight** even more than Stage 2.2 did — money-touching code at midnight is the failure mode the design explicitly tried to prevent. Do not start without runway.
+### Stage 2.3 design decisions ratified (do not relitigate without an ADR)
+
+- **Dry-run = `validate=true`.** `KrakenAdapter(config, dry_run=True)` adds `validate=true` to every AddOrder request. Kraken validates auth + pair + precision + balance + ordermin + costmin without placing. The adapter synthesizes a `DRYRUN-<order.id>` exchange_id so the engine's bookkeeping path still works for diagnostic runs.
+- **Per-pair precision quantization is mandatory.** AssetPairs cache (`pair_decimals`, `lot_decimals`, `ordermin`, `costmin`) populated lazily on first trading call. Price/volume rounded DOWN before submission — never up, since rounding up could push spending past the engine's intended `order_size_usd` budget.
+- **Two separate Kraken keys, not one.** The read-only key (`cli/check`) and the trade key (`cli/validate` / `cli/grid`) live side-by-side in `.env`. `KrakenConfig.from_env(key_var=..., secret_var=...)` parameterizes which env vars to read.
+- **Live taker fee is 0.40%, not the mock's 0.26%.** Discovered during the 2026-05-15 first-trade test: $0.04 fee on each $9.99 leg of a marketable round-trip = 0.40%. The mock uses 0.26% (Kraken maker rate, conservative). The grid engine in normal operation places limit orders that sit on the book — those collect MAKER fees, so the mock's assumption is right *for the engine's normal mode*; the gap only shows up on marketable orders (which the engine doesn't normally place).
+- **Cleanup discipline in the loop.** `cli/grid`'s shutdown path cancels every open order for the symbol in a `finally` block, regardless of why the loop ended (signal, runtime cap, loss cap, exception). The session-end log records before/after USD balance, session PnL, cancellations succeeded/failed.
+
+**Next:** Stage 2.4 — Multi-Asset Support. Extend the engine wiring to run grids for multiple coins from the whitelist (`GridConfig.coins` already supports this; `cli/grid` currently takes a single `--symbol`). Then Stage 2.5 — Phase 2 Integration Check (full pipeline demo with multiple assets, live Kraken, withdrawals still disabled at the API-key level). Both can land code-only without escalating live-trading risk.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
