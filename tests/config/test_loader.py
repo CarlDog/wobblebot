@@ -56,10 +56,28 @@ class TestLoadConfig:
     def test_loads_committed_example(self) -> None:
         # The repo's example file should always parse. If this breaks,
         # the example and the schema have drifted apart.
+        # Drift-tolerant assertions: we don't pin specific operator-tunable
+        # values (those legitimately change over time as defaults evolve),
+        # we just verify the load produces sensible structure across every
+        # section the example file documents.
         example = Path(__file__).resolve().parents[2] / "config" / "settings.example.yml"
         cfg = load_config(example)
-        assert cfg.grid.default.levels_above == 5
-        assert cfg.safety.max_total_exposure_usd == Decimal("1000.0")
+        # Engine sections — required, must be populated
+        assert cfg.grid.default.levels_above > 0
+        assert cfg.grid.default.levels_below > 0
+        assert cfg.safety.max_total_exposure_usd > Decimal("0")
+        # Per-CLI sections — all optional in the schema, but the committed
+        # example documents every one
+        assert cfg.live is not None
+        assert cfg.shadow is not None
+        assert cfg.observe is not None
+        assert cfg.validate_cli is not None
+        assert cfg.check is not None
+        assert cfg.simulate is not None
+        # Advisor + profiles — also documented
+        assert cfg.advisor is not None
+        assert cfg.advisor.type in ("single", "moe")
+        assert len(cfg.profiles) > 0
 
     def test_extra_top_level_keys_ignored(self, tmp_path: Path) -> None:
         # The example YAML has application/exchange/logging/database

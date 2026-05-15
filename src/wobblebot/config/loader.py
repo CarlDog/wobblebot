@@ -1,35 +1,64 @@
 """YAML loader for the WobbleBot configuration file.
 
-Returns a :class:`WobbleBotConfig` containing the grid and safety sections.
-Other top-level YAML keys (``application``, ``exchange``, ``logging``,
-``database``, etc.) are tolerated and ignored — they are loaded by their
-own modules or not yet implemented as of Stage 2.2.
+Returns a :class:`WobbleBotConfig` containing the per-section schemas
+that have shipped so far. Extra top-level YAML keys (e.g.
+``application``, ``exchange``, ``logging``, ``database``,
+``harvester``) are tolerated and ignored — they are loaded by their
+own modules or not yet implemented.
+
+The ``profiles:`` block is captured as a raw dict; the audit-slice-3
+resolver merges a named profile into the base config before
+validation. ``WobbleBotConfig.model_validate`` itself does NOT apply
+profiles — that's a separate layer between YAML load and CLI use.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from wobblebot.config.advisor import AdvisorConfig
+from wobblebot.config.cli import (
+    CheckConfig,
+    LiveConfig,
+    ObserveConfig,
+    ShadowConfig,
+    SimulateConfig,
+    ValidateConfig,
+)
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
 
 
 class WobbleBotConfig(BaseModel):
-    """Top-level config aggregate. Holds only what Stage 2.2 needs.
+    """Top-level config aggregate.
 
-    Future stages extend this by adding fields (e.g. ``advisor``,
-    ``harvester``) — extra keys in the YAML are ignored, so adding a
-    section to the file before adding its schema does not break loading.
+    Engine knobs (``grid``, ``safety``) are required for any CLI that
+    runs the engine. Per-CLI sections are optional — operator can
+    leave out sections for CLIs they don't use; CLI defaults fill in.
+    The ``profiles`` map is loaded as raw dicts and consumed by the
+    profile resolver before this model validates.
     """
 
     grid: GridConfig
     safety: SafetyConfig
+    live: LiveConfig | None = None
+    shadow: ShadowConfig | None = None
+    observe: ObserveConfig | None = None
+    validate_cli: ValidateConfig | None = Field(default=None, alias="validate")
+    check: CheckConfig | None = None
+    simulate: SimulateConfig | None = None
+    advisor: AdvisorConfig | None = None
+    profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     class Config:
         frozen = True
+        populate_by_name = True
+        # Pydantic v2: this is the equivalent of populate_by_name plus
+        # accepting alias on input.
 
 
 def load_config(path: Path) -> WobbleBotConfig:

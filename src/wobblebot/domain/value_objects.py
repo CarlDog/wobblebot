@@ -28,6 +28,20 @@ class Symbol(BaseModel):
         """Ensure currency codes are uppercase."""
         return v.upper().strip()
 
+    @classmethod
+    def from_string(cls, raw: str) -> "Symbol":
+        """Parse ``"BASE/QUOTE"`` form into a ``Symbol``.
+
+        Single canonical entry point for symbol-string parsing — every
+        CLI and config layer converges on this method instead of
+        duplicating the split. Raises ``ValueError`` on malformed
+        input (missing slash, empty side).
+        """
+        parts = raw.split("/")
+        if len(parts) != 2 or not all(parts):
+            raise ValueError(f"Symbol must be BASE/QUOTE form (e.g. BTC/USD); got {raw!r}")
+        return cls(base=parts[0], quote=parts[1])
+
     def __str__(self) -> str:
         """Format as BASE/QUOTE."""
         return f"{self.base}/{self.quote}"
