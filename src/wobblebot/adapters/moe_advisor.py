@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -38,20 +38,28 @@ from wobblebot.ports.advisor import (
 )
 from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.services.aggregators import (
+    ArbitratorAdvisor,
+    aggregate_arbitrator,
     aggregate_voting,
     aggregate_weighted_confidence,
 )
 
 _LOGGER = logging.getLogger("wobblebot.adapters.moe_advisor")
 
-AggregatorStrategy = Literal["voting", "weighted_confidence"]
-# arbitrator strategy lands in Slice C — it needs an LLM call so it
-# can't be a pure aggregator function.
+AggregatorStrategy = Literal["voting", "weighted_confidence", "arbitrator"]
 
+# Pure-function aggregators dispatchable by name. The ``arbitrator``
+# strategy is async + needs the arbitrator entry, so it's invoked
+# directly in ``get_recommendation`` rather than through this map.
 _AGGREGATORS = {
     "voting": aggregate_voting,
     "weighted_confidence": aggregate_weighted_confidence,
 }
+_ALL_STRATEGIES: tuple[AggregatorStrategy, ...] = (
+    "voting",
+    "weighted_confidence",
+    "arbitrator",
+)
 
 
 @dataclass(frozen=True)
@@ -78,8 +86,12 @@ class MoEAdvisorAdapter(AdvisorPort):
             recommends ≥3 for meaningful diversity, but the adapter
             doesn't enforce a minimum — operator-side validation in
             ``AdvisorConfig`` already requires ≥3 for MoE mode.
-        aggregator: Which aggregation strategy to use. ``arbitrator``
-            ships in Slice C (currently unsupported here).
+        aggregator: Which aggregation strategy to use.
+        arbitrator: Required iff ``aggregator == "arbitrator"``. Its
+            ``advisor`` must satisfy ``ArbitratorAdvisor`` (i.e. accept
+            ``extra_context``). ``OllamaAdapter`` satisfies this; the
+            future cloud adapters will too. Forbidden for other
+            aggregator strategies so misconfigurations fail loud.
     """
 
     def __init__(
@@ -87,23 +99,36 @@ class MoEAdvisorAdapter(AdvisorPort):
         *,
         experts: list[MoEExpertEntry],
         aggregator: AggregatorStrategy,
+        arbitrator: MoEExpertEntry | None = None,
     ) -> None:
         if not experts:
             raise ValueError("MoE requires at least one expert")
-        if aggregator not in _AGGREGATORS:
+        if aggregator not in _ALL_STRATEGIES:
             raise ValueError(
-                f"Unknown aggregator {aggregator!r}; " f"choose from {sorted(_AGGREGATORS)}"
+                f"Unknown aggregator {aggregator!r}; " f"choose from {list(_ALL_STRATEGIES)}"
+            )
+        if aggregator == "arbitrator" and arbitrator is None:
+            raise ValueError(
+                "aggregator='arbitrator' requires an arbitrator entry; pass arbitrator=..."
+            )
+        if aggregator != "arbitrator" and arbitrator is not None:
+            raise ValueError(
+                f"aggregator={aggregator!r} cannot accept an arbitrator entry "
+                "(arbitrator is only valid with aggregator='arbitrator')"
             )
         # Operator-side AdvisorConfig validator already enforces
         # name uniqueness — re-check here so library-level callers
-        # can't bypass it.
-        names = [e.name for e in experts]
-        if len(set(names)) != len(names):
-            duplicates = sorted({n for n in names if names.count(n) > 1})
+        # can't bypass it. The arbitrator's name is in the same
+        # namespace (audit logs use ``expert_name`` for both kinds).
+        all_names = [e.name for e in experts]
+        if arbitrator is not None:
+            all_names.append(arbitrator.name)
+        if len(set(all_names)) != len(all_names):
+            duplicates = sorted({n for n in all_names if all_names.count(n) > 1})
             raise ValueError(f"expert names must be unique; duplicates: {duplicates}")
         self._experts = experts
         self._aggregator_name = aggregator
-        self._aggregator_fn = _AGGREGATORS[aggregator]
+        self._arbitrator = arbitrator
 
     async def get_recommendation(self, summary: PerformanceSummary) -> AdvisorRecommendation:
         """Fan out to every expert in parallel; aggregate surviving opinions."""
@@ -119,10 +144,21 @@ class MoEAdvisorAdapter(AdvisorPort):
                 f"All {len(self._experts)} MoE experts failed; no opinion to aggregate"
             )
 
-        aggregated = self._aggregator_fn(opinions)
+        if self._aggregator_name == "arbitrator":
+            assert self._arbitrator is not None  # enforced at init
+            aggregated = await aggregate_arbitrator(
+                opinions,
+                _as_arbitrator_advisor(self._arbitrator.advisor),
+                summary,
+            )
+        else:
+            aggregated = _AGGREGATORS[self._aggregator_name](opinions)
         # Attach per-expert opinions for the audit trail. AdvisorRecommendation
-        # is frozen — re-construct with the field populated.
-        return aggregated.model_copy(update={"expert_opinions": opinions})
+        # is frozen — re-construct with the field populated. The
+        # aggregated role is forced to "aggregated" regardless of the
+        # arbitrator's self-tag so the audit trail keeps the MoE output
+        # distinguishable from a raw single-LLM call.
+        return aggregated.model_copy(update={"role": "aggregated", "expert_opinions": opinions})
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.4a: passing through — like the single-LLM adapter, real
@@ -155,3 +191,17 @@ class MoEAdvisorAdapter(AdvisorPort):
         # default to "quant" regardless), but the operator's config is
         # the source of truth for which slot this expert fills.
         return opinion.model_copy(update={"role": entry.role})
+
+
+def _as_arbitrator_advisor(advisor: AdvisorPort) -> ArbitratorAdvisor:
+    """Coerce an ``AdvisorPort`` to ``ArbitratorAdvisor`` (structural).
+
+    ``ArbitratorAdvisor`` is a Protocol; ``OllamaAdapter`` satisfies it
+    structurally by accepting the ``extra_context`` kwarg. We cast
+    instead of isinstance-checking because Protocol runtime-checking
+    requires ``@runtime_checkable`` and even then doesn't validate
+    keyword-only argument compatibility. If the operator wires a
+    non-arbitrator-capable advisor, the failure surfaces as a
+    ``TypeError`` on the first call — clear enough for now.
+    """
+    return cast(ArbitratorAdvisor, advisor)

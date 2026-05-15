@@ -75,6 +75,33 @@ class _StubExpert(AdvisorPort):
         return True
 
 
+class _StubArbitratorAdvisor(AdvisorPort):
+    """AdvisorPort that also accepts the ``extra_context`` kwarg —
+    mirrors OllamaAdapter's Stage 3.4a extension. Captures the
+    received context so MoE tests can assert the arbitrator's prompt
+    actually received the opinions blob."""
+
+    def __init__(self, *, response: AdvisorRecommendation) -> None:
+        self._response = response
+        self.last_extra_context: str = ""
+        self.call_count = 0
+
+    async def get_recommendation(  # pylint: disable=arguments-differ
+        self,
+        summary: PerformanceSummary,
+        *,
+        extra_context: str = "",
+    ) -> AdvisorRecommendation:
+        del summary
+        self.call_count += 1
+        self.last_extra_context = extra_context
+        return self._response
+
+    async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
+        del recommendation
+        return True
+
+
 def _entry(name: str, role: str, expert: AdvisorPort) -> MoEExpertEntry:
     return MoEExpertEntry(name=name, role=role, advisor=expert)
 
@@ -261,3 +288,89 @@ class TestValidateRecommendation:
         )
         rec = _rec(role="aggregated", confidence="medium")
         assert await adapter.validate_recommendation(rec) is True
+
+
+class TestArbitratorConstructor:
+    def test_arbitrator_required_when_aggregator_is_arbitrator(self) -> None:
+        with pytest.raises(ValueError, match="requires an arbitrator entry"):
+            MoEAdvisorAdapter(
+                experts=[
+                    _entry("q", "quant", _StubExpert(opinion=_rec(role="quant"))),
+                    _entry("r", "risk", _StubExpert(opinion=_rec(role="risk"))),
+                ],
+                aggregator="arbitrator",
+            )
+
+    def test_arbitrator_forbidden_for_pure_aggregators(self) -> None:
+        arbitrator = _StubArbitratorAdvisor(response=_rec(role="arbitrator"))
+        with pytest.raises(ValueError, match="cannot accept an arbitrator entry"):
+            MoEAdvisorAdapter(
+                experts=[_entry("q", "quant", _StubExpert(opinion=_rec(role="quant")))],
+                aggregator="voting",
+                arbitrator=_entry("arb", "arbitrator", arbitrator),
+            )
+
+    def test_arbitrator_name_must_be_unique(self) -> None:
+        """Arbitrator's name shares the same namespace as experts —
+        no duplicates allowed (audit logs use ``expert_name`` for both)."""
+        arbitrator = _StubArbitratorAdvisor(response=_rec(role="arbitrator"))
+        with pytest.raises(ValueError, match="duplicates"):
+            MoEAdvisorAdapter(
+                experts=[_entry("clash", "quant", _StubExpert(opinion=_rec(role="quant")))],
+                aggregator="arbitrator",
+                arbitrator=_entry("clash", "arbitrator", arbitrator),
+            )
+
+
+@pytest.mark.asyncio
+class TestArbitratorDispatch:
+    async def test_arbitrator_receives_opinions_context(self) -> None:
+        """Verify the MoE wires opinions into the arbitrator's
+        extra_context — proves the end-to-end channel works."""
+        quant = _StubExpert(opinion=_rec(role="quant", recommendations={"x": 1}))
+        risk = _StubExpert(opinion=_rec(role="risk", recommendations={"x": 2}))
+        arb = _StubArbitratorAdvisor(
+            response=_rec(
+                role="single",  # arbitrator self-tags; MoE overrides
+                recommendations={"x": 3},
+                confidence="high",
+                rationale="synthesized",
+            )
+        )
+        adapter = MoEAdvisorAdapter(
+            experts=[
+                _entry("q", "quant", quant),
+                _entry("r", "risk", risk),
+            ],
+            aggregator="arbitrator",
+            arbitrator=_entry("arb", "arbitrator", arb),
+        )
+
+        result = await adapter.get_recommendation(_summary())
+
+        assert arb.call_count == 1
+        # The two expert opinions reached the arbitrator's prompt.
+        assert "quant" in arb.last_extra_context
+        assert "risk" in arb.last_extra_context
+        # MoE stamps the final role to "aggregated" regardless of the
+        # arbitrator's self-tag.
+        assert result.role == "aggregated"
+        assert result.recommendations == {"x": 3}
+        # Per-expert audit trail still populated.
+        assert len(result.expert_opinions) == 2
+
+    async def test_arbitrator_only_called_after_experts(self) -> None:
+        """If every expert fails, MoE raises before invoking the
+        arbitrator — there's nothing meaningful to synthesize."""
+        arb = _StubArbitratorAdvisor(response=_rec(role="arbitrator"))
+        adapter = MoEAdvisorAdapter(
+            experts=[
+                _entry("a", "quant", _StubExpert(error=AdvisorError("down"))),
+                _entry("b", "risk", _StubExpert(error=AdvisorError("down"))),
+            ],
+            aggregator="arbitrator",
+            arbitrator=_entry("arb", "arbitrator", arb),
+        )
+        with pytest.raises(AdvisorError, match="All 2 MoE experts failed"):
+            await adapter.get_recommendation(_summary())
+        assert arb.call_count == 0

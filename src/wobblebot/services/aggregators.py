@@ -1,26 +1,22 @@
 """Aggregator strategies for the Stage 3.4a MoE advisor.
 
-Pure functions: take a list of per-expert ``AdvisorRecommendation``
-opinions, return one combined ``AdvisorRecommendation``. No I/O, no
-HTTP, no LLM calls — that's the MoE adapter's job. These functions
-are how multiple opinions become a single answer.
+Three strategies live here:
 
-Two strategies live here:
+- ``aggregate_voting`` — pure function. Per-key majority across
+  experts' ``recommendations`` dicts. Ties or no-majority cases omit
+  the key (returns "no consensus on X" rather than fabricating one).
 
-- ``aggregate_voting`` — per-key majority. For each key seen in any
-  opinion's ``recommendations`` dict, count proposed values; the
-  value with the most votes wins. Ties or no-majority cases omit the
-  key from the output (the MoE returns "no consensus on X" rather
-  than fabricating one).
+- ``aggregate_weighted_confidence`` — pure function. Per-key
+  confidence-weighted average / mode (``high=3``, ``medium=2``,
+  ``low=1``).
 
-- ``aggregate_weighted_confidence`` — per-key weighted average. Each
-  expert's vote is weighted by their self-reported confidence
-  (``high=3``, ``medium=2``, ``low=1``). Numeric keys produce a
-  weighted mean; non-numeric keys fall back to majority among
-  highest-confidence opinions.
-
-The third strategy, ``aggregate_arbitrator``, lives in a separate
-slice — it needs an LLM round trip, so it can't be a pure function.
+- ``aggregate_arbitrator`` — async, one LLM round-trip. Serializes
+  the experts' opinions as context and asks a separate arbitrator
+  model (typically a stronger/larger LLM) to synthesize the final
+  call. Unlike the pure-function strategies it can't be invoked
+  without I/O — and that's the point: ADR-007 calls out arbitrator
+  as the path where the operator wants reasoned synthesis rather
+  than mechanical aggregation.
 
 **News-role inclusion:** Per ADR-007, news-derived recommendations
 "contribute to the aggregated reasoning but cannot drive an
@@ -31,13 +27,39 @@ they DO inform the aggregated reasoning.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, ConfidenceLevel
+from wobblebot.ports.advisor import (
+    AdvisorRecommendation,
+    ConfidenceLevel,
+    PerformanceSummary,
+)
+
+
+class ArbitratorAdvisor(Protocol):
+    """Structural type for an advisor that accepts arbitrator context.
+
+    OllamaAdapter satisfies this by extending ``AdvisorPort.get_recommendation``
+    with an optional ``extra_context: str = ""`` keyword. Future cloud
+    adapters (AnthropicAdapter, OpenAIAdapter) will add the same kwarg
+    and structurally satisfy the protocol. We use a Protocol rather than
+    putting ``extra_context`` on ``AdvisorPort`` itself because the kwarg
+    is MoE-arbitrator-specific — the single-LLM advisor path doesn't
+    need it and shouldn't be forced to thread it through.
+    """
+
+    async def get_recommendation(
+        self,
+        summary: PerformanceSummary,
+        *,
+        extra_context: str = "",
+    ) -> AdvisorRecommendation: ...
+
 
 _CONFIDENCE_WEIGHT: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
 _AGGREGATED_ROLE = "aggregated"
@@ -282,3 +304,71 @@ def _weighted_rationale(
     for key, value in sorted(weighted.items()):
         parts.append(f"{key}: {value}")
     return " ".join(parts)
+
+
+async def aggregate_arbitrator(
+    opinions: list[AdvisorRecommendation],
+    arbitrator: ArbitratorAdvisor,
+    summary: PerformanceSummary,
+) -> AdvisorRecommendation:
+    """Have a separate arbitrator LLM synthesize the experts' opinions.
+
+    Builds a context string from the surviving experts' opinions and
+    invokes ``arbitrator.get_recommendation(summary, extra_context=...)``.
+    The arbitrator sees the same ``PerformanceSummary`` the experts saw
+    plus a JSON dump of their per-role opinions, and returns one final
+    ``AdvisorRecommendation``. Unlike the pure-function aggregators
+    this path does I/O — typically a single Ollama or cloud-LLM call.
+
+    The returned recommendation's ``role`` is forced to ``"arbitrator"``
+    regardless of what the arbitrator model self-tags. The MoE adapter
+    re-stamps it again to ``"aggregated"`` when populating
+    ``expert_opinions`` so the audit-trail field on the final result
+    matches the other aggregators' convention.
+
+    Args:
+        opinions: Surviving expert opinions (at least one).
+        arbitrator: An ``ArbitratorAdvisor`` (typically a cloud or
+            heavyweight local LLM); the operator wires it via
+            ``AdvisorConfig.arbitrator``.
+        summary: The same performance summary the experts saw.
+
+    Returns:
+        Final synthesized recommendation with ``role="arbitrator"``.
+
+    Raises:
+        ValueError: If ``opinions`` is empty.
+        AdvisorError: If the arbitrator's LLM call fails (propagated).
+    """
+    if not opinions:
+        raise ValueError("aggregate_arbitrator requires at least one opinion")
+
+    context = _arbitrator_context(opinions)
+    result = await arbitrator.get_recommendation(summary, extra_context=context)
+    # Force the role — arbitrator prompts often default to "single" or
+    # whatever role string the model was trained on. The MoE adapter
+    # re-stamps to "aggregated" on the final output; we tag this
+    # intermediate as "arbitrator" so the audit trail keeps it
+    # distinguishable from a raw single-LLM call.
+    return result.model_copy(update={"role": "arbitrator"})
+
+
+def _arbitrator_context(opinions: list[AdvisorRecommendation]) -> str:
+    """Serialize per-expert opinions as a context block for the arbitrator."""
+    serialized = [
+        {
+            "role": op.role,
+            "confidence": op.confidence,
+            "recommendations": op.recommendations,
+            "rationale": op.rationale,
+        }
+        for op in opinions
+    ]
+    payload = json.dumps(serialized, indent=2, sort_keys=True)
+    return (
+        f"Other experts' opinions on this same metrics window "
+        f"({len(opinions)} expert(s)):\n\n"
+        f"{payload}\n\n"
+        "Synthesize a final recommendation. You may agree with one "
+        "expert, average them, or override based on the rationales."
+    )

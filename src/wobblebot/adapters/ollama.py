@@ -158,13 +158,24 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
             await self._client.aclose()
 
     async def get_recommendation(  # pylint: disable=too-many-locals
-        self, summary: PerformanceSummary
+        self,
+        summary: PerformanceSummary,
+        *,
+        extra_context: str = "",
     ) -> AdvisorRecommendation:
+        # ``extra_context`` is a Stage 3.4a-specific channel for the MoE
+        # arbitrator: when an arbitrator-role expert is invoked, the
+        # other experts' opinions are serialized into this string so the
+        # arbitrating LLM can synthesize a final call from them. Default
+        # empty preserves AdvisorPort-compatible behavior for the
+        # single-LLM path.
         user_message = (
             "Current engine state (JSON):\n\n"
             f"{summary.model_dump_json(indent=2)}\n\n"
             "Respond with JSON conforming to advisor_recommendation_v1."
         )
+        if extra_context:
+            user_message = f"{user_message}\n\n{extra_context}"
         thinking_mode = _is_thinking_model(self._model)
         payload: dict[str, Any] = {
             "model": self._model,

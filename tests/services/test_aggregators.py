@@ -8,8 +8,9 @@ from typing import Any
 import pytest
 
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation
+from wobblebot.ports.advisor import AdvisorRecommendation, PerformanceSummary
 from wobblebot.services.aggregators import (
+    aggregate_arbitrator,
     aggregate_voting,
     aggregate_weighted_confidence,
 )
@@ -292,3 +293,107 @@ class TestNewsRoleParticipation:
         result = aggregate_weighted_confidence(opinions)
         # Both high → (1.0*3 + 2.0*3) / 6 = 1.5
         assert result.recommendations["spacing_percentage"] == pytest.approx(1.5)
+
+
+def _summary() -> PerformanceSummary:
+    return PerformanceSummary(
+        symbol="BTC/USD",
+        lookback_hours=6.0,
+        snapshot_count=100,
+        volatility=0.0004,
+        max_drawdown=-0.03,
+        flatness=0.97,
+        cycle_count=0,
+        win_rate=0.0,
+    )
+
+
+class _StubArbitrator:
+    """Captures the extra_context it was called with so tests can assert
+    the opinions JSON reached the arbitrator's prompt."""
+
+    def __init__(self, *, response: AdvisorRecommendation) -> None:
+        self._response = response
+        self.last_summary: PerformanceSummary | None = None
+        self.last_extra_context: str = ""
+        self.call_count = 0
+
+    async def get_recommendation(
+        self,
+        summary: PerformanceSummary,
+        *,
+        extra_context: str = "",
+    ) -> AdvisorRecommendation:
+        self.call_count += 1
+        self.last_summary = summary
+        self.last_extra_context = extra_context
+        return self._response
+
+
+@pytest.mark.asyncio
+class TestArbitratorAggregator:
+    async def test_empty_opinions_rejected(self) -> None:
+        arbitrator = _StubArbitrator(response=_opinion())
+        with pytest.raises(ValueError, match="at least one opinion"):
+            await aggregate_arbitrator([], arbitrator, _summary())
+        assert arbitrator.call_count == 0
+
+    async def test_role_forced_to_arbitrator(self) -> None:
+        """Whatever the arbitrator self-tags as, the function re-tags
+        the result with role='arbitrator' so the audit trail keeps it
+        distinguishable from a raw single-LLM call."""
+        # The arbitrator self-tags as "single" — typical default for the
+        # underlying OllamaAdapter when no role override is set.
+        arbitrator_says = _opinion(
+            role="single",
+            recommendations={"spacing_percentage": 1.5},
+            confidence="high",
+        )
+        arbitrator = _StubArbitrator(response=arbitrator_says)
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.2}),
+            _opinion(role="risk", recommendations={"spacing_percentage": 1.5}),
+        ]
+
+        result = await aggregate_arbitrator(opinions, arbitrator, _summary())
+
+        assert result.role == "arbitrator"
+        assert result.recommendations == {"spacing_percentage": 1.5}
+
+    async def test_opinions_serialized_into_extra_context(self) -> None:
+        """The arbitrator's prompt receives a JSON blob of every
+        opinion's role / confidence / recommendations / rationale."""
+        arbitrator = _StubArbitrator(response=_opinion(role="arbitrator"))
+        opinions = [
+            _opinion(
+                role="quant",
+                recommendations={"spacing_percentage": 1.2},
+                confidence="high",
+                rationale="volatility spiking",
+            ),
+            _opinion(
+                role="risk",
+                recommendations={"spacing_percentage": 1.5},
+                confidence="medium",
+                rationale="drawdown widening",
+            ),
+        ]
+
+        await aggregate_arbitrator(opinions, arbitrator, _summary())
+
+        context = arbitrator.last_extra_context
+        assert "quant" in context
+        assert "risk" in context
+        assert "volatility spiking" in context
+        assert "drawdown widening" in context
+        # Every opinion-side field is named in the context blob.
+        for field in ("role", "confidence", "recommendations", "rationale"):
+            assert f'"{field}":' in context
+
+    async def test_summary_passed_through_to_arbitrator(self) -> None:
+        """The arbitrator must receive the same PerformanceSummary the
+        experts saw — it's reasoning over the same metrics window."""
+        arbitrator = _StubArbitrator(response=_opinion(role="arbitrator"))
+        summary = _summary()
+        await aggregate_arbitrator([_opinion()], arbitrator, summary)
+        assert arbitrator.last_summary is summary
