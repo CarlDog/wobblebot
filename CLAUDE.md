@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Source of truth:** `docs/planning/roadmap.md`. Each completed stage carries a ✅ completion date.
 
-**Phase 2 closed 2026-05-14; Phase 3 Stage 3.0 (Observer & Shadow Mode) followed in the same session.** Closing summary for Phase 2 at `docs/planning/phase-2-summary.md`. Total real-money cost across both live verifications: **$0.08** (the $0.08 first-trade test in `tools/first_real_trade.py` + the $0.00 multi-coin grid run in Stage 2.5). **Six** operator entry points work end-to-end (Stage 3.0 added `cli/observe` and `cli/shadow`):
+**Phase 2 closed 2026-05-14; Phase 3 Stage 3.0 (Observer & Shadow Mode) followed in the same session; Stage 3.1 (Data Collector & Metrics v2) closed 2026-05-15.** Closing summary for Phase 2 at `docs/planning/phase-2-summary.md`. Total real-money cost across both live verifications: **$0.08** (the $0.08 first-trade test in `tools/first_real_trade.py` + the $0.00 multi-coin grid run in Stage 2.5). **Six** operator entry points work end-to-end (Stage 3.0 added `cli/observe` and `cli/shadow`):
 
 - `python -m wobblebot.cli.sandbox` — Phase 1 sandbox: buy-dip/sell-rebound cycle through `MockExchangeAdapter` + `SQLiteStorageAdapter`, persists to SQLite.
 - `python -m wobblebot.cli.status` — Stage 2.1 live read check: read-only Kraken price + balance fetch.
@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD --price-interval-seconds 30` — Stage 3.0 pure data collection. Read-only. Polls Ticker per symbol, persists to `price_snapshots` table; optionally polls BalanceEx on a slower cadence. Build a multi-week price dataset.
 - `python -m wobblebot.cli.shadow --symbols BTC/USD,ETH/USD --initial-shadow-usd 10000` — Stage 3.0 shadow trading. Same engine code as `cli/live` but with `ShadowExchangeAdapter`: live Kraken prices, synthetic balance ledger, honest maker/taker fee modeling. Real-time backtest framework + Phase 3 advisor sandbox.
 
-401 unit tests pass by default (up from 296 after the config consolidation audit added 100+ tests for per-CLI schemas, prompt loader, profile resolver, and schema-drift detection; +2 from the deprived-env walkthrough fixes); 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (42 src files), black/isort clean, pylint **10.00/10** on `src/`.
+458 unit tests pass by default (up from 401 after Stage 3.1 added 57: 11 for `StoragePort.get_price_snapshots`, 34 for `services/metrics.py`, and 12 for the DataCollector v2 metric methods); 21 integration tests (5 Kraken API drift + 3 live read + 2 simulator + 2 grid e2e + 9 live trading) on opt-in. mypy clean (44 src files), black/isort clean, pylint **10.00/10** on `src/`.
 
 ### Operator handoff: from dry-run to live trading
 
@@ -42,7 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Config consolidation audit ✅ closed 2026-05-14** (queued before Stage 3.1, landed in eight slices). Every CLI now loads its config via `wobblebot.config.runtime.load_resolved_config(...)` with three-layer precedence (base YAML → `--profile` deep-merge → CLI flag overrides). Per-CLI sections (`live`, `shadow`, `observe`, `preflight`, `status`, `sandbox`) live in `config/settings.example.yml` alongside engine sections (`grid`, `safety`) and the Phase-3 `advisor:` block (MoE schema, ≥3 experts validator, prompt-file references). Profiles `conservative` / `aggressive` cover both `live` and `shadow`; `cloud-only-moe` swaps Ollama experts for cloud equivalents. Stale `docker/env.example` moved to repo-root `.env.example` and refreshed for Phase 2.3 reality. Schema-drift tests in `tests/config/test_schema_drift.py` keep the example/operator pairs aligned for both `settings.yml` and `.env`; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` promotes warnings to hard failures. Prompt-file infrastructure (`config/prompts/{quant,risk,news,arbitrator}.md` + `wobblebot.config.prompts.load_prompt`) is in place for Stage 3.4a to consume. New runtime dep: `python-frontmatter`.
 
-**Next:** Phase 3 stages 3.1 → 3.5 per the roadmap (Data Collector v2 → AdvisorPort + Ollama → Passive workflow → MoE adapter with cloud-LLM experts → bounded auto-tuning → integration check). Per ADR-002 + ADR-007 the advisor cannot execute, so no new live-money risk over Phase 2.
+**Next:** Phase 3 stages 3.2 → 3.5 per the roadmap (AdvisorPort + Ollama → News Ingestion → Passive workflow → MoE adapter with cloud-LLM experts → bounded auto-tuning → integration check). Per ADR-002 + ADR-007 the advisor cannot execute, so no new live-money risk over Phase 2. Stage 5.3.5 (Background Maintenance Worker) is on the roadmap but deferred to Phase 5.
 
 **Design decisions ratified during Phase 1 + Stage 2.1 (do not relitigate without an ADR):**
 
