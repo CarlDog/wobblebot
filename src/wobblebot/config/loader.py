@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from wobblebot.config.advisor import AdvisorConfig
 from wobblebot.config.cli import (
     LiveConfig,
+    NewsConfig,
     ObserveConfig,
     PreflightConfig,
     SandboxConfig,
@@ -51,6 +52,7 @@ class WobbleBotConfig(BaseModel):
     preflight: PreflightConfig | None = None
     status: StatusConfig | None = None
     sandbox: SandboxConfig | None = None
+    news: NewsConfig | None = None
     advisor: AdvisorConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 

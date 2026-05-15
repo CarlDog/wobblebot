@@ -205,12 +205,74 @@ class SandboxConfig(BaseModel):
         frozen = True
 
 
+# ---------------------------------------------------------------------------
+# News CLI (Stage 3.2.5 — long-running news poller)
+# ---------------------------------------------------------------------------
+
+
+class RssFeedSpec(BaseModel):
+    """One RSS/Atom feed entry under ``news.rss_feeds``.
+
+    ``source_id`` is operator-chosen (e.g. ``"rss:coindesk"``) and
+    becomes ``NewsItem.source``. ``enabled: false`` parks the feed
+    in the config without removing it.
+    """
+
+    source_id: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    enabled: bool = True
+
+    class Config:
+        frozen = True
+
+
+class CryptoCompareSpec(BaseModel):
+    """CryptoCompare News block under ``news.cryptocompare``.
+
+    The API key itself lives in ``$CRYPTOCOMPARE_API_KEY`` (not in
+    the YAML). ``enabled: false`` skips the adapter even if the key
+    is present.
+    """
+
+    enabled: bool = False
+    lang: str = "EN"
+    categories: str | None = None
+
+    class Config:
+        frozen = True
+
+
+class NewsConfig(BaseModel):
+    """Settings for ``cli/news``.
+
+    Operator lists every feed source they want polled. Disabled
+    sources are parsed but not constructed at runtime — one toggle
+    to silence a noisy outlet without removing it from the YAML.
+
+    ``poll_interval_minutes`` applies uniformly to every enabled
+    source. Per ADR-007 we don't need per-source cadence at this
+    stage — news is hours-cycle anyway.
+    """
+
+    db: str = "data/wobblebot-news.db"
+    poll_interval_minutes: float = Field(default=30.0, gt=0)
+    rss_feeds: list[RssFeedSpec] = Field(default_factory=list)
+    cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+
 __all__ = [
-    "StatusConfig",
+    "CryptoCompareSpec",
     "LiveConfig",
     "LogFormat",
+    "NewsConfig",
     "ObserveConfig",
-    "ShadowConfig",
-    "SandboxConfig",
     "PreflightConfig",
+    "RssFeedSpec",
+    "SandboxConfig",
+    "ShadowConfig",
+    "StatusConfig",
 ]
