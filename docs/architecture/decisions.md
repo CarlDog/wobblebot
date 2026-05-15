@@ -249,3 +249,57 @@ The operator also wants a "lurker mode" — observe the market 24/7 without trad
 **References:**
 - ADR-007 — MoE advisor + news ingestion (the Phase 3 work this sandbox supports).
 - [Phase 2 closing summary](../planning/phase-2-summary.md) — `cli/grid` is the entry point being renamed to `cli/live` as part of this ADR.
+
+## ADR-009 — Config Consolidation: YAML + Profiles + Prompt Files
+**Status:** Accepted (planned for the config audit slated between Stage 3.0 and Stage 3.1)
+**Date:** 2026-05-14
+**Context:** Slice 2.2.1 built `WobbleBotConfig` + `load_config()` to read `grid` and `safety` sections from YAML. Then Stages 2.3, 2.4, and 3.0 shipped five operator CLIs (`cli/check`, `cli/validate`, `cli/live`, `cli/shadow`, `cli/observe`) — every one of them takes its config via argparse with hardcoded defaults. **Nothing reads the YAML.** The two layers were built in different sessions and never connected. The operator surfaced this as a real architectural gap during the Stage 3.0 evening session.
+
+Concurrently, ADR-007 introduced the Mixture-of-Experts advisor with provider-pluggable expert configurations (Ollama + cloud LLMs mixed) and per-expert prompt files. ADR-007 was specified at the architecture level; ADR-009 is where the YAML schema, profile system, and prompt-file format land.
+
+**Decision:** Adopt the following config consolidation policy as the audit's deliverable:
+
+1. **`config/settings.example.yml` is the operator-facing API.** Every operator-tunable value lives here with a comment explaining what it does. CLIs read this YAML at startup; argparse flags become *overrides* of YAML values, not the source of defaults.
+
+2. **Per-CLI sections in YAML.** Each CLI has its own top-level section (`live`, `shadow`, `observe`, `validate`, `check`, `simulate`) holding only the knobs that CLI cares about. Engine knobs (`grid`, `safety`) stay shared across all CLIs that use the engine. Per-CLI sections are the most operator-readable structure: when an operator opens `settings.yml` looking for "what does cli/live do?", they find the `live:` block.
+
+3. **Profiles as named overrides.** A top-level `profiles:` block holds named override blocks (e.g. `conservative`, `aggressive`, `cloud-only-moe`). Operator runs `cli/live --profile conservative` to deep-merge that block over the base config before CLI flags apply on top. Layering order: **base config → profile (if any) → CLI flags**. CLI flags always win.
+
+4. **MoE advisor schema.** `advisor.type` is `single` or `moe`; when `moe`, an experts list with **min 3 entries** (Pydantic validator) and **no maximum** (operator can run 5+ experts if they want). Each expert specifies provider (`ollama|anthropic|openai|google`), model, role, prompt_file path, and inference_params. Aggregator is `voting | weighted_confidence | arbitrator`; arbitrator mode has its own dedicated config block. See ADR-007 for the architectural rationale.
+
+5. **Prompt files use YAML frontmatter + Markdown body.** Same pattern as the project's OC memory files. Frontmatter holds structured metadata (output_schema, inference_params); body holds the prose system prompt. Files live at `config/prompts/{quant,risk,news,arbitrator}.md` shipped committed (operator edits in place; no `.example` variant for prompts since the operator's edits ARE the prompts they want to use).
+
+6. **`python-frontmatter` dependency.** Mature (10+ years), MIT licensed, ~3KB. Handles only what it says on the tin. Acceptable per operator approval; alternative (rolling our own ~20 lines) rejected as not worth the maintenance.
+
+7. **Schema-drift detection lives in tests.** `tests/config/test_schema_drift.py` checks that, IF the operator's local `settings.yml` exists, its key set + ordering matches `settings.example.yml`. Same for `.env` vs `.env.example`. **Initial strictness: medium** (keys + ordering, not comment parity); a `--strict` flag in the test enables full structural comparison and is available to flip if drift starts wandering. Comment parity is on the operator (and me) per the standing rule in feedback memory.
+
+8. **`docker/env.example` → repo root `.env.example`.** More conventional location, easier for new contributors to find, single source of truth. Refresh content to match Phase 2.3 reality (`KRAKEN_TRADE_API_KEY`, drop stale `LLM_PROVIDER` / `OPENAI_API_KEY` placeholders).
+
+**Alternatives Considered:**
+- **(YAML sections) Shared "runtime" + per-CLI overrides instead of one section per CLI.** Rejected: less operator-readable. When an operator opens settings.yml looking for cli/live's tick rate, they want to find it in one place, not "well, the default tick rate is in `runtime`, but `live` overrides it sometimes."
+- **(YAML sections) Flat top-level by concern (engine, storage, logging, live, shadow).** Rejected: more verbose, more cognitive load. Per-CLI is the operator-readable structure.
+- **(Prompt format) Plain text or YAML-only files.** Rejected: plain text loses structured metadata; pure YAML makes prose editing miserable. Hybrid wins.
+- **(Prompt format) Jinja2 templates.** Deferred to v2 if needed. Frontmatter pattern doesn't preclude adding Jinja2 substitution later.
+- **(Profiles) Skip profiles entirely; let operators maintain multiple settings.yml files.** Rejected: operator workflow is harder; can't override one section while keeping others. Profiles are 30 extra lines of YAML and a small merge helper; worth it.
+- **(MoE size) Cap at fixed N experts.** Rejected: operator preference is "min 3, no max." We trust operators to make their own choices about how many models to query per advisor cycle.
+- **(Drift strictness) Default-strict with comment parity enforced mechanically.** Rejected: operator-hostile (whitespace tweaks fail tests). Medium default; strict toggle available.
+- **(Dependency) Roll our own frontmatter parser.** Rejected per operator approval — `python-frontmatter` is small, mature, and saves the 20 lines of edge-case handling we'd rewrite.
+
+**Consequences:**
+
+- **Positive:** Five (six post-rename, if the simulate/check/validate naming proposal lands) CLIs share one config story. New operators read `settings.example.yml` once and understand the surface.
+- **Positive:** Adding new CLI knobs becomes an example-file edit + a Pydantic field, not a per-CLI argparse change. Less opportunity to forget the YAML side.
+- **Positive:** Profiles let operators flip between regimes without editing YAML each session.
+- **Positive:** MoE config schema is operator-tunable, so swapping in cloud LLMs (Claude + GPT + Gemini for the "watch them argue" experiment) is a YAML change, not code.
+- **Positive:** Prompt files are version-controllable — every prompt edit is a clean line-level git diff.
+- **Positive:** Drift tests catch the "I edited one file but not the other" failure mode that the operator explicitly flagged as recurring.
+- **Negative:** Audit is ~2-3 evenings of work touching every CLI. Measured against the cost of carrying the inconsistency forward (advisor work in Phase 3.2-3.4 would have to fight the same hardcoded-defaults pattern), worth the up-front pay.
+- **Negative:** Profile deep-merge introduces edge cases (lists override vs append?). Decision: lists override entirely. Operator who wants to add experts to a profile re-lists all of them.
+- **Negative:** `python-frontmatter` becomes a runtime dependency. Tiny.
+
+**Compliance:** Aligns with ADR-001 (the YAML loader extends `WobbleBotConfig` which lives in `config/`; CLIs in `cli/` consume it; clean layer separation). Aligns with ADR-007 (advisor schema implements the MoE architecture decided there). Refines ADR-008 (cli/live/shadow/observe were named per ADR-008; this audit consolidates their config story).
+
+**References:**
+- ADR-007 — Advisor architecture (the schema this ADR encodes).
+- ADR-008 — Observer + Shadow Mode (the CLIs this ADR audits).
+- `feedback_keep_example_files_in_sync.md` — the operator's standing rule motivating the drift detection tests.

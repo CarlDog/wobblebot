@@ -1,71 +1,55 @@
 # WobbleBot Configuration (Example)
-# Copy this file to settings.yml and adjust for your needs
+#
+# Copy this file to settings.yml and adjust for your needs. The
+# committed example file documents every operator-tunable value;
+# settings.yml stays gitignored and holds your actual values.
+#
+# Per the project's standing rule, settings.example.yml and
+# settings.yml stay schema-aligned: same keys, same comments, same
+# section ordering, same structure — only VALUES differ. Schema-drift
+# tests (tests/config/test_schema_drift.py) catch most drift, but
+# comment parity is on you.
+#
+# CLIs accept --config path/to/settings.yml (default: this directory's
+# settings.yml) and --profile NAME to apply a named override block.
+# Any CLI flag passed explicitly takes precedence over both YAML and
+# profile values.
 
 # ============================================================================
-# Application Settings
+# Application metadata
 # ============================================================================
 application:
   name: "WobbleBot"
   version: "0.1.0"
-  mode: "sandbox" # sandbox, dev, live-low-risk, production
+  # mode: sandbox | dev | live-low-risk | production
+  # Currently informational only; Phase 5 may use it to gate features.
+  mode: "sandbox"
 
 # ============================================================================
-# Safety Constraints (Non-Negotiable)
+# Exchange connection (Kraken)
 # ============================================================================
-safety:
-  # Maximum total exposure across all coins (USD)
-  max_total_exposure_usd: 1000.0
-
-  # Maximum daily spend limit (USD)
-  max_daily_spend_usd: 100.0
-
-  # Maximum exposure per coin (USD)
-  max_per_coin_exposure_usd: 200.0
-
-  # Maximum number of open orders per coin
-  max_orders_per_coin: 10
-
-  # Emergency stop conditions
-  emergency_stop:
-    enabled: true
-    # Stop trading if total loss exceeds this percentage
-    max_loss_percentage: 20.0
-    # Stop trading if exchange balance drops below this (USD)
-    min_exchange_balance_usd: 50.0
-
-# ============================================================================
-# Exchange Settings
-# ============================================================================
+# API credentials NEVER live here — they're in .env as KRAKEN_API_KEY
+# (read-only) and KRAKEN_TRADE_API_KEY (Trade scope, no Withdraw).
+# This block holds connection-level tunables only.
 exchange:
   name: "kraken"
-
-  # API credentials loaded from environment variables
-  # KRAKEN_API_KEY and KRAKEN_API_SECRET
-
-  # Rate limiting (requests per second)
-  rate_limit_rps: 1.0
-
-  # Retry configuration
+  rate_limit_rps: 1.0       # request budget per second; Kraken's tier limit is generous for hobby use
+  request_timeout_seconds: 10
   max_retries: 3
   retry_delay_seconds: 2.0
 
 # ============================================================================
-# Grid Trading Configuration
+# Grid trading geometry (engine-tunable)
 # ============================================================================
+# These are the parameters the GridEngine reads. Per-coin overrides
+# under `coins:` shadow `default:` for that coin only.
 grid:
-  # Default grid parameters (can be overridden per coin)
   default:
-    # Grid spacing as percentage of base price
-    spacing_percentage: 1.0
+    spacing_percentage: 1.0   # delta between adjacent levels, % of reference price
+    levels_above: 3           # SELL levels above the anchor
+    levels_below: 3           # BUY levels below the anchor
+    order_size_usd: 10.0      # USD budget per order; per-pair quantization happens at submit
 
-    # Number of grid levels above and below
-    levels_above: 5
-    levels_below: 5
-
-    # Order size per grid level (USD)
-    order_size_usd: 10.0
-
-  # Per-coin overrides
   coins:
     DOGE:
       spacing_percentage: 2.0
@@ -73,28 +57,24 @@ grid:
       levels_below: 3
       order_size_usd: 15.0
       enabled: true
-
     ADA:
       spacing_percentage: 1.5
       levels_above: 4
       levels_below: 4
       order_size_usd: 12.0
-      enabled: false # Disabled for now
-
+      enabled: false
     SOL:
       spacing_percentage: 1.0
       levels_above: 5
       levels_below: 5
       order_size_usd: 10.0
       enabled: false
-
     MATIC:
       spacing_percentage: 1.5
       levels_above: 4
       levels_below: 4
       order_size_usd: 10.0
       enabled: false
-
     ETH:
       spacing_percentage: 0.5
       levels_above: 6
@@ -103,63 +83,242 @@ grid:
       enabled: false
 
 # ============================================================================
-# Strategy Advisor Settings (Phase 3+)
+# Safety caps (engine-enforced, non-negotiable)
 # ============================================================================
+# These are checked inside GridEngine BEFORE any place_order call.
+# Refusals are logged + counted in StepResult.refusals; they never raise.
+safety:
+  max_total_exposure_usd: 100.0       # global cap across all coins
+  max_daily_spend_usd: 100.0          # BUY-side commits per UTC day
+  max_per_coin_exposure_usd: 100.0    # per-coin cap
+  max_orders_per_coin: 20             # count cap, per-coin
+
+  emergency_stop:
+    enabled: true
+    max_loss_percentage: 20.0         # informational; not yet wired
+    min_exchange_balance_usd: 0       # informational; not yet wired
+
+# ============================================================================
+# Per-CLI: live (cli/live)
+# ============================================================================
+# Knobs specific to the operational loop against real Kraken.
+# Real money trading. CLI flags override these values.
+live:
+  symbols:
+    - BTC/USD
+  db: "data/wobblebot-live.db"
+  tick_seconds: 5.0
+  max_runtime_minutes: 60.0           # session-level kill switch
+  max_session_loss_usd: 5.0           # USD-balance delta abort threshold
+  log_format: plain                   # plain | json
+
+# ============================================================================
+# Per-CLI: shadow (cli/shadow)
+# ============================================================================
+# Same engine, real Kraken prices, simulated execution against a
+# synthetic ledger. No real money.
+shadow:
+  symbols:
+    - BTC/USD
+  db: "data/wobblebot-shadow.db"
+  tick_seconds: 5.0
+  max_runtime_minutes: 60.0
+  max_session_loss_usd: 100.0         # synthetic — be generous
+  log_format: plain
+
+  # Synthetic balances at session start. Operator-supplied; never
+  # inferred from real Kraken (per ADR-008's muscle-memory guard).
+  initial_balances:
+    USD: 10000
+    BTC: 0
+    ETH: 0
+
+  # Per-fill fee model. Default rates match Kraken's published
+  # base-tier (0.26% maker / 0.40% taker), confirmed by the live
+  # measurement in Phase 2's first-trade receipt.
+  maker_fee_rate: 0.0026
+  taker_fee_rate: 0.0040
+
+# ============================================================================
+# Per-CLI: observe (cli/observe)
+# ============================================================================
+# Pure data collection; no engine, no LLM, no orders.
+observe:
+  symbols:
+    - BTC/USD
+  db: "data/wobblebot-observe.db"
+  price_interval_seconds: 30          # public Ticker poll cadence
+  balance_interval_seconds: 600       # private BalanceEx poll cadence; 0 disables
+  log_format: plain
+
+# ============================================================================
+# Per-CLI: validate (cli/validate)
+# ============================================================================
+# Diagnostic single-step against live Kraken with adapter in
+# validate=true mode. Reads grid + safety from the sections above.
+validate:
+  symbol: BTC/USD                     # singular — validate runs ONE step
+  log_format: plain
+
+# ============================================================================
+# Per-CLI: check (cli/check)
+# ============================================================================
+# Read-only one-shot Kraken fetch: current price + account balances.
+# No engine, no orders. Uses KRAKEN_API_KEY (read-only key).
+check:
+  symbol: BTC/USD
+  log_format: plain
+
+# ============================================================================
+# Per-CLI: simulate (cli/simulate)
+# ============================================================================
+# Phase 1 sandbox: hard-coded buy-dip/sell-rebound cycle through
+# MockExchangeAdapter + SQLiteStorageAdapter. No real Kraken contact.
+# Useful for verifying the hex layers wire up after a fresh checkout.
+simulate:
+  db: "data/wobblebot-sim.db"
+  log_format: plain
+
+# ============================================================================
+# Strategy Advisor (Phase 3 — see ADR-007 + ADR-009)
+# ============================================================================
+# Two modes:
+#   type: single  - one LLM, no aggregation. Simple; fast to iterate.
+#   type: moe     - mixture of experts (≥3 LLMs) + aggregator. Per the
+#                   project rule. Each expert points to a prompt file
+#                   in config/prompts/ that the operator can edit.
+#
+# Aggregation strategies:
+#   voting              - discrete-direction votes; majority wins
+#   weighted_confidence - numeric proposals × self-reported confidence
+#   arbitrator          - a fourth model reads expert opinions, picks
+#
+# Cloud LLMs (Anthropic/OpenAI/Google) and local Ollama models can mix
+# freely. Per ADR-007 the upside of genuinely different training priors
+# outweighs per-call data exposure for a hobby trading bot.
 advisor:
-  enabled: false # Enable in Phase 3
+  type: moe
+  cadence_hours: 4                    # how often to run the advisor
+  aggregator: arbitrator
 
-  # How often to request advisor recommendations (hours)
-  interval_hours: 24
+  # Required only when aggregator == arbitrator.
+  arbitrator:
+    provider: anthropic               # anthropic | openai | google | ollama
+    model: claude-sonnet-4-6
+    prompt_file: "config/prompts/arbitrator.md"
+    inference_params:
+      temperature: 0.3                # arbitrator is more deterministic than experts
+      max_tokens: 1024
 
-  # Auto-apply recommendations (with strict validation)
+  # Variable-length expert list. Min 3 when type=moe (Pydantic
+  # validator); no upper limit. Mix providers freely.
+  experts:
+    - name: quant
+      provider: ollama
+      model: deepseek-r1:7b
+      role: quant                     # quant | risk | news | custom
+      prompt_file: "config/prompts/quant.md"
+      inference_params:
+        temperature: 0.5
+        max_tokens: 512
+
+    - name: risk
+      provider: anthropic
+      model: claude-sonnet-4-6
+      role: risk
+      prompt_file: "config/prompts/risk.md"
+      inference_params:
+        temperature: 0.4
+        max_tokens: 512
+
+    - name: news
+      provider: google
+      model: gemini-2.0-flash
+      role: news
+      prompt_file: "config/prompts/news.md"
+      inference_params:
+        temperature: 0.6
+        max_tokens: 512
+
+  # Bounded auto-tuning. Off by default. Per ADR-007, news-derived
+  # recommendations NEVER auto-apply regardless of these bounds —
+  # only metrics-driven (quant, risk) suggestions are eligible.
   auto_apply:
     enabled: false
-    # Only auto-apply if recommendations are within these bounds
     max_spacing_change_percentage: 20.0
     max_order_size_change_percentage: 15.0
 
 # ============================================================================
-# Harvester Settings (Phase 4+)
+# Harvester (Phase 4 — placeholder, not yet implemented)
 # ============================================================================
 harvester:
-  enabled: false # Enable in Phase 4
-
-  # Minimum liquidity to keep on exchange (USD)
+  enabled: false
   min_exchange_liquidity_usd: 200.0
-
-  # Surplus threshold for scraping to bank (USD)
   surplus_threshold_usd: 500.0
-
-  # Top-up threshold for bank → exchange transfers (USD)
   topup_threshold_usd: 150.0
-
-  # Transfer limits
   max_withdrawal_per_day_usd: 1000.0
 
 # ============================================================================
-# Logging Configuration
+# Profiles (named overrides)
 # ============================================================================
-logging:
-  level: "INFO" # DEBUG, INFO, WARNING, ERROR
+# Operator runs `cli/live --profile conservative` to deep-merge the
+# named block over the base config. CLI flags override even profiles.
+# Apply only the keys you want to change; everything else inherits.
+profiles:
 
-  # Log to file
-  file:
-    enabled: true
-    path: "logs/wobblebot.log"
-    max_size_mb: 10
-    backup_count: 5
+  # Conservative: wide spacing, fewer orders, tight kill switches.
+  conservative:
+    grid:
+      default:
+        spacing_percentage: 2.0
+        levels_above: 2
+        levels_below: 2
+    live:
+      max_session_loss_usd: 2.0
+    safety:
+      max_total_exposure_usd: 50.0
+      max_daily_spend_usd: 30.0
 
-  # Log to console
-  console:
-    enabled: true
+  # Aggressive: tight spacing, more orders, looser caps.
+  aggressive:
+    grid:
+      default:
+        spacing_percentage: 0.5
+        levels_above: 5
+        levels_below: 5
+        order_size_usd: 20.0
+    live:
+      max_session_loss_usd: 10.0
+    safety:
+      max_total_exposure_usd: 500.0
+      max_daily_spend_usd: 200.0
 
-# ============================================================================
-# Database Configuration
-# ============================================================================
-database:
-  type: "sqlite"
-  path: "data/wobblebot.db"
-
-  # Connection pool settings (if applicable)
-  pool_size: 5
-  max_overflow: 10
+  # Cloud-only MoE: replaces the local Ollama experts with cloud
+  # equivalents. Useful when running on a machine without GPU.
+  cloud-only-moe:
+    advisor:
+      experts:
+        - name: claude
+          provider: anthropic
+          model: claude-sonnet-4-6
+          role: quant
+          prompt_file: "config/prompts/quant.md"
+          inference_params:
+            temperature: 0.5
+            max_tokens: 512
+        - name: gpt
+          provider: openai
+          model: gpt-4o
+          role: risk
+          prompt_file: "config/prompts/risk.md"
+          inference_params:
+            temperature: 0.4
+            max_tokens: 512
+        - name: gemini
+          provider: google
+          model: gemini-2.0-flash
+          role: news
+          prompt_file: "config/prompts/news.md"
+          inference_params:
+            temperature: 0.6
+            max_tokens: 512
