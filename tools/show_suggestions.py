@@ -48,6 +48,10 @@ def _format_line(metrics: dict[str, Any]) -> str:
         f"conf={confidence}",
         f"recs={rec['recommendations']}",
     ]
+    expert_opinions = rec.get("expert_opinions") or []
+    if expert_opinions:
+        roles = [op.get("role", "?") for op in expert_opinions]
+        parts.append(f"experts={len(expert_opinions)}[{','.join(roles)}]")
     return " | ".join(parts)
 
 
@@ -64,7 +68,7 @@ def _extract_iso(value: Any) -> str:
 def _flatten_for_log(suggestion_dict: dict[str, Any]) -> dict[str, Any]:
     """Pull the headline fields up for structured-log emission."""
     rec = suggestion_dict["recommendation"]
-    return {
+    flat = {
         "recommendation_id": rec["recommendation_id"],
         "created_at": suggestion_dict["created_at"],
         "model_name": suggestion_dict["model_name"],
@@ -74,6 +78,10 @@ def _flatten_for_log(suggestion_dict: dict[str, Any]) -> dict[str, Any]:
         "rationale": rec["rationale"],
         "input_summary": suggestion_dict["input_summary"],
     }
+    expert_opinions = rec.get("expert_opinions") or []
+    if expert_opinions:
+        flat["expert_opinions"] = expert_opinions
+    return flat
 
 
 async def _run(args: argparse.Namespace) -> int:

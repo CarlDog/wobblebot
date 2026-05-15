@@ -378,52 +378,67 @@ profiles:
         BTC: 1
         ETH: 5
 
-  # Mixture-of-experts advisor. Activate via `--profile moe-advisor`
-  # once the MoE adapter ships in Stage 3.4a. Local Ollama for the
-  # quant expert + cloud LLMs for risk and news. The arbitrator
-  # block is the fourth model that reads the experts' opinions and
-  # picks the final recommendation.
+  # Mixture-of-experts advisor (Stage 3.4a).
+  #
+  # As of Stage 3.4a only the Ollama provider is wired up — cloud
+  # adapters (anthropic / openai / google) raise at advisor-construction
+  # time. The default `moe-advisor` profile below is therefore an
+  # all-Ollama lineup that runs as-shipped. The `cloud-mix` and
+  # `cloud-only-moe` profiles further down show the shape that will
+  # work once those adapters land in a later stage.
+  #
+  # Adjust the model tags to match what `ollama list` shows on your
+  # machine. The aggregator choices are `voting` (per-key majority),
+  # `weighted_confidence` (weighted by each expert's self-reported
+  # confidence), or `arbitrator` (a fourth model reads the three
+  # opinions and picks the final call — the arbitrator block must
+  # be set when aggregator=arbitrator).
   moe-advisor:
     advisor:
       type: moe
       aggregator: arbitrator
 
       arbitrator:
-        provider: anthropic
-        model: claude-sonnet-4-6
+        provider: ollama
+        model: phi4:14b-q8_0
         prompt_file: "config/prompts/arbitrator.md"
         inference_params:
           temperature: 0.3
           max_tokens: 1024
+          timeout_seconds: 180
 
       experts:
         - name: quant
           provider: ollama
-          model: deepseek-r1:7b
+          model: phi4:14b-q8_0
           role: quant
           prompt_file: "config/prompts/quant.md"
           inference_params:
             temperature: 0.5
             max_tokens: 512
+            timeout_seconds: 120
         - name: risk
-          provider: anthropic
-          model: claude-sonnet-4-6
+          provider: ollama
+          model: qwen3:8b
           role: risk
           prompt_file: "config/prompts/risk.md"
           inference_params:
             temperature: 0.4
             max_tokens: 512
+            timeout_seconds: 120
         - name: news
-          provider: google
-          model: gemini-2.0-flash
+          provider: ollama
+          model: deepseek-r1:8b
           role: news
           prompt_file: "config/prompts/news.md"
           inference_params:
             temperature: 0.6
-            max_tokens: 512
+            max_tokens: 2048               # R1 needs room for <think> + JSON
+            timeout_seconds: 180
 
-  # Cloud-only MoE: replaces the local Ollama quant expert with a
-  # cloud equivalent. Useful when running on a machine without GPU.
+  # Cloud-only MoE: every expert is a cloud LLM. Will land once the
+  # AnthropicAdapter / OpenAIAdapter / GoogleAdapter ship — currently
+  # raises at advisor-construction time with "provider not implemented".
   cloud-only-moe:
     advisor:
       type: moe

@@ -190,3 +190,139 @@ async def test_full_text_rationale_survives(storage: SQLiteStorageAdapter) -> No
     await storage.save_advisor_suggestion(suggestion)
     got = (await storage.get_advisor_suggestions())[0]
     assert got.recommendation.rationale == long_rationale
+
+
+async def test_expert_opinions_empty_for_single_mode(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """Single-LLM suggestions persist with an empty expert_opinions list —
+    the Stage 3.3 path stays unchanged at the read boundary."""
+    await storage.save_advisor_suggestion(_make_suggestion())
+    got = (await storage.get_advisor_suggestions())[0]
+    assert got.recommendation.expert_opinions == []
+
+
+async def test_expert_opinions_round_trip(storage: SQLiteStorageAdapter) -> None:
+    """MoE suggestions persist every expert's role / confidence /
+    recommendations / rationale and read back as a populated list of
+    ``AdvisorRecommendation`` instances."""
+    expert_opinions = [
+        AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="quant",
+            recommendations={"spacing_percentage": 1.2},
+            rationale="vol spiking",
+            confidence="high",
+        ),
+        AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="risk",
+            recommendations={"spacing_percentage": 1.5},
+            rationale="drawdown widening",
+            confidence="medium",
+        ),
+        AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="news",
+            recommendations={},
+            rationale="quiet news window",
+            confidence="low",
+        ),
+    ]
+    aggregated = AdvisorRecommendation(
+        recommendation_id=str(uuid4()),
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+        role="aggregated",
+        recommendations={"spacing_percentage": 1.35},
+        rationale="voting consensus",
+        confidence="medium",
+        expert_opinions=expert_opinions,
+    )
+    suggestion = AdvisorSuggestion(
+        recommendation=aggregated,
+        created_at=Timestamp(dt=datetime.now(UTC)),
+        input_summary={"symbol": "BTC/USD"},
+        model_name="moe[voting:quant:phi4/risk:qwen3/news:r1]",
+    )
+    await storage.save_advisor_suggestion(suggestion)
+
+    got = (await storage.get_advisor_suggestions())[0]
+    assert got.recommendation.role == "aggregated"
+    assert len(got.recommendation.expert_opinions) == 3
+    roles = {op.role for op in got.recommendation.expert_opinions}
+    assert roles == {"quant", "risk", "news"}
+    by_role = {op.role: op for op in got.recommendation.expert_opinions}
+    assert by_role["quant"].confidence == "high"
+    assert by_role["quant"].rationale == "vol spiking"
+    assert by_role["quant"].recommendations == {"spacing_percentage": 1.2}
+    assert by_role["news"].recommendations == {}
+
+
+async def test_expert_opinions_migration_on_pre_3_4a_db(tmp_path: object) -> None:
+    """Operators upgrading from Stage 3.3 have advisor_suggestions tables
+    without the ``expert_opinions`` column. ``connect()`` must ALTER the
+    table to add it (defaulted to ``'[]'``) without losing existing rows."""
+    from pathlib import Path as _Path
+
+    import aiosqlite as _aiosqlite
+
+    db_path = _Path(tmp_path) / "legacy.db"  # type: ignore[arg-type]
+
+    # Materialize a pre-3.4a schema by hand: same columns as Stage 3.3, no
+    # expert_opinions column. Then insert a row so we can prove data
+    # survives the migration.
+    legacy_create = """
+    CREATE TABLE advisor_suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recommendation_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        role TEXT NOT NULL,
+        recommendations TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+        input_summary TEXT NOT NULL,
+        model_name TEXT NOT NULL
+    );
+    """
+    async with _aiosqlite.connect(str(db_path)) as raw:
+        await raw.executescript(legacy_create)
+        await raw.execute(
+            """
+            INSERT INTO advisor_suggestions (
+                recommendation_id, created_at, role, recommendations,
+                rationale, confidence, input_summary, model_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-id",
+                datetime.now(UTC).isoformat(),
+                "single",
+                "{}",
+                "pre-migration row",
+                "low",
+                "{}",
+                "phi4:14b",
+            ),
+        )
+        await raw.commit()
+
+    # Now open via the adapter — connect() should detect the missing column
+    # and ALTER the table.
+    adapter = SQLiteStorageAdapter(str(db_path))
+    await adapter.connect()
+    try:
+        got = await adapter.get_advisor_suggestions()
+        assert len(got) == 1
+        assert got[0].recommendation.rationale == "pre-migration row"
+        # The pre-existing row picked up the default empty-list expert_opinions.
+        assert got[0].recommendation.expert_opinions == []
+
+        # And new writes work — proves the column is present + writeable.
+        await adapter.save_advisor_suggestion(_make_suggestion(model_name="post-migration"))
+        got2 = await adapter.get_advisor_suggestions(model_name="post-migration")
+        assert len(got2) == 1
+    finally:
+        await adapter.close()

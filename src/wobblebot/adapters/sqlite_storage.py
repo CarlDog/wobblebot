@@ -133,7 +133,12 @@ CREATE TABLE IF NOT EXISTS advisor_suggestions (
     rationale           TEXT NOT NULL,
     confidence          TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
     input_summary       TEXT NOT NULL,
-    model_name          TEXT NOT NULL
+    model_name          TEXT NOT NULL,
+    -- Stage 3.4a: MoE per-expert audit trail. JSON array of opinion dicts
+    -- (role, confidence, recommendations, rationale). Empty array for
+    -- single-LLM suggestions. NOT NULL DEFAULT keeps the migration on
+    -- pre-3.4a DBs trivial — the ALTER below picks up existing rows.
+    expert_opinions     TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created
@@ -185,6 +190,7 @@ class SQLiteStorageAdapter(StoragePort):
             self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA foreign_keys = ON")
             await self._conn.executescript(_SCHEMA)
+            await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -507,8 +513,8 @@ class SQLiteStorageAdapter(StoragePort):
                 INSERT INTO advisor_suggestions (
                     recommendation_id, created_at, role,
                     recommendations, rationale, confidence,
-                    input_summary, model_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    input_summary, model_name, expert_opinions
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     suggestion.recommendation.recommendation_id,
@@ -519,6 +525,7 @@ class SQLiteStorageAdapter(StoragePort):
                     suggestion.recommendation.confidence,
                     json.dumps(suggestion.input_summary),
                     suggestion.model_name,
+                    _serialize_expert_opinions(suggestion.recommendation.expert_opinions),
                 ),
             )
             await conn.commit()
@@ -702,6 +709,7 @@ def _row_to_news_item(row: aiosqlite.Row) -> NewsItem:
 
 
 def _row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
+    expert_opinions_raw = row["expert_opinions"] if "expert_opinions" in row.keys() else "[]"
     return AdvisorSuggestion(
         recommendation=AdvisorRecommendation(
             recommendation_id=row["recommendation_id"],
@@ -710,8 +718,84 @@ def _row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
             recommendations=json.loads(row["recommendations"]),
             rationale=row["rationale"],
             confidence=row["confidence"],
+            expert_opinions=_deserialize_expert_opinions(
+                expert_opinions_raw,
+                fallback_timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+            ),
         ),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         input_summary=json.loads(row["input_summary"]),
         model_name=row["model_name"],
     )
+
+
+def _serialize_expert_opinions(opinions: list[AdvisorRecommendation]) -> str:
+    """Serialize per-expert opinions for the audit-trail column.
+
+    Stored as a JSON array of dicts (one per expert). The forensic
+    fields are: role, confidence, recommendations, rationale. The
+    ``recommendation_id`` and ``timestamp`` per-expert get dropped on
+    purpose — they're synthetic UUIDs / per-call wall-clocks that
+    carry no semantic information once the aggregated row exists. If
+    we ever need them, the column is JSON so a future migration can
+    add them back without a schema change.
+    """
+    return json.dumps(
+        [
+            {
+                "role": op.role,
+                "confidence": op.confidence,
+                "recommendations": op.recommendations,
+                "rationale": op.rationale,
+            }
+            for op in opinions
+        ]
+    )
+
+
+def _deserialize_expert_opinions(
+    raw: str,
+    *,
+    fallback_timestamp: Timestamp,
+) -> list[AdvisorRecommendation]:
+    """Reverse :func:`_serialize_expert_opinions`.
+
+    We reconstruct ``AdvisorRecommendation`` instances with synthetic
+    ``recommendation_id`` (``"opinion-<idx>"``) and the parent row's
+    timestamp — neither field was persisted per-opinion. Read-side
+    consumers (``tools/show_suggestions.py``) care about role /
+    confidence / recommendations / rationale, not the synthetic IDs.
+    """
+    if not raw:
+        return []
+    payload = json.loads(raw)
+    return [
+        AdvisorRecommendation(
+            recommendation_id=f"opinion-{idx}",
+            timestamp=fallback_timestamp,
+            role=entry["role"],
+            recommendations=entry.get("recommendations") or {},
+            rationale=entry["rationale"],
+            confidence=entry["confidence"],
+        )
+        for idx, entry in enumerate(payload)
+    ]
+
+
+async def _migrate_advisor_suggestions_expert_opinions(
+    conn: aiosqlite.Connection,
+) -> None:
+    """Add the ``expert_opinions`` column to pre-3.4a advisor_suggestions tables.
+
+    The CREATE TABLE in ``_SCHEMA`` already declares the column for new
+    DBs (via ``IF NOT EXISTS``), but operators running Stage 3.3 have
+    existing tables that lack it. SQLite doesn't support ``ALTER TABLE
+    ADD COLUMN IF NOT EXISTS``, so we PRAGMA-check first.
+    """
+    async with conn.execute("PRAGMA table_info(advisor_suggestions)") as cursor:
+        cols = {row[1] async for row in cursor}
+    if "expert_opinions" not in cols:
+        await conn.execute(
+            "ALTER TABLE advisor_suggestions "
+            "ADD COLUMN expert_opinions TEXT NOT NULL DEFAULT '[]'"
+        )

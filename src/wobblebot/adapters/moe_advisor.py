@@ -166,6 +166,19 @@ class MoEAdvisorAdapter(AdvisorPort):
         del recommendation
         return True
 
+    async def aclose(self) -> None:
+        """Best-effort close of every wrapped advisor that exposes ``aclose``.
+
+        ``AdvisorPort`` doesn't mandate ``aclose`` (the port is purely
+        the LLM contract); ``OllamaAdapter`` adds it to release its
+        underlying httpx client. cli/advise calls this at shutdown so
+        sockets close cleanly. Adapters without ``aclose`` are skipped.
+        """
+        for entry in self._experts:
+            await _maybe_aclose(entry.advisor)
+        if self._arbitrator is not None:
+            await _maybe_aclose(self._arbitrator.advisor)
+
     async def _call_expert(
         self,
         entry: MoEExpertEntry,
@@ -205,3 +218,10 @@ def _as_arbitrator_advisor(advisor: AdvisorPort) -> ArbitratorAdvisor:
     ``TypeError`` on the first call — clear enough for now.
     """
     return cast(ArbitratorAdvisor, advisor)
+
+
+async def _maybe_aclose(advisor: AdvisorPort) -> None:
+    """Call ``advisor.aclose()`` if the adapter exposes one; else no-op."""
+    aclose = getattr(advisor, "aclose", None)
+    if aclose is not None:
+        await aclose()

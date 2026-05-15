@@ -9,8 +9,16 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter
+from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.advise import _run_cycle, _summary_to_dict
+from wobblebot.cli.advise import _build_advisor, _moe_model_label, _run_cycle, _summary_to_dict
+from wobblebot.config.advisor import (
+    AdvisorConfig,
+    ArbitratorConfig,
+    ExpertConfig,
+    InferenceParams,
+)
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -21,7 +29,7 @@ from wobblebot.ports.advisor import (
 from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.services.summary_builder import SummaryBuilder
 
-pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+pytestmark = pytest.mark.unit
 
 
 BTC_USD = Symbol(base="BTC", quote="USD")
@@ -94,6 +102,7 @@ def _default_grid() -> CurrentGridParams:
     )
 
 
+@pytest.mark.asyncio
 class TestRunCycleHappyPath:
     async def test_persists_a_suggestion(self, storage: SQLiteStorageAdapter) -> None:
         await _seed_prices(storage)
@@ -149,6 +158,7 @@ class TestRunCycleHappyPath:
         assert persisted.input_summary["current_grid"]["levels_above"] == 5
 
 
+@pytest.mark.asyncio
 class TestRunCycleFaultIsolation:
     async def test_advisor_error_returns_false(self, storage: SQLiteStorageAdapter) -> None:
         """A bad advisor call doesn't kill the cycle — _run_cycle just
@@ -200,6 +210,7 @@ class TestRunCycleFaultIsolation:
         assert persisted.input_summary["latest_price"] is None
 
 
+@pytest.mark.asyncio
 class TestSummaryToDict:
     async def test_serializes_recent_news(self) -> None:
         """The persisted input_summary must be JSON-safe — no Pydantic
@@ -221,3 +232,236 @@ class TestSummaryToDict:
         roundtrip = json.loads(json.dumps(result))
         assert roundtrip["symbol"] == "BTC/USD"
         assert roundtrip["lookback_hours"] == 6.0
+
+
+class TestBuildAdvisorDispatch:
+    """``_build_advisor`` is the single + MoE dispatch seam in cli/advise.
+
+    These tests don't talk to a real Ollama server — they just verify
+    that the right concrete adapter type comes back and the resolved
+    model name lands in the audit slot. The OllamaAdapter constructor
+    is cheap (creates an httpx.AsyncClient but doesn't connect).
+    """
+
+    @pytest.fixture
+    def quant_prompt_path(self) -> str:
+        return "config/prompts/quant.md"
+
+    @pytest.fixture
+    def risk_prompt_path(self) -> str:
+        return "config/prompts/risk.md"
+
+    @pytest.fixture
+    def news_prompt_path(self) -> str:
+        return "config/prompts/news.md"
+
+    @pytest.fixture
+    def arbitrator_prompt_path(self) -> str:
+        return "config/prompts/arbitrator.md"
+
+    def test_single_mode_returns_ollama(self, quant_prompt_path: str) -> None:
+        config = AdvisorConfig(
+            type="single",
+            provider="ollama",
+            model="phi4:14b",
+            prompt_file=quant_prompt_path,
+            inference_params=InferenceParams(),
+        )
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, OllamaAdapter)
+        assert out == ["phi4:14b"]
+
+    def test_moe_mode_returns_moe_adapter(
+        self,
+        quant_prompt_path: str,
+        risk_prompt_path: str,
+        news_prompt_path: str,
+    ) -> None:
+        config = AdvisorConfig(
+            type="moe",
+            aggregator="voting",
+            experts=[
+                ExpertConfig(
+                    name="q",
+                    provider="ollama",
+                    model="phi4:14b",
+                    role="quant",
+                    prompt_file=quant_prompt_path,
+                ),
+                ExpertConfig(
+                    name="r",
+                    provider="ollama",
+                    model="qwen3:8b",
+                    role="risk",
+                    prompt_file=risk_prompt_path,
+                ),
+                ExpertConfig(
+                    name="n",
+                    provider="ollama",
+                    model="deepseek-r1:8b",
+                    role="news",
+                    prompt_file=news_prompt_path,
+                ),
+            ],
+        )
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, MoEAdvisorAdapter)
+        # The label captures the aggregator + every expert role:model pair.
+        assert "voting" in out[0]
+        assert "quant:phi4:14b" in out[0]
+        assert "risk:qwen3:8b" in out[0]
+        assert "news:deepseek-r1:8b" in out[0]
+        # No arbitrator suffix when aggregator != arbitrator.
+        assert "arb=" not in out[0]
+
+    def test_moe_mode_with_arbitrator(
+        self,
+        quant_prompt_path: str,
+        risk_prompt_path: str,
+        news_prompt_path: str,
+        arbitrator_prompt_path: str,
+    ) -> None:
+        config = AdvisorConfig(
+            type="moe",
+            aggregator="arbitrator",
+            arbitrator=ArbitratorConfig(
+                provider="ollama",
+                model="phi4:14b-q8_0",
+                prompt_file=arbitrator_prompt_path,
+            ),
+            experts=[
+                ExpertConfig(
+                    name="q",
+                    provider="ollama",
+                    model="phi4:14b",
+                    role="quant",
+                    prompt_file=quant_prompt_path,
+                ),
+                ExpertConfig(
+                    name="r",
+                    provider="ollama",
+                    model="qwen3:8b",
+                    role="risk",
+                    prompt_file=risk_prompt_path,
+                ),
+                ExpertConfig(
+                    name="n",
+                    provider="ollama",
+                    model="deepseek-r1:8b",
+                    role="news",
+                    prompt_file=news_prompt_path,
+                ),
+            ],
+        )
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, MoEAdvisorAdapter)
+        assert "arb=phi4:14b-q8_0" in out[0]
+
+    def test_unimplemented_cloud_provider_rejected(self, quant_prompt_path: str) -> None:
+        config = AdvisorConfig(
+            type="single",
+            provider="anthropic",  # not yet implemented
+            model="claude-sonnet-4-6",
+            prompt_file=quant_prompt_path,
+            inference_params=InferenceParams(),
+        )
+        with pytest.raises(ValueError, match="not implemented"):
+            _build_advisor(config, [])
+
+    def test_moe_label_format(self, quant_prompt_path: str, risk_prompt_path: str) -> None:
+        """The compact model_name label is operator-readable and machine-grep-able."""
+        config = AdvisorConfig(
+            type="moe",
+            aggregator="weighted_confidence",
+            experts=[
+                ExpertConfig(
+                    name="q",
+                    provider="ollama",
+                    model="m1",
+                    role="quant",
+                    prompt_file=quant_prompt_path,
+                ),
+                ExpertConfig(
+                    name="r",
+                    provider="ollama",
+                    model="m2",
+                    role="risk",
+                    prompt_file=risk_prompt_path,
+                ),
+                ExpertConfig(
+                    name="n",
+                    provider="ollama",
+                    model="m3",
+                    role="news",
+                    prompt_file="config/prompts/news.md",
+                ),
+            ],
+        )
+        label = _moe_model_label(config)
+        assert label == "moe[weighted_confidence:quant:m1/risk:m2/news:m3]"
+
+
+@pytest.mark.asyncio
+class TestMoEExpertOpinionsRoundTrip:
+    async def test_expert_opinions_persist_through_cycle(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """When the advisor is a MoE-style adapter (or any AdvisorPort
+        returning a recommendation with populated ``expert_opinions``),
+        ``_run_cycle`` must persist those opinions so ``tools/show_suggestions``
+        and downstream consumers see the per-expert audit trail."""
+        await _seed_prices(storage)
+        expert_opinions = [
+            AdvisorRecommendation(
+                recommendation_id="op-quant",
+                timestamp=Timestamp(dt=datetime.now(UTC)),
+                role="quant",
+                recommendations={"spacing_percentage": 1.2},
+                rationale="vol spiking",
+                confidence="high",
+            ),
+            AdvisorRecommendation(
+                recommendation_id="op-risk",
+                timestamp=Timestamp(dt=datetime.now(UTC)),
+                role="risk",
+                recommendations={"spacing_percentage": 1.5},
+                rationale="drawdown widening",
+                confidence="medium",
+            ),
+        ]
+        aggregated = AdvisorRecommendation(
+            recommendation_id="rec-aggregated",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="aggregated",
+            recommendations={"spacing_percentage": 1.35},
+            rationale="MoE consensus",
+            confidence="medium",
+            expert_opinions=expert_opinions,
+        )
+        advisor = _CannedAdvisor(recommendation=aggregated)
+        builder = SummaryBuilder(storage)
+
+        ok = await _run_cycle(
+            advisor,
+            builder,
+            storage,
+            symbol=BTC_USD,
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grid=_default_grid(),
+            model_name="moe[voting:quant:phi4/risk:qwen3]",
+        )
+        assert ok is True
+
+        persisted = (await storage.get_advisor_suggestions())[0]
+        assert persisted.recommendation.role == "aggregated"
+        assert persisted.model_name == "moe[voting:quant:phi4/risk:qwen3]"
+        assert len(persisted.recommendation.expert_opinions) == 2
+        by_role = {op.role: op for op in persisted.recommendation.expert_opinions}
+        assert by_role["quant"].confidence == "high"
+        assert by_role["risk"].rationale == "drawdown widening"

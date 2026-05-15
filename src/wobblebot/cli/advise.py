@@ -40,10 +40,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
-from wobblebot.config.advisor import AdvisorConfig
+from wobblebot.config.advisor import (
+    AdvisorConfig,
+    ArbitratorConfig,
+    ExpertConfig,
+    InferenceParams,
+)
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import load_prompt
@@ -72,37 +78,121 @@ def _current_grid_from_config(config: WobbleBotConfig, symbol: Symbol) -> Curren
     )
 
 
-def _build_advisor(advisor: AdvisorConfig, model_name_out: list[str]) -> AdvisorPort:
-    """Construct the configured AdvisorPort. Stage 3.3 supports type=single+ollama.
+_CLOUD_PROVIDERS_UNIMPLEMENTED = ("anthropic", "openai", "google")
 
-    Records the resolved model name into ``model_name_out[0]`` for the
-    caller to include in persisted suggestions.
-    """
-    if advisor.type != "single":
-        raise ValueError(
-            f"Stage 3.3 only supports advisor.type=single (got {advisor.type!r}). "
-            "MoE arrives in Stage 3.4a."
-        )
-    if advisor.provider != "ollama":
-        raise ValueError(
-            f"Stage 3.3 only ships the Ollama adapter (got provider={advisor.provider!r}). "
-            "Cloud experts arrive in Stage 3.4a."
-        )
-    assert advisor.model is not None  # validator enforces this for type=single
-    assert advisor.prompt_file is not None
 
-    prompt = load_prompt(Path(advisor.prompt_file))
+def _build_ollama_advisor(
+    *,
+    provider: str,
+    model: str,
+    prompt_file: str,
+    inference_params: InferenceParams,
+    role: str,
+) -> OllamaAdapter:
+    """Construct one OllamaAdapter from the (provider, model, prompt_file)
+    triple shared by single + per-expert + arbitrator config blocks."""
+    if provider in _CLOUD_PROVIDERS_UNIMPLEMENTED:
+        raise ValueError(
+            f"provider={provider!r} not implemented yet "
+            "(only ollama ships in Stage 3.4a; cloud adapters land later)"
+        )
+    if provider != "ollama":
+        raise ValueError(f"unknown provider {provider!r}")
+    prompt = load_prompt(Path(prompt_file))
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    model_name_out.append(advisor.model)
     return OllamaAdapter(
-        model=advisor.model,
+        model=model,
         prompt=prompt,
-        role="single",
+        role=role,
         base_url=base_url,
-        temperature=float(advisor.inference_params.temperature),
-        max_tokens=advisor.inference_params.max_tokens,
-        timeout_seconds=advisor.inference_params.timeout_seconds,
+        temperature=float(inference_params.temperature),
+        max_tokens=inference_params.max_tokens,
+        timeout_seconds=inference_params.timeout_seconds,
     )
+
+
+def _build_expert_entry(expert: ExpertConfig) -> MoEExpertEntry:
+    adapter = _build_ollama_advisor(
+        provider=expert.provider,
+        model=expert.model,
+        prompt_file=expert.prompt_file,
+        inference_params=expert.inference_params,
+        role=expert.role,
+    )
+    return MoEExpertEntry(name=expert.name, role=expert.role, advisor=adapter)
+
+
+def _build_arbitrator_entry(arbitrator: ArbitratorConfig) -> MoEExpertEntry:
+    adapter = _build_ollama_advisor(
+        provider=arbitrator.provider,
+        model=arbitrator.model,
+        prompt_file=arbitrator.prompt_file,
+        inference_params=arbitrator.inference_params,
+        role="arbitrator",
+    )
+    # Arbitrator's name slot in the audit log. Operator config doesn't
+    # supply one (ArbitratorConfig has no `name` field) — the role is
+    # already unique so use it directly. If we ever add multiple
+    # arbitrators (we won't), revisit.
+    return MoEExpertEntry(name="arbitrator", role="arbitrator", advisor=adapter)
+
+
+def _build_advisor(advisor: AdvisorConfig, model_name_out: list[str]) -> AdvisorPort:
+    """Construct the configured AdvisorPort.
+
+    Dispatches on ``advisor.type``:
+    - ``single``: one ``OllamaAdapter`` (Stage 3.2 path).
+    - ``moe``: ``MoEAdvisorAdapter`` wrapping one ``OllamaAdapter`` per
+      configured expert; arbitrator wired iff ``aggregator="arbitrator"``.
+
+    The resolved model name is pushed into ``model_name_out[0]`` so the
+    caller can persist it in ``AdvisorSuggestion.model_name``. For MoE
+    the name is a compact summary of the lineup (the per-expert audit
+    trail lives in ``AdvisorRecommendation.expert_opinions``).
+    """
+    if advisor.type == "single":
+        assert advisor.provider is not None  # validator enforces for type=single
+        assert advisor.model is not None
+        assert advisor.prompt_file is not None
+        ollama = _build_ollama_advisor(
+            provider=advisor.provider,
+            model=advisor.model,
+            prompt_file=advisor.prompt_file,
+            inference_params=advisor.inference_params,
+            role="single",
+        )
+        model_name_out.append(advisor.model)
+        return ollama
+
+    # type=moe
+    expert_entries = [_build_expert_entry(e) for e in advisor.experts]
+    arbitrator_entry: MoEExpertEntry | None = None
+    if advisor.aggregator == "arbitrator":
+        assert advisor.arbitrator is not None  # validator enforces for arbitrator
+        arbitrator_entry = _build_arbitrator_entry(advisor.arbitrator)
+    moe = MoEAdvisorAdapter(
+        experts=expert_entries,
+        aggregator=advisor.aggregator,
+        arbitrator=arbitrator_entry,
+    )
+    model_name_out.append(_moe_model_label(advisor))
+    return moe
+
+
+def _moe_model_label(advisor: AdvisorConfig) -> str:
+    """Compact, operator-facing summary of a MoE lineup.
+
+    Persisted as ``AdvisorSuggestion.model_name`` so a SQL-ish glance
+    at the suggestions table tells the operator which model committee
+    produced each aggregated recommendation. Per-expert opinions in
+    ``expert_opinions`` carry the role but not the model name — that's
+    a known limitation; the operator's config is the source of truth
+    for role→model mapping at any given point in time."""
+    parts = "/".join(f"{e.role}:{e.model}" for e in advisor.experts)
+    suffix = ""
+    if advisor.aggregator == "arbitrator" and advisor.arbitrator is not None:
+        suffix = f"|arb={advisor.arbitrator.model}"
+    return f"moe[{advisor.aggregator}:{parts}{suffix}]"
 
 
 async def _run_cycle(  # pylint: disable=too-many-arguments
