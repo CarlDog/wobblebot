@@ -28,6 +28,7 @@ from wobblebot.config.cli import (
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.loader import WobbleBotConfig, load_config
 from wobblebot.config.logging import JsonFormatter, configure_logging
+from wobblebot.config.resolver import deep_merge, resolve_config
 from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 
 __all__ = [
@@ -55,5 +56,7 @@ __all__ = [
     "ValidateConfig",
     "WobbleBotConfig",
     "configure_logging",
+    "deep_merge",
     "load_config",
+    "resolve_config",
 ]
