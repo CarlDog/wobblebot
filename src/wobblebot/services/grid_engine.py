@@ -62,8 +62,12 @@ StepAction = Literal["initialized", "stepped", "skipped_disabled"]
 
 
 @dataclass(frozen=True)
-class StepResult:
+class StepResult:  # pylint: disable=too-many-instance-attributes
     """Summary of a single ``GridEngine.step`` invocation.
+
+    R0902 disabled: every field is a leaf summary metric the operator or
+    test suite consumes by name; bundling sub-fields would just add an
+    indirection without clarifying anything.
 
     ``action`` distinguishes the three outcomes:
 

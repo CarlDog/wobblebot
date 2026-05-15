@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from dataclasses import dataclass
 from decimal import Decimal
 
 from dotenv import load_dotenv
@@ -40,7 +41,20 @@ from wobblebot.config.logging import LogFormat, configure_logging
 from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import WobbleBotPortError
-from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.grid_engine import GridEngine, StepResult
+
+
+@dataclass(frozen=True)
+class _ValidateConfig:
+    """All knobs for one ``cli/validate`` run, bundled per the same
+    pattern as ``cli/grid``'s ``_SessionConfig``."""
+
+    symbol: Symbol
+    spacing_pct: Decimal
+    above: int
+    below: int
+    order_size_usd: Decimal
+    log_format: LogFormat
 
 
 def _parse_symbol(raw: str) -> Symbol:
@@ -85,19 +99,44 @@ def _build_safety_config(max_total_usd: Decimal, max_orders: int) -> SafetyConfi
     )
 
 
-async def _run(
-    symbol: Symbol,
-    spacing_pct: Decimal,
-    above: int,
-    below: int,
-    order_size_usd: Decimal,
-    log_format: LogFormat,
-) -> int:
-    configure_logging(log_format=log_format)
+def _check_step_result(
+    result: StepResult,
+    expected_layout: int,
+    logger: logging.Logger,
+) -> int | None:
+    """Validate one StepResult against expectations. Returns an error
+    exit code if anything is wrong, or ``None`` to indicate success."""
+    if result.action != "initialized":
+        logger.error(
+            "expected first-tick initialization; got something else",
+            extra={"action": result.action},
+        )
+        return 1
+    if result.refusals:
+        logger.error(
+            "engine refused some placements via the safety cap layer",
+            extra={
+                "placed": result.placed,
+                "refusals": result.refusals,
+                "expected": expected_layout,
+            },
+        )
+        return 1
+    if result.placed != expected_layout:
+        logger.error(
+            "placed count does not match expected layout",
+            extra={"placed": result.placed, "expected": expected_layout},
+        )
+        return 1
+    return None
+
+
+async def _run(config: _ValidateConfig) -> int:
+    configure_logging(log_format=config.log_format)
     logger = logging.getLogger("wobblebot.cli.validate")
 
     try:
-        config = KrakenConfig.from_env(
+        kraken_config = KrakenConfig.from_env(
             key_var="KRAKEN_TRADE_API_KEY",
             secret_var="KRAKEN_TRADE_API_SECRET",
         )
@@ -108,60 +147,40 @@ async def _run(
         )
         return 2
 
-    grid_config = _build_grid_config(spacing_pct, above, below, order_size_usd)
-    layout_count = above + below
-    max_total = order_size_usd * layout_count
+    grid_config = _build_grid_config(
+        config.spacing_pct, config.above, config.below, config.order_size_usd
+    )
+    layout_count = config.above + config.below
+    max_total = config.order_size_usd * layout_count
     safety_config = _build_safety_config(max_total_usd=max_total, max_orders=layout_count + 5)
 
     storage = SQLiteStorageAdapter(":memory:")
     await storage.connect()
-    adapter = KrakenAdapter(config=config, dry_run=True)
+    adapter = KrakenAdapter(config=kraken_config, dry_run=True)
     engine = GridEngine(adapter, storage, grid_config, safety_config)
 
     try:
-        ref_price = (await adapter.get_current_price(symbol)).amount
+        ref_price = (await adapter.get_current_price(config.symbol)).amount
         logger.info(
             "validate run starting",
             extra={
-                "symbol": str(symbol),
+                "symbol": str(config.symbol),
                 "reference_price_live": str(ref_price),
-                "spacing_percentage": str(spacing_pct),
-                "levels_above": above,
-                "levels_below": below,
-                "order_size_usd": str(order_size_usd),
+                "spacing_percentage": str(config.spacing_pct),
+                "levels_above": config.above,
+                "levels_below": config.below,
+                "order_size_usd": str(config.order_size_usd),
                 "expected_layout_orders": layout_count,
                 "max_total_exposure_usd": str(max_total),
             },
         )
 
-        result = await engine.step(symbol)
+        result = await engine.step(config.symbol)
+        bad = _check_step_result(result, layout_count, logger)
+        if bad is not None:
+            return bad
 
-        if result.action != "initialized":
-            logger.error(
-                "expected first-tick initialization; got something else",
-                extra={"action": result.action},
-            )
-            return 1
-
-        if result.refusals:
-            logger.error(
-                "engine refused some placements via the safety cap layer",
-                extra={
-                    "placed": result.placed,
-                    "refusals": result.refusals,
-                    "expected": layout_count,
-                },
-            )
-            return 1
-
-        if result.placed != layout_count:
-            logger.error(
-                "placed count does not match expected layout",
-                extra={"placed": result.placed, "expected": layout_count},
-            )
-            return 1
-
-        opens = await storage.get_open_orders(symbol=symbol)
+        opens = await storage.get_open_orders(symbol=config.symbol)
         non_dryrun = [
             o.exchange_id
             for o in opens
@@ -177,7 +196,7 @@ async def _run(
         logger.info(
             "validate run completed successfully",
             extra={
-                "symbol": str(symbol),
+                "symbol": str(config.symbol),
                 "validated": result.placed,
                 "expected": layout_count,
                 "all_dry_run": True,
@@ -243,16 +262,15 @@ def main() -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    return asyncio.run(
-        _run(
-            symbol=symbol,
-            spacing_pct=args.spacing,
-            above=args.above,
-            below=args.below,
-            order_size_usd=args.order_size,
-            log_format=args.log_format,
-        )
+    config = _ValidateConfig(
+        symbol=symbol,
+        spacing_pct=args.spacing,
+        above=args.above,
+        below=args.below,
+        order_size_usd=args.order_size,
+        log_format=args.log_format,
     )
+    return asyncio.run(_run(config))
 
 
 if __name__ == "__main__":

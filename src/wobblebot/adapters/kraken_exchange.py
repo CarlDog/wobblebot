@@ -99,8 +99,15 @@ class _PairMetadata:
 _INSUFFICIENT_FUNDS_MARKERS = ("EOrder:Insufficient funds",)
 
 
-class KrakenAdapter(ExchangePort):
+class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
     """Concrete ``ExchangePort`` for the Kraken REST API.
+
+    R0902 disabled: the adapter holds two independent lazy caches
+    (``_asset_altnames`` and ``_pair_metadata``) each paired with its
+    own asyncio.Lock, plus the HTTP client / config / ownership flag /
+    nonce / dry_run flag — nine attributes total, each with a clear
+    single role. Bundling the cache+lock pairs into helper objects
+    would shave the count but obscure the data flow.
 
     Args:
         config: Credentials + connection parameters.
