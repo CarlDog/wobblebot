@@ -10,7 +10,7 @@ from uuid import UUID
 
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Symbol
+from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 
 
 class StoragePort(ABC):
@@ -205,5 +205,29 @@ class StoragePort(ABC):
 
         Raises:
             StorageError: If retrieval fails.
+        """
+        pass
+
+    # Price snapshot operations (Stage 3.0 — Observer mode)
+    @abstractmethod
+    async def save_price_snapshot(
+        self,
+        symbol: Symbol,
+        price: Price,
+        observed_at: Timestamp,
+    ) -> None:
+        """Append a single price observation to the snapshot history.
+
+        ``cli/observe`` calls this on every poll. The history is the raw
+        tape that ``DataCollector v2`` (Stage 3.1) will compute metrics
+        over (volatility, returns, drawdown, etc.).
+
+        Args:
+            symbol: Trading pair the price is for.
+            price: The observed price.
+            observed_at: When the observation was made.
+
+        Raises:
+            StorageError: If save fails.
         """
         pass

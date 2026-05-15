@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS grid_state (
     created_at          TEXT NOT NULL,
     PRIMARY KEY (symbol_base, symbol_quote)
 );
+
+CREATE TABLE IF NOT EXISTS price_snapshots (
+    snapshot_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_base     TEXT NOT NULL,
+    symbol_quote    TEXT NOT NULL,
+    price_amount    TEXT NOT NULL,
+    price_currency  TEXT NOT NULL,
+    observed_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
+    ON price_snapshots(symbol_base, symbol_quote, observed_at);
 """
 
 
@@ -384,6 +396,34 @@ class SQLiteStorageAdapter(StoragePort):
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save grid state for {state.symbol}: {exc}") from exc
+
+    async def save_price_snapshot(
+        self,
+        symbol: Symbol,
+        price: Price,
+        observed_at: Timestamp,
+    ) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO price_snapshots (
+                    symbol_base, symbol_quote,
+                    price_amount, price_currency, observed_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    symbol.base,
+                    symbol.quote,
+                    str(price.amount),
+                    price.currency,
+                    observed_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save price snapshot for {symbol}: {exc}") from exc
 
     async def get_grid_state(self, symbol: Symbol) -> GridState | None:
         conn = self._require_conn()
