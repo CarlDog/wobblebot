@@ -54,18 +54,31 @@ def _select_suggestion(
     suggestions: list[AdvisorSuggestion],
     *,
     recommendation_id: str | None,
+    symbol: str | None = None,
 ) -> AdvisorSuggestion | None:
     """Pick the suggestion to evaluate.
 
-    If ``recommendation_id`` is given, find the matching row. Otherwise
-    the most recent (``get_advisor_suggestions`` returns DESC by
-    ``created_at``) is the default.
+    Priority:
+    1. If ``recommendation_id`` is given, find the matching row. Symbol
+       filter is ignored — the operator picked an exact row by ID.
+    2. If ``symbol`` is given, return the newest suggestion whose
+       ``input_summary["symbol"]`` matches (BASE/QUOTE shape, e.g.
+       ``"BTC/USD"``). Stage 3.6b's multi-symbol advise daemon writes
+       one row per coin per sweep, so a global "newest" can pick the
+       wrong coin.
+    3. Otherwise fall back to the newest row overall (Stage 3.4b
+       single-coin behavior).
     """
     if not suggestions:
         return None
     if recommendation_id is not None:
         for s in suggestions:
             if s.recommendation.recommendation_id == recommendation_id:
+                return s
+        return None
+    if symbol is not None:
+        for s in suggestions:
+            if s.input_summary.get("symbol") == symbol:
                 return s
         return None
     return suggestions[0]
@@ -124,7 +137,9 @@ def _log_result(suggestion: AdvisorSuggestion, result: AutoApplyResult) -> None:
         )
 
 
-async def _run(args: argparse.Namespace, config: WobbleBotConfig) -> int:
+async def _run(  # pylint: disable=too-many-return-statements
+    args: argparse.Namespace, config: WobbleBotConfig
+) -> int:
     if config.advise is None:
         _LOGGER.error("settings.yml is missing the `advise:` section")
         return 2
@@ -135,8 +150,15 @@ async def _run(args: argparse.Namespace, config: WobbleBotConfig) -> int:
     symbol: Symbol
     if args.symbol is not None:
         symbol = Symbol.from_string(args.symbol)
+    elif config.advise.symbols:
+        # Multi-symbol advise daemons (Stage 3.6b) — default to the first
+        # configured symbol when --symbol is omitted. Operators with
+        # multi-coin coverage typically want explicit --symbol per
+        # invocation; the default keeps single-coin operators friction-free.
+        symbol = config.advise.symbols[0]
     else:
-        symbol = config.advise.symbol
+        _LOGGER.error("settings.yml advise.symbols is empty; cannot infer default")
+        return 2
 
     advise_db = args.db if args.db is not None else config.advise.db
     storage = SQLiteStorageAdapter(advise_db)
@@ -154,7 +176,17 @@ async def _run(args: argparse.Namespace, config: WobbleBotConfig) -> int:
     finally:
         await storage.close()
 
-    suggestion = _select_suggestion(suggestions, recommendation_id=args.recommendation_id)
+    # Filter to suggestions tagged with the target symbol. Stage 3.6b's
+    # multi-symbol advise daemon writes one row per coin per sweep, so
+    # the newest row in advise.db may be for a different coin than the
+    # operator asked about. `--recommendation-id` skips the symbol
+    # filter (operator picked an exact row by hand).
+    symbol_filter = None if args.recommendation_id is not None else str(symbol)
+    suggestion = _select_suggestion(
+        suggestions,
+        recommendation_id=args.recommendation_id,
+        symbol=symbol_filter,
+    )
     if suggestion is None:
         if args.recommendation_id is not None:
             _LOGGER.error(
@@ -166,8 +198,8 @@ async def _run(args: argparse.Namespace, config: WobbleBotConfig) -> int:
             )
         else:
             _LOGGER.error(
-                "no advisor suggestions found in db",
-                extra={"db": advise_db},
+                "no advisor suggestions found in db for symbol",
+                extra={"db": advise_db, "symbol": str(symbol)},
             )
         return 2
 

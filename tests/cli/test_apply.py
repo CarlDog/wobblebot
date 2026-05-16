@@ -43,6 +43,7 @@ def _suggestion(
     recommendations: dict[str, Any] | None = None,
     minutes_ago: int = 1,
     model_name: str = "phi4:14b",
+    symbol: str = "BTC/USD",
 ) -> AdvisorSuggestion:
     when = datetime.now(UTC) - timedelta(minutes=minutes_ago)
     rec = AdvisorRecommendation(
@@ -56,7 +57,7 @@ def _suggestion(
     return AdvisorSuggestion(
         recommendation=rec,
         created_at=Timestamp(dt=when),
-        input_summary={"symbol": "BTC/USD"},
+        input_summary={"symbol": symbol},
         model_name=model_name,
     )
 
@@ -121,7 +122,7 @@ def _full_config(
             ),
         ),
         advise=AdviseConfig(
-            symbol=Symbol(base="BTC", quote="USD"),
+            symbols=[Symbol(base="BTC", quote="USD")],
             db=advise_db_path,
         ),
     )
@@ -242,7 +243,7 @@ class TestRunFailureModes:
             grid=_grid_config(),
             safety=_safety_config(),
             schedules=SchedulesConfig(root={}),
-            advise=AdviseConfig(symbol=Symbol(base="BTC", quote="USD"), db=advise_db),
+            advise=AdviseConfig(symbols=[Symbol(base="BTC", quote="USD")], db=advise_db),
             # advisor=None — missing section
         )
         rc = await _run(_args(), config)
@@ -277,11 +278,26 @@ class TestSymbolOverride:
         """--symbol picks a coin's grid distinct from advise.symbol — useful
         when an operator's advise daemon runs on BTC but they want to
         evaluate the same recommendation pattern against ETH."""
+        # Seed one BTC-tagged and one ETH-tagged suggestion. Under
+        # Stage 3.6b's symbol filter, cli/apply --symbol BTC/USD must
+        # pick the BTC row and apply against BTC's grid; --symbol
+        # ETH/USD picks the ETH row and applies against ETH's grid.
         storage = SQLiteStorageAdapter(advise_db)
         await storage.connect()
         try:
             await storage.save_advisor_suggestion(
-                _suggestion(recommendations={"spacing_percentage": 1.1}),
+                _suggestion(
+                    rec_id="r-btc",
+                    symbol="BTC/USD",
+                    recommendations={"spacing_percentage": 1.1},
+                ),
+            )
+            await storage.save_advisor_suggestion(
+                _suggestion(
+                    rec_id="r-eth",
+                    symbol="ETH/USD",
+                    recommendations={"spacing_percentage": 2.1},
+                ),
             )
         finally:
             await storage.close()
@@ -311,13 +327,13 @@ class TestSymbolOverride:
             },
         )
         config = _full_config(advise_db_path=advise_db, grid=eth_grid)
-        # 1.1 against ETH's 2.0 baseline is -45% — exceeds 20% cap.
-        # 1.1 against BTC's 1.0 baseline is +10% — within cap.
-        # Override to ETH; expect rejection.
-        rc = await _run(_args(symbol="ETH/USD"), config)
+        # --symbol BTC/USD picks the BTC suggestion (spacing 1.1 vs
+        # 1.0 baseline = +10%) and applies against BTC's grid: within cap.
+        rc = await _run(_args(symbol="BTC/USD"), config)
         assert rc == 0
-        # Default BTC; expect acceptance.
-        rc2 = await _run(_args(symbol="BTC/USD"), config)
+        # --symbol ETH/USD picks the ETH suggestion (spacing 2.1 vs
+        # 2.0 baseline = +5%) and applies against ETH's grid: within cap.
+        rc2 = await _run(_args(symbol="ETH/USD"), config)
         assert rc2 == 0
 
 

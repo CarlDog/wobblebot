@@ -1,10 +1,10 @@
-"""Advise CLI — long-running passive advisor (Stage 3.3).
+"""Advise CLI — long-running passive advisor (Stage 3.3; multi-symbol since 3.6b).
 
 Run as a module::
 
     python -m wobblebot.cli.advise
     python -m wobblebot.cli.advise --profile aggressive
-    python -m wobblebot.cli.advise --symbol ETH/USD
+    python -m wobblebot.cli.advise --symbols BTC/USD,ETH/USD,DOGE/USD
 
 **Advisory only — no money movement.** Per ADR-002 + ADR-007, this
 daemon's job is to periodically:
@@ -43,7 +43,13 @@ from typing import Any
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    parse_symbol_csv,
+)
 from wobblebot.config.advisor import (
     AdvisorConfig,
     ArbitratorConfig,
@@ -283,24 +289,25 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     advisor: AdvisorPort,
     summary_builder: SummaryBuilder,
     advise_storage: SQLiteStorageAdapter,
-    symbol: Symbol,
+    symbols: list[Symbol],
     interval: timedelta,
     metrics_lookback: timedelta,
     news_lookback: timedelta | None,
     news_limit: int,
     news_match_coin: bool,
-    current_grid: CurrentGridParams,
+    current_grids: dict[str, CurrentGridParams],
     model_name: str,
     stop_event: asyncio.Event,
 ) -> int:
     started_at = time.monotonic()
-    cycles_run = 0
+    cycles_run = 0  # one cycle = one symbol's pass
     cycles_succeeded = 0
+    sweeps_run = 0  # one sweep = one tick across every symbol
     interval_seconds = interval.total_seconds()
     _LOGGER.info(
         "advise session start",
         extra={
-            "symbol": str(symbol),
+            "symbols": [str(s) for s in symbols],
             "interval_seconds": interval_seconds,
             "metrics_lookback_hours": metrics_lookback.total_seconds() / 3600,
             "news_lookback_hours": (
@@ -311,21 +318,28 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     )
     try:
         while not stop_event.is_set():
-            cycles_run += 1
-            ok = await _run_cycle(
-                advisor,
-                summary_builder,
-                advise_storage,
-                symbol=symbol,
-                metrics_lookback=metrics_lookback,
-                news_lookback=news_lookback,
-                news_limit=news_limit,
-                news_match_coin=news_match_coin,
-                current_grid=current_grid,
-                model_name=model_name,
-            )
-            if ok:
-                cycles_succeeded += 1
+            sweeps_run += 1
+            for symbol in symbols:
+                if stop_event.is_set():
+                    break
+                cycles_run += 1
+                # Per-symbol cycle errors are surfaced inside _run_cycle
+                # (logged with structured fields, returns False). One
+                # bad coin can't kill the sweep — Stage 2.4 discipline.
+                ok = await _run_cycle(
+                    advisor,
+                    summary_builder,
+                    advise_storage,
+                    symbol=symbol,
+                    metrics_lookback=metrics_lookback,
+                    news_lookback=news_lookback,
+                    news_limit=news_limit,
+                    news_match_coin=news_match_coin,
+                    current_grid=current_grids[symbol.base],
+                    model_name=model_name,
+                )
+                if ok:
+                    cycles_succeeded += 1
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
             except asyncio.TimeoutError:
@@ -335,6 +349,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             "advise session end",
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
+                "sweeps_run": sweeps_run,
                 "cycles_run": cycles_run,
                 "cycles_succeeded": cycles_succeeded,
             },
@@ -386,7 +401,14 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
     await advise_storage.connect()
 
     summary_builder = SummaryBuilder(observe_storage, news_storage=news_storage)
-    current_grid = _current_grid_from_config(config, config.advise.symbol)
+    # Build a current-grid snapshot per symbol once at startup. The
+    # engine's running grid lives in settings.yml; cli/apply rewrites
+    # that file out-of-band, but cli/advise doesn't pick up mid-run
+    # config changes (per ADR-012 the operator restarts the affected
+    # daemon).
+    current_grids = {
+        symbol.base: _current_grid_from_config(config, symbol) for symbol in config.advise.symbols
+    }
 
     metrics_lookback = timedelta(hours=config.advise.metrics_lookback_hours)
     news_lookback: timedelta | None = (
@@ -403,13 +425,13 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
             advisor=advisor,
             summary_builder=summary_builder,
             advise_storage=advise_storage,
-            symbol=config.advise.symbol,
+            symbols=config.advise.symbols,
             interval=interval,
             metrics_lookback=metrics_lookback,
             news_lookback=news_lookback,
             news_limit=config.advise.news_limit,
             news_match_coin=config.advise.news_match_coin,
-            current_grid=current_grid,
+            current_grids=current_grids,
             model_name=model_name,
             stop_event=stop_event,
         )
@@ -423,14 +445,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
-    def _parse_symbol_one(value: str) -> Symbol:
-        return Symbol.from_string(value)
-
     return collect_overrides(
         args,
         "advise",
         {
-            "symbol": ("symbol", _parse_symbol_one),
+            "symbols": ("symbols", parse_symbol_csv),
             "db": ("db", identity),
             "observe_db": ("observe_db", identity),
             "news_db": ("news_db", identity),
@@ -445,7 +464,12 @@ def main() -> int:
     load_operator_env()
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
-    parser.add_argument("--symbol", default=None, help="Trading pair (BASE/QUOTE).")
+    parser.add_argument(
+        "--symbols",
+        default=None,
+        help="Comma-separated trading pairs (e.g. BTC/USD,ETH/USD). Per-symbol "
+        "cycles run serial within each sweep; each LLM call sees one coin's context.",
+    )
     parser.add_argument("--db", default=None)
     parser.add_argument("--observe-db", default=None)
     parser.add_argument("--news-db", default=None)

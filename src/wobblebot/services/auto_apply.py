@@ -117,7 +117,7 @@ class AutoApplyResult(BaseModel):
         return bool(self.applied_keys) and not self.rejected_keys
 
 
-def evaluate_auto_apply(
+def evaluate_auto_apply(  # pylint: disable=too-many-locals
     suggestion: AdvisorSuggestion,
     current_grid: GridLevels,
     auto_apply_config: AutoApplyConfig,

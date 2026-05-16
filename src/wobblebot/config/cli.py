@@ -281,12 +281,16 @@ class AdviseConfig(BaseModel):
     suggestions to its own ``db``. Cadence lives in
     ``schedules.advise``.
 
-    ``symbol`` is singular — one advise daemon per symbol. Operators
-    who want multi-coin advisor coverage run multiple processes,
-    matching how cli/live's multi-symbol grid is already per-process.
+    Stage 3.6b grew this from single-symbol (one daemon per coin) to
+    multi-symbol with **per-symbol-isolated LLM calls** — the daemon
+    iterates serial per symbol within each tick, building a
+    single-symbol ``PerformanceSummary`` for each call so the LLM
+    never sees more than one coin's context at a time. Cross-
+    contamination of opinions is prevented by construction; the
+    operator gets one process to monitor instead of N.
     """
 
-    symbol: Symbol
+    symbols: list[Symbol]
     db: str = "data/wobblebot-advise.db"
     observe_db: str = "data/wobblebot-observe.db"
     news_db: str = "data/wobblebot-news.db"
@@ -299,10 +303,10 @@ class AdviseConfig(BaseModel):
     class Config:
         frozen = True
 
-    @field_validator("symbol", mode="before")
+    @field_validator("symbols", mode="before")
     @classmethod
-    def _parse_symbol(cls, v: object) -> Symbol:
-        return _coerce_symbol(v)
+    def _parse_symbols(cls, v: object) -> list[Symbol]:
+        return _coerce_symbol_list(v)
 
 
 __all__ = [

@@ -12,7 +12,13 @@ import pytest_asyncio
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.advise import _build_advisor, _moe_model_label, _run_cycle, _summary_to_dict
+from wobblebot.cli.advise import (
+    _build_advisor,
+    _moe_model_label,
+    _run_cycle,
+    _run_loop,
+    _summary_to_dict,
+)
 from wobblebot.config.advisor import (
     AdvisorConfig,
     ArbitratorConfig,
@@ -465,3 +471,134 @@ class TestMoEExpertOpinionsRoundTrip:
         by_role = {op.role: op for op in persisted.recommendation.expert_opinions}
         assert by_role["quant"].confidence == "high"
         assert by_role["risk"].rationale == "drawdown widening"
+
+
+@pytest.mark.asyncio
+class TestMultiSymbolSweep:
+    """Stage 3.6b: cli/advise iterates serial per symbol within each tick.
+    Each LLM call sees one coin's PerformanceSummary — no cross-
+    contamination of opinions. Per-symbol cycle errors are swallowed at
+    the daemon layer (matching cli/live's Stage 2.4 discipline)."""
+
+    async def test_sweep_visits_every_symbol(self, storage: SQLiteStorageAdapter) -> None:
+        """One sweep should produce one AdvisorSuggestion per configured
+        symbol — and each suggestion's input_summary should carry its
+        own symbol tag (proves per-symbol isolation)."""
+        eth_usd = Symbol(base="ETH", quote="USD")
+        doge_usd = Symbol(base="DOGE", quote="USD")
+        symbols = [BTC_USD, eth_usd, doge_usd]
+        # Seed a few snapshots so SummaryBuilder doesn't degenerate to
+        # snapshot_count=0 — not strictly required but matches reality.
+        await _seed_prices(storage)
+
+        advisor = _CannedAdvisor(recommendation=_make_recommendation())
+        builder = SummaryBuilder(storage)
+        current_grids = {s.base: _default_grid() for s in symbols}
+
+        # Stop event fires after the first tick — single sweep, no
+        # second sweep, no infinite loop in the test.
+        import asyncio as _asyncio
+
+        stop_event = _asyncio.Event()
+
+        async def _stop_after_one_sweep() -> None:
+            # Wait long enough for the sweep across 3 symbols to complete
+            # (3× ~5ms per cycle with the canned advisor); then signal stop.
+            await _asyncio.sleep(0.5)
+            stop_event.set()
+
+        stopper = _asyncio.create_task(_stop_after_one_sweep())
+        rc = await _run_loop(
+            advisor=advisor,
+            summary_builder=builder,
+            advise_storage=storage,
+            symbols=symbols,
+            interval=timedelta(seconds=60),  # cadence; doesn't matter — we stop early
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grids=current_grids,
+            model_name="canned",
+            stop_event=stop_event,
+        )
+        await stopper
+        assert rc == 0
+
+        # The advisor was invoked once per symbol — 3 calls total in one sweep.
+        # (May have more if the sweep finished before stop and rolled into a
+        # second iteration; we just assert the minimum.)
+        assert advisor.call_count >= 3
+
+        # Persisted suggestions should cover every symbol from the sweep.
+        # Use input_summary.symbol to verify per-symbol isolation in the
+        # builder's PerformanceSummary.
+        suggestions = await storage.get_advisor_suggestions()
+        symbols_seen = {s.input_summary["symbol"] for s in suggestions}
+        assert "BTC/USD" in symbols_seen
+        assert "ETH/USD" in symbols_seen
+        assert "DOGE/USD" in symbols_seen
+
+    async def test_per_symbol_error_does_not_kill_sweep(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """One bad coin (advisor raising) must not stop the remaining
+        symbols from running this tick. Matches cli/live's Stage 2.4
+        per-symbol error-swallow discipline."""
+        eth_usd = Symbol(base="ETH", quote="USD")
+        symbols = [BTC_USD, eth_usd]
+        await _seed_prices(storage)
+
+        class _FlakeyAdvisor(AdvisorPort):
+            """Raises on BTC, succeeds on everything else."""
+
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_recommendation(
+                self, summary: PerformanceSummary
+            ) -> AdvisorRecommendation:
+                self.call_count += 1
+                if summary.symbol == "BTC/USD":
+                    raise AdvisorError("simulated BTC outage")
+                return _make_recommendation()
+
+            async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
+                del recommendation
+                return True
+
+        advisor = _FlakeyAdvisor()
+        builder = SummaryBuilder(storage)
+        current_grids = {s.base: _default_grid() for s in symbols}
+
+        import asyncio as _asyncio
+
+        stop_event = _asyncio.Event()
+
+        async def _stop_after_one_sweep() -> None:
+            await _asyncio.sleep(0.5)
+            stop_event.set()
+
+        stopper = _asyncio.create_task(_stop_after_one_sweep())
+        await _run_loop(
+            advisor=advisor,
+            summary_builder=builder,
+            advise_storage=storage,
+            symbols=symbols,
+            interval=timedelta(seconds=60),
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grids=current_grids,
+            model_name="canned",
+            stop_event=stop_event,
+        )
+        await stopper
+
+        # Both symbols got tried; BTC raised but ETH still produced a
+        # suggestion. The ETH suggestion must be persisted.
+        assert advisor.call_count >= 2
+        suggestions = await storage.get_advisor_suggestions()
+        eth_suggestions = [s for s in suggestions if s.input_summary["symbol"] == "ETH/USD"]
+        assert eth_suggestions, "ETH suggestion must persist despite BTC failure"
