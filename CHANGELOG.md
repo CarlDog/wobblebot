@@ -10,6 +10,40 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 4.4 — Active Mode (Guarded Withdrawals) (2026-05-15)
+
+Phase 4's biggest slice. **Money can finally move** — but only when the operator explicitly says so, and only after six defense layers clear. Four sub-slices:
+
+**4.4a — `KrakenAdapter.withdraw()` + Harvester key wiring.**
+- Implemented `/0/private/Withdraw` against Kraken's signed API. Returns Kraken's `refid` (withdrawal reference) for forensic linking to Kraken Pro's Funding history.
+- `HarvesterConfig` gained `api_key_env_var` / `api_secret_env_var` (configurable for testing; default `KRAKEN_HARVESTER_API_KEY` / `_SECRET`) and `withdrawal_destinations: dict[str, str]` (asset → Kraken Pro destination label; the API only accepts labels from the operator's pre-registered address book).
+- `cli/harvest` switched to loading the Harvester key (Withdraw + Query Funds scopes).
+
+**4.4b — TransferResult storage + day-cap from real history.**
+- New `transfer_results` SQLite table (UNIQUE on `transaction_id`, CHECK on status + direction).
+- `TransferResult` gained denormalized `direction` and `asset` fields so the day-cap query stays single-table.
+- `services.harvester.compute_today_total_withdrawn_usd()` — rolling 24h sum of exchange→bank withdrawals (status != failed).
+- `cli/harvest._run_cycle` now feeds the real total to `propose_transfer()`. Pre-4.4b was always `Decimal("0")` — the day-cap was effectively never enforced.
+
+**4.4c — `cli/harvest --execute <proposal-id>` operator-approval gate.**
+- Mirrors the `cli/apply --commit` pattern: explicit per-call flag, multi-layer validation, persists outcome regardless of success or failure.
+- Defense chain (any failure aborts; `adapter.withdraw()` NEVER called):
+  1. `HarvesterConfig.enabled=True` required.
+  2. Proposal exists in harvest db.
+  3. Proposal not stale (≤ `proposal_max_age_hours`, default 24h).
+  4. Destination label resolves in `withdrawal_destinations`.
+  5. Current balance ≥ proposal amount (exchange→bank only).
+  6. Day-cap headroom: `today_total + proposal.amount ≤ max_withdrawal_per_day_usd`.
+- After all six clear, calls withdraw. `TransferResult` with `status="pending"` on success (Kraken hasn't settled yet) + Kraken's real refid; `status="failed"` on Kraken refusal with a synthetic `failed-<uuid>` transaction_id.
+- The "**WITHDRAWAL SUBMITTED — money moved**" log message is the only place in the codebase that admits real money has moved.
+
+**4.4d — Inspection + close.**
+- `tools/show_transfers.py` mirrors `tools/show_proposals.py` shape (`--since-hours` / `--status` / `--direction` / `--asset` / `--limit` / `--log-format`).
+
+**No real withdrawal happened during the slice work** — every test uses a stub `withdraw()`. The first live execution is operator-triggered: $1 ACH against the "360 Performance Savings" destination once balance enters surplus band (currently $99.92 USD, in deficit; would need a deposit or threshold adjustment).
+
+888 unit tests pass (was 853 at Stage 4.3 close, +35 across the four slices). mypy clean (60 src files); pylint 10.00/10. No new runtime deps. Running real-money cost still $0.08 (unchanged from Phase 2 close until the operator's first `--execute`).
+
 ### Stage 4.3 — Passive Transfer Proposals (persistence + inspection) (2026-05-15)
 
 Phase 4's third slice. Every non-None proposal from `cli/harvest` now persists to a new `transfer_proposals` SQLite table for operator review. **No transfers** — that's 4.4's job once the operator can approve+execute through an explicit gate. Zero new real-money risk.
