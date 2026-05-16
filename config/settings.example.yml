@@ -318,13 +318,31 @@ advisor:
     max_order_size_change_percentage: 15.0
 
 # ============================================================================
-# Harvester (Phase 4 — placeholder, not yet implemented)
+# Harvester (Phase 4 — Stage 4.1 schema landed; operational from 4.2+)
 # ============================================================================
+# Treasury-management thresholds. The Harvester proposes (and later
+# executes, per ADR-003) Kraken↔bank transfers when balance leaves the
+# operator-defined band. Per ADR-004 transfers go through Kraken's
+# withdrawal API via ExchangePort — no separate banking adapter.
+#
+# Ordering invariant (validated at config-load):
+#   min_exchange_liquidity_usd  <  topup_threshold_usd  <  surplus_threshold_usd
+#
+# - min_exchange_liquidity_usd: floor; Harvester never withdraws below.
+# - topup_threshold_usd: low-water mark above the floor. Between min
+#   and topup, Harvester proposes a bank→Kraken deposit.
+# - surplus_threshold_usd: ceiling. Above this, Harvester proposes
+#   scraping the excess to bank.
+# - max_withdrawal_per_day_usd: rolling 24h cap on outflows. Limits
+#   blast radius of a misconfiguration or runaway loop.
+#
+# `enabled: false` mirrors the auto-apply gate posture (ADR-012-style):
+# operator opts in for any code path that moves money.
 harvester:
   enabled: false
   min_exchange_liquidity_usd: 200.0
+  topup_threshold_usd: 250.0
   surplus_threshold_usd: 500.0
-  topup_threshold_usd: 150.0
   max_withdrawal_per_day_usd: 1000.0
 
 # ============================================================================
