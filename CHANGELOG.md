@@ -10,6 +10,20 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 4.2 — cli/harvest Read-Only Balance Monitor (2026-05-15)
+
+Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what *would* be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
+
+- **`HarvestConfig`** (per-CLI section): `log_format` only for now. Future stages may grow more knobs.
+- **`schedules.harvest`**: new entry in the unified schedules block; defaults to `1h` in the example yml.
+- **`cli/harvest._run_cycle`**: read balance → propose_transfer() → log. Returns `False` on a recoverable balance-read failure so the outer loop continues. Operator-facing band classification (`deficit / topup_band / hold_band / surplus`) included as a structured log field.
+- Proposal log lines are tagged `"HYPOTHETICAL proposal (no money moved)"` so a glance at logs can't mistake them for real actions.
+- Test stub's `ExchangePort.withdraw()` raises `NotImplementedError` with a `"Stage 4.2 must not call withdraw"` message — surfaces accidental cross-wiring as a hard test failure.
+
+**Verified live** against the operator's real Kraken account: daemon read $99.92 USD (current state), correctly classified as `deficit` (below the $200 `min_exchange_liquidity_usd` threshold), logged "no proposal" with full band context. Below-floor is operator-only territory by design.
+
+14 new tests. 838 total unit tests pass (+14 since Stage 4.1 close); mypy clean (60 src files); pylint 10.00/10. No new runtime deps.
+
 ### Stage 4.1 — Harvester Domain + Decision Logic (2026-05-15)
 
 First Phase 4 slice. Pure-domain — no I/O, no Kraken calls, no withdrawals; **zero new real-money risk**.
