@@ -6,6 +6,11 @@ is double-precision float, which is lossy for monetary amounts).
 
 Per ADR-005, orders use a dual-ID strategy: internal UUID for the primary key
 and a nullable Kraken txid for cross-system identification.
+
+Schema DDL lives in ``sqlite_storage_schema.py`` and row-to-domain mapping
+helpers live in ``sqlite_storage_rowmap.py``; both were split out in Slice
+5.1.C to keep this module under the pylint ``too-many-lines`` budget while
+preserving the public ``SQLiteStorageAdapter`` interface unchanged.
 """
 
 from __future__ import annotations
@@ -18,187 +23,25 @@ from uuid import UUID
 
 import aiosqlite
 
+from wobblebot.adapters.sqlite_storage_rowmap import (
+    row_to_advisor_suggestion,
+    row_to_applied_suggestion,
+    row_to_news_item,
+    row_to_order,
+    row_to_price_snapshot,
+    row_to_trade,
+    row_to_transfer_proposal,
+    row_to_transfer_result,
+    serialize_expert_opinions,
+)
+from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
+from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.storage import StoragePort
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS orders (
-    id              TEXT PRIMARY KEY,
-    exchange_id     TEXT,
-    symbol_base     TEXT NOT NULL,
-    symbol_quote    TEXT NOT NULL,
-    side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
-    price_amount    TEXT NOT NULL,
-    price_currency  TEXT NOT NULL,
-    amount_value    TEXT NOT NULL,
-    amount_asset    TEXT NOT NULL,
-    status          TEXT NOT NULL CHECK (status IN
-                        ('pending', 'open', 'closed', 'canceled', 'expired')),
-    filled_amount   TEXT NOT NULL DEFAULT '0',
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_orders_exchange_id ON orders(exchange_id);
-CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_symbol
-    ON orders(symbol_base, symbol_quote);
-
-CREATE TABLE IF NOT EXISTS trades (
-    id              TEXT PRIMARY KEY,
-    order_id        TEXT NOT NULL,
-    symbol_base     TEXT NOT NULL,
-    symbol_quote    TEXT NOT NULL,
-    side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
-    price_amount    TEXT NOT NULL,
-    price_currency  TEXT NOT NULL,
-    amount_value    TEXT NOT NULL,
-    amount_asset    TEXT NOT NULL,
-    fee             TEXT NOT NULL,
-    cost            TEXT NOT NULL,
-    executed_at     TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_trades_executed_at ON trades(executed_at);
-CREATE INDEX IF NOT EXISTS idx_trades_symbol
-    ON trades(symbol_base, symbol_quote);
-
-CREATE TABLE IF NOT EXISTS balance_snapshots (
-    snapshot_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    snapshot_at     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS balance_entries (
-    snapshot_id     INTEGER NOT NULL
-                    REFERENCES balance_snapshots(snapshot_id) ON DELETE CASCADE,
-    asset           TEXT NOT NULL,
-    total           TEXT NOT NULL,
-    available       TEXT NOT NULL,
-    locked          TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    PRIMARY KEY (snapshot_id, asset)
-);
-
-CREATE TABLE IF NOT EXISTS grid_state (
-    symbol_base         TEXT NOT NULL,
-    symbol_quote        TEXT NOT NULL,
-    reference_price     TEXT NOT NULL,
-    spacing_percentage  TEXT NOT NULL,
-    levels_above        INTEGER NOT NULL,
-    levels_below        INTEGER NOT NULL,
-    created_at          TEXT NOT NULL,
-    PRIMARY KEY (symbol_base, symbol_quote)
-);
-
-CREATE TABLE IF NOT EXISTS price_snapshots (
-    snapshot_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol_base     TEXT NOT NULL,
-    symbol_quote    TEXT NOT NULL,
-    price_amount    TEXT NOT NULL,
-    price_currency  TEXT NOT NULL,
-    observed_at     TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
-    ON price_snapshots(symbol_base, symbol_quote, observed_at);
-
-CREATE TABLE IF NOT EXISTS news_items (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source          TEXT NOT NULL,
-    external_id     TEXT,
-    published_at    TEXT NOT NULL,
-    headline        TEXT NOT NULL,
-    body            TEXT NOT NULL DEFAULT '',
-    sentiment_score REAL,
-    mentioned_coins TEXT NOT NULL DEFAULT '[]',
-    fetched_at      TEXT NOT NULL,
-    UNIQUE (source, external_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_news_items_published
-    ON news_items(published_at);
-CREATE INDEX IF NOT EXISTS idx_news_items_source_time
-    ON news_items(source, published_at);
-
-CREATE TABLE IF NOT EXISTS advisor_suggestions (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    recommendation_id   TEXT NOT NULL,
-    created_at          TEXT NOT NULL,
-    role                TEXT NOT NULL,
-    recommendations     TEXT NOT NULL,
-    rationale           TEXT NOT NULL,
-    confidence          TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
-    input_summary       TEXT NOT NULL,
-    model_name          TEXT NOT NULL,
-    -- Stage 3.4a: MoE per-expert audit trail. JSON array of opinion dicts
-    -- (role, confidence, recommendations, rationale). Empty array for
-    -- single-LLM suggestions. NOT NULL DEFAULT keeps the migration on
-    -- pre-3.4a DBs trivial — the ALTER below picks up existing rows.
-    expert_opinions     TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created
-    ON advisor_suggestions(created_at);
-CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_model
-    ON advisor_suggestions(model_name, created_at);
-
-CREATE TABLE IF NOT EXISTS applied_suggestions (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    recommendation_id   TEXT NOT NULL,
-    applied_at          TEXT NOT NULL,
-    symbol              TEXT NOT NULL,
-    applied_keys        TEXT NOT NULL DEFAULT '[]',
-    rejected_keys       TEXT NOT NULL DEFAULT '[]',
-    model_name          TEXT NOT NULL,
-    rationale           TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_applied_suggestions_applied
-    ON applied_suggestions(applied_at);
-CREATE INDEX IF NOT EXISTS idx_applied_suggestions_symbol
-    ON applied_suggestions(symbol, applied_at);
-
-CREATE TABLE IF NOT EXISTS transfer_proposals (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-    proposal_id                 TEXT NOT NULL UNIQUE,
-    direction                   TEXT NOT NULL
-                                    CHECK (direction IN ('exchange_to_bank', 'bank_to_exchange')),
-    asset                       TEXT NOT NULL,
-    amount                      TEXT NOT NULL,
-    rationale                   TEXT NOT NULL,
-    current_exchange_balance    TEXT NOT NULL,
-    target_exchange_balance     TEXT NOT NULL,
-    created_at                  TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_transfer_proposals_created
-    ON transfer_proposals(created_at);
-CREATE INDEX IF NOT EXISTS idx_transfer_proposals_direction
-    ON transfer_proposals(direction, created_at);
-
-CREATE TABLE IF NOT EXISTS transfer_results (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-    proposal_id                 TEXT NOT NULL,
-    transaction_id              TEXT NOT NULL UNIQUE,
-    status                      TEXT NOT NULL
-                                    CHECK (status IN ('pending', 'completed', 'failed')),
-    executed_amount             TEXT NOT NULL,
-    direction                   TEXT NOT NULL
-                                    CHECK (direction IN ('exchange_to_bank', 'bank_to_exchange')),
-    asset                       TEXT NOT NULL,
-    timestamp                   TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_transfer_results_timestamp
-    ON transfer_results(timestamp);
-CREATE INDEX IF NOT EXISTS idx_transfer_results_day_cap
-    ON transfer_results(asset, direction, timestamp);
-"""
 
 
 class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
@@ -242,7 +85,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # unreliable and version-dependent in aiosqlite.
             self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA foreign_keys = ON")
-            await self._conn.executescript(_SCHEMA)
+            await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await self._conn.commit()
         except Exception as exc:
@@ -307,7 +150,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 "SELECT * FROM orders WHERE id = ?", (str(order_id),)
             ) as cursor:
                 row = await cursor.fetchone()
-            return _row_to_order(row) if row else None
+            return row_to_order(row) if row else None
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load order {order_id}: {exc}") from exc
 
@@ -322,7 +165,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_order(row) for row in rows]
+            return [row_to_order(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load open orders: {exc}") from exc
 
@@ -349,7 +192,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_order(row) for row in rows]
+            return [row_to_order(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load orders: {exc}") from exc
 
@@ -411,7 +254,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_trade(row) for row in rows]
+            return [row_to_trade(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load trades: {exc}") from exc
 
@@ -578,7 +421,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     suggestion.recommendation.confidence,
                     json.dumps(suggestion.input_summary),
                     suggestion.model_name,
-                    _serialize_expert_opinions(suggestion.recommendation.expert_opinions),
+                    serialize_expert_opinions(suggestion.recommendation.expert_opinions),
                 ),
             )
             await conn.commit()
@@ -616,7 +459,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_advisor_suggestion(row) for row in rows]
+            return [row_to_advisor_suggestion(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load advisor suggestions: {exc}") from exc
 
@@ -675,7 +518,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_applied_suggestion(row) for row in rows]
+            return [row_to_applied_suggestion(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load applied suggestions: {exc}") from exc
 
@@ -735,7 +578,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_transfer_proposal(row) for row in rows]
+            return [row_to_transfer_proposal(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load transfer proposals: {exc}") from exc
 
@@ -798,7 +641,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_transfer_result(row) for row in rows]
+            return [row_to_transfer_result(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load transfer results: {exc}") from exc
 
@@ -830,7 +673,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound_params) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_news_item(row) for row in rows]
+            return [row_to_news_item(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load news items: {exc}") from exc
 
@@ -862,7 +705,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute(sql, bound_params) as cursor:
                 rows = await cursor.fetchall()
-            return [_row_to_price_snapshot(row) for row in rows]
+            return [row_to_price_snapshot(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load price snapshots: {exc}") from exc
 
@@ -891,175 +734,12 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         )
 
 
-def _row_to_order(row: aiosqlite.Row) -> Order:
-    return Order(
-        id=UUID(row["id"]),
-        exchange_id=row["exchange_id"],
-        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
-        side=OrderSide(row["side"]),
-        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
-        amount=Amount(value=Decimal(row["amount_value"]), asset=row["amount_asset"]),
-        status=row["status"],
-        filled_amount=Decimal(row["filled_amount"]),
-        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
-        updated_at=(
-            Timestamp(dt=datetime.fromisoformat(row["updated_at"])) if row["updated_at"] else None
-        ),
-    )
-
-
-def _row_to_trade(row: aiosqlite.Row) -> Trade:
-    return Trade(
-        id=row["id"],
-        order_id=row["order_id"],
-        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
-        side=OrderSide(row["side"]),
-        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
-        amount=Amount(value=Decimal(row["amount_value"]), asset=row["amount_asset"]),
-        fee=Decimal(row["fee"]),
-        cost=Decimal(row["cost"]),
-        executed_at=Timestamp(dt=datetime.fromisoformat(row["executed_at"])),
-    )
-
-
-def _row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
-    return PriceSnapshot(
-        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
-        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
-        observed_at=Timestamp(dt=datetime.fromisoformat(row["observed_at"])),
-    )
-
-
-def _row_to_news_item(row: aiosqlite.Row) -> NewsItem:
-    return NewsItem(
-        source=row["source"],
-        external_id=row["external_id"],
-        published_at=Timestamp(dt=datetime.fromisoformat(row["published_at"])),
-        headline=row["headline"],
-        body=row["body"] or "",
-        sentiment_score=row["sentiment_score"],
-        mentioned_coins=json.loads(row["mentioned_coins"]),
-        fetched_at=Timestamp(dt=datetime.fromisoformat(row["fetched_at"])),
-    )
-
-
-def _row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
-    expert_opinions_raw = row["expert_opinions"] if "expert_opinions" in row.keys() else "[]"
-    return AdvisorSuggestion(
-        recommendation=AdvisorRecommendation(
-            recommendation_id=row["recommendation_id"],
-            timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
-            role=row["role"],
-            recommendations=json.loads(row["recommendations"]),
-            rationale=row["rationale"],
-            confidence=row["confidence"],
-            expert_opinions=_deserialize_expert_opinions(
-                expert_opinions_raw,
-                fallback_timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
-            ),
-        ),
-        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
-        input_summary=json.loads(row["input_summary"]),
-        model_name=row["model_name"],
-    )
-
-
-def _serialize_expert_opinions(opinions: list[AdvisorRecommendation]) -> str:
-    """Serialize per-expert opinions for the audit-trail column.
-
-    Stored as a JSON array of dicts (one per expert). The forensic
-    fields are: role, confidence, recommendations, rationale. The
-    ``recommendation_id`` and ``timestamp`` per-expert get dropped on
-    purpose — they're synthetic UUIDs / per-call wall-clocks that
-    carry no semantic information once the aggregated row exists. If
-    we ever need them, the column is JSON so a future migration can
-    add them back without a schema change.
-    """
-    return json.dumps(
-        [
-            {
-                "role": op.role,
-                "confidence": op.confidence,
-                "recommendations": op.recommendations,
-                "rationale": op.rationale,
-            }
-            for op in opinions
-        ]
-    )
-
-
-def _deserialize_expert_opinions(
-    raw: str,
-    *,
-    fallback_timestamp: Timestamp,
-) -> list[AdvisorRecommendation]:
-    """Reverse :func:`_serialize_expert_opinions`.
-
-    We reconstruct ``AdvisorRecommendation`` instances with synthetic
-    ``recommendation_id`` (``"opinion-<idx>"``) and the parent row's
-    timestamp — neither field was persisted per-opinion. Read-side
-    consumers (``tools/show_suggestions.py``) care about role /
-    confidence / recommendations / rationale, not the synthetic IDs.
-    """
-    if not raw:
-        return []
-    payload = json.loads(raw)
-    return [
-        AdvisorRecommendation(
-            recommendation_id=f"opinion-{idx}",
-            timestamp=fallback_timestamp,
-            role=entry["role"],
-            recommendations=entry.get("recommendations") or {},
-            rationale=entry["rationale"],
-            confidence=entry["confidence"],
-        )
-        for idx, entry in enumerate(payload)
-    ]
-
-
-def _row_to_applied_suggestion(row: aiosqlite.Row) -> AppliedSuggestion:
-    return AppliedSuggestion(
-        recommendation_id=row["recommendation_id"],
-        applied_at=Timestamp(dt=datetime.fromisoformat(row["applied_at"])),
-        symbol=row["symbol"],
-        applied_keys=json.loads(row["applied_keys"]),
-        rejected_keys=json.loads(row["rejected_keys"]),
-        model_name=row["model_name"],
-        rationale=row["rationale"],
-    )
-
-
-def _row_to_transfer_proposal(row: aiosqlite.Row) -> TransferProposal:
-    return TransferProposal(
-        proposal_id=row["proposal_id"],
-        direction=row["direction"],
-        asset=row["asset"],
-        amount=Decimal(row["amount"]),
-        rationale=row["rationale"],
-        current_exchange_balance=Decimal(row["current_exchange_balance"]),
-        target_exchange_balance=Decimal(row["target_exchange_balance"]),
-        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
-    )
-
-
-def _row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
-    return TransferResult(
-        proposal_id=row["proposal_id"],
-        transaction_id=row["transaction_id"],
-        status=row["status"],
-        executed_amount=Decimal(row["executed_amount"]),
-        direction=row["direction"],
-        asset=row["asset"],
-        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
-    )
-
-
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,
 ) -> None:
     """Add the ``expert_opinions`` column to pre-3.4a advisor_suggestions tables.
 
-    The CREATE TABLE in ``_SCHEMA`` already declares the column for new
+    The CREATE TABLE in ``SCHEMA`` (sqlite_storage_schema.py) already declares the column for new
     DBs (via ``IF NOT EXISTS``), but operators running Stage 3.3 have
     existing tables that lack it. SQLite doesn't support ``ALTER TABLE
     ADD COLUMN IF NOT EXISTS``, so we PRAGMA-check first.

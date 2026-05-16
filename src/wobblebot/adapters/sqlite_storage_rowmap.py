@@ -1,0 +1,189 @@
+"""Row-to-domain mapping helpers for ``SQLiteStorageAdapter``.
+
+Extracted from ``sqlite_storage.py`` to keep the adapter module under
+the project's per-file line budget (1000 lines, pylint
+``too-many-lines``). These are pure functions: SQLite row in, domain
+or port-layer value object out. They never touch the connection, never
+write, and have no side effects.
+
+Two pairs of helpers also live here for the MoE per-expert audit trail
+(``serialize_expert_opinions`` / ``deserialize_expert_opinions``) so
+the JSON conversion stays alongside the row mapping that consumes it.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+
+import aiosqlite
+
+from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.harvester import TransferProposal, TransferResult
+
+
+def row_to_order(row: aiosqlite.Row) -> Order:
+    return Order(
+        id=UUID(row["id"]),
+        exchange_id=row["exchange_id"],
+        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+        side=OrderSide(row["side"]),
+        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
+        amount=Amount(value=Decimal(row["amount_value"]), asset=row["amount_asset"]),
+        status=row["status"],
+        filled_amount=Decimal(row["filled_amount"]),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        updated_at=(
+            Timestamp(dt=datetime.fromisoformat(row["updated_at"])) if row["updated_at"] else None
+        ),
+    )
+
+
+def row_to_trade(row: aiosqlite.Row) -> Trade:
+    return Trade(
+        id=row["id"],
+        order_id=row["order_id"],
+        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+        side=OrderSide(row["side"]),
+        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
+        amount=Amount(value=Decimal(row["amount_value"]), asset=row["amount_asset"]),
+        fee=Decimal(row["fee"]),
+        cost=Decimal(row["cost"]),
+        executed_at=Timestamp(dt=datetime.fromisoformat(row["executed_at"])),
+    )
+
+
+def row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
+    return PriceSnapshot(
+        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+        price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
+        observed_at=Timestamp(dt=datetime.fromisoformat(row["observed_at"])),
+    )
+
+
+def row_to_news_item(row: aiosqlite.Row) -> NewsItem:
+    return NewsItem(
+        source=row["source"],
+        external_id=row["external_id"],
+        published_at=Timestamp(dt=datetime.fromisoformat(row["published_at"])),
+        headline=row["headline"],
+        body=row["body"] or "",
+        sentiment_score=row["sentiment_score"],
+        mentioned_coins=json.loads(row["mentioned_coins"]),
+        fetched_at=Timestamp(dt=datetime.fromisoformat(row["fetched_at"])),
+    )
+
+
+def row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
+    expert_opinions_raw = row["expert_opinions"] if "expert_opinions" in row.keys() else "[]"
+    return AdvisorSuggestion(
+        recommendation=AdvisorRecommendation(
+            recommendation_id=row["recommendation_id"],
+            timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+            role=row["role"],
+            recommendations=json.loads(row["recommendations"]),
+            rationale=row["rationale"],
+            confidence=row["confidence"],
+            expert_opinions=deserialize_expert_opinions(
+                expert_opinions_raw,
+                fallback_timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+            ),
+        ),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        input_summary=json.loads(row["input_summary"]),
+        model_name=row["model_name"],
+    )
+
+
+def serialize_expert_opinions(opinions: list[AdvisorRecommendation]) -> str:
+    """Serialize per-expert opinions for the audit-trail column.
+
+    Stored as a JSON array of dicts (one per expert). The forensic
+    fields are: role, confidence, recommendations, rationale. The
+    ``recommendation_id`` and ``timestamp`` per-expert get dropped on
+    purpose — they're synthetic UUIDs / per-call wall-clocks that
+    carry no semantic information once the aggregated row exists. If
+    we ever need them, the column is JSON so a future migration can
+    add them back without a schema change.
+    """
+    return json.dumps(
+        [
+            {
+                "role": op.role,
+                "confidence": op.confidence,
+                "recommendations": op.recommendations,
+                "rationale": op.rationale,
+            }
+            for op in opinions
+        ]
+    )
+
+
+def deserialize_expert_opinions(
+    raw: str,
+    *,
+    fallback_timestamp: Timestamp,
+) -> list[AdvisorRecommendation]:
+    """Reverse :func:`serialize_expert_opinions`.
+
+    We reconstruct ``AdvisorRecommendation`` instances with synthetic
+    ``recommendation_id`` (``"opinion-<idx>"``) and the parent row's
+    timestamp — neither field was persisted per-opinion. Read-side
+    consumers (``tools/show_suggestions.py``) care about role /
+    confidence / recommendations / rationale, not the synthetic IDs.
+    """
+    if not raw:
+        return []
+    payload = json.loads(raw)
+    return [
+        AdvisorRecommendation(
+            recommendation_id=f"opinion-{idx}",
+            timestamp=fallback_timestamp,
+            role=entry["role"],
+            recommendations=entry.get("recommendations") or {},
+            rationale=entry["rationale"],
+            confidence=entry["confidence"],
+        )
+        for idx, entry in enumerate(payload)
+    ]
+
+
+def row_to_applied_suggestion(row: aiosqlite.Row) -> AppliedSuggestion:
+    return AppliedSuggestion(
+        recommendation_id=row["recommendation_id"],
+        applied_at=Timestamp(dt=datetime.fromisoformat(row["applied_at"])),
+        symbol=row["symbol"],
+        applied_keys=json.loads(row["applied_keys"]),
+        rejected_keys=json.loads(row["rejected_keys"]),
+        model_name=row["model_name"],
+        rationale=row["rationale"],
+    )
+
+
+def row_to_transfer_proposal(row: aiosqlite.Row) -> TransferProposal:
+    return TransferProposal(
+        proposal_id=row["proposal_id"],
+        direction=row["direction"],
+        asset=row["asset"],
+        amount=Decimal(row["amount"]),
+        rationale=row["rationale"],
+        current_exchange_balance=Decimal(row["current_exchange_balance"]),
+        target_exchange_balance=Decimal(row["target_exchange_balance"]),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+    )
+
+
+def row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
+    return TransferResult(
+        proposal_id=row["proposal_id"],
+        transaction_id=row["transaction_id"],
+        status=row["status"],
+        executed_amount=Decimal(row["executed_amount"]),
+        direction=row["direction"],
+        asset=row["asset"],
+        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+    )
