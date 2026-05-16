@@ -205,6 +205,15 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def save_pending_command(self, pending):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_pending_command(self, pending_id):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_pending_commands(self, status=None, limit=None):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:

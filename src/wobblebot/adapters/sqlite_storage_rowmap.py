@@ -19,11 +19,18 @@ from decimal import Decimal
 from uuid import UUID
 
 import aiosqlite
+from pydantic import TypeAdapter
 
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.operator import CommandResult, OperatorCommand, PendingCommand
+
+# Module-level TypeAdapter — Pydantic discriminator resolution is the
+# only way to materialize the right OperatorCommand variant from a
+# serialized dict. Cheap to construct once.
+_COMMAND_ADAPTER: TypeAdapter[OperatorCommand] = TypeAdapter(OperatorCommand)
 
 
 def row_to_order(row: aiosqlite.Row) -> Order:
@@ -186,4 +193,41 @@ def row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
         direction=row["direction"],
         asset=row["asset"],
         timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+    )
+
+
+def row_to_pending_command(row: aiosqlite.Row) -> PendingCommand:
+    """Materialize a ``PendingCommand`` from a ``pending_commands`` row.
+
+    ``command_json`` and ``result_json`` are stored as JSON strings so
+    schema evolution (new command kinds, new result fields) doesn't
+    force a SQLite migration. Discriminator resolution rebuilds the
+    typed ``OperatorCommand`` variant on read.
+    """
+    command_payload = json.loads(row["command_json"])
+    command = _COMMAND_ADAPTER.validate_python(command_payload)
+    result_raw = row["result_json"]
+    result: CommandResult | None = None
+    if result_raw:
+        result = CommandResult.model_validate_json(result_raw)
+    return PendingCommand(
+        id=UUID(row["id"]),
+        command=command,
+        status=row["status"],
+        channel_id=row["channel_id"],
+        requesting_user_id=row["requesting_user_id"],
+        confirming_user_id=row["confirming_user_id"],
+        confirmed_at=(
+            Timestamp(dt=datetime.fromisoformat(row["confirmed_at"]))
+            if row["confirmed_at"]
+            else None
+        ),
+        dispatched_at=(
+            Timestamp(dt=datetime.fromisoformat(row["dispatched_at"]))
+            if row["dispatched_at"]
+            else None
+        ),
+        result=result,
+        ttl_expires_at=Timestamp(dt=datetime.fromisoformat(row["ttl_expires_at"])),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
     )

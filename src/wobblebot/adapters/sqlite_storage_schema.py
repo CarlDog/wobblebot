@@ -187,4 +187,34 @@ CREATE INDEX IF NOT EXISTS idx_transfer_results_timestamp
     ON transfer_results(timestamp);
 CREATE INDEX IF NOT EXISTS idx_transfer_results_day_cap
     ON transfer_results(asset, direction, timestamp);
+
+-- Stage 5.4 — pending commands (operator interaction layer, ADR-013).
+-- cli/operator writes; cli/live polls WHERE status='approved'.
+-- The full OperatorCommand and (optional) CommandResult ride as JSON
+-- so future command/result schema evolution doesn't force a migration.
+-- command_kind is denormalized for selective filtering / metrics.
+CREATE TABLE IF NOT EXISTS pending_commands (
+    id                  TEXT PRIMARY KEY,
+    command_kind        TEXT NOT NULL,
+    command_json        TEXT NOT NULL,
+    status              TEXT NOT NULL CHECK (status IN (
+                            'awaiting_confirmation', 'approved', 'rejected',
+                            'expired', 'dispatched', 'failed'
+                        )),
+    channel_id          TEXT NOT NULL,
+    requesting_user_id  TEXT NOT NULL,
+    confirming_user_id  TEXT,
+    confirmed_at        TEXT,
+    dispatched_at       TEXT,
+    result_json         TEXT,
+    ttl_expires_at      TEXT NOT NULL,
+    created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_commands_status
+    ON pending_commands(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_commands_created
+    ON pending_commands(created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_commands_ttl
+    ON pending_commands(ttl_expires_at);
 """

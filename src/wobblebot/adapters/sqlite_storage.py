@@ -28,6 +28,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_applied_suggestion,
     row_to_news_item,
     row_to_order,
+    row_to_pending_command,
     row_to_price_snapshot,
     row_to_trade,
     row_to_transfer_proposal,
@@ -41,6 +42,7 @@ from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
 
 
@@ -732,6 +734,85 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             levels_below=row["levels_below"],
             created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         )
+
+    # ----- pending commands (Stage 5.4 — operator interaction) -----
+
+    async def save_pending_command(self, pending: PendingCommand) -> None:
+        conn = self._require_conn()
+        command_json = pending.command.model_dump_json()
+        result_json = pending.result.model_dump_json() if pending.result else None
+        try:
+            await conn.execute(
+                """
+                INSERT INTO pending_commands (
+                    id, command_kind, command_json, status,
+                    channel_id, requesting_user_id,
+                    confirming_user_id, confirmed_at,
+                    dispatched_at, result_json,
+                    ttl_expires_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    command_kind = excluded.command_kind,
+                    command_json = excluded.command_json,
+                    status = excluded.status,
+                    confirming_user_id = excluded.confirming_user_id,
+                    confirmed_at = excluded.confirmed_at,
+                    dispatched_at = excluded.dispatched_at,
+                    result_json = excluded.result_json,
+                    ttl_expires_at = excluded.ttl_expires_at
+                """,
+                (
+                    str(pending.id),
+                    pending.command.kind,
+                    command_json,
+                    pending.status,
+                    pending.channel_id,
+                    pending.requesting_user_id,
+                    pending.confirming_user_id,
+                    pending.confirmed_at.dt.isoformat() if pending.confirmed_at else None,
+                    pending.dispatched_at.dt.isoformat() if pending.dispatched_at else None,
+                    result_json,
+                    pending.ttl_expires_at.dt.isoformat(),
+                    pending.created_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save pending command {pending.id}: {exc}") from exc
+
+    async def get_pending_command(self, pending_id: UUID) -> PendingCommand | None:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT * FROM pending_commands WHERE id = ?", (str(pending_id),)
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load pending command {pending_id}: {exc}") from exc
+        return row_to_pending_command(row) if row else None
+
+    async def get_pending_commands(
+        self,
+        status: PendingCommandStatus | None = None,
+        limit: int | None = None,
+    ) -> list[PendingCommand]:
+        conn = self._require_conn()
+        sql = "SELECT * FROM pending_commands"
+        params: list[object] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        try:
+            async with conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load pending commands: {exc}") from exc
+        return [row_to_pending_command(row) for row in rows]
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

@@ -13,6 +13,7 @@ from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Tra
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 
 
 class StoragePort(ABC):  # pylint: disable=too-many-public-methods
@@ -485,3 +486,62 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: If retrieval fails.
         """
         pass
+
+    # Pending command operations (Stage 5.4 — Operator interaction)
+    @abstractmethod
+    async def save_pending_command(self, pending: PendingCommand) -> None:
+        """Persist a ``PendingCommand``; upserts on ``id``.
+
+        ``cli/operator`` (Stage 5.6) writes a row on intent emission
+        with ``status='awaiting_confirmation'``. Subsequent status
+        transitions (``approved``, ``rejected``, ``expired``,
+        ``dispatched``, ``failed``) re-save the same row via
+        ``ON CONFLICT(id) DO UPDATE``. Per ADR-013 decision 4, this is
+        the only mechanism by which intent flows from ``cli/operator``
+        to ``cli/live``.
+
+        Args:
+            pending: Row to persist.
+
+        Raises:
+            StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def get_pending_command(self, pending_id: UUID) -> PendingCommand | None:
+        """Look up one ``PendingCommand`` by id.
+
+        Args:
+            pending_id: UUID primary key.
+
+        Returns:
+            The row if present; ``None`` if no such id exists.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def get_pending_commands(
+        self,
+        status: PendingCommandStatus | None = None,
+        limit: int | None = None,
+    ) -> list[PendingCommand]:
+        """Query ``PendingCommand`` rows.
+
+        ``cli/live`` polls with ``status='approved'`` every tick to
+        pick up confirmed commands; operator inspection tools may pass
+        ``status=None`` for the full audit log.
+
+        Args:
+            status: Optional status filter (one of the six lifecycle
+                states from ``PendingCommandStatus``).
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching rows ordered by ``created_at`` ASC (oldest first)
+            so a poll picks the longest-waiting approval first.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
