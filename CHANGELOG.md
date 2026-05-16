@@ -10,6 +10,102 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Phase 5 kickoff — Operator Interaction Engine (ADR-013) (2026-05-16)
+
+After Phase 4 close, the operator surfaced a broader vision than the
+roadmap's narrow Stage 5.1.5 (outbound Discord notifier) + Stage 5.2
+(structured slash commands): Discord should be a bidirectional
+**interaction engine** with multi-turn conversational LLM intent
+parsing, ADR-002-preserving confirm-before-execute, and DB-mediated
+decoupling between `cli/operator` and `cli/live`.
+
+This becomes the whole of Phase 5. The originally-scoped Phase 5
+stages (dashboard, reliability, maintenance, performance, v1.0
+release) reorganized into three downstream phases: **Phase 6 Cloud
+LLM Integration** (cloud assistant + cloud advisor adapters),
+**Phase 7 Web UI / Dashboard**, **Phase 8 Hardening & v1.0 Release**
+(reliability + maintenance worker + performance tuning + v1.0 soak).
+
+Kickoff commit landed `ADR-013` (10 architectural commitments
+including OperatorPort + AssistantPort split, OperatorIntent strict
+typed sum, confirm-before-execute as the ADR-002 firewall, DB-mediated
+decoupling, multi-turn conversation state with prompt-context pronoun
+resolution, user+channel allowlist auth, pluggable LLM provider with
+Ollama in Phase 5 / cloud in Phase 6, `discord.py` as the Gateway
+client), `docs/planning/stage-5.1-design.md` (full slicing plan and
+implementation-level decisions), and the roadmap rewrite to seven
+Phase 5 stages plus the new Phases 6 / 7 / 8.
+
+### Stage 5.1 — Operator Domain & Ports (2026-05-16)
+
+First Phase 5 slice. Pure-domain — no I/O, no Discord, no LLM call,
+no SQLite table. Establishes the type contracts every later stage
+consumes. Four sub-slices:
+
+**5.1.A — Operator types + port.** New `ports/operator.py` defines
+the full operator-interaction type contract: `OperatorCommand` typed
+sum (`PauseCommand` / `ResumeCommand` / `PauseAllCommand` /
+`ResumeAllCommand` / `CancelOpenOrdersCommand` / `StopCommand`),
+`OperatorQuery` typed sum (nine variants from `StatusQuery` through
+`HelpQuery`), `OperatorIntent` outermost union (`IntentCommand` |
+`IntentQuery` | `IntentConversational` | `IntentUnparseable`),
+per-query `*Result` types with `QueryResult` discriminated union,
+`CommandResult`, `PendingCommand` with the six-state lifecycle
+(`awaiting_confirmation` → `approved` → `dispatched`, with
+`rejected` / `expired` / `failed` terminals), `OperatorPort` ABC
+with `dispatch_command` + `answer_query`. New `OperatorError` in
+`ports/exceptions.py`. `SymbolInput` / `OptionalSymbolInput`
+BeforeValidator helpers accept `"BTC/USD"` strings as well as
+`{base, quote}` dicts so the LLM can emit either form. 117 new unit
+tests, 100% module coverage on `ports/operator.py`.
+
+**5.1.B — Assistant types + port.** New `ports/assistant.py` defines
+the LLM-side contract: `SymbolStateSnapshot` + `EngineStateSnapshot`
+(read-only view `cli/operator` composes per inbound message to ground
+the assistant's replies), `ConversationTurn` (id / channel_id /
+user_id / role / content / `intent: OperatorIntent | None` /
+timestamp), `ConversationContext`
+(`current_message` + `channel_id` / `user_id` +
+`recent_turns: tuple[ConversationTurn, ...]` for the multi-turn
+prompt window + `engine_state_snapshot`), `AssistantPort` ABC with
+`parse_intent(context) -> OperatorIntent`. New `AssistantError` in
+`ports/exceptions.py`. 25 new unit tests, 100% module coverage on
+`ports/assistant.py`. Per ADR-013 the conversational LLM is NOT in
+the money path — an `AssistantError` affects only the Discord chat
+surface; `cli/live` cannot observe it.
+
+**5.1.C — `sqlite_storage.py` split.** Pre-existing pylint flag
+(file at 1073 lines, threshold 1000) surfaced during 5.1.A's lint
+check. Split out two sibling modules without changing the public
+`SQLiteStorageAdapter` interface or its tests:
+`adapters/sqlite_storage_schema.py` holds the `SCHEMA` constant
+(every `CREATE TABLE` / `CREATE INDEX` the adapter runs at first
+connect); `adapters/sqlite_storage_rowmap.py` holds pure row-to-domain
+mapping helpers (`row_to_order` / `row_to_trade` / `row_to_price_snapshot`
+/ `row_to_news_item` / `row_to_advisor_suggestion` /
+`row_to_applied_suggestion` / `row_to_transfer_proposal` /
+`row_to_transfer_result` plus the MoE expert-opinion JSON
+serialize / deserialize pair). Dropped leading underscores on the
+moved names since they cross module boundaries now; updated every
+callsite in `sqlite_storage.py` to match. Migration helper
+`_migrate_advisor_suggestions_expert_opinions` stays inline (tightly
+coupled to `connect()`'s schema bootstrap). Main module:
+**1073 → 753 lines**. No behavior change; 1031 tests still pass.
+
+**5.1.D — Stage close.** Roadmap ✅, CHANGELOG entry, CLAUDE.md
+Project Status bump, `project_state` memory update.
+
+**Health at Stage 5.1 close:** **1031 unit tests** pass (was 892 at
+Phase 4 close, +139 across 5.1.A and 5.1.B); 21 integration tests
+opt-in; mypy clean across **64 src files** (was 60; +2 new
+`ports/` modules, +2 new `adapters/sqlite_storage_*` modules);
+pylint **10.00/10** with **no outstanding warnings** (the
+pre-existing `too-many-lines` flag on `sqlite_storage.py` is gone);
+black + isort clean.
+
+Running real-money cost unchanged at $0.08 (pure-domain stage; no
+real-money operations).
+
 ### Stage 4.5 — Phase 4 Integration Check + Phase 4 Close (2026-05-15)
 
 Stage 4.5 audited the full Phase 4 path with the question "could anything move money the operator didn't intend?" and found one real defect. Then wrote `docs/planning/phase-4-summary.md` mirroring `phase-3-summary.md`'s shape.
