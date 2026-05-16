@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from wobblebot.config.advisor import AdvisorConfig
 from wobblebot.config.cli import (
     AdviseConfig,
+    HarvestConfig,
     LiveConfig,
     NewsConfig,
     ObserveConfig,
@@ -59,6 +60,7 @@ class WobbleBotConfig(BaseModel):
     news: NewsConfig | None = None
     advise: AdviseConfig | None = None
     advisor: AdvisorConfig | None = None
+    harvest: HarvestConfig | None = None
     harvester: HarvesterConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 

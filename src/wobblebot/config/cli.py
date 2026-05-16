@@ -309,9 +309,38 @@ class AdviseConfig(BaseModel):
         return _coerce_symbol_list(v)
 
 
+# ---------------------------------------------------------------------------
+# Harvest CLI (Phase 4 — Stage 4.2 read-only balance monitoring)
+# ---------------------------------------------------------------------------
+
+
+class HarvestConfig(BaseModel):
+    """Settings for ``cli/harvest`` — Phase 4 treasury monitor.
+
+    Stage 4.2 surface: poll Kraken USD balance, run the
+    ``propose_transfer()`` decision against the operator's
+    ``HarvesterConfig`` thresholds, and log what *would* be proposed.
+    No transfers, no DB writes for proposals (that's 4.3's job once
+    proposals become operator-reviewable). Uses the read-only
+    ``KRAKEN_API_KEY`` — the Harvester key with Withdraw scope isn't
+    needed until 4.4.
+
+    The Stage 4.2 ``today_total_withdrawn_usd`` parameter always
+    flows in as 0 because no transfers happen. Once 4.3+ persists
+    real withdrawals, the daemon queries that history for the rolling
+    24h total.
+    """
+
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+
 __all__ = [
     "AdviseConfig",
     "CryptoCompareSpec",
+    "HarvestConfig",
     "LiveConfig",
     "LogFormat",
     "NewsConfig",

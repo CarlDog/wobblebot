@@ -118,6 +118,7 @@ schedules:
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
   news: 30m                           # cli/news: poll every enabled source
   advise: 4h                          # cli/advise (Stage 3.3): advisor invocation cadence
+  harvest: 1h                         # cli/harvest (Stage 4.2): balance-monitor cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -316,6 +317,17 @@ advisor:
     enabled: false
     max_spacing_change_percentage: 20.0
     max_order_size_change_percentage: 15.0
+
+# ============================================================================
+# Per-CLI: harvest (cli/harvest — Stage 4.2 read-only treasury monitor)
+# ============================================================================
+# Cadence lives in `schedules.harvest` above. The daemon reads Kraken
+# USD balance, runs the propose_transfer() decision, and logs what
+# WOULD be proposed. No transfers happen at Stage 4.2 — operator
+# watches the proposal stream to calibrate the harvester thresholds
+# before flipping `harvester.enabled` (which only matters from 4.3+).
+harvest:
+  log_format: plain                     # plain | json
 
 # ============================================================================
 # Harvester (Phase 4 — Stage 4.1 schema landed; operational from 4.2+)
