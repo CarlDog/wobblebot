@@ -423,3 +423,87 @@ The operator (and ADR-002 + ADR-007's "advisor is advisory-only" stance) clearly
 - `src/wobblebot/services/auto_apply.py` — the gate.
 - `src/wobblebot/services/settings_rewriter.py` — the ruamel.yaml-backed rewriter.
 - `src/wobblebot/ports/advisor.py::AppliedSuggestion` — audit row schema.
+
+## ADR-013 — Operator Interaction Engine (Discord + Conversational LLM)
+**Status:** Accepted (planned for Phase 5)
+**Date:** 2026-05-16
+
+**Context:** Phase 4 closed with the engine running unattended but blind to the operator's day. Outbound visibility is "tail the logs"; inbound control is "SIGINT, edit settings.yml, restart cli/live." The original Phase 5 roadmap addressed this with two adjacent stages — 5.1.5 outbound webhook notifier (one-evening scope) and 5.2 structured slash-command control surface — both narrow.
+
+Mid-kickoff the operator surfaced a broader vision: Discord isn't just a notifier — it's an interaction engine. The operator wants to converse with the bot (multi-turn, context-aware), get status answers in natural language, and issue commands by talking rather than memorizing slash-command syntax. This is a fundamentally different architectural commitment than "post embeds to a webhook," and it exposes a tension with ADR-002 (LLM is advisory-only; never executes): the LLM's role here is intent parsing, not execution, and the bridge from intent to action must keep the human in the loop.
+
+Per operator decision 2026-05-16, the Operator Interaction Engine becomes the whole of Phase 5. The displaced stages reorganize into three downstream phases: **Phase 6 — Cloud LLM Integration** (cloud assistant + cloud advisor adapters, the long-standing `_build_advisor` placeholders, cost tracking, provider selection); **Phase 7 — Web UI / Dashboard** (FastAPI app at `src/wobblebot/web/`, balance / PnL / cycle / advisor / harvester surfaces); **Phase 8 — Hardening & v1.0 Release** (Reliability & Recovery, Background Maintenance Worker, Performance Tuning, soak test, v1.0 tag). This ADR ratifies the Phase 5 architecture; per-stage design docs (starting with `stage-5.1-design.md`) handle the slicing.
+
+**Decision:** Adopt the following architectural commitments for Phase 5. Stable across stages 5.1–5.7; revisit only via a follow-on ADR.
+
+1. **Two new ports, layered.**
+   - **`OperatorPort`** — engine-side. Exposes the engine ops the operator can request (`pause_symbol`, `resume_symbol`, `cancel_all`, plus read-only query handlers for status / pnl / open orders / recent fills / last advisor suggestion / current harvester proposal). Lives in `ports/operator.py`. `cli/live` (and `cli/harvest`) consume this port via constructor DI.
+   - **`AssistantPort`** — LLM-side. Converts a `ConversationContext` (operator's latest message + recent turn history + engine state snapshot) into a strictly-typed `OperatorIntent`. Lives in `ports/assistant.py`. Consumed by `cli/operator`.
+
+2. **`OperatorIntent` is a strict typed sum, not free-form text.**
+   `OperatorIntent = Command | Query | Conversational | Unparseable`. The LLM emits one as JSON; Pydantic discriminator validation runs before any downstream code touches it. Same wire-format discipline as `AdvisorRecommendation`.
+   - `Command(name, args)` — state-mutating ops (pause, resume, cancel-all). **Always routes through confirm-before-execute.**
+   - `Query(name, args)` — read-only ops (status, fills, suggestions). Executes immediately; no confirm.
+   - `Conversational(reply_text)` — chat that doesn't resolve to an action ("thanks", "what can you do?"). Bot replies; engine untouched.
+   - `Unparseable(reason)` — LLM's "I don't understand" signal. Bot asks for clarification.
+
+   Each concrete `Command` and `Query` is its own Pydantic model with typed args (e.g. `PauseCommand(symbol: Symbol)`, `RecentFillsQuery(symbol: Symbol | None, lookback_hours: int)`). The exact catalog lands in `stage-5.1-design.md`; this ADR only pins the shape.
+
+3. **ADR-002 preservation: confirm-before-execute is the firewall.** Every `Command` intent persists to `pending_commands` with status `awaiting_confirmation`. The bot posts a confirmation embed in Discord with ✅ / ❌ reaction buttons summarizing the parsed command. Only on ✅ does status transition to `approved`, after which `cli/live` polls the table on its tick and dispatches. ❌ marks `rejected`; inactivity past `confirm_ttl_seconds` (default 300) marks `expired`. **The LLM never reaches a code path that mutates engine state without an operator click.** This is the load-bearing safety property that keeps ADR-002 intact under the conversational layer.
+
+4. **DB-mediated decoupling between `cli/operator` and `cli/live`.** A new `operator.db` carries three new tables:
+   - `pending_commands` — `cli/operator` writes; `cli/live` polls approved rows; `cli/live` updates status to `dispatched` after execution.
+   - `notifications` — `cli/live` and `cli/harvest` write outbound events; `cli/operator` reads and forwards to Discord.
+   - `conversation_turns` — `cli/operator` stores chat history per `(channel_id, user_id)` for multi-turn context.
+
+   Both daemons run independently. cli/operator down → cli/live keeps trading; notifications queue in the table (forwarded once cli/operator returns). cli/live down → operator can still chat (commands queue with status `awaiting_dispatch`; queries that need live state return graceful errors). Same shape as `cli/advise` ↔ `cli/apply` via `advise.db`.
+
+5. **Multi-turn conversation state; pronoun resolution by prompt context.** The assistant receives the last N turns (default 10, configurable per `OperatorConfig.context_window_turns`) plus the current engine-state snapshot in each prompt. "Show me yesterday's fills" → "now filter to BTC" works because turn 2's prompt includes turn 1 verbatim. **No symbolic dereferencing of pronouns in code** — the LLM handles context resolution. Active-context TTL: 30 minutes of inactivity per `(channel_id, user_id)` resets the prompt window to "fresh conversation." Older turns remain persisted for forensic audit but stop being fed into prompts.
+
+6. **User + channel allowlist authorization.** Inbound messages drop unless `(user_id, channel_id)` matches the allowlist in `OperatorConfig.authorization`. Channel IDs in `settings.yml` (not secret). User IDs in env (`DISCORD_OPERATOR_USER_IDS`, csv) — keeping user identities out of the committed config. No per-command role/permission system in v1; any allowlisted user has full authority. Defer per-command roles to a later phase if multi-user collaboration ever becomes a thing.
+
+7. **Pluggable LLM provider via `AssistantPort`; Phase 5 ships Ollama-only.** v1 ships `OllamaAssistantAdapter` (reuses existing Ollama infrastructure). The port is provider-agnostic by construction so **Phase 6** can add cloud assistant adapters (anthropic / openai / google) alongside the corresponding cloud trading-advisor adapters in one cohesive integration phase. Provider is selectable per the same `provider:` config pattern as the trading advisor. **The assistant role is separate from MoE trading roles** — different prompt (`config/prompts/operator.md`), different model choices appropriate to the conversational task vs the analytical-recommendation task.
+
+8. **Discord library: `discord.py`.** Battle-tested, MIT-licensed, primary maintained Python Discord library. The Gateway is the only realistic transport for inbound messages (webhooks are POST-only by protocol). Lock to a stable major version in `pyproject.toml`; Discord API changes do periodically break this lib, so dependabot will surface those.
+
+9. **Outbound notifications use the same DB-mediated pipe.** `cli/live` and `cli/harvest` call a `NotifierPort` impl (`SqliteNotifierAdapter`) that writes to `notifications`. `cli/operator`'s notification forwarder reads new rows and posts to Discord. **`cli/live` is Discord-ignorant** — does not import `discord.py`, has no awareness of bot tokens or channels or embeds. The original Stage 5.1.5 outbound scope is now naturally part of the bidirectional system but architecturally subordinate to the same decoupling rule.
+
+10. **The conversational LLM is not in the money path.** It can crash, hallucinate, get confused, time out, or refuse to respond — none of which can affect trading decisions. Worst case from a misbehaved assistant: bot says weird things in Discord; operator ignores or rephrases. The confirm-before-execute gate + the structured-output contract + the DB-mediated decoupling make this a hard guarantee, not a hope.
+
+**Alternatives Considered:**
+- **Outbound webhook + structured slash commands (original 5.1.5 + 5.2 split).** Rejected: the operator explicitly wants conversational interaction, not memorized command syntax. Slash commands serve when the operator already knows what they want; conversation serves when the operator is exploring or doesn't remember the exact arg shape. The structured-command surface remains useful as a power-user fast path — could be added as a complement later, but is not v1 scope.
+- **Single supervisor process running both Discord client and engine.** Rejected: violates the daemons-per-CLI pattern established in Phase 3-4. A `discord.py` disconnect or Gateway bug inside the engine process is the failure mode this ADR exists to prevent.
+- **LLM directly executes parsed commands (skip confirm).** Rejected: violates ADR-002. The confirm step is the firewall, full stop.
+- **Free-form LLM output without structured-intent contract.** Rejected: string-parsing the LLM's response is brittle, hard to test, and every prompt-engineering tweak risks breaking the parser. Structured JSON output is the same pattern that works for the trading advisor (ADR-007).
+- **Discord webhooks only (no Gateway bot).** Rejected: webhooks are outbound-only by protocol. Conversational requires inbound message reception, which requires Gateway.
+- **In-process asyncio queues for cli/operator ↔ cli/live IPC.** Rejected: queues don't survive crashes, can't span processes, and force coupling. Same reasoning that drove the `cli/advise` ↔ `cli/apply` separation via `advise.db`.
+- **Conversation state in OpenChronicle (OC) memory.** Considered. Decided against for v1: `operator.db` is the cheap project-local choice; OC is for cross-session synthesized memories, not raw per-turn chat history. Could route a synthesized OC memory ("operator's most-issued commands", "patterns of operator concern") later if useful, but raw turns belong in the project DB.
+- **Per-command role-based authorization** (e.g. `/pause` for any allowlisted user, `/cancel-all` admin only). Deferred: v1 is single-operator; the complexity isn't justified yet. If multi-operator collaboration ever becomes real, this is a clean follow-on.
+- **Voice transport** (the operator talks to a Discord voice channel; STT → assistant → TTS → reply). Out of scope; mentioned only to retire the question.
+
+**Consequences:**
+- **Positive:** Bidirectional bot delivers operator UX that flat-out doesn't exist today — status answers in natural language, conversation-resolved follow-ups, commands without memorized arg syntax, async visibility while away from the machine.
+- **Positive:** ADR-002 stays intact under a much richer LLM interaction surface. Every state mutation is human-clicked. The audit trail (`pending_commands`) is forensically complete.
+- **Positive:** DB-mediated decoupling means `cli/operator` is developable, deployable, restartable, even temporarily killable without touching `cli/live`. Same operational story as the rest of the daemon-per-CLI fleet.
+- **Positive:** Engine code stays Discord-ignorant. New trading features don't have to know about chat transport; new chat features don't have to know about trading internals.
+- **Positive:** Pluggable LLM provider — operator picks free-local (Ollama, default) or cloud (when those adapters land in 5.6) without code changes. Same pattern operators are already used to from the trading advisor.
+- **Positive:** Conversational state and outbound notifications both forensically auditable via `operator.db`.
+- **Negative:** Adds `discord.py` as a new runtime dep. Pin to a stable major version; Discord's API changes do break this lib periodically. Dependabot will surface required bumps.
+- **Negative:** Adds another long-running daemon to operate (`cli/operator`). Mitigated by Phase 6's maintenance worker (process supervision is part of that stage's scope).
+- **Negative:** Three new SQLite tables and a new `operator.db` file. Schema lifecycle now needs cross-DB coordination (`price_snapshots` in `observe.db`; `advisor_suggestions` in `advise.db`; `transfer_*` in `harvest.db`; operator tables in `operator.db`). Documented in `stage-5.1-design.md`.
+- **Negative:** New secrets: `DISCORD_BOT_TOKEN`, `DISCORD_OPERATOR_USER_IDS` (csv of operator user IDs). Bot token is of similar sensitivity to a Kraken API key. Standard `.env` + gitignore + `.env.example` placeholder pattern; the bot token is the bot's identity — leak it and someone else can impersonate the bot.
+- **Negative:** LLM latency on the conversational path. Ollama at ~3–30s per turn depending on model; can feel slow in chat. Mitigated by Discord typing-indicator while the bot thinks, and by streaming responses where the library supports it.
+- **Negative:** Multi-turn prompts grow in length, potentially hitting model context limits. v1 caps at 10 turns; tunable. Past the cap, oldest turn drops out of the prompt window (still persisted for audit).
+- **Negative:** Confirm-button drift — operator could lose track of which pending command they're approving if multiple are in flight. Mitigated by including the parsed command summary in the confirmation embed and by per-message confirm IDs.
+- **Negative:** Discord platform dependency. If Discord is down, both inbound and outbound disappear; cli/live keeps trading. Acceptable for a hobby bot; flagged so it's not a surprise.
+
+**Compliance:** Aligns with ADR-001 (new ports in `ports/`, adapters in `adapters/`, services in `services/`, CLI in `cli/`; layer discipline intact). Aligns with ADR-002 (LLM never executes — confirm-before-execute is the firewall; the conversational layer is intent parsing, not execution). Aligns with the daemon-per-CLI pattern established by Phase 3 (`cli/advise`, `cli/apply`, `cli/news`) and Phase 4 (`cli/harvest`). Aligns with the structured-JSON-output contract from ADR-007 and ADR-012 (advisor and apply gate both work with strictly-typed wire formats; operator intent extends the pattern). **Refines ADR-007** by introducing a second LLM role (operator assistant) alongside the trading-advisor roles (quant/risk/news/arbitrator) — same pluggable-provider machinery, different prompt, separate config block.
+
+**References:**
+- `docs/planning/stage-5.1-design.md` — first stage slicing (Domain & Ports; lands in same kickoff commit as this ADR).
+- `docs/planning/roadmap.md` — Phase 5 stage list (5.1 Domain & Ports → 5.7 Integration Check), Phase 6 provisional.
+- ADR-001 — Hexagonal architecture (the layer rules the new ports live under).
+- ADR-002 — LLM is advisory-only (the firewall this ADR preserves under a richer interaction surface).
+- ADR-007 — MoE advisor + news ingestion (precedent for pluggable LLM providers and structured-output contracts).
+- ADR-012 — Operator-driven auto-apply gate (precedent for "LLM proposes, operator clicks").
+- `discord.py` documentation: https://discordpy.readthedocs.io/ (Gateway client + Intents + reactions API).
