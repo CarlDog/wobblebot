@@ -69,6 +69,11 @@ class HarvesterConfig(BaseModel):
     api_key_env_var: str = Field(default="KRAKEN_HARVESTER_API_KEY", min_length=1)
     api_secret_env_var: str = Field(default="KRAKEN_HARVESTER_API_SECRET", min_length=1)
     withdrawal_destinations: dict[str, str] = Field(default_factory=dict)
+    # Stage 4.4c: --execute refuses any proposal older than this. Defends
+    # against an operator approving stale proposals where the balance /
+    # threshold context has shifted significantly. 24h is the rolling-cap
+    # window; 24h-stale proposals are the longest still-useful ones.
+    proposal_max_age_hours: int = Field(default=24, gt=0)
 
     class Config:
         frozen = True

@@ -377,6 +377,10 @@ harvester:
   withdrawal_destinations:
     USD: "<your-bank-label>"              # bank ACH/wire recipient label
     # BTC: "btc-coldstorage-1"            # crypto address label (uncomment as needed)
+  # --execute refuses any proposal older than this; defends against
+  # operator approving stale proposals where balance/threshold context
+  # has drifted since the proposal was generated.
+  proposal_max_age_hours: 24
 
 # ============================================================================
 # Profiles (named overrides)

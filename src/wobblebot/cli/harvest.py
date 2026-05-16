@@ -34,8 +34,10 @@ import logging
 import signal
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -44,8 +46,10 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
+from wobblebot.ports.harvester import TransferResult
 from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 _LOGGER = logging.getLogger("wobblebot.cli.harvest")
@@ -206,6 +210,203 @@ async def _run_loop(
     return 0
 
 
+async def _execute_command(  # pylint: disable=too-many-return-statements,too-many-locals,too-many-branches
+    *,
+    adapter: ExchangePort,
+    storage: SQLiteStorageAdapter,
+    config: WobbleBotConfig,
+    proposal_id: str,
+) -> int:
+    """Operator-approved execution of a persisted TransferProposal.
+
+    Mirrors the cli/apply --commit pattern: explicit per-call flag,
+    multiple defense-in-depth checks, persists the outcome to a
+    forensic table regardless of success/failure.
+
+    Defense layers (any failure aborts with exit 1; no money moved
+    unless we reach step 6):
+    1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
+       beyond the per-call flag).
+    2. Proposal must exist in the harvest db.
+    3. Proposal must not be stale (≤ ``proposal_max_age_hours``).
+    4. Destination label must resolve in
+       ``HarvesterConfig.withdrawal_destinations[proposal.asset]``.
+    5. Current exchange balance must cover the proposed amount
+       (for exchange→bank only; the gate avoids attempting
+       withdrawals that Kraken would reject for insufficient funds).
+    6. Day-cap must still have headroom — ``today_total_withdrawn_usd
+       + proposal.amount ≤ max_withdrawal_per_day_usd``.
+
+    After all checks pass, calls ``adapter.withdraw()`` and persists
+    a TransferResult (``status="pending"`` on success; ``status="failed"``
+    if Kraken returns an error after we cleared all our gates).
+    """
+    assert config.harvester is not None  # caller-enforced
+
+    # 1. HarvesterConfig.enabled gate
+    if not config.harvester.enabled:
+        _LOGGER.error(
+            "harvester.enabled=False — refusing execution. Flip the flag in "
+            "settings.yml to opt in to live withdrawals."
+        )
+        return 1
+
+    # 2. Proposal lookup
+    proposals = await storage.get_transfer_proposals(limit=1000)
+    proposal = next((p for p in proposals if p.proposal_id == proposal_id), None)
+    if proposal is None:
+        _LOGGER.error(
+            "proposal not found in harvest db",
+            extra={"proposal_id": proposal_id, "searched": len(proposals)},
+        )
+        return 1
+
+    # 3. Staleness check
+    now = datetime.now(UTC)
+    age = now - proposal.created_at.dt
+    max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
+    if age > max_age:
+        _LOGGER.error(
+            "proposal is stale; refusing — generate a fresh one before --execute",
+            extra={
+                "proposal_id": proposal_id,
+                "age_hours": round(age.total_seconds() / 3600, 2),
+                "max_age_hours": config.harvester.proposal_max_age_hours,
+            },
+        )
+        return 1
+
+    # 4. Destination label resolution
+    destination = config.harvester.withdrawal_destinations.get(proposal.asset)
+    if not destination:
+        _LOGGER.error(
+            "asset has no destination label in HarvesterConfig.withdrawal_destinations; "
+            "operator must add a Kraken Pro destination label first",
+            extra={
+                "asset": proposal.asset,
+                "configured_assets": sorted(config.harvester.withdrawal_destinations),
+            },
+        )
+        return 1
+
+    # 5. Current balance check (exchange→bank only)
+    if proposal.direction == "exchange_to_bank":
+        current_balance = await _read_usd_balance(adapter)
+        if current_balance is None:
+            _LOGGER.error("could not read current balance; refusing execution")
+            return 1
+        if current_balance < proposal.amount:
+            _LOGGER.error(
+                "current exchange balance below proposed withdrawal amount; refusing",
+                extra={
+                    "current_balance_usd": str(current_balance),
+                    "proposal_amount_usd": str(proposal.amount),
+                },
+            )
+            return 1
+
+        # 6. Day-cap fresh check
+        today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
+        if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
+            _LOGGER.error(
+                "executing would push today's total over max_withdrawal_per_day_usd; refusing",
+                extra={
+                    "today_total_usd": str(today_total),
+                    "proposal_amount_usd": str(proposal.amount),
+                    "max_withdrawal_per_day_usd": str(config.harvester.max_withdrawal_per_day_usd),
+                },
+            )
+            return 1
+
+    # 7. Execute via Kraken /Withdraw
+    _LOGGER.info(
+        "executing withdrawal via Kraken /Withdraw",
+        extra={
+            "proposal_id": proposal.proposal_id,
+            "asset": proposal.asset,
+            "amount": str(proposal.amount),
+            "destination": destination,
+        },
+    )
+    try:
+        refid = await adapter.withdraw(
+            asset=proposal.asset,
+            amount=proposal.amount,
+            destination=destination,
+        )
+    except ExchangeError as exc:
+        _LOGGER.error(
+            "kraken /Withdraw rejected the request",
+            extra={
+                "proposal_id": proposal.proposal_id,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
+        # Persist a failed TransferResult so the audit trail records
+        # the attempt. transaction_id is synthetic (no Kraken refid
+        # was issued); prefix lets show_transfers distinguish.
+        try:
+            await storage.save_transfer_result(
+                TransferResult(
+                    proposal_id=proposal.proposal_id,
+                    transaction_id=f"failed-{uuid4()}",
+                    status="failed",
+                    executed_amount=proposal.amount,
+                    direction=proposal.direction,
+                    asset=proposal.asset,
+                    timestamp=Timestamp(dt=datetime.now(UTC)),
+                ),
+            )
+        except StorageError as persist_exc:
+            _LOGGER.error(
+                "failed to persist failure audit row",
+                extra={"error": str(persist_exc)},
+            )
+        return 1
+
+    # 8. Persist success
+    result = TransferResult(
+        proposal_id=proposal.proposal_id,
+        transaction_id=refid,
+        status="pending",  # Kraken hasn't settled the wire/ACH yet
+        executed_amount=proposal.amount,
+        direction=proposal.direction,
+        asset=proposal.asset,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    try:
+        await storage.save_transfer_result(result)
+    except StorageError as exc:
+        # The withdrawal SUBMITTED at Kraken but our audit row didn't
+        # persist. This is a bad state — flag it loudly. The Kraken
+        # refid is in the log so the operator can reconcile manually
+        # from Kraken Pro.
+        _LOGGER.error(
+            "WITHDRAWAL SUBMITTED but audit row persistence failed — "
+            "reconcile manually from Kraken Pro using the refid below",
+            extra={
+                "refid": refid,
+                "proposal_id": proposal.proposal_id,
+                "error": str(exc),
+            },
+        )
+        return 1
+
+    _LOGGER.info(
+        "WITHDRAWAL SUBMITTED — money moved",
+        extra={
+            "proposal_id": proposal.proposal_id,
+            "transaction_id": refid,
+            "asset": proposal.asset,
+            "amount": str(proposal.amount),
+            "destination": destination,
+            "status": "pending",
+        },
+    )
+    return 0
+
+
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     def _set_stop() -> None:
         _LOGGER.info("signal received; initiating clean shutdown")
@@ -218,22 +419,18 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asynci
             return
 
 
-async def _main_async(config: WobbleBotConfig) -> int:
+async def _main_async(  # pylint: disable=too-many-return-statements,too-many-branches
+    config: WobbleBotConfig,
+    *,
+    execute_proposal_id: str | None = None,
+) -> int:
     if config.harvester is None:
         _LOGGER.error("settings.yml is missing the `harvester:` section")
         return 2
 
-    try:
-        interval = config.schedules.get("harvest")
-    except KeyError as exc:
-        _LOGGER.error("missing schedule", extra={"error": str(exc)})
-        return 2
-
     # Stage 4.4: load the Harvester key (Withdraw + Query Funds scopes).
     # Per ADR-003 this MUST be a different key from KRAKEN_TRADE_API_KEY —
-    # operator-side discipline; we trust the .env config here. cli/harvest
-    # always uses this key now; the Withdraw scope is dormant until
-    # ``--execute`` lands in Slice 4.4c.
+    # operator-side discipline; we trust the .env config here.
     try:
         kraken = KrakenConfig.from_env(
             key_var=config.harvester.api_key_env_var,
@@ -252,10 +449,9 @@ async def _main_async(config: WobbleBotConfig) -> int:
 
     adapter = KrakenAdapter(kraken)
 
-    # Stage 4.3: open storage for transfer-proposal persistence.
-    # config.harvest may be None if the operator omitted the per-CLI
-    # section — in that case skip persistence (operator gets the log
-    # stream but no forensic table).
+    # Open storage. For --execute mode this is REQUIRED (we read the
+    # proposal from here); for daemon mode it's optional (persistence
+    # gracefully degrades to log-only).
     storage: SQLiteStorageAdapter | None = None
     if config.harvest is not None:
         storage = SQLiteStorageAdapter(config.harvest.db)
@@ -263,15 +459,36 @@ async def _main_async(config: WobbleBotConfig) -> int:
             await storage.connect()
         except StorageError as exc:
             _LOGGER.error(
-                "failed to open harvest db; persistence disabled",
+                "failed to open harvest db",
                 extra={"path": config.harvest.db, "error": str(exc)},
             )
             storage = None
 
-    stop_event = asyncio.Event()
-    _install_signal_handlers(asyncio.get_running_loop(), stop_event)
-
     try:
+        if execute_proposal_id is not None:
+            # Stage 4.4c: one-shot operator-approved execution.
+            if storage is None:
+                _LOGGER.error(
+                    "--execute requires the harvest db to be open; "
+                    "configure harvest.db or remove --execute"
+                )
+                return 2
+            return await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=config,
+                proposal_id=execute_proposal_id,
+            )
+
+        # Daemon mode (read-only observation + proposal persistence).
+        try:
+            interval = config.schedules.get("harvest")
+        except KeyError as exc:
+            _LOGGER.error("missing schedule", extra={"error": str(exc)})
+            return 2
+
+        stop_event = asyncio.Event()
+        _install_signal_handlers(asyncio.get_running_loop(), stop_event)
         return await _run_loop(
             adapter=adapter,
             config=config,
@@ -301,6 +518,18 @@ def main() -> int:
     load_operator_env()
     parser = argparse.ArgumentParser(description=__doc__)
     add_config_args(parser)
+    parser.add_argument(
+        "--execute",
+        default=None,
+        metavar="PROPOSAL_ID",
+        help=(
+            "Operator-approved one-shot execution of a persisted "
+            "TransferProposal. Defends behind multiple checks: "
+            "harvester.enabled, proposal staleness, destination label "
+            "resolution, current balance sufficient, day-cap headroom. "
+            "Without this flag the daemon runs in read-only mode."
+        ),
+    )
     parser.add_argument("--log-format", choices=("plain", "json"), default=None)
     args = parser.parse_args()
 
@@ -322,7 +551,7 @@ def main() -> int:
     configure_logging(log_format=log_format)
 
     try:
-        return asyncio.run(_main_async(config))
+        return asyncio.run(_main_async(config, execute_proposal_id=args.execute))
     except KeyboardInterrupt:
         _LOGGER.info("KeyboardInterrupt at top level; exiting clean")
         return 0
