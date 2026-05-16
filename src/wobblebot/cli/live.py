@@ -173,13 +173,18 @@ async def _run_loop(
     """Run the engine loop. Returns the process exit code."""
     started_usd = await _session_usd_balance(adapter)
     started_at = time.monotonic()
-    max_runtime_seconds = live.max_runtime_minutes * 60.0
+    # ``None`` means "no runtime cap" — operator opts into indefinite
+    # mode. SIGINT/SIGTERM and the session-loss cap still apply, so
+    # this isn't a way to bypass safety.
+    max_runtime_seconds = (
+        live.max_runtime_minutes * 60.0 if live.max_runtime_minutes is not None else None
+    )
     _LOGGER.info(
         "session start",
         extra={
             "symbols": [str(s) for s in live.symbols],
             "tick_seconds": live.tick_seconds,
-            "max_runtime_seconds": max_runtime_seconds,
+            "max_runtime_seconds": max_runtime_seconds,  # None == unlimited
             "max_session_loss_usd": str(live.max_session_loss_usd),
             "starting_usd": str(started_usd),
         },
@@ -190,7 +195,7 @@ async def _run_loop(
     try:
         while not stop_event.is_set():
             elapsed = time.monotonic() - started_at
-            if elapsed >= max_runtime_seconds:
+            if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(
                     "max runtime reached; stopping",
                     extra={"elapsed_seconds": round(elapsed, 1)},

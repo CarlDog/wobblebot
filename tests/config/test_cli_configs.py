@@ -90,6 +90,29 @@ class TestLiveConfig:
         with pytest.raises(ValidationError):
             cfg.tick_seconds = 1.0  # type: ignore[misc]
 
+    def test_max_runtime_default_bounded(self) -> None:
+        """Default remains 60 minutes — long-running mode is opt-in."""
+        cfg = LiveConfig(symbols=["BTC/USD"])
+        assert cfg.max_runtime_minutes == 60.0
+
+    def test_max_runtime_none_means_unbounded(self) -> None:
+        """Stage 3.6a: ``None`` is the type-system-honest way to express
+        'run indefinitely.' The loop check in cli/live skips the elapsed
+        comparison when the resolved seconds is None."""
+        cfg = LiveConfig(symbols=["BTC/USD"], max_runtime_minutes=None)
+        assert cfg.max_runtime_minutes is None
+
+    def test_max_runtime_zero_still_rejected(self) -> None:
+        """``0`` remains invalid because the loop check is ``>=``; allowing
+        zero would cause the daemon to exit on tick 1. Operators wanting
+        'no cap' use ``None`` explicitly."""
+        with pytest.raises(ValidationError, match="max_runtime_minutes"):
+            LiveConfig(symbols=["BTC/USD"], max_runtime_minutes=0)
+
+    def test_max_runtime_negative_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="max_runtime_minutes"):
+            LiveConfig(symbols=["BTC/USD"], max_runtime_minutes=-5)
+
 
 # ---------------------------------------------------------------------------
 # ShadowConfig
@@ -116,6 +139,25 @@ class TestShadowConfig:
                 symbols=["BTC/USD"],
                 initial_balances={"USD": Decimal("100")},
                 maker_fee_rate=Decimal("-0.001"),
+            )
+
+    def test_max_runtime_none_means_unbounded(self) -> None:
+        """Stage 3.6a: ShadowConfig matches LiveConfig — operators want
+        to soak shadow runs across multi-day windows for backtest-style
+        sweeps without bumping the cap to a sentinel like 999999."""
+        cfg = ShadowConfig(
+            symbols=["BTC/USD"],
+            initial_balances={"USD": Decimal("10000")},
+            max_runtime_minutes=None,
+        )
+        assert cfg.max_runtime_minutes is None
+
+    def test_max_runtime_zero_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="max_runtime_minutes"):
+            ShadowConfig(
+                symbols=["BTC/USD"],
+                initial_balances={"USD": Decimal("100")},
+                max_runtime_minutes=0,
             )
 
 

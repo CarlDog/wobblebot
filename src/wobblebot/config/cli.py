@@ -68,7 +68,11 @@ class LiveConfig(BaseModel):
     symbols: list[Symbol]
     db: str = "data/wobblebot-live.db"
     tick_seconds: float = Field(default=5.0, gt=0)
-    max_runtime_minutes: float = Field(default=60.0, gt=0)
+    # ``None`` means "run indefinitely" — for long-running operational
+    # mode. Positive number caps the session at that many minutes.
+    # Stage 3.6a introduced the Optional shape; pre-3.6a the field was
+    # ``Field(gt=0)`` with no escape hatch.
+    max_runtime_minutes: float | None = Field(default=60.0, gt=0)
     max_session_loss_usd: Decimal = Field(default=Decimal("5"), gt=Decimal("0"))
     log_format: LogFormat = "plain"
 
@@ -97,7 +101,8 @@ class ShadowConfig(BaseModel):
     symbols: list[Symbol]
     db: str = "data/wobblebot-shadow.db"
     tick_seconds: float = Field(default=5.0, gt=0)
-    max_runtime_minutes: float = Field(default=60.0, gt=0)
+    # ``None`` means "run indefinitely." Same shape as ``LiveConfig``.
+    max_runtime_minutes: float | None = Field(default=60.0, gt=0)
     max_session_loss_usd: Decimal = Field(default=Decimal("100"), gt=Decimal("0"))
     log_format: LogFormat = "plain"
 

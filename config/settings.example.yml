@@ -129,7 +129,7 @@ live:
     - BTC/USD
   db: "data/wobblebot-live.db"
   tick_seconds: 5.0
-  max_runtime_minutes: 60.0           # session-level kill switch
+  max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 5.0           # USD-balance delta abort threshold
   log_format: plain                   # plain | json
 
@@ -143,7 +143,7 @@ shadow:
     - BTC/USD
   db: "data/wobblebot-shadow.db"
   tick_seconds: 5.0
-  max_runtime_minutes: 60.0
+  max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 100.0         # synthetic — be generous
   log_format: plain
 

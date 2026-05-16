@@ -189,14 +189,18 @@ async def _run_loop(
 ) -> int:
     started_usd = await _shadow_usd_balance(adapter)
     started_at = time.monotonic()
-    max_runtime_seconds = shadow.max_runtime_minutes * 60.0
+    # ``None`` means "no runtime cap" — operator opts into indefinite mode.
+    # Stage 3.6a matches the LiveConfig optional-runtime shape.
+    max_runtime_seconds = (
+        shadow.max_runtime_minutes * 60.0 if shadow.max_runtime_minutes is not None else None
+    )
     _LOGGER.info(
         "shadow session start",
         extra={
             "symbols": [str(s) for s in shadow.symbols],
             "initial_balances": {a: str(v) for a, v in shadow.initial_balances.items()},
             "tick_seconds": shadow.tick_seconds,
-            "max_runtime_seconds": max_runtime_seconds,
+            "max_runtime_seconds": max_runtime_seconds,  # None == unlimited
             "max_session_loss_usd": str(shadow.max_session_loss_usd),
             "starting_usd_synthetic": str(started_usd),
             "maker_fee_rate": str(shadow.maker_fee_rate),
@@ -209,7 +213,7 @@ async def _run_loop(
     try:
         while not stop_event.is_set():
             elapsed = time.monotonic() - started_at
-            if elapsed >= max_runtime_seconds:
+            if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(
                     "shadow max runtime reached; stopping",
                     extra={"elapsed_seconds": round(elapsed, 1)},
