@@ -38,6 +38,12 @@ dependencies = [
     # because the example settings file is heavily commented with
     # operator-facing explanations.
     "ruamel.yaml>=0.18.0",
+    # Stage 5.2 — Discord transport for the operator interaction
+    # layer (ADR-013). 2.x is the current actively-maintained line;
+    # pin major to avoid breaking-change drift. Gateway client used
+    # only by cli/operator — cli/live stays Discord-ignorant per
+    # ADR-013 decision 9.
+    "discord.py>=2.3.0,<3",
 ]
 
 [project.optional-dependencies]
