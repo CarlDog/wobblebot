@@ -10,6 +10,21 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 4.3 — Passive Transfer Proposals (persistence + inspection) (2026-05-15)
+
+Phase 4's third slice. Every non-None proposal from `cli/harvest` now persists to a new `transfer_proposals` SQLite table for operator review. **No transfers** — that's 4.4's job once the operator can approve+execute through an explicit gate. Zero new real-money risk.
+
+- **Domain**: `TransferProposal` gained `created_at: Timestamp`. `services.harvester.propose_transfer()` populates it.
+- **Storage**: new `transfer_proposals` table with `UNIQUE(proposal_id)` guard, `CHECK` on direction, indexes on `(created_at)` and `(direction, created_at)`. `StoragePort.save_transfer_proposal` / `get_transfer_proposals` (filter by `since / direction / asset / limit`; DESC by `created_at`).
+- **`HarvestConfig.db`**: new field (default `data/wobblebot-harvest.db`) following the per-CLI DB convention (advise.db, news.db, etc.).
+- **`cli/harvest`**: persists every non-None proposal on every tick. Storage write failures log + continue (the daemon's main job is observation; one missed audit row is less bad than killing the loop). Session-start log gained `persistence_enabled: true|false`.
+- **Persistence ≠ execution**: `HarvesterConfig.enabled` does NOT gate persistence — that flag will gate Stage 4.4 execution. Operators can calibrate thresholds against a real proposal stream before flipping enabled.
+- **`tools/show_proposals.py`**: new inspector mirroring `tools/show_suggestions.py` shape (`--since-hours / --direction / --asset / --limit / --log-format`).
+
+**Verified live** against the operator's real Kraken account: daemon read $99.92 USD → deficit band → no proposal → `transfer_proposals` empty → `tools/show_proposals.py` correctly reports "no transfer proposals match the filters". `persistence_enabled: true` confirmed in session-start log.
+
+15 new tests (10 storage round-trip + filters + UNIQUE + CHECK + Decimal precision; 5 cli/harvest persistence happy-path + no-proposal-no-persist + enabled-independence + storage-failure-isolation). 853 total unit tests pass (+15 since Stage 4.2 close); mypy clean (60 src files); pylint 10.00/10. No new runtime deps.
+
 ### Stage 4.2 — cli/harvest Read-Only Balance Monitor (2026-05-15)
 
 Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what *would* be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
