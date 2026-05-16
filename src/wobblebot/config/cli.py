@@ -75,6 +75,13 @@ class LiveConfig(BaseModel):
     max_runtime_minutes: float | None = Field(default=60.0, gt=0)
     max_session_loss_usd: Decimal = Field(default=Decimal("5"), gt=Decimal("0"))
     log_format: LogFormat = "plain"
+    # Stage 5.4: path to the operator interaction DB. When set, cli/live
+    # opens it as a second StoragePort + wires the OperatorService poll
+    # loop. When None, cli/live runs Discord-ignorant (no operator
+    # interaction, no pending-command processing). Per ADR-013 decision
+    # 9 the engine code path stays the same either way — only the poll
+    # is gated on this field.
+    operator_db: str | None = None
 
     class Config:
         frozen = True

@@ -41,6 +41,7 @@ import logging
 import signal
 import sys
 import time
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -58,9 +59,12 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Symbol
-from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.ports.exceptions import OperatorError, WobbleBotPortError
+from wobblebot.ports.operator import CommandResult
+from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.operator_service import OperatorService
 
 _LOGGER = logging.getLogger("wobblebot.cli.live")
 
@@ -164,13 +168,84 @@ async def _run_one_tick(
     return False
 
 
-async def _run_loop(
+async def _process_pending_commands(
+    operator_service: OperatorService,
+    operator_storage: StoragePort,
+) -> int:
+    """Drain approved ``pending_commands`` rows; dispatch + mark each.
+
+    **ADR-002 firewall.** This is the only path from a ``PendingCommand``
+    to the engine. The ``status='approved'`` filter on the SELECT is the
+    confirm-before-execute gate — rows without operator ✅ never reach
+    ``OperatorService.dispatch_command``. Per-row failures (engine
+    refusal, ``OperatorError``) mark the row ``failed`` and record the
+    error message in the result; the loop continues so one bad command
+    doesn't starve the others. Returns the number of rows processed.
+    """
+    approved = await operator_storage.get_pending_commands(status="approved")
+    for pending in approved:
+        try:
+            cmd_result = await operator_service.dispatch_command(pending.command)
+            updated = pending.model_copy(
+                update={
+                    "status": "dispatched",
+                    "dispatched_at": Timestamp(dt=datetime.now(UTC)),
+                    "result": cmd_result,
+                }
+            )
+        except OperatorError as exc:
+            _LOGGER.error(
+                "operator command dispatch failed",
+                extra={
+                    "pending_id": str(pending.id),
+                    "command_kind": pending.command.kind,
+                    "error": str(exc),
+                },
+            )
+            updated = pending.model_copy(
+                update={
+                    "status": "failed",
+                    "dispatched_at": Timestamp(dt=datetime.now(UTC)),
+                    "result": CommandResult(
+                        success=False,
+                        command_kind=pending.command.kind,
+                        message=f"OperatorError: {exc}",
+                        executed_at=Timestamp(dt=datetime.now(UTC)),
+                    ),
+                }
+            )
+        try:
+            await operator_storage.save_pending_command(updated)
+        except WobbleBotPortError as exc:
+            # Persistence failure here is bad — the operator's confirm
+            # already happened, the engine action already ran, but we
+            # can't record the outcome. Log and continue; the row stays
+            # in 'approved' status and will be re-dispatched next tick.
+            # That's an idempotency hazard for non-idempotent commands;
+            # acceptable v1 trade-off given how rare DB failures are.
+            _LOGGER.error(
+                "failed to persist dispatched pending_command",
+                extra={"pending_id": str(pending.id), "error": str(exc)},
+            )
+    return len(approved)
+
+
+async def _run_loop(  # pylint: disable=too-many-arguments
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
     stop_event: asyncio.Event,
+    *,
+    operator_service: OperatorService | None = None,
+    operator_storage: StoragePort | None = None,
 ) -> int:
-    """Run the engine loop. Returns the process exit code."""
+    """Run the engine loop. Returns the process exit code.
+
+    When ``operator_service`` and ``operator_storage`` are provided,
+    each iteration polls ``pending_commands WHERE status='approved'``
+    before stepping the engine and exits cleanly when
+    ``engine.is_stop_requested`` is set.
+    """
     started_usd = await _session_usd_balance(adapter)
     started_at = time.monotonic()
     # ``None`` means "no runtime cap" — operator opts into indefinite
@@ -200,6 +275,24 @@ async def _run_loop(
                     "max runtime reached; stopping",
                     extra={"elapsed_seconds": round(elapsed, 1)},
                 )
+                break
+
+            # Operator interaction poll (Stage 5.4): drain approved
+            # pending_commands BEFORE the engine tick so an operator
+            # PauseCommand takes effect on the current tick.
+            if operator_service is not None and operator_storage is not None:
+                try:
+                    await _process_pending_commands(operator_service, operator_storage)
+                except WobbleBotPortError as exc:
+                    _LOGGER.error(
+                        "pending_commands poll failed; continuing",
+                        extra={"error": str(exc)},
+                    )
+
+            # Soft-stop honored after the poll so a StopCommand processed
+            # this tick exits cleanly without one more engine step.
+            if engine.is_stop_requested:
+                _LOGGER.info("engine soft stop requested; exiting cleanly")
                 break
 
             tick += 1
@@ -269,16 +362,43 @@ async def _main_async(config: WobbleBotConfig) -> int:
     adapter = KrakenAdapter(config=kraken_config)
     engine = GridEngine(adapter, storage, config.grid, config.safety)
 
+    # Stage 5.4: optional operator-interaction wiring. When operator_db
+    # is set in settings.yml, open it as a second storage adapter and
+    # construct an OperatorService; cli/live's loop will poll it.
+    operator_storage: SQLiteStorageAdapter | None = None
+    operator_service: OperatorService | None = None
+    if config.live.operator_db is not None:
+        operator_storage = SQLiteStorageAdapter(config.live.operator_db)
+        await operator_storage.connect()
+        operator_service = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=tuple(config.live.symbols),
+            grid_config=config.grid,
+            session_started_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        _LOGGER.info(
+            "operator interaction enabled",
+            extra={"operator_db": config.live.operator_db},
+        )
+
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
     try:
         return await _run_loop(
-            adapter=adapter, engine=engine, live=config.live, stop_event=stop_event
+            adapter=adapter,
+            engine=engine,
+            live=config.live,
+            stop_event=stop_event,
+            operator_service=operator_service,
+            operator_storage=operator_storage,
         )
     finally:
         await adapter.aclose()
         await storage.close()
+        if operator_storage is not None:
+            await operator_storage.close()
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
