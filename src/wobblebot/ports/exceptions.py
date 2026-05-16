@@ -82,3 +82,15 @@ class NewsError(WobbleBotPortError):
     body is malformed XML/JSON, the feed exists but is empty in a way
     that suggests an upstream change rather than legitimate quiet.
     """
+
+
+class OperatorError(WobbleBotPortError):
+    """Raised when an ``OperatorPort`` operation fails.
+
+    Examples: dispatching an approved command fails because the engine
+    refused (symbol unknown, already paused, cancel failed at the
+    exchange); answering a query fails because a backing storage call
+    raises. Per ADR-013 / stage-5.1-design.md the port returns typed
+    ``CommandResult`` / ``QueryResult`` for domain misses — exceptions
+    are reserved for protocol / transport / unrecoverable conditions.
+    """
