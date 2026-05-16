@@ -571,3 +571,204 @@ class TestGetTradeHistory:
         adapter = _make_adapter(handler)
         eth_trades = await adapter.get_trade_history(symbol=Symbol(base="ETH", quote="USD"))
         assert eth_trades == []
+
+
+# ---------------------------------------------------------------------------
+# withdraw (Stage 4.4a)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestWithdraw:
+    """KrakenAdapter.withdraw against the mocked /0/private/Withdraw endpoint.
+
+    Phase 4.4's first slice: implement the API call. Operator-approval
+    flow + day-cap enforcement + persistence land in 4.4b/c — those
+    are above the adapter's pay grade. Here we verify wire shape,
+    response parsing, and error propagation.
+    """
+
+    async def test_happy_path_returns_refid(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/0/private/Withdraw"
+            captured["body"] = _post_body(request)
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"refid": "AGBSO6T-UFMTTQ-I7KGS6"}},
+            )
+
+        adapter = _make_adapter(handler)
+        refid = await adapter.withdraw(
+            asset="USD",
+            amount=Decimal("10"),
+            destination="360 Performance Savings",
+        )
+        assert refid == "AGBSO6T-UFMTTQ-I7KGS6"
+        # The wire shape Kraken expects.
+        assert captured["body"]["asset"] == "USD"
+        assert captured["body"]["amount"] == "10"
+        assert captured["body"]["key"] == "360 Performance Savings"
+        # The signing layer adds nonce; verify it's present (value
+        # changes per call, just assert it's there).
+        assert "nonce" in captured["body"]
+
+    async def test_decimal_amount_serializes_with_precision(self) -> None:
+        """Amount goes over the wire as a string so Decimal precision
+        survives — Kraken stores monetary amounts at fixed precision
+        per asset, but the adapter shouldn't truncate."""
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = _post_body(request)
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"refid": "ABC"}},
+            )
+
+        adapter = _make_adapter(handler)
+        await adapter.withdraw(
+            asset="USD",
+            amount=Decimal("99.9999"),
+            destination="bank-ach",
+        )
+        assert captured["body"]["amount"] == "99.9999"
+
+    async def test_unknown_destination_label_raises(self) -> None:
+        """Kraken returns EFunding:Unknown reference id when the
+        operator passes a label that isn't in their address book."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": ["EFunding:Unknown reference id"],
+                    "result": {},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="Unknown reference id"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("10"),
+                destination="not-in-address-book",
+            )
+
+    async def test_below_minimum_raises(self) -> None:
+        """ACH withdrawals below Kraken's per-method minimum get
+        ``EFunding:Below minimum``. The operator sees this as a
+        clean ExchangeError, not a silent acceptance."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": ["EFunding:Below minimum"],
+                    "result": {},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="Below minimum"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("0.50"),
+                destination="360 Performance Savings",
+            )
+
+    async def test_insufficient_balance_raises(self) -> None:
+        """When the account can't fund the withdrawal Kraken returns
+        ``EFunding:Insufficient funds`` — surfaces cleanly."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": ["EFunding:Insufficient funds"],
+                    "result": {},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="Insufficient funds"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("1000000"),
+                destination="360 Performance Savings",
+            )
+
+    async def test_permission_denied_raises(self) -> None:
+        """If the operator points cli/harvest at a key without Withdraw
+        scope (e.g. the trade key) Kraken returns
+        ``EAPI:Invalid key`` or ``EAPI:Insufficient permissions``.
+        Either way, ExchangeError."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": ["EAPI:Permission denied"],
+                    "result": {},
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="Permission denied"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("10"),
+                destination="360 Performance Savings",
+            )
+
+    async def test_missing_refid_in_response_raises(self) -> None:
+        """Defensive: Kraken always returns refid on success, but if
+        the envelope is malformed we must not silently return an
+        empty/None reference."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"something": "else"}},
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="missing 'refid'"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("10"),
+                destination="360 Performance Savings",
+            )
+
+    async def test_empty_refid_raises(self) -> None:
+        """Defensive: an explicit empty string refid is also invalid."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"refid": ""}},
+            )
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="missing 'refid'"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("10"),
+                destination="360 Performance Savings",
+            )
+
+    async def test_transport_failure_raises(self) -> None:
+        """Network failure surfaces as ExchangeError, not a leaked
+        httpx exception."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("kraken.com unreachable")
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError, match="transport failure"):
+            await adapter.withdraw(
+                asset="USD",
+                amount=Decimal("10"),
+                destination="360 Performance Savings",
+            )

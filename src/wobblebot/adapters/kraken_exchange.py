@@ -349,9 +349,53 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         return order
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
-        raise NotImplementedError(
-            "Withdrawals are exclusive to the Phase 4 Harvester key (ADR-003)"
+        """Withdraw funds via Kraken's ``/0/private/Withdraw`` endpoint.
+
+        Per ADR-003 this requires the Harvester-scope API key (Withdraw
+        permission). Per ADR-004 it's the project's sole fund-transfer
+        mechanism — there's no separate banking adapter.
+
+        Kraken's withdrawal API only accepts ``key`` values
+        (destination labels) that the operator has pre-registered via
+        Kraken Pro → Funding → Withdraw → New Address (or New Wire
+        Recipient). Calling with an unknown label returns
+        ``EFunding:Unknown reference id`` (surfaced as
+        ``ExchangeError``). Below-minimum amounts surface as
+        ``EFunding:Below minimum``.
+
+        Args:
+            asset: Asset code (``"USD"``, ``"BTC"``, ...). Kraken's
+                endpoint accepts the friendly altname directly.
+            amount: Amount to withdraw in asset units. Serialized as
+                a string so Decimal precision survives the wire.
+            destination: Pre-registered destination label from the
+                operator's Kraken Pro address book.
+
+        Returns:
+            Kraken's withdrawal reference ID (``refid``). Lives in
+            ``TransferResult.transaction_id`` for forensic linking
+            to Kraken Pro's Funding history.
+
+        Raises:
+            ExchangeError: On transport failure, malformed response,
+                or any Kraken-side rejection (unknown destination
+                label, below-minimum amount, insufficient balance,
+                API key scope mismatch, etc.).
+        """
+        result = await self._private_post(
+            "/0/private/Withdraw",
+            {
+                "asset": asset,
+                "key": destination,
+                "amount": str(amount),
+            },
         )
+        refid = result.get("refid")
+        if not isinstance(refid, str) or not refid:
+            raise ExchangeError(
+                f"Kraken /0/private/Withdraw response missing 'refid'; got {result!r}"
+            )
+        return refid
 
     # ------------------------------------------------ Asset metadata cache
 

@@ -45,6 +45,20 @@ class HarvesterConfig(BaseModel):
     All amounts in USD. Per-asset configs (BTC scraping, ETH
     scraping, etc.) deferred to a later stage when the operator
     actually wants more than fiat sweep coverage.
+
+    Stage 4.4 fields (operational):
+    - ``api_key_env_var`` / ``api_secret_env_var``: which environment
+      variables hold the Harvester Kraken key (Withdraw scope). The
+      defaults assume the operator followed the .env.example
+      convention. Per ADR-003 these MUST be different from the trade
+      key — if the operator points them at ``KRAKEN_TRADE_API_KEY``,
+      they've defeated the safety design.
+    - ``withdrawal_destinations``: asset → Kraken Pro destination
+      label mapping. Operator pre-registers labels in Kraken Pro's
+      address book; Kraken's withdrawal API only accepts labels from
+      that book, never arbitrary recipients. Empty by default — the
+      Stage 4.4 ``cli/harvest --execute`` path refuses if the asset
+      isn't in this dict.
     """
 
     enabled: bool = False
@@ -52,6 +66,9 @@ class HarvesterConfig(BaseModel):
     surplus_threshold_usd: Decimal = Field(gt=Decimal("0"))
     topup_threshold_usd: Decimal = Field(gt=Decimal("0"))
     max_withdrawal_per_day_usd: Decimal = Field(gt=Decimal("0"))
+    api_key_env_var: str = Field(default="KRAKEN_HARVESTER_API_KEY", min_length=1)
+    api_secret_env_var: str = Field(default="KRAKEN_HARVESTER_API_SECRET", min_length=1)
+    withdrawal_destinations: dict[str, str] = Field(default_factory=dict)
 
     class Config:
         frozen = True

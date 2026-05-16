@@ -219,10 +219,25 @@ async def _main_async(config: WobbleBotConfig) -> int:
         _LOGGER.error("missing schedule", extra={"error": str(exc)})
         return 2
 
+    # Stage 4.4: load the Harvester key (Withdraw + Query Funds scopes).
+    # Per ADR-003 this MUST be a different key from KRAKEN_TRADE_API_KEY —
+    # operator-side discipline; we trust the .env config here. cli/harvest
+    # always uses this key now; the Withdraw scope is dormant until
+    # ``--execute`` lands in Slice 4.4c.
     try:
-        kraken = KrakenConfig.from_env()
+        kraken = KrakenConfig.from_env(
+            key_var=config.harvester.api_key_env_var,
+            secret_var=config.harvester.api_secret_env_var,
+        )
     except (KeyError, ValueError) as exc:
-        _LOGGER.error("kraken credentials missing", extra={"error": str(exc)})
+        _LOGGER.error(
+            "harvester kraken credentials missing",
+            extra={
+                "error": str(exc),
+                "expected_key_var": config.harvester.api_key_env_var,
+                "expected_secret_var": config.harvester.api_secret_env_var,
+            },
+        )
         return 2
 
     adapter = KrakenAdapter(kraken)

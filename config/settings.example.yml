@@ -359,6 +359,24 @@ harvester:
   topup_threshold_usd: 250.0
   surplus_threshold_usd: 500.0
   max_withdrawal_per_day_usd: 1000.0
+  # Stage 4.4 fields (operational; safe to leave as defaults until execute lands).
+  # Per ADR-003 the Harvester key has Withdraw + Query Funds scopes ONLY —
+  # NOT Create/Modify/Cancel orders (that's the trade key's territory).
+  api_key_env_var: KRAKEN_HARVESTER_API_KEY
+  api_secret_env_var: KRAKEN_HARVESTER_API_SECRET
+  # Asset → destination-label mapping. The label MUST already exist in
+  # Kraken Pro → Funding → Withdraw → New Address (or New Wire Recipient).
+  # Kraken's withdrawal API only accepts labels from the operator's
+  # pre-registered address book — there's no API path for arbitrary
+  # recipients, by design. The Stage 4.4c `cli/harvest --execute` path
+  # refuses every withdrawal whose asset has no entry here.
+  #
+  # Operator: replace these placeholders with your real Kraken Pro
+  # destination labels (or remove the asset entirely if you don't want
+  # withdrawals enabled for it).
+  withdrawal_destinations:
+    USD: "<your-bank-label>"              # bank ACH/wire recipient label
+    # BTC: "btc-coldstorage-1"            # crypto address label (uncomment as needed)
 
 # ============================================================================
 # Profiles (named overrides)
