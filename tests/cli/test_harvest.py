@@ -337,6 +337,45 @@ class TestPersistence:
         finally:
             await storage.close()
 
+    async def test_day_cap_reads_real_history(self) -> None:
+        """Stage 4.4b: cli/harvest now queries transfer_results before
+        calling propose_transfer, so a withdrawal earlier today
+        constrains the next proposal."""
+        from datetime import UTC, datetime, timedelta
+
+        from wobblebot.domain.value_objects import Timestamp
+        from wobblebot.ports.harvester import TransferResult
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            # Seed a 1h-old completed withdrawal of $950. Day-cap is
+            # $1000, so only $50 remains.
+            past = TransferResult(
+                proposal_id="prior",
+                transaction_id="tx-earlier-today",
+                status="completed",
+                executed_amount=Decimal("950"),
+                direction="exchange_to_bank",
+                asset="USD",
+                timestamp=Timestamp(dt=datetime.now(UTC) - timedelta(hours=1)),
+            )
+            await storage.save_transfer_result(past)
+
+            # Balance way above surplus — would propose a $625 scrape
+            # if there were no history (1000 - 375 midpoint). With
+            # the seeded $950 already withdrawn, only $50 fits.
+            adapter = _StubExchange(usd_balance=Decimal("1000"))
+            config = _full_config()
+            await _run_cycle(adapter, config=config, storage=storage)
+
+            proposals = await storage.get_transfer_proposals()
+            assert len(proposals) == 1
+            assert proposals[0].amount == Decimal("50")
+            assert "max_withdrawal_per_day_usd" in proposals[0].rationale
+        finally:
+            await storage.close()
+
     async def test_storage_failure_logged_but_cycle_continues(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -346,7 +385,18 @@ class TestPersistence:
 
         class _FlakeyStorage:
             """Just-enough SQLiteStorageAdapter-shaped object that
-            raises StorageError on save."""
+            raises StorageError on proposal-save but answers the
+            day-cap history read normally (returns empty)."""
+
+            async def get_transfer_results(  # type: ignore[no-untyped-def]
+                self,
+                since=None,
+                status=None,
+                asset=None,
+                direction=None,
+                limit=None,
+            ):
+                return []
 
             async def save_transfer_proposal(self, proposal):  # type: ignore[no-untyped-def]
                 from wobblebot.ports.exceptions import StorageError as _SE

@@ -49,13 +49,81 @@ deposits, not withdrawals.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Protocol
 from uuid import uuid4
 
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.harvester import TransferProposal
+from wobblebot.ports.harvester import TransferProposal, TransferResult
+
+
+class _TransferHistoryReader(Protocol):
+    """Subset of ``StoragePort`` ``compute_today_total_withdrawn_usd``
+    needs. Keeps this module's import surface narrow (avoids dragging
+    the full storage port into the pure-domain layer)."""
+
+    async def get_transfer_results(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        since: datetime | None = None,
+        status: str | None = None,
+        asset: str | None = None,
+        direction: str | None = None,
+        limit: int | None = None,
+    ) -> list[TransferResult]: ...
+
+
+async def compute_today_total_withdrawn_usd(
+    storage: _TransferHistoryReader,
+    *,
+    asset: str = "USD",
+    now: datetime | None = None,
+    window: timedelta = timedelta(hours=24),
+) -> Decimal:
+    """Sum exchange→bank withdrawals over a rolling 24h window.
+
+    Stage 4.4b's day-cap input: feeds ``today_total_withdrawn_usd``
+    into ``propose_transfer()``. Pre-4.4b the daemon always passed
+    ``Decimal("0")`` (no history); now it reads the actual recent
+    withdrawals.
+
+    Definition of "today":
+    - **Rolling 24h** from ``now`` (default ``datetime.now(UTC)``),
+      not calendar-day-based. A withdrawal at 23:55 UTC counts
+      against the cap for the next ~24h, not just until the next
+      midnight. Operator-friendly: if the operator submits at
+      midnight, they don't get a fresh cap five minutes later.
+    - Includes ``status in ("pending", "completed")``. Failed
+      withdrawals don't count — they didn't actually move money.
+
+    Args:
+        storage: Anything with a ``get_transfer_results`` method
+          matching the StoragePort signature.
+        asset: Asset to sum (defaults to "USD" — Stage 4.4's only
+          supported asset).
+        now: Override for tests; defaults to wall-clock UTC.
+        window: Rolling window size. 24h is the only sensible value
+          for the day-cap, but parameterized for future flexibility.
+
+    Returns:
+        Sum of executed_amount for matching results, or Decimal('0')
+        when the history is empty.
+    """
+    cutoff = (now or datetime.now(UTC)) - window
+    # Filter at the SQL level (since/asset/direction) so we don't
+    # haul every transfer_result row into Python on a long-running
+    # account.
+    results = await storage.get_transfer_results(
+        since=cutoff,
+        asset=asset,
+        direction="exchange_to_bank",
+    )
+    total = Decimal("0")
+    for r in results:
+        if r.status in ("pending", "completed"):
+            total += r.executed_amount
+    return total
 
 
 def propose_transfer(

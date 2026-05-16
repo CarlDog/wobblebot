@@ -46,7 +46,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
-from wobblebot.services.harvester import propose_transfer
+from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 _LOGGER = logging.getLogger("wobblebot.cli.harvest")
 
@@ -94,10 +94,20 @@ async def _run_cycle(
     if balance_usd is None:
         return False
 
+    # Stage 4.4b: real rolling-24h history feeds the day-cap. Pre-4.4b
+    # this was always Decimal("0"); the gate effectively had no
+    # day-cap because there was no history to subtract from. With
+    # storage wired in, the gate now refuses proposals that would
+    # push today's total past max_withdrawal_per_day_usd.
+    if storage is not None:
+        today_total = await compute_today_total_withdrawn_usd(storage, asset="USD")
+    else:
+        today_total = Decimal("0")
+
     proposal = propose_transfer(
         balance_usd=balance_usd,
         config=config.harvester,
-        today_total_withdrawn_usd=Decimal("0"),  # 4.3: no history yet (4.4's job)
+        today_total_withdrawn_usd=today_total,
     )
 
     if proposal is None:

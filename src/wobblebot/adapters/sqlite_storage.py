@@ -23,7 +23,7 @@ from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Tra
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
-from wobblebot.ports.harvester import TransferProposal
+from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.storage import StoragePort
 
 _SCHEMA = """
@@ -180,10 +180,28 @@ CREATE INDEX IF NOT EXISTS idx_transfer_proposals_created
     ON transfer_proposals(created_at);
 CREATE INDEX IF NOT EXISTS idx_transfer_proposals_direction
     ON transfer_proposals(direction, created_at);
+
+CREATE TABLE IF NOT EXISTS transfer_results (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id                 TEXT NOT NULL,
+    transaction_id              TEXT NOT NULL UNIQUE,
+    status                      TEXT NOT NULL
+                                    CHECK (status IN ('pending', 'completed', 'failed')),
+    executed_amount             TEXT NOT NULL,
+    direction                   TEXT NOT NULL
+                                    CHECK (direction IN ('exchange_to_bank', 'bank_to_exchange')),
+    asset                       TEXT NOT NULL,
+    timestamp                   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_transfer_results_timestamp
+    ON transfer_results(timestamp);
+CREATE INDEX IF NOT EXISTS idx_transfer_results_day_cap
+    ON transfer_results(asset, direction, timestamp);
 """
 
 
-class SQLiteStorageAdapter(StoragePort):
+class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
     """SQLite-backed StoragePort implementation.
 
     The adapter holds a single long-lived ``aiosqlite.Connection``.
@@ -721,6 +739,69 @@ class SQLiteStorageAdapter(StoragePort):
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load transfer proposals: {exc}") from exc
 
+    async def save_transfer_result(self, result: TransferResult) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO transfer_results (
+                    proposal_id, transaction_id, status, executed_amount,
+                    direction, asset, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result.proposal_id,
+                    result.transaction_id,
+                    result.status,
+                    str(result.executed_amount),
+                    result.direction,
+                    result.asset,
+                    result.timestamp.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to save transfer result {result.transaction_id}: {exc}"
+            ) from exc
+
+    async def get_transfer_results(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        since: datetime | None = None,
+        status: str | None = None,
+        asset: str | None = None,
+        direction: str | None = None,
+        limit: int | None = None,
+    ) -> list[TransferResult]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if since is not None:
+            clauses.append("timestamp >= ?")
+            params.append(since.astimezone(UTC).isoformat())
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if asset is not None:
+            clauses.append("asset = ?")
+            params.append(asset)
+        if direction is not None:
+            clauses.append("direction = ?")
+            params.append(direction)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM transfer_results{where} ORDER BY timestamp DESC"
+        bound: tuple[str | int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound = (*bound, limit)
+        try:
+            async with conn.execute(sql, bound) as cursor:
+                rows = await cursor.fetchall()
+            return [_row_to_transfer_result(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load transfer results: {exc}") from exc
+
     async def get_news_items(
         self,
         source: str | None = None,
@@ -958,6 +1039,18 @@ def _row_to_transfer_proposal(row: aiosqlite.Row) -> TransferProposal:
         current_exchange_balance=Decimal(row["current_exchange_balance"]),
         target_exchange_balance=Decimal(row["target_exchange_balance"]),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+    )
+
+
+def _row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
+    return TransferResult(
+        proposal_id=row["proposal_id"],
+        transaction_id=row["transaction_id"],
+        status=row["status"],
+        executed_amount=Decimal(row["executed_amount"]),
+        direction=row["direction"],
+        asset=row["asset"],
+        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
     )
 
 

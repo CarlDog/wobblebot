@@ -12,10 +12,10 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
-from wobblebot.ports.harvester import TransferProposal
+from wobblebot.ports.harvester import TransferProposal, TransferResult
 
 
-class StoragePort(ABC):
+class StoragePort(ABC):  # pylint: disable=too-many-public-methods
     """Abstract interface for persistence operations.
 
     Implementations must handle:
@@ -371,6 +371,53 @@ class StoragePort(ABC):
 
         Returns:
             Matching proposals ordered by ``created_at`` DESC.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def save_transfer_result(self, result: TransferResult) -> None:
+        """Persist a Stage 4.4b transfer result.
+
+        ``transaction_id`` is UNIQUE — a retry that already wrote the
+        row raises StorageError (the caller should fetch by id and
+        skip rather than retry blindly).
+
+        Args:
+            result: TransferResult to save.
+
+        Raises:
+            StorageError: If save fails (including UNIQUE violation
+                on ``transaction_id``).
+        """
+
+    @abstractmethod
+    async def get_transfer_results(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        since: datetime | None = None,
+        status: str | None = None,
+        asset: str | None = None,
+        direction: str | None = None,
+        limit: int | None = None,
+    ) -> list[TransferResult]:
+        """Query persisted transfer results with optional filters.
+
+        Used by the Stage 4.4b day-cap helper to compute the rolling
+        24h sum of exchange→bank withdrawals (``status != "failed"``,
+        within window).
+
+        Args:
+            since: Lower bound on ``timestamp`` (inclusive, tz-aware).
+            status: Filter to one status
+                (``"pending"``, ``"completed"``, or ``"failed"``).
+            asset: Filter to one asset.
+            direction: Filter to one direction
+                (``"exchange_to_bank"`` or ``"bank_to_exchange"``).
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching results ordered by ``timestamp`` DESC.
 
         Raises:
             StorageError: If retrieval fails.

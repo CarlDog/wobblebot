@@ -1,14 +1,16 @@
-"""Unit tests for the Stage 4.1 Harvester decision logic."""
+"""Unit tests for the Stage 4.1 Harvester decision logic + Stage 4.4b day-cap helper."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from wobblebot.config.harvester import HarvesterConfig
-from wobblebot.ports.harvester import TransferProposal
-from wobblebot.services.harvester import propose_transfer
+from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 pytestmark = pytest.mark.unit
 
@@ -263,3 +265,163 @@ class TestProposalShape:
     def test_returns_pydantic_model(self) -> None:
         result = propose_transfer(balance_usd=Decimal("600"), config=_config())
         assert isinstance(result, TransferProposal)
+
+
+# ----- Day-cap history reader (Stage 4.4b) -----
+
+
+class _StubHistory:
+    """Just-enough storage-port-shaped object for the day-cap helper.
+
+    Returns canned results when ``get_transfer_results`` is called.
+    Captures the filter args so tests can assert the helper queried
+    with the right window/asset/direction.
+    """
+
+    def __init__(self, results: list[TransferResult]) -> None:
+        self.results = results
+        self.last_since: object = None
+        self.last_asset: object = None
+        self.last_direction: object = None
+
+    async def get_transfer_results(  # type: ignore[no-untyped-def]
+        self,
+        since=None,
+        status=None,
+        asset=None,
+        direction=None,
+        limit=None,
+    ):
+        self.last_since = since
+        self.last_asset = asset
+        self.last_direction = direction
+        # The helper expects the storage adapter to apply since/asset/
+        # direction filters at the SQL level. Stub follows the same
+        # contract.
+        out = []
+        for r in self.results:
+            if since is not None and r.timestamp.dt < since:
+                continue
+            if asset is not None and r.asset != asset:
+                continue
+            if direction is not None and r.direction != direction:
+                continue
+            out.append(r)
+        return out
+
+
+def _result(
+    *,
+    minutes_ago: int = 10,
+    status: str = "completed",
+    direction: str = "exchange_to_bank",
+    asset: str = "USD",
+    amount: str = "100",
+) -> TransferResult:
+    return TransferResult(
+        proposal_id="p",
+        transaction_id=f"tx-{minutes_ago}-{status}",
+        status=status,  # type: ignore[arg-type]
+        executed_amount=Decimal(amount),
+        direction=direction,  # type: ignore[arg-type]
+        asset=asset,
+        timestamp=Timestamp(dt=datetime.now(UTC) - timedelta(minutes=minutes_ago)),
+    )
+
+
+@pytest.mark.asyncio
+class TestComputeTodayTotalWithdrawnUsd:
+    async def test_empty_history_returns_zero(self) -> None:
+        history = _StubHistory(results=[])
+        total = await compute_today_total_withdrawn_usd(history)
+        assert total == Decimal("0")
+
+    async def test_sums_completed_within_window(self) -> None:
+        history = _StubHistory(
+            results=[
+                _result(minutes_ago=60, amount="100"),
+                _result(minutes_ago=120, amount="50"),
+                _result(minutes_ago=300, amount="25"),
+            ],
+        )
+        total = await compute_today_total_withdrawn_usd(history)
+        assert total == Decimal("175")
+
+    async def test_excludes_outside_window(self) -> None:
+        """A withdrawal from 25 hours ago is outside the rolling 24h
+        window and must not count."""
+        history = _StubHistory(
+            results=[
+                _result(minutes_ago=60, amount="100"),
+                _result(minutes_ago=25 * 60, amount="999"),  # outside window
+            ],
+        )
+        total = await compute_today_total_withdrawn_usd(history)
+        assert total == Decimal("100")
+
+    async def test_excludes_failed_status(self) -> None:
+        """Failed withdrawals didn't move money — must not count."""
+        history = _StubHistory(
+            results=[
+                _result(minutes_ago=60, amount="100", status="completed"),
+                _result(minutes_ago=120, amount="50", status="failed"),
+                _result(minutes_ago=180, amount="25", status="pending"),
+            ],
+        )
+        total = await compute_today_total_withdrawn_usd(history)
+        # 100 completed + 25 pending = 125; failed 50 excluded.
+        assert total == Decimal("125")
+
+    async def test_filters_to_outflows(self) -> None:
+        """bank→exchange (inflow) doesn't count toward the withdrawal
+        cap — verified by the storage filter (helper passes
+        direction='exchange_to_bank')."""
+        history = _StubHistory(
+            results=[
+                _result(direction="exchange_to_bank", amount="100"),
+                _result(direction="bank_to_exchange", amount="999"),
+            ],
+        )
+        total = await compute_today_total_withdrawn_usd(history)
+        assert total == Decimal("100")
+        # Verified at the query-arg layer too.
+        assert history.last_direction == "exchange_to_bank"
+
+    async def test_filters_to_asset(self) -> None:
+        history = _StubHistory(
+            results=[
+                _result(asset="USD", amount="100"),
+                _result(asset="EUR", amount="999"),
+            ],
+        )
+        total = await compute_today_total_withdrawn_usd(history, asset="USD")
+        assert total == Decimal("100")
+        assert history.last_asset == "USD"
+
+    async def test_now_override_for_deterministic_tests(self) -> None:
+        """The ``now`` parameter lets tests pin the window to a fixed
+        wall-clock — useful when the absolute time matters."""
+        anchor = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
+        # Result 30min before anchor is inside the 24h window
+        result_in = TransferResult(
+            proposal_id="p",
+            transaction_id="in",
+            status="completed",
+            executed_amount=Decimal("50"),
+            direction="exchange_to_bank",
+            asset="USD",
+            timestamp=Timestamp(dt=anchor - timedelta(minutes=30)),
+        )
+        # Result 25h before anchor is outside
+        result_out = TransferResult(
+            proposal_id="p",
+            transaction_id="out",
+            status="completed",
+            executed_amount=Decimal("100"),
+            direction="exchange_to_bank",
+            asset="USD",
+            timestamp=Timestamp(dt=anchor - timedelta(hours=25)),
+        )
+        history = _StubHistory(results=[result_in, result_out])
+        total = await compute_today_total_withdrawn_usd(history, now=anchor)
+        assert total == Decimal("50")

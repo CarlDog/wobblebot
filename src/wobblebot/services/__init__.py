@@ -16,7 +16,7 @@ from wobblebot.services.auto_apply import (
     evaluate_auto_apply,
 )
 from wobblebot.services.grid_engine import GridEngine, StepResult
-from wobblebot.services.harvester import propose_transfer
+from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 from wobblebot.services.metrics import (
     CycleStats,
     compute_cycle_stats,
@@ -47,6 +47,7 @@ __all__ = [
     "compute_cycle_stats",
     "compute_flatness",
     "compute_max_drawdown",
+    "compute_today_total_withdrawn_usd",
     "compute_volatility",
     "evaluate_auto_apply",
     "propose_transfer",

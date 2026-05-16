@@ -42,13 +42,22 @@ class TransferProposal(BaseModel):
 
 
 class TransferResult(BaseModel):
-    """Result of an executed transfer."""
+    """Result of an executed transfer.
+
+    Persisted to ``transfer_results`` (Stage 4.4b) for the forensic
+    audit chain + the rolling-24h day-cap computation. ``direction``
+    and ``asset`` are denormalized from the originating
+    ``TransferProposal`` so the day-cap query is single-table —
+    avoids a join on every cycle of cli/harvest.
+    """
 
     proposal_id: str
-    transaction_id: str = Field(..., description="Exchange/bank transaction ID")
+    transaction_id: str = Field(..., description="Exchange refid")
     status: Literal["pending", "completed", "failed"]
     executed_amount: Decimal = Field(..., ge=0)
-    timestamp: Timestamp = Field(..., description="When the transfer settled")
+    direction: Literal["exchange_to_bank", "bank_to_exchange"]
+    asset: str = Field(..., min_length=1, max_length=10)
+    timestamp: Timestamp = Field(..., description="When the transfer was submitted")
 
 
 class HarvesterPort(ABC):
