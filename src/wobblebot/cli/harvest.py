@@ -224,17 +224,20 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     forensic table regardless of success/failure.
 
     Defense layers (any failure aborts with exit 1; no money moved
-    unless we reach step 6):
+    unless we reach step 7):
     1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
        beyond the per-call flag).
     2. Proposal must exist in the harvest db.
-    3. Proposal must not be stale (≤ ``proposal_max_age_hours``).
-    4. Destination label must resolve in
+    3. Proposal direction must be ``exchange_to_bank``. Deposits
+       (``bank_to_exchange``) cannot be executed through Kraken's API
+       — they're operator-pushed from the bank side using Kraken's
+       deposit instructions. The harvester surfaces deposit proposals
+       only as a signal that the operator should manually fund.
+    4. Proposal must not be stale (≤ ``proposal_max_age_hours``).
+    5. Destination label must resolve in
        ``HarvesterConfig.withdrawal_destinations[proposal.asset]``.
-    5. Current exchange balance must cover the proposed amount
-       (for exchange→bank only; the gate avoids attempting
-       withdrawals that Kraken would reject for insufficient funds).
-    6. Day-cap must still have headroom — ``today_total_withdrawn_usd
+    6. Current exchange balance must cover the proposed amount.
+    7. Day-cap must still have headroom — ``today_total_withdrawn_usd
        + proposal.amount ≤ max_withdrawal_per_day_usd``.
 
     After all checks pass, calls ``adapter.withdraw()`` and persists
@@ -258,6 +261,28 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         _LOGGER.error(
             "proposal not found in harvest db",
             extra={"proposal_id": proposal_id, "searched": len(proposals)},
+        )
+        return 1
+
+    # 3. Direction gate (caught during the Stage 4.5 integration audit).
+    # Kraken's /0/private/Withdraw is exchange→bank only. Deposits are
+    # operator-pushed from the bank side using Kraken's deposit
+    # instructions (account number + routing number visible in Kraken
+    # Pro). There's no API path for "initiate ACH from bank to Kraken"
+    # — refusing here prevents calling /Withdraw with the wrong
+    # semantics and accidentally moving money in the opposite
+    # direction.
+    if proposal.direction != "exchange_to_bank":
+        _LOGGER.error(
+            "deposit proposals cannot be executed via the API; "
+            "manually push funds to Kraken using the deposit instructions "
+            "from Kraken Pro → Funding → Deposit",
+            extra={
+                "proposal_id": proposal_id,
+                "direction": proposal.direction,
+                "amount": str(proposal.amount),
+                "asset": proposal.asset,
+            },
         )
         return 1
 
@@ -289,34 +314,34 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 5. Current balance check (exchange→bank only)
-    if proposal.direction == "exchange_to_bank":
-        current_balance = await _read_usd_balance(adapter)
-        if current_balance is None:
-            _LOGGER.error("could not read current balance; refusing execution")
-            return 1
-        if current_balance < proposal.amount:
-            _LOGGER.error(
-                "current exchange balance below proposed withdrawal amount; refusing",
-                extra={
-                    "current_balance_usd": str(current_balance),
-                    "proposal_amount_usd": str(proposal.amount),
-                },
-            )
-            return 1
+    # 6. Current balance check. Step 3 already guaranteed
+    # direction == "exchange_to_bank", so this fires unconditionally.
+    current_balance = await _read_usd_balance(adapter)
+    if current_balance is None:
+        _LOGGER.error("could not read current balance; refusing execution")
+        return 1
+    if current_balance < proposal.amount:
+        _LOGGER.error(
+            "current exchange balance below proposed withdrawal amount; refusing",
+            extra={
+                "current_balance_usd": str(current_balance),
+                "proposal_amount_usd": str(proposal.amount),
+            },
+        )
+        return 1
 
-        # 6. Day-cap fresh check
-        today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
-        if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
-            _LOGGER.error(
-                "executing would push today's total over max_withdrawal_per_day_usd; refusing",
-                extra={
-                    "today_total_usd": str(today_total),
-                    "proposal_amount_usd": str(proposal.amount),
-                    "max_withdrawal_per_day_usd": str(config.harvester.max_withdrawal_per_day_usd),
-                },
-            )
-            return 1
+    # 7. Day-cap fresh check
+    today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
+    if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
+        _LOGGER.error(
+            "executing would push today's total over max_withdrawal_per_day_usd; refusing",
+            extra={
+                "today_total_usd": str(today_total),
+                "proposal_amount_usd": str(proposal.amount),
+                "max_withdrawal_per_day_usd": str(config.harvester.max_withdrawal_per_day_usd),
+            },
+        )
+        return 1
 
     # 7. Execute via Kraken /Withdraw
     _LOGGER.info(

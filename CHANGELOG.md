@@ -10,6 +10,24 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 4.5 — Phase 4 Integration Check + Phase 4 Close (2026-05-15)
+
+Stage 4.5 audited the full Phase 4 path with the question "could anything move money the operator didn't intend?" and found one real defect. Then wrote `docs/planning/phase-4-summary.md` mirroring `phase-3-summary.md`'s shape.
+
+**Defect found and fixed**: `cli/harvest --execute` would have called `KrakenAdapter.withdraw()` on a `bank_to_exchange` proposal. Kraken's `/0/private/Withdraw` is exchange→bank only — deposits are operator-pushed from the bank side using deposit instructions from Kraken Pro. Calling withdraw with a deposit-direction proposal would have moved money in the wrong direction (or, more likely, Kraken would have refused with a confusing error).
+
+Fix: new defense layer 3 in `_execute_command` refuses any proposal whose direction isn't `exchange_to_bank`, with an operator-facing message pointing them to Kraken Pro's deposit instructions. The gate now has **seven** defense layers (was six). Test added: `tests/cli/test_harvest.py::TestExecuteGuardrails::test_bank_to_exchange_refused_no_api_call` asserts `adapter.withdraw_calls == []` after refusal.
+
+Other Phase 4 paths verified end-to-end during the audit (all read-only against the operator's real account):
+- `cli/harvest` read $99.92 USD via the Harvester key + classified as deficit + `persistence_enabled: true` confirmed
+- `tools/show_proposals.py` reports "no proposals match" against empty table
+- `tools/show_transfers.py` reports "no results match" against empty table
+- All 8 (now 9 with the new test) execute-gate guardrails verified by unit tests with `adapter.withdraw_calls == []` assertions
+
+**Phase 4 total real-money cost: $0.00** (no live withdrawal during slice work). The operator's first $1 ACH to "360 Performance Savings" is a separately-tracked event. Project running total still $0.08 unchanged from Phase 2 close.
+
+Phase 4 stages closed: 4.1, 4.2, 4.3, 4.4, 4.5. Phase 5 entry conditions met.
+
 ### Stage 4.4 — Active Mode (Guarded Withdrawals) (2026-05-15)
 
 Phase 4's biggest slice. **Money can finally move** — but only when the operator explicitly says so, and only after six defense layers clear. Four sub-slices:

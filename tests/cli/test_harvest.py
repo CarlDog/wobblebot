@@ -513,6 +513,35 @@ class TestExecuteGuardrails:
         finally:
             await storage.close()
 
+    async def test_bank_to_exchange_refused_no_api_call(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Stage 4.5 integration audit caught this: Kraken's /Withdraw
+        is exchange→bank only. A bank_to_exchange proposal must be
+        refused at the gate — calling adapter.withdraw with deposit
+        semantics would move money in the wrong direction."""
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(
+                storage,
+                _proposal(direction="bank_to_exchange", amount="50"),
+            )
+            adapter = _WithdrawingExchange()
+            config = _full_config(harvester=_enabled_harvester())
+            with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+                rc = await _execute_command(
+                    adapter=adapter,
+                    storage=storage,
+                    config=config,
+                    proposal_id="p-test",
+                )
+            assert rc == 1
+            assert adapter.withdraw_calls == []
+            assert any("deposit proposals cannot be executed" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
     async def test_proposal_not_found_refuses(self, caplog: pytest.LogCaptureFixture) -> None:
         storage = SQLiteStorageAdapter(":memory:")
         await storage.connect()

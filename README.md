@@ -46,7 +46,8 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 4 / Stage 4.2** — `cli/harvest` read-only balance monitor | ✅ closed 2026-05-15 |
 | **Phase 4 / Stage 4.3** — Transfer proposal persistence + `tools/show_proposals.py` | ✅ closed 2026-05-15 |
 | **Phase 4 / Stage 4.4** — Active-mode withdrawals (`cli/harvest --execute`) | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.5** — Phase 4 integration check | next up |
+| **Phase 4 / Stage 4.5** — Phase 4 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-4-summary.md)) |
+| **Phase 5** — UX, dashboard, hardening, v1.0 | next up |
 | **Phase 5** — UX, dashboard, hardening, v1.0 | gated on Phase 4 |
 
 **Health:** 792 unit tests pass by default; 21 integration tests opt-in. mypy clean (57 src files), black/isort clean, pylint **10.00/10**.
