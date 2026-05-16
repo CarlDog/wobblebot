@@ -67,7 +67,7 @@ class TestLoadPromptHappyPath:
         prompt = load_prompt(path)
         assert prompt.body == "body text"
 
-    @pytest.mark.parametrize("role", ["quant", "risk", "news", "arbitrator", "custom"])
+    @pytest.mark.parametrize("role", ["quant", "risk", "news", "arbitrator", "operator", "custom"])
     def test_accepts_every_documented_role(self, tmp_path: Path, role: str) -> None:
         path = _write_prompt(tmp_path / f"{role}.md", role=role)
         prompt = load_prompt(path)
@@ -131,21 +131,26 @@ class TestShippedPrompts:
         return Path(__file__).resolve().parents[2] / "config" / "prompts"
 
     @pytest.mark.parametrize(
-        ("filename", "expected_role"),
+        ("filename", "expected_role", "expected_schema"),
         [
-            ("quant.md", "quant"),
-            ("risk.md", "risk"),
-            ("news.md", "news"),
-            ("arbitrator.md", "arbitrator"),
+            ("quant.md", "quant", "advisor_recommendation_v1"),
+            ("risk.md", "risk", "advisor_recommendation_v1"),
+            ("news.md", "news", "advisor_recommendation_v1"),
+            ("arbitrator.md", "arbitrator", "advisor_recommendation_v1"),
+            ("operator.md", "operator", "operator_intent_v1"),
         ],
     )
     def test_shipped_prompt_loads(
-        self, prompts_dir: Path, filename: str, expected_role: str
+        self,
+        prompts_dir: Path,
+        filename: str,
+        expected_role: str,
+        expected_schema: str,
     ) -> None:
         prompt = load_prompt(prompts_dir / filename)
         assert prompt.metadata.role == expected_role
         assert prompt.metadata.description
-        assert prompt.metadata.response_schema == "advisor_recommendation_v1"
+        assert prompt.metadata.response_schema == expected_schema
         assert prompt.body  # non-empty
 
 

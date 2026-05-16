@@ -15,8 +15,8 @@ import pytest
 
 from wobblebot.adapters.ollama import (
     OllamaAdapter,
-    _extract_last_json_object,
-    _is_thinking_model,
+    extract_last_json_object,
+    is_thinking_model,
 )
 from wobblebot.config.prompts import Prompt, PromptMetadata
 from wobblebot.ports.advisor import AdvisorRecommendation, PerformanceSummary
@@ -414,7 +414,7 @@ class TestIsThinkingModel:
         ],
     )
     def test_matches_known_thinking_patterns(self, name: str) -> None:
-        assert _is_thinking_model(name) is True
+        assert is_thinking_model(name) is True
 
     @pytest.mark.parametrize(
         "name",
@@ -429,55 +429,62 @@ class TestIsThinkingModel:
         ],
     )
     def test_does_not_match_non_thinking_models(self, name: str) -> None:
-        assert _is_thinking_model(name) is False
+        assert is_thinking_model(name) is False
 
 
 class TestExtractLastJsonObject:
     """Pure helper — pulls a trailing JSON object out of free-text output."""
 
     def test_pure_json_returned(self) -> None:
-        assert _extract_last_json_object('{"a": 1, "b": "x"}') == {"a": 1, "b": "x"}
+        assert extract_last_json_object('{"a": 1, "b": "x"}') == {"a": 1, "b": "x"}
 
     def test_thinking_preamble_then_json(self) -> None:
         text = (
             "<think>\nLet me consider the metrics...\nVolatility is low.\n</think>\n\n"
             '{"role": "quant", "confidence": "medium"}'
         )
-        assert _extract_last_json_object(text) == {"role": "quant", "confidence": "medium"}
+        assert extract_last_json_object(text) == {"role": "quant", "confidence": "medium"}
 
     def test_json_in_code_fence(self) -> None:
         text = "```json\n" + '{"answer": 42}' + "\n```"
-        assert _extract_last_json_object(text) == {"answer": 42}
+        assert extract_last_json_object(text) == {"answer": 42}
 
     def test_multiple_objects_returns_last(self) -> None:
         # Thinking sometimes contains illustrative JSON-shaped examples
         # earlier in the reasoning; the last successful parse is the answer.
         text = 'Maybe try {"x": 1}. Or perhaps {"x": 2}. ' 'Final: {"x": 3, "confidence": "high"}'
-        result = _extract_last_json_object(text)
+        result = extract_last_json_object(text)
         assert result == {"x": 3, "confidence": "high"}
 
     def test_braces_inside_strings_dont_break_parsing(self) -> None:
         # raw_decode is JSON-aware; a brace inside a string literal isn't
         # treated as an object boundary.
         text = '{"note": "the {value} is {nested}", "result": "ok"}'
-        assert _extract_last_json_object(text) == {
+        assert extract_last_json_object(text) == {
             "note": "the {value} is {nested}",
             "result": "ok",
         }
 
-    def test_no_json_raises_advisor_error(self) -> None:
-        with pytest.raises(AdvisorError, match="no parseable JSON object"):
-            _extract_last_json_object("I am unable to comply at this time.")
+    def test_no_json_raises_extract_error(self) -> None:
+        # The shared helper raises a port-agnostic OllamaJsonExtractError;
+        # callers (advisor / assistant adapters) wrap it into their own
+        # port-specific error type.
+        from wobblebot.adapters.ollama import OllamaJsonExtractError
+
+        with pytest.raises(OllamaJsonExtractError, match="no parseable JSON object"):
+            extract_last_json_object("I am unable to comply at this time.")
 
     def test_invalid_json_braces_are_skipped(self) -> None:
         # First `{` opens malformed JSON; second `{` opens valid.
         text = '{not valid json} but then {"ok": true}'
-        assert _extract_last_json_object(text) == {"ok": True}
+        assert extract_last_json_object(text) == {"ok": True}
 
     def test_top_level_array_ignored(self) -> None:
         # Only object-typed JSON counts as a candidate.
-        with pytest.raises(AdvisorError, match="no parseable JSON object"):
-            _extract_last_json_object("[1, 2, 3]")
+        from wobblebot.adapters.ollama import OllamaJsonExtractError
+
+        with pytest.raises(OllamaJsonExtractError, match="no parseable JSON object"):
+            extract_last_json_object("[1, 2, 3]")
 
 
 @pytest.mark.asyncio

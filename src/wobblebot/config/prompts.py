@@ -35,7 +35,7 @@ from typing import Literal
 import frontmatter
 from pydantic import BaseModel, Field, field_validator
 
-PromptRole = Literal["quant", "risk", "news", "arbitrator", "custom"]
+PromptRole = Literal["quant", "risk", "news", "arbitrator", "operator", "custom"]
 
 
 class PromptMetadata(BaseModel):

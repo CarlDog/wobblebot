@@ -1,0 +1,228 @@
+"""OllamaAssistantAdapter — Stage 5.3 ``AssistantPort`` backed by Ollama.
+
+Sister adapter to ``adapters/ollama.py`` (which implements
+``AdvisorPort`` for the Phase 3 strategy advisor). Same Ollama
+infrastructure, different port: this adapter takes a
+``ConversationContext`` (current operator message + recent turn
+history + engine state snapshot) and returns a typed ``OperatorIntent``
+(``Command`` | ``Query`` | ``Conversational`` | ``Unparseable``).
+
+**Endpoint:** ``/api/chat`` (not ``/api/generate`` like the advisor).
+The chat endpoint accepts role-tagged messages (``system`` / ``user`` /
+``assistant``), which gives the LLM a structured multi-turn history
+instead of a concatenated prompt. Better behavior for context-sensitive
+intent parsing ("now filter to ETH" referring to the prior turn's
+``recent_fills`` query).
+
+**Shared with the advisor adapter:** ``is_thinking_model`` and
+``extract_last_json_object`` (promoted from underscore-private to
+module-public in ``adapters/ollama.py``). Each adapter wraps the
+extractor's ``OllamaJsonExtractError`` as its own port-specific error
+(``AssistantError`` here, ``AdvisorError`` there).
+
+**Output validation:** the LLM's JSON is validated against the
+``OperatorIntent`` discriminated-union ``TypeAdapter``. Two levels of
+discriminator (outer ``Command``/``Query``/``Conversational``/
+``Unparseable``, inner concrete command/query kind) resolve in one
+validation pass. Validation failure raises ``AssistantError`` so the
+``cli/operator`` daemon (Stage 5.6) can post a graceful "I couldn't
+parse that" reply.
+
+**Per ADR-013:** this adapter is NOT in the money path. An
+``AssistantError`` only affects the Discord chat surface; ``cli/live``
+never imports this module.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+from pydantic import TypeAdapter, ValidationError
+
+from wobblebot.adapters.ollama import (
+    OllamaJsonExtractError,
+    extract_last_json_object,
+    is_thinking_model,
+)
+from wobblebot.config.prompts import Prompt
+from wobblebot.ports.assistant import AssistantPort, ConversationContext
+from wobblebot.ports.exceptions import AssistantError
+from wobblebot.ports.operator import OperatorIntent
+
+_DEFAULT_BASE_URL = "http://localhost:11434"
+_DEFAULT_TIMEOUT_SECONDS = 60.0
+
+# Module-level TypeAdapter — cheap to construct once, expensive to rebuild
+# per call. Validates the operator_intent_v1 discriminated union.
+_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
+
+
+class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instance-attributes
+    """Ollama-backed ``AssistantPort`` for the operator interaction layer.
+
+    Args:
+        model: Ollama model tag (e.g. ``"phi4:14b"``).
+        prompt: Validated operator prompt (loaded from
+            ``config/prompts/operator.md``). The body is sent as the
+            ``system`` message; the engine state snapshot is appended
+            to it so the LLM sees current state on every turn.
+        base_url: Ollama server URL.
+        temperature: Sampling temperature (lower for deterministic
+            intent parsing; defaults to 0.3 per the prompt's
+            ``temperature_hint``).
+        max_tokens: ``num_predict`` cap on response length. Operator
+            intent payloads are small; 512 is plenty.
+        timeout_seconds: HTTP timeout for the chat call.
+        client: Optional pre-constructed ``httpx.AsyncClient`` (test
+            seam). If ``None``, the adapter creates and owns one;
+            ``aclose()`` releases it.
+    """
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        model: str,
+        prompt: Prompt,
+        base_url: str = _DEFAULT_BASE_URL,
+        temperature: float = 0.3,
+        max_tokens: int = 512,
+        timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        if prompt.metadata.role != "operator":
+            raise AssistantError(
+                f"OllamaAssistantAdapter requires an operator-role prompt; "
+                f"got role={prompt.metadata.role!r}"
+            )
+        self._model = model
+        self._prompt = prompt
+        self._base_url = base_url.rstrip("/")
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+
+    async def aclose(self) -> None:
+        """Release the underlying httpx client if the adapter owns it."""
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def parse_intent(self, context: ConversationContext) -> OperatorIntent:
+        """Send the conversation context to Ollama and return a typed intent.
+
+        Raises:
+            AssistantError: Transport failure, malformed envelope,
+                JSON parse failure, or output that fails
+                ``OperatorIntent`` schema validation.
+        """
+        messages = self._build_messages(context)
+        thinking_mode = is_thinking_model(self._model)
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": self._temperature,
+                "num_predict": self._max_tokens,
+            },
+        }
+        if not thinking_mode:
+            payload["format"] = "json"
+
+        try:
+            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            envelope: dict[str, Any] = response.json()
+        except httpx.HTTPError as exc:
+            raise AssistantError(f"Ollama chat request failed: {exc}") from exc
+
+        inner = self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
+
+        try:
+            return _INTENT_ADAPTER.validate_python(inner)
+        except ValidationError as exc:
+            raise AssistantError(
+                f"LLM output failed operator_intent_v1 schema validation: {exc}"
+            ) from exc
+
+    # ---- internals ------------------------------------------------ #
+
+    def _build_messages(self, context: ConversationContext) -> list[dict[str, str]]:
+        """Compose the role-tagged message list for Ollama's chat API.
+
+        System message = prompt body + the engine state snapshot (JSON).
+        Then each recent turn becomes a user / assistant message in
+        chronological order. Finally the current operator message is
+        appended as the last ``user`` turn.
+        """
+        system = (
+            f"{self._prompt.body}\n\n"
+            "Current engine state (JSON):\n"
+            f"{context.engine_state_snapshot.model_dump_json(indent=2)}"
+        )
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        for turn in context.recent_turns:
+            messages.append(
+                {
+                    "role": "user" if turn.role == "operator" else "assistant",
+                    "content": turn.content,
+                }
+            )
+        messages.append({"role": "user", "content": context.current_message})
+        return messages
+
+    def _extract_intent_dict(
+        self,
+        envelope: dict[str, Any],
+        *,
+        thinking_mode: bool,
+    ) -> dict[str, Any]:
+        """Pull the LLM's JSON object out of the chat envelope.
+
+        ``/api/chat`` returns ``{"message": {"role": "assistant",
+        "content": "..."}, ...}``. Some newer Ollama versions also
+        surface a top-level ``"thinking"`` field for thinking models;
+        we treat both as one combined text and walk for the last
+        balanced JSON object when in thinking mode.
+        """
+        message = envelope.get("message")
+        if not isinstance(message, dict):
+            raise AssistantError(
+                f"Ollama chat envelope missing 'message' object; keys: {sorted(envelope)}"
+            )
+        content = message.get("content")
+        if not isinstance(content, str):
+            content = ""
+        raw_thinking_field = envelope.get("thinking")
+        if not isinstance(raw_thinking_field, str):
+            raw_thinking_field = ""
+        content_empty = not content.strip()
+        thinking_present = bool(raw_thinking_field.strip())
+
+        if content_empty and not thinking_present:
+            raise AssistantError(
+                "Ollama chat returned empty 'message.content' and no 'thinking' field"
+            )
+
+        if thinking_mode or content_empty:
+            combined = content
+            if thinking_present:
+                combined = (combined + "\n" + raw_thinking_field).strip()
+            try:
+                return extract_last_json_object(combined)
+            except OllamaJsonExtractError as exc:
+                raise AssistantError(str(exc)) from exc
+
+        try:
+            parsed: Any = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise AssistantError(
+                f"Ollama 'message.content' is not valid JSON despite format=json request: {exc}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise AssistantError(
+                f"Ollama 'message.content' decoded to {type(parsed).__name__}, expected object"
+            )
+        return parsed

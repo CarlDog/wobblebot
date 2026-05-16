@@ -64,13 +64,28 @@ _THINKING_MODEL_PATTERNS = (
 )
 
 
-def _is_thinking_model(model_tag: str) -> bool:
-    """Return True iff the Ollama model tag matches a known thinking-style model."""
+def is_thinking_model(model_tag: str) -> bool:
+    """Return True iff the Ollama model tag matches a known thinking-style model.
+
+    Used by the advisor adapter (this module) and the assistant adapter
+    (``adapters/ollama_assistant.py``) to decide whether to drop Ollama's
+    ``format: "json"`` constraint and walk the free-text body for the
+    final JSON object instead.
+    """
     name = model_tag.lower()
     return any(pattern in name for pattern in _THINKING_MODEL_PATTERNS)
 
 
-def _extract_last_json_object(text: str) -> dict[str, Any]:
+class OllamaJsonExtractError(Exception):
+    """Internal helper exception — see :func:`extract_last_json_object`.
+
+    Callers catch and re-raise as their port-specific error
+    (``AdvisorError`` from the advisor adapter, ``AssistantError`` from
+    the assistant adapter) so the shared helper stays port-agnostic.
+    """
+
+
+def extract_last_json_object(text: str) -> dict[str, Any]:
     """Walk ``text`` and return the last ``{...}`` block that parses as a JSON object.
 
     Thinking models emit a long reasoning preamble (``<think>...</think>``,
@@ -79,6 +94,9 @@ def _extract_last_json_object(text: str) -> dict[str, Any]:
     try to parse a complete value from there — successful parses are
     collected and the last one wins.
 
+    Shared between the advisor and assistant adapters; each wraps a
+    failure as its port-specific error type.
+
     Args:
         text: The raw response body from the LLM.
 
@@ -86,7 +104,7 @@ def _extract_last_json_object(text: str) -> dict[str, Any]:
         The parsed JSON object.
 
     Raises:
-        AdvisorError: If no parseable JSON object is present.
+        OllamaJsonExtractError: If no parseable JSON object is present.
     """
     decoder = json.JSONDecoder()
     candidates: list[dict[str, Any]] = []
@@ -104,7 +122,7 @@ def _extract_last_json_object(text: str) -> dict[str, Any]:
         else:
             i += 1
     if not candidates:
-        raise AdvisorError(
+        raise OllamaJsonExtractError(
             f"Thinking-mode model returned no parseable JSON object "
             f"in {len(text)} chars of output"
         )
@@ -176,7 +194,7 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         )
         if extra_context:
             user_message = f"{user_message}\n\n{extra_context}"
-        thinking_mode = _is_thinking_model(self._model)
+        thinking_mode = is_thinking_model(self._model)
         payload: dict[str, Any] = {
             "model": self._model,
             "prompt": f"{self._prompt.body}\n\n{user_message}",
@@ -190,7 +208,7 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         # which forces the response body to be a parseable JSON value.
         # Thinking models (R1, o1-style) emit a reasoning preamble first,
         # so we drop the constraint and extract the trailing JSON from
-        # free text instead — see `_extract_last_json_object`.
+        # free text instead — see ``extract_last_json_object``.
         if not thinking_mode:
             payload["format"] = "json"
 
@@ -228,7 +246,10 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
             if thinking_present:
                 joined = (combined + "\n" + raw_thinking).strip()
                 combined = joined
-            inner = _extract_last_json_object(combined)
+            try:
+                inner = extract_last_json_object(combined)
+            except OllamaJsonExtractError as exc:
+                raise AdvisorError(str(exc)) from exc
         else:
             try:
                 inner = json.loads(raw_response)
