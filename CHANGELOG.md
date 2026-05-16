@@ -36,6 +36,90 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.3 — Operator Assistant (Ollama) (2026-05-16)
+
+Third Phase 5 slice. `OllamaAssistantAdapter` implementing
+`AssistantPort` — the LLM-side intent parser that turns operator
+natural-language messages into typed `OperatorIntent` payloads.
+Sister adapter to the existing Stage 3.2 `OllamaAdapter` (which
+implements `AdvisorPort` for the trading recommendation flow);
+different port, different endpoint, different output type, different
+prompt.
+
+**Endpoint:** Ollama's `/api/chat`, not `/api/generate`. The chat
+endpoint accepts role-tagged messages (`system` / `user` / `assistant`),
+giving the LLM a structured multi-turn history instead of a
+concatenated prompt — better behavior for context-sensitive intent
+parsing where one turn references a prior turn ("now filter to ETH").
+
+**Code reuse (per operator guidance "always reuse what makes
+sense"):** the helpers shared with the advisor adapter were
+extracted rather than duplicated:
+
+- `is_thinking_model` and `extract_last_json_object` in
+  `adapters/ollama.py` promoted from underscore-private to module-public.
+- New `OllamaJsonExtractError` raised by the shared extractor — each
+  adapter catches and wraps as its port-specific error
+  (`AdvisorError` from the advisor side, `AssistantError` from the
+  assistant side). Helper stays port-agnostic.
+- The ~10 lines of HTTP boilerplate per adapter (init, aclose,
+  envelope key extraction) stay duplicated because the envelope
+  shapes for `/api/chat` vs `/api/generate` diverge enough that a
+  shared wrapper would carry conditional logic for marginal DRY win.
+
+**Prompt:** new `config/prompts/operator.md` with frontmatter
+declaring `role=operator` and `response_schema=operator_intent_v1`.
+Body documents all four `OperatorIntent` variants with concrete JSON
+examples for every command + query in the v1 catalog. Hard
+constraint: never invent commands not in the catalog; emit
+`unparseable` instead.
+
+**`PromptRole` literal** gained `"operator"`. One-line change in
+`config/prompts.py`; test parametrize updated to match.
+
+**Adapter behavior:**
+- Constructor refuses prompts whose role != "operator" — fails
+  loudly at wiring time rather than silently producing nonsense.
+- `parse_intent` builds the role-tagged message list: system prompt
+  body + engine state snapshot JSON in the system message; each
+  recent `ConversationTurn` becomes a user/assistant message in
+  chronological order; current operator message is the last user
+  turn.
+- Module-level `TypeAdapter[OperatorIntent]` validates the LLM's
+  JSON output against the discriminated union (both nesting levels
+  — outer `Command`/`Query`/`Conversational`/`Unparseable` and
+  inner concrete command/query kind — resolve in one pass).
+- Thinking-mode (R1, o1, etc.) + split-response-envelope handling
+  matches the advisor pattern.
+- Every layer's failure wraps as `AssistantError`. Per ADR-013 the
+  conversational LLM is NOT in the money path; an `AssistantError`
+  affects only the Discord chat surface — `cli/live` never imports
+  this module.
+
+19 new unit tests for the assistant adapter cover constructor
+prompt-role validation; happy paths for each `OperatorIntent`
+variant (command + query + query-with-args + conversational +
+unparseable); multi-turn `ConversationContext` propagation as
+role-tagged messages; engine state snapshot embedding in the system
+message; thinking-mode drops `format=json` and walks free-text;
+split-response envelope (empty `message.content`, JSON in
+`thinking`); error paths (HTTP 5xx, malformed envelope, empty
+content, invalid JSON, top-level non-object, schema validation
+failure, thinking-mode no-JSON); `aclose` lifecycle for owned vs
+borrowed clients. 2 existing advisor tests updated to expect the
+port-agnostic `OllamaJsonExtractError`. 1 parametrize case added
+for the `"operator"` role in `test_prompts.py`. `TestShippedPrompts`
+extended to assert `operator.md` loads with
+`response_schema=operator_intent_v1`.
+
+Full suite **1088** passes (was 1067 at Stage 5.2 close, +21).
+mypy clean across 66 src files. pylint **10.00/10** with no
+outstanding warnings. black + isort clean.
+
+Running real-money cost unchanged at $0.08 (Stage 5.3 is an LLM
+adapter; tests use `httpx.MockTransport` so no real Ollama call
+happened, and the assistant is structurally outside the money path).
+
 ### Stage 5.2 — Discord Transport Adapter (2026-05-16)
 
 Second Phase 5 slice. The adapter wraps `discord.py`'s Gateway client.
