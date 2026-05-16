@@ -10,6 +10,21 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 3.5 — Phase 3 Integration Check + Phase 3 Close (2026-05-15)
+
+End-to-end advisor-in-the-loop chain verified against live operator state, then Phase 3 closed.
+
+**Chain verification:**
+- **observe → metrics**: 6520 price snapshots accumulated by overnight `cli/observe` soak across BTC/USD + ETH/USD + DOGE/USD.
+- **news → summary**: one `cli/news` poll cycle pulled 131 items (CoinDesk 25 + Decrypt 37 + The Block 19 + CryptoCompare 50; matches Stage 3.2.5 closing receipt to the row).
+- **advise → suggestion**: one `cli/advise` cycle (39s wall-clock, phi4:14b-q8_0) produced `{spacing 1.1, levels±4}` with 20 news items in the summary's `recent_news`. Notable: same parameter recommendation as the previous cycle but `confidence` dropped from `high` (no news) to `medium` (news context present) — calibration shift even when proposed params hold.
+- **apply → operator review**: `cli/apply` (dry-run) correctly rejected every key with reason "auto-apply disabled" — gate default-off posture holds end-to-end.
+
+**Phase 3 close:**
+- Closing summary at `docs/planning/phase-3-summary.md` (mirrors Phase 2's at `phase-2-summary.md`). Captures per-stage outcomes, MoE live verification numbers, design decisions ratified across the phase, health snapshot, what was deliberately not done, Phase 4 entry conditions.
+- **Phase 3 real-money cost: $0.00** (advisor never executes per ADR-002). Running project total still **$0.08** unchanged from Phase 2 close.
+- Phase 3 stages closed: 3.0, 3.1, 3.2, 3.2.5, 3.3, 3.4a, 3.4b, 3.5 (plus the config consolidation audit). Phase 4 entry conditions met.
+
 ### Stage 3.4b — Bounded Auto-Tuning Gate (2026-05-15)
 
 Three-slice landing of the operator-in-the-loop apply surface. **Off by default** — `AutoApplyConfig.enabled=False` blanket-rejects every key, matching the conservative posture ADR-007 calls for. When the operator opts in, advisor suggestions can mutate the running grid within configured magnitude bounds. News-role suggestions never apply regardless of bounds.

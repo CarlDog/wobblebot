@@ -40,8 +40,8 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 3 / Stage 3.3** — Passive Advisory Workflow (`cli/advise`) | ✅ closed 2026-05-15 |
 | **Phase 3 / Stage 3.4a** — Mixture of Experts (MoE) | ✅ closed 2026-05-15 |
 | **Phase 3 / Stage 3.4b** — Bounded Auto-Tuning Gate (`cli/apply`) | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.5** — Phase 3 integration check | next up |
-| **Phase 4** — Harvester & treasury management | gated on Phase 3 |
+| **Phase 3 / Stage 3.5** — Phase 3 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-3-summary.md)) |
+| **Phase 4** — Harvester & treasury management | next up |
 | **Phase 5** — UX, dashboard, hardening, v1.0 | gated on Phase 4 |
 
 **Health:** 792 unit tests pass by default; 21 integration tests opt-in. mypy clean (57 src files), black/isort clean, pylint **10.00/10**.
