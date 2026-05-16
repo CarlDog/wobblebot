@@ -10,6 +10,24 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 3.6 — Operational polish: indefinite runtime + multi-symbol advise (2026-05-15)
+
+Two small slices to remove pre-Phase-4 operational friction.
+
+**Slice 3.6a — indefinite runtime.**
+- `LiveConfig.max_runtime_minutes` and `ShadowConfig.max_runtime_minutes` became `Optional[float]`. `None` means "no runtime cap." Pre-3.6a the field was `Field(default=60.0, gt=0)` and operators had to bump it to a sentinel like 525600 for "effectively forever" — `0` was rejected by Pydantic, and even if allowed the loop check `elapsed >= max_runtime_seconds` would have exited on tick 1.
+- Loop logic in `cli/live._run_engine_loop` and `cli/shadow._run_loop` resolves `max_runtime_seconds` to `None` when configured and skips the per-tick comparison. SIGINT/SIGTERM, max_session_loss_usd, and the engine's safety caps still apply — this isn't a way to bypass safety.
+- `settings.example.yml` comments flag `~null~` as the run-indefinitely value.
+
+**Slice 3.6b — multi-symbol `cli/advise` with per-symbol-isolated LLM calls.**
+- `AdviseConfig.symbol: Symbol` → `AdviseConfig.symbols: list[Symbol]`. CLI flag `--symbol` → `--symbols` (comma-separated, matching `cli/live`/`cli/shadow`/`cli/observe`).
+- The daemon iterates serial per symbol within each tick: `for symbol in symbols: await _run_cycle(symbol=symbol)`. Each cycle builds a single-symbol `PerformanceSummary` so the LLM never sees more than one coin's context per call. Cross-contamination of opinions prevented by construction.
+- Per-symbol cycle errors swallowed at the daemon layer (one bad coin can't kill the sweep) — matches `cli/live`'s Stage 2.4 discipline.
+- `cli/apply` updated to filter `advisor_suggestions` by symbol — the multi-symbol advise daemon writes one row per coin per sweep, so a global "newest" pick could land on the wrong coin's row.
+- **Verified live** against the operator's real advise.db: one sweep with `--symbols BTC/USD,ETH/USD` produced distinct recommendations per coin — BTC got `spacing 1.1 / order $12` (high confidence), ETH got `spacing 0.7 / order $15` (medium confidence). Different parameters AND different confidence levels prove per-symbol reasoning isolation end-to-end.
+
+800 unit tests pass (was 792 at Phase 3 close, +8 across 3.6a's runtime tests and 3.6b's sweep tests). mypy clean (57 src files); pylint 10.00/10. No new runtime deps.
+
 ### Stage 3.5 — Phase 3 Integration Check + Phase 3 Close (2026-05-15)
 
 End-to-end advisor-in-the-loop chain verified against live operator state, then Phase 3 closed.

@@ -41,6 +41,7 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 3 / Stage 3.4a** — Mixture of Experts (MoE) | ✅ closed 2026-05-15 |
 | **Phase 3 / Stage 3.4b** — Bounded Auto-Tuning Gate (`cli/apply`) | ✅ closed 2026-05-15 |
 | **Phase 3 / Stage 3.5** — Phase 3 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-3-summary.md)) |
+| **Stage 3.6** — Operational polish (indefinite runtime + multi-symbol advise) | ✅ closed 2026-05-15 |
 | **Phase 4** — Harvester & treasury management | next up |
 | **Phase 5** — UX, dashboard, hardening, v1.0 | gated on Phase 4 |
 
