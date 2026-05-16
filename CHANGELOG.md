@@ -10,6 +10,22 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 4.1 — Harvester Domain + Decision Logic (2026-05-15)
+
+First Phase 4 slice. Pure-domain — no I/O, no Kraken calls, no withdrawals; **zero new real-money risk**.
+
+- **`HarvesterConfig`** (`config/harvester.py`): four operator-tunable USD thresholds (`min_exchange_liquidity_usd / topup_threshold_usd / surplus_threshold_usd / max_withdrawal_per_day_usd`). Model validator enforces the `min < topup < surplus` ordering invariant at config-load. `enabled: bool = False` mirrors the auto-apply gate posture (ADR-012-style): operator opts in for anything that moves money.
+- **`services/harvester.propose_transfer()`**: pure function taking `(balance_usd, config, today_total_withdrawn_usd)` and returning `TransferProposal | None` per four bands carved out by the thresholds:
+  - **Deficit** (`< min`): no proposal — operator-only territory.
+  - **Top-up band** (`min ≤ balance < topup`): propose `bank_to_exchange` to the midpoint of `(topup, surplus)`.
+  - **Hold band** (`topup ≤ balance ≤ surplus`): no proposal.
+  - **Surplus** (`> surplus`): propose `exchange_to_bank` scrape to the same midpoint.
+- **Day-cap interaction**: proposals shrink to the remaining cap when `today_total_withdrawn_usd + desired_amount > max_withdrawal_per_day_usd`; cap exhausted returns `None`. Day-cap doesn't apply to deposits (inflows).
+- Existing `HarvesterPort` interface (Phase 1.2) stays unchanged; 4.2+ adapter implementations will consume `propose_transfer()`.
+- `settings.example.yml` harvester block reordered to match the new invariant and gained an operator-facing comment explaining the three bands.
+
+24 new tests covering every band, every day-cap branch, config invariants, and proposal shape sanity. 824 total unit tests pass (+24 since Stage 3.6 close); mypy clean (59 src files); pylint 10.00/10. No new runtime deps.
+
 ### Stage 3.6 — Operational polish: indefinite runtime + multi-symbol advise (2026-05-15)
 
 Two small slices to remove pre-Phase-4 operational friction.
