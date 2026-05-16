@@ -36,6 +36,45 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.2 — Discord Transport Adapter (2026-05-16)
+
+Second Phase 5 slice. The adapter wraps `discord.py`'s Gateway client.
+Inbound Gateway events (messages, reactions) are normalized into typed
+`InboundMessage` / `ReactionEvent` value objects, allowlist-filtered
+(user + channel both required, empty allowlists deny-by-default, bot's
+own user id always rejected), and dispatched to registered handler
+callbacks. Outbound surface: `send_message`, `send_embed` (color-coded
+by level), `send_confirmation` (amber-bordered embed + ✅ / ❌ reaction
+buttons wired for the Stage 5.4 confirm-before-execute gate).
+
+The adapter is concrete (not behind a port). Only `cli/operator`
+(Stage 5.6) will consume it; an abstraction would be speculative. Per
+ADR-013 decision 9, `cli/live` remains Discord-ignorant — it never
+imports this module.
+
+**New runtime dep:** `discord.py>=2.3,<3` (2.7.1 currently). MIT,
+actively maintained, the de-facto Python Discord client. Pinned to
+major 2 to avoid breaking-change drift. The `message_content` Intent
+is enabled (privileged; must also be enabled in the Discord developer
+portal for the bot account).
+
+36 new unit tests cover config + value object construction /
+frozenness / validation; `is_allowed` allowlist semantics including
+bot self-rejection and empty-allowlist deny; handler dispatch +
+filtering + per-handler exception swallowing; outbound `send_*`
+against a `MagicMock` / `AsyncMock` injected `discord.Client`;
+`_resolve_text_channel` fallback path (`get_channel` returns `None`
+→ `fetch_channel`); send to non-text channel raises; `start` without
+token env var raises; `close` idempotency. 90% module coverage
+(uncovered: the Gateway-bound `on_message` / `on_raw_reaction_add`
+event shims marked `# pragma: no cover`, and the
+`discord.DiscordException` re-raise wrappers that require contrived
+mocks). Full suite **1067** passes (was 1031 at Stage 5.1 close,
++36). mypy clean across 65 src files. pylint **10.00/10**.
+
+Running real-money cost unchanged at $0.08 (pure-transport stage; no
+real-money operations, no Gateway connection in tests).
+
 ### Stage 5.1 — Operator Domain & Ports (2026-05-16)
 
 First Phase 5 slice. Pure-domain — no I/O, no Discord, no LLM call,
