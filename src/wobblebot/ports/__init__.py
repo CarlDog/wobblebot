@@ -15,9 +15,17 @@ from wobblebot.ports.advisor import (
     NewsItemSummary,
     PerformanceSummary,
 )
+from wobblebot.ports.assistant import (
+    AssistantPort,
+    ConversationContext,
+    ConversationTurn,
+    EngineStateSnapshot,
+    SymbolStateSnapshot,
+)
 from wobblebot.ports.data_collector import DataCollectorPort, MarketSnapshot
 from wobblebot.ports.exceptions import (
     AdvisorError,
+    AssistantError,
     DataCollectorError,
     ExchangeError,
     HarvesterError,
@@ -98,6 +106,7 @@ __all__ = [
     "TransferResult",
     # Phase 5 — operator interaction (ADR-013)
     "OperatorPort",
+    "AssistantPort",
     "OperatorIntent",
     "OperatorCommand",
     "OperatorQuery",
@@ -105,6 +114,10 @@ __all__ = [
     "CommandResult",
     "PendingCommand",
     "PendingCommandStatus",
+    "ConversationTurn",
+    "ConversationContext",
+    "EngineStateSnapshot",
+    "SymbolStateSnapshot",
     # Intent variants
     "IntentCommand",
     "IntentQuery",
@@ -162,4 +175,5 @@ __all__ = [
     "DataCollectorError",
     "NewsError",
     "OperatorError",
+    "AssistantError",
 ]

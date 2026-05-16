@@ -94,3 +94,16 @@ class OperatorError(WobbleBotPortError):
     ``CommandResult`` / ``QueryResult`` for domain misses — exceptions
     are reserved for protocol / transport / unrecoverable conditions.
     """
+
+
+class AssistantError(WobbleBotPortError):
+    """Raised when an ``AssistantPort`` operation fails.
+
+    Examples: LLM backend unreachable, output fails ``OperatorIntent``
+    schema validation, model returns an empty or malformed response.
+    Per ADR-013 the conversational LLM is NOT in the money path — an
+    ``AssistantError`` only affects the Discord chat surface; engine
+    code in ``cli/live`` cannot observe it. ``cli/operator`` catches
+    this, logs structurally, and posts a graceful "I couldn't parse
+    that" reply rather than dropping the message.
+    """
