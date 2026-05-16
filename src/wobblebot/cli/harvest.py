@@ -38,12 +38,13 @@ from decimal import Decimal
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.ports.exceptions import ExchangeError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.services.harvester import propose_transfer
 
@@ -76,10 +77,18 @@ async def _run_cycle(
     adapter: ExchangePort,
     *,
     config: WobbleBotConfig,
+    storage: SQLiteStorageAdapter | None,
 ) -> bool:
-    """One harvest tick: read balance → decide → log. Returns True on
-    a successful read (proposal or no-op), False on a recoverable
-    failure."""
+    """One harvest tick: read balance → decide → log → persist if there's
+    a proposal. Returns True on a successful read (proposal or no-op),
+    False on a recoverable failure.
+
+    Persistence (Stage 4.3): when a proposal fires AND ``storage`` is
+    provided, the proposal lands in the ``transfer_proposals`` table.
+    A storage write failure is logged but does NOT fail the tick —
+    the daemon's main job is observation; missing one audit row is
+    less bad than killing the loop.
+    """
     assert config.harvester is not None  # caller-enforced
     balance_usd = await _read_usd_balance(adapter)
     if balance_usd is None:
@@ -88,7 +97,7 @@ async def _run_cycle(
     proposal = propose_transfer(
         balance_usd=balance_usd,
         config=config.harvester,
-        today_total_withdrawn_usd=Decimal("0"),  # 4.2: no history yet
+        today_total_withdrawn_usd=Decimal("0"),  # 4.3: no history yet (4.4's job)
     )
 
     if proposal is None:
@@ -116,6 +125,22 @@ async def _run_cycle(
             "rationale": proposal.rationale,
         },
     )
+
+    if storage is not None:
+        try:
+            await storage.save_transfer_proposal(proposal)
+        except StorageError as exc:
+            # Log + continue: missing a row in the audit table is
+            # worse than killing the loop. Operator will see the
+            # error and can investigate.
+            _LOGGER.error(
+                "transfer proposal persistence failed",
+                extra={
+                    "proposal_id": proposal.proposal_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
     return True
 
 
@@ -134,6 +159,7 @@ async def _run_loop(
     *,
     adapter: ExchangePort,
     config: WobbleBotConfig,
+    storage: SQLiteStorageAdapter | None,
     interval_seconds: float,
     stop_event: asyncio.Event,
 ) -> int:
@@ -145,12 +171,13 @@ async def _run_loop(
         extra={
             "interval_seconds": interval_seconds,
             "harvester_enabled": config.harvester.enabled if config.harvester else False,
+            "persistence_enabled": storage is not None,
         },
     )
     try:
         while not stop_event.is_set():
             ticks_run += 1
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=storage)
             if ok:
                 ticks_succeeded += 1
             try:
@@ -200,6 +227,22 @@ async def _main_async(config: WobbleBotConfig) -> int:
 
     adapter = KrakenAdapter(kraken)
 
+    # Stage 4.3: open storage for transfer-proposal persistence.
+    # config.harvest may be None if the operator omitted the per-CLI
+    # section — in that case skip persistence (operator gets the log
+    # stream but no forensic table).
+    storage: SQLiteStorageAdapter | None = None
+    if config.harvest is not None:
+        storage = SQLiteStorageAdapter(config.harvest.db)
+        try:
+            await storage.connect()
+        except StorageError as exc:
+            _LOGGER.error(
+                "failed to open harvest db; persistence disabled",
+                extra={"path": config.harvest.db, "error": str(exc)},
+            )
+            storage = None
+
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
@@ -207,6 +250,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
         return await _run_loop(
             adapter=adapter,
             config=config,
+            storage=storage,
             interval_seconds=interval.total_seconds(),
             stop_event=stop_event,
         )
@@ -214,6 +258,8 @@ async def _main_async(config: WobbleBotConfig) -> int:
         aclose = getattr(adapter, "aclose", None)
         if aclose is not None:
             await aclose()
+        if storage is not None:
+            await storage.close()
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

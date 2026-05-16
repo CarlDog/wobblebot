@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.harvest import _classify_band, _read_usd_balance, _run_cycle
 from wobblebot.config.cli import HarvestConfig
 from wobblebot.config.grid import GridConfig, GridLevels
@@ -185,7 +186,7 @@ class TestRunCycleHappyPath:
         adapter = _StubExchange(usd_balance=Decimal("375"))
         config = _full_config()
         with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         no_proposal = [r for r in caplog.records if "no proposal" in r.message]
         assert no_proposal
@@ -198,7 +199,7 @@ class TestRunCycleHappyPath:
         adapter = _StubExchange(usd_balance=Decimal("600"))
         config = _full_config()
         with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         proposal_logs = [r for r in caplog.records if "HYPOTHETICAL" in r.message]
         assert proposal_logs
@@ -215,7 +216,7 @@ class TestRunCycleHappyPath:
         adapter = _StubExchange(usd_balance=Decimal("210"))
         config = _full_config()
         with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         proposal_logs = [r for r in caplog.records if "HYPOTHETICAL" in r.message]
         assert proposal_logs
@@ -230,7 +231,7 @@ class TestRunCycleHappyPath:
         adapter = _StubExchange(usd_balance=Decimal("100"))
         config = _full_config()
         with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         no_proposal = [r for r in caplog.records if "no proposal" in r.message]
         assert no_proposal
@@ -247,7 +248,7 @@ class TestRunCycleFaultIsolation:
         adapter = _StubExchange(error=ExchangeError("HTTP 503"))
         config = _full_config()
         with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
-            ok = await _run_cycle(adapter, config=config)
+            ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is False
         # No proposal log should fire on a failed read.
         assert not [r for r in caplog.records if "HYPOTHETICAL" in r.message]
@@ -266,7 +267,7 @@ class TestNoMoneyMovesAtStage42:
         adapter = _StubExchange(usd_balance=Decimal("600"))
         config = _full_config()
         with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
-            await _run_cycle(adapter, config=config)
+            await _run_cycle(adapter, config=config, storage=None)
         # The message MUST flag the hypothetical nature so an operator
         # glancing at logs doesn't mistake it for a real action.
         proposal_logs = [r for r in caplog.records if "HYPOTHETICAL" in r.message]
@@ -274,3 +275,87 @@ class TestNoMoneyMovesAtStage42:
         assert "no money moved" in proposal_logs[0].message
         # Only ONE call to get_balance (the read); no execute_transfer-shaped path.
         assert adapter.call_count == 1
+
+
+@pytest.mark.asyncio
+class TestPersistence:
+    """Stage 4.3: when storage is provided, proposals land in
+    transfer_proposals. Persistence is independent of
+    HarvesterConfig.enabled — that flag gates execution (4.4+)."""
+
+    async def test_proposal_persists_when_storage_provided(self) -> None:
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            adapter = _StubExchange(usd_balance=Decimal("600"))
+            config = _full_config()
+            ok = await _run_cycle(adapter, config=config, storage=storage)
+            assert ok is True
+
+            proposals = await storage.get_transfer_proposals()
+            assert len(proposals) == 1
+            assert proposals[0].direction == "exchange_to_bank"
+            assert proposals[0].amount == Decimal("225")
+        finally:
+            await storage.close()
+
+    async def test_no_proposal_no_persist(self) -> None:
+        """Hold-band ticks return None — nothing should land in storage."""
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            adapter = _StubExchange(usd_balance=Decimal("375"))  # hold band
+            config = _full_config()
+            ok = await _run_cycle(adapter, config=config, storage=storage)
+            assert ok is True
+
+            proposals = await storage.get_transfer_proposals()
+            assert proposals == []
+        finally:
+            await storage.close()
+
+    async def test_persistence_independent_of_enabled_flag(self) -> None:
+        """harvester.enabled=False (default) does NOT suppress
+        persistence — the forensic record is always on. enabled is
+        the 4.4 execute-gate, not the persist-gate."""
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            disabled_harvester = HarvesterConfig(
+                enabled=False,  # explicit
+                min_exchange_liquidity_usd=Decimal("200"),
+                topup_threshold_usd=Decimal("250"),
+                surplus_threshold_usd=Decimal("500"),
+                max_withdrawal_per_day_usd=Decimal("1000"),
+            )
+            adapter = _StubExchange(usd_balance=Decimal("600"))
+            config = _full_config(harvester=disabled_harvester)
+            await _run_cycle(adapter, config=config, storage=storage)
+
+            proposals = await storage.get_transfer_proposals()
+            assert len(proposals) == 1
+        finally:
+            await storage.close()
+
+    async def test_storage_failure_logged_but_cycle_continues(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A storage write failure must NOT kill the daemon — the log
+        stream is the operator's primary surface; missing one audit
+        row is less bad than missing every subsequent tick."""
+
+        class _FlakeyStorage:
+            """Just-enough SQLiteStorageAdapter-shaped object that
+            raises StorageError on save."""
+
+            async def save_transfer_proposal(self, proposal):  # type: ignore[no-untyped-def]
+                from wobblebot.ports.exceptions import StorageError as _SE
+
+                raise _SE("simulated db down")
+
+        adapter = _StubExchange(usd_balance=Decimal("600"))
+        config = _full_config()
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+            ok = await _run_cycle(adapter, config=config, storage=_FlakeyStorage())  # type: ignore[arg-type]
+        assert ok is True  # cycle succeeded even though persist failed
+        assert any("persistence failed" in r.message for r in caplog.records)

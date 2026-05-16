@@ -317,20 +317,21 @@ class AdviseConfig(BaseModel):
 class HarvestConfig(BaseModel):
     """Settings for ``cli/harvest`` — Phase 4 treasury monitor.
 
-    Stage 4.2 surface: poll Kraken USD balance, run the
-    ``propose_transfer()`` decision against the operator's
-    ``HarvesterConfig`` thresholds, and log what *would* be proposed.
-    No transfers, no DB writes for proposals (that's 4.3's job once
-    proposals become operator-reviewable). Uses the read-only
-    ``KRAKEN_API_KEY`` — the Harvester key with Withdraw scope isn't
-    needed until 4.4.
+    Stage 4.2 introduced the daemon (read balance + log). Stage 4.3
+    adds persistence: every non-None proposal lands in
+    ``transfer_proposals`` regardless of ``HarvesterConfig.enabled``
+    (that flag gates execution in 4.4+, not the forensic record).
 
-    The Stage 4.2 ``today_total_withdrawn_usd`` parameter always
-    flows in as 0 because no transfers happen. Once 4.3+ persists
-    real withdrawals, the daemon queries that history for the rolling
-    24h total.
+    Uses the read-only ``KRAKEN_API_KEY`` through 4.3; the Harvester
+    key with Withdraw scope isn't needed until 4.4.
+
+    The ``today_total_withdrawn_usd`` parameter that feeds the
+    day-cap check flows in as 0 through 4.3 — no withdrawals happen
+    yet. Stage 4.4 wires a real history query against the
+    ``transfer_results`` table.
     """
 
+    db: str = "data/wobblebot-harvest.db"
     log_format: LogFormat = "plain"
 
     class Config:

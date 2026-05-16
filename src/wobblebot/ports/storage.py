@@ -12,6 +12,7 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.harvester import TransferProposal
 
 
 class StoragePort(ABC):
@@ -329,6 +330,47 @@ class StoragePort(ABC):
 
         Returns:
             Matching audit rows ordered by ``applied_at`` DESC.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def save_transfer_proposal(self, proposal: TransferProposal) -> None:
+        """Persist a Stage 4.3 transfer proposal for operator review.
+
+        Persisted regardless of ``HarvesterConfig.enabled`` — that flag
+        gates execution (Stage 4.4+), not the forensic record. The
+        proposal's ``proposal_id`` is enforced UNIQUE at the DB level
+        to catch accidental double-inserts.
+
+        Args:
+            proposal: TransferProposal to save.
+
+        Raises:
+            StorageError: If save fails (including UNIQUE violation
+                on ``proposal_id``).
+        """
+
+    @abstractmethod
+    async def get_transfer_proposals(
+        self,
+        since: datetime | None = None,
+        direction: str | None = None,
+        asset: str | None = None,
+        limit: int | None = None,
+    ) -> list[TransferProposal]:
+        """Query persisted transfer proposals with optional filters.
+
+        Args:
+            since: Lower bound on ``created_at`` (inclusive, tz-aware).
+            direction: Filter to one direction
+                (``"exchange_to_bank"`` or ``"bank_to_exchange"``).
+            asset: Filter to one asset (``"USD"``, etc.).
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching proposals ordered by ``created_at`` DESC.
 
         Raises:
             StorageError: If retrieval fails.

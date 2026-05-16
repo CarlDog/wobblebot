@@ -322,11 +322,14 @@ advisor:
 # Per-CLI: harvest (cli/harvest — Stage 4.2 read-only treasury monitor)
 # ============================================================================
 # Cadence lives in `schedules.harvest` above. The daemon reads Kraken
-# USD balance, runs the propose_transfer() decision, and logs what
-# WOULD be proposed. No transfers happen at Stage 4.2 — operator
-# watches the proposal stream to calibrate the harvester thresholds
-# before flipping `harvester.enabled` (which only matters from 4.3+).
+# USD balance, runs the propose_transfer() decision, logs what WOULD
+# be proposed, and (Stage 4.3) persists every non-None proposal to
+# the harvest.db transfer_proposals table for operator review via
+# `python tools/show_proposals.py`. Persistence happens regardless
+# of `harvester.enabled` — that flag gates execution in Stage 4.4+,
+# not the forensic record. No transfers happen through Stage 4.3.
 harvest:
+  db: "data/wobblebot-harvest.db"       # transfer_proposals lands here
   log_format: plain                     # plain | json
 
 # ============================================================================

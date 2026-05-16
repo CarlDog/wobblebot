@@ -49,10 +49,12 @@ deposits, not withdrawals.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 from wobblebot.config.harvester import HarvesterConfig
+from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.harvester import TransferProposal
 
 
@@ -132,6 +134,7 @@ def _propose_withdrawal(
         rationale=rationale,
         current_exchange_balance=balance_usd,
         target_exchange_balance=target_balance,
+        created_at=Timestamp(dt=datetime.now(UTC)),
     )
 
 
@@ -156,6 +159,7 @@ def _propose_topup(
         rationale=rationale,
         current_exchange_balance=balance_usd,
         target_exchange_balance=hold_midpoint,
+        created_at=Timestamp(dt=datetime.now(UTC)),
     )
 
 

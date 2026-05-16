@@ -180,6 +180,18 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def save_transfer_proposal(self, proposal):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_transfer_proposals(
+        self,
+        since: datetime | None = None,
+        direction: str | None = None,
+        asset: str | None = None,
+        limit: int | None = None,
+    ):
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
