@@ -652,3 +652,138 @@ class TestMultiSymbol:
         assert btc_state is not None
         assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
         assert await storage.get_grid_state(ETH_USD) is None
+
+
+# ---------------------------------------------------------------------------
+# Stage 5.4 — operator-driven control (pause / resume / cancel / stop)
+# ---------------------------------------------------------------------------
+
+
+class TestPauseResume:
+    async def test_pause_returns_true_first_call(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        assert engine.pause_symbol(BTC_USD) is True
+        assert engine.is_paused(BTC_USD) is True
+
+    async def test_pause_idempotent_returns_false_when_already_paused(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        assert engine.pause_symbol(BTC_USD) is False
+
+    async def test_resume_returns_true_when_paused(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        assert engine.resume_symbol(BTC_USD) is True
+        assert engine.is_paused(BTC_USD) is False
+
+    async def test_resume_idempotent_returns_false_when_active(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        assert engine.resume_symbol(BTC_USD) is False
+
+    async def test_paused_symbols_snapshot_is_frozen(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        snap = engine.paused_symbols()
+        assert isinstance(snap, frozenset)
+        assert BTC_USD in snap
+        # Mutating after snapshot doesn't reflect into the snap (it's a copy)
+        engine.resume_symbol(BTC_USD)
+        assert BTC_USD in snap  # snapshot unchanged
+
+    async def test_step_returns_skipped_paused_when_paused(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        result = await engine.step(BTC_USD)
+        assert result.action == "skipped_paused"
+        # No grid state created, no orders placed
+        assert await storage.get_grid_state(BTC_USD) is None
+        assert await storage.get_open_orders(symbol=BTC_USD) == []
+
+    async def test_paused_then_resumed_step_initializes(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        await engine.step(BTC_USD)  # skipped
+        engine.resume_symbol(BTC_USD)
+        result = await engine.step(BTC_USD)
+        assert result.action == "initialized"
+        assert result.placed > 0
+
+    async def test_pause_does_not_cancel_orders(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        # Lay the grid first
+        await engine.step(BTC_USD)
+        opens_before = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(opens_before) > 0
+        engine.pause_symbol(BTC_USD)
+        # Open orders preserved through pause
+        opens_after = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(opens_after) == len(opens_before)
+
+
+class TestRequestStop:
+    async def test_initial_state_not_requested(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        assert engine.is_stop_requested is False
+
+    async def test_request_stop_sets_flag(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.request_stop()
+        assert engine.is_stop_requested is True
+
+    async def test_request_stop_idempotent(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.request_stop()
+        engine.request_stop()  # second call is a no-op
+        assert engine.is_stop_requested is True
+
+
+class TestCancelOpenOrders:
+    async def test_cancel_one_symbol(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize -> places grid
+        opens_before = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(opens_before) > 0
+        cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+        assert cancelled == len(opens_before)
+        assert failed == 0
+        # After cancel + persist, storage shows no open BTC orders
+        opens_after = await storage.get_open_orders(symbol=BTC_USD)
+        assert opens_after == []
+
+    async def test_cancel_returns_zero_when_no_open_orders(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+        assert (cancelled, failed) == (0, 0)
+
+    async def test_cancel_all_symbols(self, storage: SQLiteStorageAdapter) -> None:
+        eth_usd = Symbol(base="ETH", quote="USD")
+        exch = MockExchangeAdapter(
+            starting_balances={
+                "USD": Decimal("100000"),
+                "BTC": Decimal("10"),
+                "ETH": Decimal("100"),
+            },
+            starting_prices={
+                BTC_USD: Decimal("50000"),
+                eth_usd: Decimal("3000"),
+            },
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        await engine.step(eth_usd)
+        opens_total = await storage.get_open_orders()
+        assert len(opens_total) > 0
+        cancelled, failed = await engine.cancel_open_orders(symbol=None)
+        assert cancelled == len(opens_total)
+        assert failed == 0
+        assert await storage.get_open_orders() == []

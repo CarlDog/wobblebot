@@ -59,7 +59,7 @@ from wobblebot.ports.storage import StoragePort
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
 
-StepAction = Literal["initialized", "stepped", "skipped_disabled"]
+StepAction = Literal["initialized", "stepped", "skipped_disabled", "skipped_paused"]
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,13 @@ class GridEngine:
         self._config = grid_config
         self._safety = safety_config
         self._coin_locks: dict[str, asyncio.Lock] = {}
+        # Stage 5.4: operator-driven control surface. In-memory state so
+        # pause is per-session — a cli/live restart resets it. Keeping it
+        # in memory avoids a schema migration and matches the "operator
+        # rebuilds context on restart" mental model. Persist to storage
+        # later if operators report surprise.
+        self._paused_symbols: set[Symbol] = set()
+        self._stop_requested = False
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -146,6 +153,8 @@ class GridEngine:
         coin_cfg = self._config.for_coin(symbol.base)
         if not coin_cfg.enabled:
             return StepResult(symbol=symbol, action="skipped_disabled")
+        if self.is_paused(symbol):
+            return StepResult(symbol=symbol, action="skipped_paused")
 
         current_price = (await self._exchange.get_current_price(symbol)).amount
 
@@ -154,6 +163,110 @@ class GridEngine:
             return await self._initialize(symbol, current_price, coin_cfg)
 
         return await self._tick(symbol, current_price, grid_state, coin_cfg)
+
+    # ------------------------------------------------------------------ operator control (5.4)
+
+    def pause_symbol(self, symbol: Symbol) -> bool:
+        """Pause one symbol's grid.
+
+        Subsequent ``step(symbol)`` calls return ``action="skipped_paused"``
+        without touching the exchange or storage. Open orders are NOT
+        cancelled — that's a separate operator action (``cancel_open_orders``).
+
+        Returns:
+            ``True`` if the symbol was active and is now paused;
+            ``False`` if it was already paused (idempotent, no-op).
+        """
+        if symbol in self._paused_symbols:
+            return False
+        self._paused_symbols.add(symbol)
+        _LOGGER.info("symbol paused by operator", extra={"symbol": str(symbol)})
+        return True
+
+    def resume_symbol(self, symbol: Symbol) -> bool:
+        """Resume one paused symbol's grid.
+
+        Returns:
+            ``True`` if the symbol was paused and is now active;
+            ``False`` if it was already active (idempotent, no-op).
+        """
+        if symbol not in self._paused_symbols:
+            return False
+        self._paused_symbols.discard(symbol)
+        _LOGGER.info("symbol resumed by operator", extra={"symbol": str(symbol)})
+        return True
+
+    def is_paused(self, symbol: Symbol) -> bool:
+        """Return ``True`` if ``symbol`` is currently paused."""
+        return symbol in self._paused_symbols
+
+    def paused_symbols(self) -> frozenset[Symbol]:
+        """Snapshot of currently paused symbols (immutable copy)."""
+        return frozenset(self._paused_symbols)
+
+    def request_stop(self) -> None:
+        """Set the soft-stop flag.
+
+        ``cli/live`` polls ``is_stop_requested`` between ticks and exits
+        cleanly when set. Idempotent — calling repeatedly is fine.
+        """
+        if not self._stop_requested:
+            _LOGGER.info("soft stop requested by operator")
+        self._stop_requested = True
+
+    @property
+    def is_stop_requested(self) -> bool:
+        """``True`` if any operator has called :meth:`request_stop`."""
+        return self._stop_requested
+
+    async def cancel_open_orders(self, symbol: Symbol | None = None) -> tuple[int, int]:
+        """Cancel every open order on the exchange for ``symbol`` (or all).
+
+        Reads the open-order set from the exchange (authoritative per
+        ADR-006 decision 3) rather than from storage, so a stale storage
+        view can't strand orders on Kraken. Per-order failures are
+        logged and counted; the batch never aborts mid-way.
+
+        Args:
+            symbol: Restrict to one symbol; ``None`` cancels across all.
+
+        Returns:
+            ``(cancelled, failed)`` counts.
+        """
+        try:
+            opens = await self._exchange.get_open_orders(symbol=symbol)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            _LOGGER.error(
+                "cancel_open_orders: get_open_orders failed",
+                extra={"symbol": str(symbol) if symbol else None, "error": str(exc)},
+            )
+            return (0, 0)
+        cancelled = 0
+        failed = 0
+        for order in opens:
+            try:
+                canceled_order = await self._exchange.cancel_order(order)
+                await self._storage.save_order(canceled_order)
+                cancelled += 1
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _LOGGER.warning(
+                    "cancel_open_orders: per-order cancel failed",
+                    extra={
+                        "symbol": str(order.symbol),
+                        "exchange_id": order.exchange_id,
+                        "error": str(exc),
+                    },
+                )
+                failed += 1
+        _LOGGER.info(
+            "cancel_open_orders complete",
+            extra={
+                "symbol": str(symbol) if symbol else None,
+                "cancelled": cancelled,
+                "failed": failed,
+            },
+        )
+        return (cancelled, failed)
 
     # ------------------------------------------------------------------ initialization
 
