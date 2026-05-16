@@ -36,6 +36,84 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.4 — Engine Integration (2026-05-16)
+
+Fourth Phase 5 slice. The first stage where Phase 5 code actually
+touches money-adjacent state. Four sub-slices land the four pieces
+the operator interaction layer needs to reach the engine:
+
+**5.4.A — GridEngine operator-control methods.** Engine gains
+`pause_symbol(symbol)` / `resume_symbol(symbol)` / `is_paused` /
+`paused_symbols`, `request_stop()` / `is_stop_requested`, and
+`cancel_open_orders(symbol | None) -> (cancelled, failed)`. New
+`StepAction` value `"skipped_paused"` — paused symbols return without
+touching exchange or storage. Pause state is per-session in-memory
+(rebuild on restart) by design. Cancel reads the open-order set from
+the exchange (authoritative per ADR-006 decision 3); per-order
+failures are logged and counted without aborting the batch.
+
+**5.4.B — `pending_commands` SQLite table + StoragePort.** New table
+in `sqlite_storage_schema.SCHEMA` with id PK, command_kind
+denormalized for filtering, command_json + result_json for
+schema-evolution headroom, the full six-state CHECK constraint on
+status (`awaiting_confirmation` → `approved` → `dispatched` with
+`rejected` / `expired` / `failed` terminals), three indexes (status
+poll, created_at, TTL cleanup). `StoragePort` gains
+`save_pending_command` (upsert via `ON CONFLICT DO UPDATE`),
+`get_pending_command(id)`, `get_pending_commands(status, limit)` —
+ordered by `created_at` ASC so the polling cli/live picks up the
+longest-waiting approval first. `row_to_pending_command` in
+`sqlite_storage_rowmap.py` uses a module-level
+`TypeAdapter[OperatorCommand]` to resolve the discriminated union on
+read.
+
+**5.4.C — OperatorService.** `services/operator_service.py`
+implements `OperatorPort` via match/case dispatch. Six commands
+(`PauseCommand` / `ResumeCommand` / `PauseAllCommand` /
+`ResumeAllCommand` / `CancelOpenOrdersCommand` / `StopCommand`) call
+through to the engine and return `CommandResult` with `success` /
+`side_effects` reflecting state changes. Nine queries
+(`StatusQuery` / `OpenOrdersQuery` / `RecentFillsQuery` /
+`RecentSuggestionsQuery` / `RecentNewsQuery` /
+`HarvesterStatusQuery` / `RecentProposalsQuery` / `GridConfigQuery` /
+`HelpQuery`) compose typed `*Result`s from storage + engine state.
+Cross-database queries (advisor suggestions, news, harvester
+proposals) take **optional** `advise_storage` / `news_storage` /
+`harvest_storage` constructor params; when unwired the corresponding
+queries return empty result lists rather than raising. Domain misses
+encode as structured `success=False` or empty-list results; protocol
+failures wrap as `OperatorError`. `HelpResult` static catalog of 15
+entries matches the operator prompt's command + query catalog.
+
+**5.4.D — cli/live poll integration.** `LiveConfig` gains optional
+`operator_db: str | None = None`. When set, `cli/live` opens a
+second `SQLiteStorageAdapter` (kept independent from live.db per the
+per-CLI DB pattern), constructs `OperatorService` with the engine +
+live storage + active symbols + grid config + session-start
+timestamp, and drains approved pending commands via the new
+`_process_pending_commands` helper. **The `WHERE status='approved'`
+filter on the SELECT is the literal confirm-before-execute gate** —
+the ADR-002 firewall that ADR-013 documents. Per-row dispatch
+failures wrap as `failed` `CommandResult`s without aborting the
+loop. `engine.is_stop_requested` is checked after the poll so a
+`StopCommand` processed this tick exits the loop cleanly without
+one more engine step. When `operator_db` is None, cli/live behaves
+exactly as before — Discord-ignorant, no operator integration.
+
+**5.4.E — Stage close.** Roadmap ✅, CHANGELOG, CLAUDE.md Project
+Status bump, project_state memory update.
+
+57 new unit tests (14 + 10 + 25 + 8 across the four sub-slices).
+Full suite **1145** passes (was 1088 at Stage 5.3 close). mypy
+clean across 67 src files. pylint **10.00/10** with no outstanding
+warnings. black + isort clean.
+
+Running real-money cost unchanged at $0.08 — the new code paths
+require an operator-confirmed `pending_commands` row, and no such
+row has been written outside test fixtures. Stage 5.6's
+`cli/operator` daemon brings the Discord side online; until then
+the firewall is entirely operator-pen-and-paper.
+
 ### Stage 5.3 — Operator Assistant (Ollama) (2026-05-16)
 
 Third Phase 5 slice. `OllamaAssistantAdapter` implementing
