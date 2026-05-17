@@ -507,3 +507,118 @@ Per operator decision 2026-05-16, the Operator Interaction Engine becomes the wh
 - ADR-007 — MoE advisor + news ingestion (precedent for pluggable LLM providers and structured-output contracts).
 - ADR-012 — Operator-driven auto-apply gate (precedent for "LLM proposes, operator clicks").
 - `discord.py` documentation: https://discordpy.readthedocs.io/ (Gateway client + Intents + reactions API).
+
+## ADR-014 — LLM Cost Caps
+**Status:** Accepted (planned for Phase 6)
+**Date:** 2026-05-17
+
+**Context:** Phase 6 introduces cloud LLM providers (Anthropic, OpenAI, Google) for both the operator-assistant role (added in Phase 5) and the MoE trading-advisor roles (Phase 3 placeholder slots in `_build_advisor`). Unlike Ollama (free / local), cloud APIs charge per request — typically a fraction of a cent per turn, occasionally several cents on long thinking-mode responses. A stuck retry loop, an unbounded conversation context, a misconfigured polling cadence, or an over-eager MoE expert lineup can burn $10s–$100s of dollars in hours without anyone noticing until the provider's monthly invoice lands. The project's safety design has a strong precedent for bounding monetary blast radius (ADR-003 separates withdrawal authority; Phase 2's `SafetyConfig` caps trading exposure; Phase 4's `HarvesterConfig` caps daily withdrawal). The same discipline should apply before the first cloud-LLM API call goes out.
+
+The existing real-money cost ledger is **$0.08** (one tiny Kraken round-trip during Phase 2's first-trade test). Phase 6 is the first project component that incurs ongoing per-use cost. The bookkeeping pattern (forensic SQLite table + structured logging + operator inspection tool) carries over cleanly from the trading and transfer history tables.
+
+**Decision:** Adopt the following commitments for Phase 6's cloud-LLM cost discipline. Land in Stage 6.1; stable across 6.2–6.5; revisit only via follow-on ADR.
+
+1. **USD-denominated caps, not token caps.** The operator thinks in dollars; provider pricing changes; token costs vary by model. Two caps:
+   - `LLMCostConfig.max_spend_per_day_usd` (default **$1.00**). Sliding 24-hour window, computed at gate-check time from the `llm_calls` table.
+   - `LLMCostConfig.max_spend_per_session_usd` (default **$0.50**). A "session" = one CLI invocation (one cli/advise tick, one cli/operator conversational turn, one cli/news cycle). In-memory tally, reset per invocation.
+2. **Single shared pool across roles in v1.** Operator-assistant calls and trading-advisor calls draw from the same daily budget. Per-role budget split (e.g., $0.50/day for operator chat + $0.50/day for MoE experts) is deferred to a follow-on ADR if real usage shows starvation. Simpler v1 surface; one config knob; one cap to reason about.
+3. **Enforcement layer: a new domain service, not the adapters.** `services/llm_cost_gate.py` exposes `check_budget(role, estimated_cost_usd) -> Allow | Deny(reason)`. The gate reads recent `llm_calls` rows from `StoragePort.get_llm_calls(since=...)`. Adapters are responsible for computing the per-call cost from token counts via the pricing table (item 6) and persisting it after each call. The CLI layer (`cli/advise`, `cli/operator`, future `cli/news` cloud-news fetch) calls `check_budget` before each cloud call. **Ollama calls bypass the gate entirely** — free / local; no need to instrument.
+4. **Hard-stop on cap trip.** `check_budget` returns `Deny(reason)` when the cap is exceeded; the calling code raises `LLMCostCapExceeded` (a new domain exception). cli/operator catches and posts an embed asking the operator to bump the cap or wait. cli/advise catches and skips the tick (logs structured; advisor output is best-effort by ADR-002 anyway). Trading and harvester loops are not in the cloud-LLM call path so they continue unaffected.
+5. **`llm_calls` SQLite table schema.** Columns: `id` UUID PK, `timestamp` ISO 8601 UTC, `role` (operator | quant | risk | news | arbitrator | single | unknown), `provider` (anthropic | openai | google), `model` (provider model id), `tokens_in` int, `tokens_out` int, `tokens_reasoning` int NULL (for o1/Claude thinking/Gemini thinking; provider-specific column), `cost_usd` Decimal(10,6), `request_id` TEXT NULL (provider correlation id), `success` BOOL, `error_kind` TEXT NULL (set on failed calls; cost still recorded — failed calls can incur charges on some providers). Two indexes: `(timestamp)` for daily totals; `(provider, model)` for cost-by-provider reports. Lives in **`operator.db`** alongside `pending_commands` / `notifications` / `conversation_turns` (cli/operator already owns that database, and cost data is operator-visible).
+6. **Pricing table is code, not config.** `services/llm_pricing.py` carries a Pydantic-modeled static dict `{(provider, model): (input_usd_per_million_tokens, output_usd_per_million_tokens, reasoning_usd_per_million_tokens | None)}`. Each entry includes a comment with the provider's pricing-page URL + the date the price was verified. Operators don't edit pricing; it's a fact about reality that lives in the codebase. Periodic verification is a Phase 8 quarterly audit item.
+7. **`tools/show_llm_costs.py` operator inspection.** Mirrors the existing `tools/show_proposals.py` / `tools/show_transfers.py` / `tools/show_pending.py` pattern. Reads `operator.db`'s `llm_calls`, prints recent N calls + per-day / per-provider / per-role rollups. Read-only; runs against the same database without lock contention.
+8. **Caps are advisory in dry-run modes.** `cli/advise` running against `OllamaAdapter` (Phase 5 default) sees no gate checks because the gate only triggers on cloud providers (item 3). When `cli/advise` is wired to a cloud provider but with `LLMCostConfig.enforce=False` (operator-configurable kill switch — analogous to `auto_apply.enabled=False` from ADR-012), the gate records calls but never raises. Useful for an initial week of "see what this would have cost" before turning enforcement on.
+
+**Alternatives Considered:**
+- **Per-role budget split (operator vs advisor vs news).** Considered, deferred. Simpler v1 with one pool; if real usage shows the conversational assistant starving advisor cycles (or vice versa), a follow-on ADR splits the budget. The cost table already carries `role` so retroactive analysis is possible.
+- **Token-based caps (max tokens/day instead of USD/day).** Rejected. Token prices vary 10×+ across models (input vs output, base vs reasoning, provider differences). Operators reason about dollars; tokens are an implementation detail.
+- **Soft-stop with graceful degrade.** Considered (e.g., cap trip switches operator-assistant from Anthropic → Ollama). Rejected for v1 — silent model substitution is exactly what ADR-015 prohibits. Cap trip = explicit error, operator decides.
+- **Trust the cloud provider's own dashboard / billing alerts.** Rejected. Provider billing alerts lag by hours-to-days, are usually per-account (not per-role), and don't give the operator the same forensic detail the project's other money paths get.
+- **Enforcement at the adapter layer (each adapter checks before calling).** Considered. Rejected: scatters gate logic across N adapters; harder to audit; harder to extend to "what if this call would cost more than the remaining day budget" computations that need cross-adapter visibility. Centralized service is the same pattern that ADR-002 + ADR-003 establish for trading caps.
+- **Provider-supplied cost field instead of computing locally.** Anthropic and OpenAI return token counts but not USD cost in the response. Google's `usage_metadata` is similar. Computing locally from token counts × pricing table is the only consistent option.
+- **No cap, just monitoring.** Rejected. The whole point of monitoring is to act on it; an unactioned graph is just a graph.
+
+**Consequences:**
+- **Positive:** Bounded blast radius for stuck loops, runaway prompts, misconfigured cadences. The "$10 surprise" failure mode is structurally prevented.
+- **Positive:** Forensic audit trail matches the project's other money-path discipline. Same operator-facing inspection-tool pattern.
+- **Positive:** Pricing table lives in code, evolves with the codebase, has commit history, and can be unit-tested.
+- **Positive:** `enforce=False` dry-run mode lets operators see real-world costs before flipping enforcement on. Same posture as `auto_apply.enabled=False` from ADR-012 — opt-in for the risky behavior.
+- **Positive:** Trading / harvester loops are untouched by cap trips. Engine never goes down because of an LLM budget event.
+- **Negative:** New SQLite table + new service + new config block + new domain exception + new pricing module + new inspection tool. Phase 6 has more carrying capacity than Phase 5's $0-cost equivalents.
+- **Negative:** Pricing table needs periodic manual refresh when providers change rates. Quarterly audit item; Anthropic + OpenAI both publish stable price-per-million-tokens that change rarely (months to years between adjustments).
+- **Negative:** Sliding 24-hour window requires `get_llm_calls(since=...)` with a timestamp filter at every gate check. With per-call costs and reasonable cadences (~1 call/sec worst case), the row count stays well under the index-scan budget; if it ever bites, add a denormalized running-total cache. Not a v1 concern.
+
+**Compliance:** Aligns with ADR-001 (cost gate is a service in `services/`, pricing is a service, adapters compute cost but don't enforce). Aligns with ADR-002 (LLM advisory-only — cap trip stops advisory output but never blocks trading). Aligns with ADR-003-style "bound monetary blast radius via configured caps." Aligns with ADR-013 (`operator.db` already owns operator-facing state — `llm_calls` belongs there). **Refines ADR-007** by adding cost accounting to the LLM provider abstraction.
+
+**References:**
+- `docs/planning/stage-6.1-design.md` — Stage 6.1 slicing (where the table + gate + pricing land).
+- `docs/planning/roadmap.md` — Phase 6 stage list.
+- ADR-002 — LLM advisory-only (the unaffected invariant).
+- ADR-003 — Cap-based safety design (precedent).
+- ADR-012 — Operator-controlled gates default-off (precedent for `enforce=False` dry-run posture).
+- ADR-013 — `operator.db` as the operator-state database.
+- ADR-015 — Provider failover policy (retries draw from the same caps).
+
+## ADR-015 — Cloud LLM Provider Failover Policy
+**Status:** Accepted (planned for Phase 6)
+**Date:** 2026-05-17
+
+**Context:** Cloud LLM APIs fail. 429 rate limits during quota bursts, 5xx transient errors during provider-side incidents, network blips between Synology NAS and provider edge, full provider outages lasting minutes to hours. Phase 5's Ollama-only assistant didn't face this — local model, no provider-side outages, the only failure modes were "ollama process not running" and "model not pulled." Phase 6's cloud adapters need a clear policy: what happens when Anthropic returns 503 mid-conversational-turn? Mid-MoE-cycle?
+
+The shape of this decision matters because the wrong answer has compounding implications. Silent failover to a different provider (or to local Ollama) means the trading advisor is silently using a different decision-maker — phi4:14b vs Claude Sonnet 4.6 are genuinely different judges, even given identical prompts. The operator deserves to know which model produced which recommendation. Failover-to-different-provider also has cost implications — provider prices vary 5–20× — which interacts with ADR-014's cost caps.
+
+**Decision:** Adopt the following commitments for Phase 6 provider-failure handling. Land in Stage 6.1's retry/backoff helper; stable across 6.2–6.5.
+
+1. **Default: fail loudly + retry on transient errors only.** Each cloud adapter classifies HTTP responses:
+   - `429` (rate limit) → transient: retry with backoff.
+   - `5xx` (server error) → transient: retry with backoff.
+   - `4xx` other (auth, bad-request, content-policy) → permanent: fail immediately.
+   - Network/connection errors (DNS, timeout, connection-refused) → transient: retry with backoff.
+   Up to **3 retries** with exponential backoff (1s, 4s, 9s — `LLMRetryConfig.initial_backoff_seconds * backoff_multiplier ** attempt`). All retries exhausted → raise the relevant port's error type (`AssistantError` / `AdvisorError`).
+2. **No cross-provider failover in v1.** When Anthropic exhausts retries, the call fails. The operator does NOT see the system silently fall back to OpenAI or Google. Cross-provider failover is deferred to a post-v1 stage because:
+   - Different models = different decisions. A Phase-6 MoE cycle that started on Claude and finished on Gemini has mixed provenance that breaks the audit trail.
+   - Provider prices vary widely; failover changes the cost math operators planned around.
+   - Operators rarely configure all three providers at once; the v1 expectation is "pick one, configure it well."
+   If real-world provider availability proves bad enough to justify cross-provider failover, the follow-on ADR adds it with explicit operator opt-in plus a logged "called Anthropic, fell back to OpenAI" trail in the `llm_calls` table.
+3. **No silent failover to local Ollama.** Even when Ollama is installed and reachable, a cloud-to-Ollama auto-failover would silently change the model's decision shape. The operator picks "use Claude for the operator assistant" because Claude's conversational behavior differs from phi4's. Failover violates that choice without telling the operator.
+4. **Retries count against ADR-014 cost caps.** Each retry that reaches the provider's API counts toward the daily and session budgets per ADR-014. A 429 typically doesn't bill (provider didn't process tokens), but a 200 retry after backoff is a full charge. The cost-gate check happens **before** the initial call, not before each retry — so a retried call that pushes over the cap is accepted (the retry doesn't get a fresh budget check). This keeps the gate logic simple and matches operator intuition ("I asked for one answer; one answer was billed for").
+5. **Operator-facing notifications on permanent failure.** When all retries are exhausted:
+   - **cli/operator**: posts a `level=error` notification ("LLM call failed: anthropic 503 after 3 retries"). The operator sees it via the Stage 5.5 forwarder.
+   - **cli/advise**: logs structured (`logger.error` with `extra={"provider", "model", "role", "error_kind"}`) and skips the tick. The next scheduled cycle tries again — most provider outages resolve in minutes.
+   - **cli/news (when Phase 6 wires cloud news fetch)**: same skip-and-log pattern.
+   In all cases the engine (cli/live, cli/harvest) keeps running. Advisory output is best-effort per ADR-002.
+6. **Per-provider auth lives in env, not config.** Each provider's API key gets its own env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) following the existing `KRAKEN_API_KEY` / `KRAKEN_TRADE_API_KEY` / `DISCORD_BOT_TOKEN` convention. `.env.example` carries the placeholder names; operators copy to `.env` with real values. Adapter constructors fail fast (clear error, exit code 2) if the configured provider's key is missing — same posture as `cli/status` for missing Kraken creds.
+7. **Retry config knobs (small, defaulted)**:
+   - `LLMRetryConfig.max_retries` (default 3)
+   - `LLMRetryConfig.initial_backoff_seconds` (default 1.0)
+   - `LLMRetryConfig.backoff_multiplier` (default 2.0)
+   Single shared `LLMRetryConfig` across all providers in v1. Per-provider override deferred unless real usage shows one provider needs different backoff.
+8. **No circuit-breaker pattern in v1.** A circuit breaker (after N failures in M minutes, refuse calls for P minutes) is a real pattern but it adds state, requires reasoning about reset semantics, and its value depends on the actual failure cadence operators see. Defer to Phase 8's reliability stage if observation justifies it.
+
+**Alternatives Considered:**
+- **Cross-provider failover (Anthropic 503 → OpenAI fallback).** Rejected for v1. Model substitution is not transparent — different model, different decision shape, different cost. Operators deserve to know.
+- **Cloud-to-Ollama failover.** Rejected. Silent behavior change is exactly what this ADR exists to prevent.
+- **Exponential backoff with jitter.** Considered. v1 ships fixed exponential backoff for simplicity (deterministic, easy to reason about, easy to test). Thundering-herd is unlikely with a single-operator system; jitter is a one-line addition if it ever shows up.
+- **Per-attempt cost-gate re-check (recheck budget before each retry).** Considered. Rejected: a retried call is one logical call from the operator's perspective; re-checking mid-retry creates the confusing case where attempt 1 was accepted but attempt 2 trips because someone else's call landed in between. Simpler invariant: one budget check per logical call.
+- **Circuit breaker.** Deferred to Phase 8.
+- **Provider-side rate-limit response respected (honor `Retry-After` header).** Considered. v1 ships fixed backoff; honoring `Retry-After` on 429 is a clean enhancement once a real adapter exists to extend. Note for Stage 6.2 — if implementing the Anthropic adapter, this is a single `httpx` response-header read.
+- **Async-queue-then-batch.** Rejected — adds complexity for negligible benefit at this call cadence.
+
+**Consequences:**
+- **Positive:** Simple, predictable, fully under operator control. No surprise model substitution.
+- **Positive:** Provenance of every advisor recommendation is single-provider, traceable to the configured model.
+- **Positive:** Trading and harvester loops never block on LLM availability.
+- **Positive:** Failure surface is small and well-defined — three retry parameters, two response classifications (transient vs permanent), one error path.
+- **Negative:** A multi-hour provider outage means degraded advisory output until either the provider recovers or the operator manually edits `settings.yml` to switch providers. Hand-on-the-wheel posture; acceptable for a hobby bot.
+- **Negative:** Recurring transient errors waste retry budget against ADR-014 caps. Mitigated by `LLMCostConfig.enforce=False` dry-run mode for the first week of cloud usage to see real failure cadence.
+- **Negative:** No automatic graceful-degrade story (yet). Phase 8 reliability stage may add one.
+
+**Compliance:** Aligns with ADR-002 (LLM advisory-only — failure stalls advisory; engine continues). Aligns with ADR-013 (operator gets clear visibility via the notification pipe). Compatible with ADR-014 (retries draw from the same cost pool; one budget check per logical call).
+
+**References:**
+- `docs/planning/stage-6.1-design.md` — where the retry helper lives.
+- ADR-002 — LLM advisory-only (the invariant this preserves).
+- ADR-014 — Cost caps (retries are budgeted against the same pool).
+- ADR-013 — Operator notification pipe (where permanent failures surface).
+- ADR-009 — Config consolidation (where the per-provider env vars are documented in `.env.example`).
+
