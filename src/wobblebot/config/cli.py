@@ -352,14 +352,114 @@ class HarvestConfig(BaseModel):
         frozen = True
 
 
+# --------------------------------------------------------------------- #
+# Stage 5.6 — cli/operator daemon                                       #
+# --------------------------------------------------------------------- #
+
+
+class AssistantLLMConfig(BaseModel):
+    """Operator-assistant LLM configuration.
+
+    Mirrors the trading-advisor's single-LLM config but is its own
+    block: the assistant role is distinct (intent parsing vs trading
+    recommendation), uses a different prompt, and often a different
+    model best-suited to chat. Phase 5 ships Ollama-only; Phase 6
+    adds cloud variants.
+    """
+
+    provider: Literal["ollama"] = "ollama"
+    model: str = Field(min_length=1)
+    prompt_file: str = Field(default="config/prompts/operator.md")
+    base_url: str = Field(default="http://localhost:11434")
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0)
+
+    class Config:
+        frozen = True
+
+
+class OperatorAuthConfig(BaseModel):
+    """Discord allowlists + bot identity for cli/operator.
+
+    Per ADR-013 decision 6, both axes are deny-by-default — empty
+    allowlists mean nothing reaches the operator daemon. User IDs are
+    typically secrets (set via env var indirection or via this block;
+    operators pick). Channel IDs are not.
+    """
+
+    bot_token_env_var: str = Field(default="DISCORD_BOT_TOKEN", min_length=1)
+    allowed_user_ids: frozenset[str] = Field(default_factory=frozenset)
+    allowed_channel_ids: frozenset[str] = Field(default_factory=frozenset)
+    # The channel cli/operator posts outbound notifications + confirm
+    # embeds to. Must be in allowed_channel_ids; the daemon validates
+    # at startup.
+    outbound_channel_id: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+
+class OperatorConfig(BaseModel):
+    """Settings for ``cli/operator`` — Stage 5.6 daemon (ADR-013).
+
+    Composes the Discord transport's allowlists + bot identity, the
+    assistant LLM block, paths to the four operator-visible DBs, and
+    the multi-turn / confirmation knobs from ADR-013 decisions 5-6.
+
+    cli/operator runs Discord-ignorant from the engine's perspective —
+    it polls ``notifications`` rows (written by cli/live + cli/harvest
+    via SqliteNotifierAdapter, Stage 5.5) and forwards them to Discord,
+    plus handles inbound messages → AssistantPort.parse_intent →
+    pending_commands write (the confirm-before-execute flow that ADR-002
+    and ADR-013 require).
+    """
+
+    auth: OperatorAuthConfig
+    assistant: AssistantLLMConfig
+
+    # The operator daemon's own DB. Stage 5.4 + 5.5 + 5.6 tables
+    # (pending_commands, notifications, conversation_turns) all live here.
+    operator_db: str = Field(default="data/wobblebot-operator.db")
+
+    # Optional cross-database paths for the read-only queries answered
+    # directly from cli/operator (no engine round-trip). When unset,
+    # the corresponding queries return empty results — graceful degrade.
+    live_db: str | None = None
+    advise_db: str | None = None
+    news_db: str | None = None
+    harvest_db: str | None = None
+
+    # ADR-013 decision 5: 10-turn default context window for the
+    # assistant's multi-turn prompt. Tunable per-deployment.
+    context_window_turns: int = Field(default=10, ge=1, le=50)
+
+    # ADR-013 decision 3: pending_commands TTL. After this many seconds
+    # without an operator reaction, the row transitions to 'expired'.
+    confirm_ttl_seconds: int = Field(default=300, gt=0)
+
+    # Notification forwarder poll cadence. Lower = faster Discord
+    # surfacing; higher = less CPU + DB load. 2s is a reasonable
+    # default for a hobby bot.
+    forwarder_poll_seconds: float = Field(default=2.0, gt=0)
+
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+
 __all__ = [
     "AdviseConfig",
+    "AssistantLLMConfig",
     "CryptoCompareSpec",
     "HarvestConfig",
     "LiveConfig",
     "LogFormat",
     "NewsConfig",
     "ObserveConfig",
+    "OperatorAuthConfig",
+    "OperatorConfig",
     "PreflightConfig",
     "RssFeedSpec",
     "SandboxConfig",
