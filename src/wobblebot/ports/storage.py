@@ -12,6 +12,7 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
@@ -611,4 +612,49 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the update fails (including the row not
                 existing).
+        """
+
+    # Conversation turn operations (Stage 5.6 — operator daemon)
+    @abstractmethod
+    async def save_conversation_turn(self, turn: ConversationTurn) -> None:
+        """Persist one conversation turn; upserts on ``id``.
+
+        ``cli/operator`` writes one row per inbound operator message
+        (with ``intent_json`` populated after AssistantPort parsing)
+        and one per outbound assistant reply. Stage 5.6's prompt
+        assembler reads the last N turns for a given
+        ``(channel_id, user_id)`` to build the LLM's context window.
+
+        Args:
+            turn: Row to persist.
+
+        Raises:
+            StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def get_conversation_turns(
+        self,
+        channel_id: str,
+        user_id: str,
+        limit: int | None = None,
+    ) -> list[ConversationTurn]:
+        """Read recent conversation turns for one ``(channel_id, user_id)`` pair.
+
+        Returned in chronological order (oldest first) so callers can
+        feed the list directly to AssistantPort's prompt assembler.
+
+        Args:
+            channel_id: Discord channel scope.
+            user_id: Discord user scope.
+            limit: Maximum rows to return. ``None`` means unbounded —
+                callers typically pass ``OperatorConfig.context_window_turns``
+                to cap the prompt size.
+
+        Returns:
+            Matching turns ordered by ``timestamp`` ASC. Empty list if
+            no turns exist for the scope yet.
+
+        Raises:
+            StorageError: If retrieval fails.
         """

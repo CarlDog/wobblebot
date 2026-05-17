@@ -24,14 +24,21 @@ from pydantic import TypeAdapter
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
-from wobblebot.ports.operator import CommandResult, OperatorCommand, PendingCommand
+from wobblebot.ports.operator import (
+    CommandResult,
+    OperatorCommand,
+    OperatorIntent,
+    PendingCommand,
+)
 
 # Module-level TypeAdapter — Pydantic discriminator resolution is the
 # only way to materialize the right OperatorCommand variant from a
 # serialized dict. Cheap to construct once.
 _COMMAND_ADAPTER: TypeAdapter[OperatorCommand] = TypeAdapter(OperatorCommand)
+_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
 
 
 def row_to_order(row: aiosqlite.Row) -> Order:
@@ -193,6 +200,28 @@ def row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
         executed_amount=Decimal(row["executed_amount"]),
         direction=row["direction"],
         asset=row["asset"],
+        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+    )
+
+
+def row_to_conversation_turn(row: aiosqlite.Row) -> ConversationTurn:
+    """Materialize a ``ConversationTurn`` from a ``conversation_turns`` row.
+
+    ``intent_json`` is NULL for assistant turns and for operator turns
+    whose AssistantPort parse failed; both materialize as
+    ``intent=None``. Operator turns with a parsed intent run through
+    the discriminator-aware ``TypeAdapter`` to rebuild the right
+    ``OperatorIntent`` variant.
+    """
+    intent_raw = row["intent_json"]
+    intent = _INTENT_ADAPTER.validate_json(intent_raw) if intent_raw else None
+    return ConversationTurn(
+        id=UUID(row["id"]),
+        channel_id=row["channel_id"],
+        user_id=row["user_id"],
+        role=row["role"],
+        content=row["content"],
+        intent=intent,
         timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
     )
 

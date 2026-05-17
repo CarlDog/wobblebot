@@ -26,6 +26,7 @@ import aiosqlite
 from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_advisor_suggestion,
     row_to_applied_suggestion,
+    row_to_conversation_turn,
     row_to_news_item,
     row_to_notification,
     row_to_order,
@@ -41,6 +42,7 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
@@ -890,6 +892,63 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             ) from exc
         if rowcount == 0:
             raise StorageError(f"Notification {notification_id} not found")
+
+    # ----- conversation turns (Stage 5.6 — operator daemon) -----
+
+    async def save_conversation_turn(self, turn: ConversationTurn) -> None:
+        conn = self._require_conn()
+        intent_json = turn.intent.model_dump_json() if turn.intent is not None else None
+        try:
+            await conn.execute(
+                """
+                INSERT INTO conversation_turns (
+                    id, channel_id, user_id, role, content, intent_json, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    content = excluded.content,
+                    intent_json = excluded.intent_json
+                """,
+                (
+                    str(turn.id),
+                    turn.channel_id,
+                    turn.user_id,
+                    turn.role,
+                    turn.content,
+                    intent_json,
+                    turn.timestamp.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save conversation turn {turn.id}: {exc}") from exc
+
+    async def get_conversation_turns(
+        self,
+        channel_id: str,
+        user_id: str,
+        limit: int | None = None,
+    ) -> list[ConversationTurn]:
+        conn = self._require_conn()
+        # SQLite has no easy "last N rows in ASC order" — fetch newest-first
+        # with a LIMIT, then reverse in Python. Without a limit, plain
+        # ASC is fine.
+        sql = "SELECT * FROM conversation_turns " "WHERE channel_id = ? AND user_id = ? "
+        params: list[object] = [channel_id, user_id]
+        if limit is not None:
+            sql += "ORDER BY timestamp DESC LIMIT ?"
+            params.append(int(limit))
+        else:
+            sql += "ORDER BY timestamp ASC"
+        try:
+            async with conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load conversation turns: {exc}") from exc
+        turns = [row_to_conversation_turn(row) for row in rows]
+        if limit is not None:
+            turns.reverse()  # newest-first → chronological
+        return turns
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

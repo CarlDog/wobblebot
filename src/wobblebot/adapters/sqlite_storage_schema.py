@@ -240,4 +240,24 @@ CREATE INDEX IF NOT EXISTS idx_notifications_forwarded
     ON notifications(forwarded, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_timestamp
     ON notifications(timestamp);
+
+-- Stage 5.6 — conversation history per Discord (channel, user) pair.
+-- cli/operator persists every operator + assistant turn for multi-turn
+-- prompt assembly + forensic audit. intent_json is populated for
+-- operator turns once parsed by AssistantPort, NULL for assistant
+-- turns and for operator turns that haven't been parsed yet.
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    id              TEXT PRIMARY KEY,
+    channel_id      TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL CHECK (role IN ('operator', 'assistant')),
+    content         TEXT NOT NULL,
+    intent_json     TEXT,
+    timestamp       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_scope
+    ON conversation_turns(channel_id, user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_timestamp
+    ON conversation_turns(timestamp);
 """
