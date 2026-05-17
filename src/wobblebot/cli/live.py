@@ -46,6 +46,7 @@ from decimal import Decimal
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
@@ -61,6 +62,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import OperatorError, WobbleBotPortError
+from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
@@ -117,12 +119,46 @@ async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
     return bal.total if bal else Decimal("0")
 
 
-async def _run_one_tick(
+async def _notify(
+    notifier: NotifierPort | None,
+    *,
+    level: str,
+    title: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort notification emit. Failures are logged, never raised.
+
+    Phase 5 notifications are forensic ledger entries — losing one
+    must NEVER break the trading loop. cli/live calls this from
+    session-start / session-end / fill / cap-trip hooks.
+    """
+    if notifier is None:
+        return
+    try:
+        await notifier.send_notification(
+            Notification(
+                level=level,
+                title=title,
+                message=message,
+                timestamp=Timestamp(dt=datetime.now(UTC)),
+                context=context or {},
+            )
+        )
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "notification emit failed; continuing",
+            extra={"title": title, "error": str(exc)},
+        )
+
+
+async def _run_one_tick(  # pylint: disable=too-many-arguments
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
     tick: int,
     started_usd: Decimal,
+    notifier: NotifierPort | None = None,
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
     check. Returns True when the loss cap tripped (caller stops)."""
@@ -142,6 +178,24 @@ async def _run_one_tick(
                     "offside": result.offside,
                 },
             )
+            # Stage 5.5: emit a notification on fills so the operator
+            # sees activity in Discord without tailing logs.
+            if result.fills > 0:
+                await _notify(
+                    notifier,
+                    level="info",
+                    title=f"Fills: {symbol} ({result.fills})",
+                    message=(
+                        f"{result.fills} order(s) filled on {symbol}; "
+                        f"{result.counters_placed} counter(s) placed."
+                    ),
+                    context={
+                        "symbol": str(symbol),
+                        "fills": result.fills,
+                        "counters_placed": result.counters_placed,
+                        "tick": tick,
+                    },
+                )
         except WobbleBotPortError as exc:
             _LOGGER.error(
                 "symbol step failed; continuing other symbols",
@@ -159,6 +213,20 @@ async def _run_one_tick(
         _LOGGER.error(
             "session loss cap exceeded; stopping",
             extra={
+                "session_pnl_usd": str(session_pnl),
+                "limit": str(live.max_session_loss_usd),
+                "tick": tick,
+            },
+        )
+        await _notify(
+            notifier,
+            level="error",
+            title="Loss cap tripped — session ending",
+            message=(
+                f"Session PnL {session_pnl} exceeded cap "
+                f"-{live.max_session_loss_usd} USD; cli/live stopping."
+            ),
+            context={
                 "session_pnl_usd": str(session_pnl),
                 "limit": str(live.max_session_loss_usd),
                 "tick": tick,
@@ -230,7 +298,7 @@ async def _process_pending_commands(
     return len(approved)
 
 
-async def _run_loop(  # pylint: disable=too-many-arguments
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -238,13 +306,16 @@ async def _run_loop(  # pylint: disable=too-many-arguments
     *,
     operator_service: OperatorService | None = None,
     operator_storage: StoragePort | None = None,
+    notifier: NotifierPort | None = None,
 ) -> int:
     """Run the engine loop. Returns the process exit code.
 
     When ``operator_service`` and ``operator_storage`` are provided,
     each iteration polls ``pending_commands WHERE status='approved'``
     before stepping the engine and exits cleanly when
-    ``engine.is_stop_requested`` is set.
+    ``engine.is_stop_requested`` is set. When ``notifier`` is provided,
+    session-start / session-end / fill / cap-trip events emit
+    ``Notification`` rows for the cli/operator forwarder (Stage 5.6).
     """
     started_usd = await _session_usd_balance(adapter)
     started_at = time.monotonic()
@@ -260,6 +331,23 @@ async def _run_loop(  # pylint: disable=too-many-arguments
             "symbols": [str(s) for s in live.symbols],
             "tick_seconds": live.tick_seconds,
             "max_runtime_seconds": max_runtime_seconds,  # None == unlimited
+            "max_session_loss_usd": str(live.max_session_loss_usd),
+            "starting_usd": str(started_usd),
+        },
+    )
+    await _notify(
+        notifier,
+        level="info",
+        title="Live session started",
+        message=(
+            f"Trading {len(live.symbols)} symbol(s): "
+            f"{', '.join(str(s) for s in live.symbols)}. "
+            f"Starting USD={started_usd}."
+        ),
+        context={
+            "symbols": [str(s) for s in live.symbols],
+            "tick_seconds": live.tick_seconds,
+            "max_runtime_seconds": max_runtime_seconds,
             "max_session_loss_usd": str(live.max_session_loss_usd),
             "starting_usd": str(started_usd),
         },
@@ -296,7 +384,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments
                 break
 
             tick += 1
-            if await _run_one_tick(adapter, engine, live, tick, started_usd):
+            if await _run_one_tick(adapter, engine, live, tick, started_usd, notifier):
                 exit_code = 1
                 break
 
@@ -307,14 +395,36 @@ async def _run_loop(  # pylint: disable=too-many-arguments
     finally:
         ended_usd = await _session_usd_balance(adapter)
         cancelled, failed = await _cancel_all_open(adapter, tuple(live.symbols))
+        session_pnl = ended_usd - started_usd
+        duration_seconds = round(time.monotonic() - started_at, 1)
         _LOGGER.info(
             "session end",
             extra={
                 "ticks": tick,
-                "duration_seconds": round(time.monotonic() - started_at, 1),
+                "duration_seconds": duration_seconds,
                 "starting_usd": str(started_usd),
                 "ending_usd": str(ended_usd),
-                "session_pnl_usd": str(ended_usd - started_usd),
+                "session_pnl_usd": str(session_pnl),
+                "open_orders_cancelled": cancelled,
+                "open_orders_cancel_failed": failed,
+                "exit_code": exit_code,
+            },
+        )
+        await _notify(
+            notifier,
+            level="error" if exit_code != 0 else "info",
+            title=f"Live session ended (exit {exit_code})",
+            message=(
+                f"{tick} tick(s), {duration_seconds}s runtime. "
+                f"PnL {session_pnl} USD ({started_usd} -> {ended_usd}). "
+                f"Cancelled {cancelled} open order(s); {failed} cancel failure(s)."
+            ),
+            context={
+                "ticks": tick,
+                "duration_seconds": duration_seconds,
+                "starting_usd": str(started_usd),
+                "ending_usd": str(ended_usd),
+                "session_pnl_usd": str(session_pnl),
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,
                 "exit_code": exit_code,
@@ -365,8 +475,12 @@ async def _main_async(config: WobbleBotConfig) -> int:
     # Stage 5.4: optional operator-interaction wiring. When operator_db
     # is set in settings.yml, open it as a second storage adapter and
     # construct an OperatorService; cli/live's loop will poll it.
+    # Stage 5.5: same operator_db backs the SqliteNotifierAdapter that
+    # cli/live writes outbound events to (cli/operator forwards them
+    # to Discord). Both share the same StoragePort connection.
     operator_storage: SQLiteStorageAdapter | None = None
     operator_service: OperatorService | None = None
+    notifier: SqliteNotifierAdapter | None = None
     if config.live.operator_db is not None:
         operator_storage = SQLiteStorageAdapter(config.live.operator_db)
         await operator_storage.connect()
@@ -377,6 +491,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
             grid_config=config.grid,
             session_started_at=Timestamp(dt=datetime.now(UTC)),
         )
+        notifier = SqliteNotifierAdapter(operator_storage)
         _LOGGER.info(
             "operator interaction enabled",
             extra={"operator_db": config.live.operator_db},
@@ -393,6 +508,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
             stop_event=stop_event,
             operator_service=operator_service,
             operator_storage=operator_storage,
+            notifier=notifier,
         )
     finally:
         await adapter.aclose()

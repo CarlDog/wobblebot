@@ -40,6 +40,7 @@ from typing import Any
 from uuid import uuid4
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
 from wobblebot.config.kraken import KrakenConfig
@@ -47,12 +48,46 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.exceptions import ExchangeError, StorageError
+from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferResult
+from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 _LOGGER = logging.getLogger("wobblebot.cli.harvest")
+
+
+async def _notify(
+    notifier: NotifierPort | None,
+    *,
+    level: str,
+    title: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort notification emit; failures logged, never raised.
+
+    Same shape as cli/live's helper. Harvester events must never break
+    the treasury loop — losing a notification is far less bad than
+    interrupting a balance poll or, worse, an in-flight withdrawal.
+    """
+    if notifier is None:
+        return
+    try:
+        await notifier.send_notification(
+            Notification(
+                level=level,
+                title=title,
+                message=message,
+                timestamp=Timestamp(dt=datetime.now(UTC)),
+                context=context or {},
+            )
+        )
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "notification emit failed; continuing",
+            extra={"title": title, "error": str(exc)},
+        )
 
 
 async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
@@ -82,6 +117,7 @@ async def _run_cycle(
     *,
     config: WobbleBotConfig,
     storage: SQLiteStorageAdapter | None,
+    notifier: NotifierPort | None = None,
 ) -> bool:
     """One harvest tick: read balance → decide → log → persist if there's
     a proposal. Returns True on a successful read (proposal or no-op),
@@ -140,6 +176,31 @@ async def _run_cycle(
         },
     )
 
+    # Stage 5.5: emit a notification on every proposal so the operator
+    # sees treasury suggestions in Discord without tailing logs. The
+    # proposal is still HYPOTHETICAL — operator must run cli/harvest
+    # --execute to actually move money.
+    await _notify(
+        notifier,
+        level="info",
+        title=f"Harvester proposal: {proposal.direction} {proposal.amount} {proposal.asset}",
+        message=(
+            f"Proposal {proposal.proposal_id}: {proposal.direction} "
+            f"{proposal.amount} {proposal.asset}. "
+            f"{proposal.rationale} "
+            f"Run `cli/harvest --execute {proposal.proposal_id}` to act."
+        ),
+        context={
+            "proposal_id": proposal.proposal_id,
+            "direction": proposal.direction,
+            "asset": proposal.asset,
+            "amount": str(proposal.amount),
+            "current_exchange_balance": str(proposal.current_exchange_balance),
+            "target_exchange_balance": str(proposal.target_exchange_balance),
+            "rationale": proposal.rationale,
+        },
+    )
+
     if storage is not None:
         try:
             await storage.save_transfer_proposal(proposal)
@@ -169,13 +230,14 @@ def _classify_band(balance_usd: Decimal, harvester_config: Any) -> str:
     return "surplus"
 
 
-async def _run_loop(
+async def _run_loop(  # pylint: disable=too-many-arguments
     *,
     adapter: ExchangePort,
     config: WobbleBotConfig,
     storage: SQLiteStorageAdapter | None,
     interval_seconds: float,
     stop_event: asyncio.Event,
+    notifier: NotifierPort | None = None,
 ) -> int:
     started_at = time.monotonic()
     ticks_run = 0
@@ -191,7 +253,7 @@ async def _run_loop(
     try:
         while not stop_event.is_set():
             ticks_run += 1
-            ok = await _run_cycle(adapter, config=config, storage=storage)
+            ok = await _run_cycle(adapter, config=config, storage=storage, notifier=notifier)
             if ok:
                 ticks_succeeded += 1
             try:
@@ -210,12 +272,13 @@ async def _run_loop(
     return 0
 
 
-async def _execute_command(  # pylint: disable=too-many-return-statements,too-many-locals,too-many-branches
+async def _execute_command(  # pylint: disable=too-many-return-statements,too-many-locals,too-many-branches,too-many-arguments
     *,
     adapter: ExchangePort,
     storage: SQLiteStorageAdapter,
     config: WobbleBotConfig,
     proposal_id: str,
+    notifier: NotifierPort | None = None,
 ) -> int:
     """Operator-approved execution of a persisted TransferProposal.
 
@@ -388,6 +451,24 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
                 "failed to persist failure audit row",
                 extra={"error": str(persist_exc)},
             )
+        # Stage 5.5: surface the failure to the operator's Discord.
+        await _notify(
+            notifier,
+            level="error",
+            title=f"Withdrawal failed: {proposal.amount} {proposal.asset}",
+            message=(
+                f"Kraken /Withdraw rejected proposal {proposal.proposal_id}: {exc}. "
+                "No money moved."
+            ),
+            context={
+                "proposal_id": proposal.proposal_id,
+                "asset": proposal.asset,
+                "amount": str(proposal.amount),
+                "destination": destination,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
         return 1
 
     # 8. Persist success
@@ -421,6 +502,28 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     _LOGGER.info(
         "WITHDRAWAL SUBMITTED — money moved",
         extra={
+            "proposal_id": proposal.proposal_id,
+            "transaction_id": refid,
+            "asset": proposal.asset,
+            "amount": str(proposal.amount),
+            "destination": destination,
+            "status": "pending",
+        },
+    )
+    # Stage 5.5: surface the successful withdrawal to the operator's
+    # Discord. Level "warning" not "info" because money moved — this is
+    # the highest-value event the harvester emits and the operator
+    # wants it surfaced loudly.
+    await _notify(
+        notifier,
+        level="warning",
+        title=f"Withdrawal submitted: {proposal.amount} {proposal.asset}",
+        message=(
+            f"Kraken /Withdraw accepted proposal {proposal.proposal_id}. "
+            f"refid={refid}, destination={destination}, status=pending. "
+            "Money has left the exchange."
+        ),
+        context={
             "proposal_id": proposal.proposal_id,
             "transaction_id": refid,
             "asset": proposal.asset,
@@ -489,6 +592,29 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             )
             storage = None
 
+    # Stage 5.5: optional operator-notification wiring. When
+    # harvest.operator_db is set, open it as a second StoragePort and
+    # wrap with SqliteNotifierAdapter; cli/harvest events emit
+    # Notification rows that cli/operator forwards to Discord.
+    operator_storage: SQLiteStorageAdapter | None = None
+    notifier: SqliteNotifierAdapter | None = None
+    if config.harvest is not None and config.harvest.operator_db is not None:
+        operator_storage = SQLiteStorageAdapter(config.harvest.operator_db)
+        try:
+            await operator_storage.connect()
+            notifier = SqliteNotifierAdapter(operator_storage)
+            _LOGGER.info(
+                "operator notifications enabled",
+                extra={"operator_db": config.harvest.operator_db},
+            )
+        except StorageError as exc:
+            _LOGGER.error(
+                "failed to open operator db; notifications disabled",
+                extra={"path": config.harvest.operator_db, "error": str(exc)},
+            )
+            operator_storage = None
+            notifier = None
+
     try:
         if execute_proposal_id is not None:
             # Stage 4.4c: one-shot operator-approved execution.
@@ -503,6 +629,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
                 storage=storage,
                 config=config,
                 proposal_id=execute_proposal_id,
+                notifier=notifier,
             )
 
         # Daemon mode (read-only observation + proposal persistence).
@@ -520,6 +647,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             storage=storage,
             interval_seconds=interval.total_seconds(),
             stop_event=stop_event,
+            notifier=notifier,
         )
     finally:
         aclose = getattr(adapter, "aclose", None)
@@ -527,6 +655,8 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             await aclose()
         if storage is not None:
             await storage.close()
+        if operator_storage is not None:
+            await operator_storage.close()
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

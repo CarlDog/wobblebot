@@ -340,6 +340,13 @@ class HarvestConfig(BaseModel):
 
     db: str = "data/wobblebot-harvest.db"
     log_format: LogFormat = "plain"
+    # Stage 5.5: path to the operator interaction DB. When set,
+    # cli/harvest opens it as a second StoragePort and writes outbound
+    # event Notifications (proposal generated, withdrawal executed,
+    # withdrawal failed) to the `notifications` table. cli/operator
+    # (Stage 5.6) forwards them to Discord. When None, cli/harvest
+    # runs Discord-ignorant — no notification persistence.
+    operator_db: str | None = None
 
     class Config:
         frozen = True
