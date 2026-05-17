@@ -366,11 +366,26 @@ class TestBuildAdvisorDispatch:
         assert isinstance(advisor, MoEAdvisorAdapter)
         assert "arb=phi4:14b-q8_0" in out[0]
 
-    def test_unimplemented_cloud_provider_rejected(self, quant_prompt_path: str) -> None:
+    def test_anthropic_without_cloud_wiring_rejected(self, quant_prompt_path: str) -> None:
+        """Stage 6.2: anthropic provider needs an `llm:` block. Without
+        cloud_wiring threaded through, _build_advisor raises clearly."""
         config = AdvisorConfig(
             type="single",
-            provider="anthropic",  # not yet implemented
+            provider="anthropic",
             model="claude-sonnet-4-6",
+            prompt_file=quant_prompt_path,
+            inference_params=InferenceParams(),
+        )
+        with pytest.raises(ValueError, match="no `llm:` block"):
+            _build_advisor(config, [])
+
+    def test_unimplemented_cloud_provider_rejected(self, quant_prompt_path: str) -> None:
+        """openai / google adapters land in Stages 6.3 / 6.4 — until then
+        the dispatcher raises 'not implemented' at construction time."""
+        config = AdvisorConfig(
+            type="single",
+            provider="openai",
+            model="gpt-4o",
             prompt_file=quant_prompt_path,
             inference_params=InferenceParams(),
         )

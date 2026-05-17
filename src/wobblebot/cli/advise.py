@@ -36,10 +36,12 @@ import os
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -56,6 +58,7 @@ from wobblebot.config.advisor import (
     ExpertConfig,
     InferenceParams,
 )
+from wobblebot.config.llm import LLMConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import load_prompt
@@ -68,6 +71,8 @@ from wobblebot.ports.advisor import (
     PerformanceSummary,
 )
 from wobblebot.ports.exceptions import AdvisorError, StorageError
+from wobblebot.ports.storage import StoragePort
+from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.summary_builder import SummaryBuilder
 
 _LOGGER = logging.getLogger("wobblebot.cli.advise")
@@ -84,57 +89,111 @@ def _current_grid_from_config(config: WobbleBotConfig, symbol: Symbol) -> Curren
     )
 
 
-_CLOUD_PROVIDERS_UNIMPLEMENTED = ("anthropic", "openai", "google")
+_UNIMPLEMENTED_PROVIDERS = ("openai", "google")
 
 
-def _build_ollama_advisor(
+@dataclass(frozen=True)
+class _CloudWiring:
+    """Cost-tracking deps every cloud-provider adapter needs.
+
+    Bundled into a small frozen dataclass so the per-expert and
+    arbitrator builders can pass it through without growing four
+    new positional args. Built once in ``_run`` and shared across
+    every advisor adapter the CLI constructs.
+    """
+
+    storage: StoragePort
+    session_tracker: SessionCostTracker
+    llm_config: LLMConfig
+
+
+def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     *,
     provider: str,
     model: str,
     prompt_file: str,
     inference_params: InferenceParams,
     role: str,
-) -> OllamaAdapter:
-    """Construct one OllamaAdapter from the (provider, model, prompt_file)
-    triple shared by single + per-expert + arbitrator config blocks."""
-    if provider in _CLOUD_PROVIDERS_UNIMPLEMENTED:
+    cloud_wiring: _CloudWiring | None,
+) -> AdvisorPort:
+    """Construct one ``AdvisorPort`` from the (provider, model, prompt_file)
+    triple shared by single + per-expert + arbitrator config blocks.
+
+    Dispatches by provider:
+    - ``ollama`` → ``OllamaAdapter`` (local, free; bypasses the cost gate).
+    - ``anthropic`` → ``AnthropicAdvisorAdapter`` (Phase 6 Stage 6.2;
+      requires ``cloud_wiring`` non-None).
+    - ``openai`` / ``google`` → not yet implemented; raise.
+    """
+    prompt = load_prompt(Path(prompt_file))
+    if provider == "ollama":
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        return OllamaAdapter(
+            model=model,
+            prompt=prompt,
+            role=role,
+            base_url=base_url,
+            temperature=float(inference_params.temperature),
+            max_tokens=inference_params.max_tokens,
+            timeout_seconds=inference_params.timeout_seconds,
+        )
+    if provider == "anthropic":
+        if cloud_wiring is None:
+            raise ValueError(
+                "Anthropic provider configured but settings.yml has no `llm:` "
+                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
+                "providers; add an `llm:` block and ensure operator.operator_db "
+                "is set so the cost ledger can be written."
+            )
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY missing from environment; required when "
+                "advisor.provider=='anthropic'."
+            )
+        return AnthropicAdvisorAdapter(
+            model=model,
+            prompt=prompt,
+            role=role,  # type: ignore[arg-type]
+            api_key=api_key,
+            storage=cloud_wiring.storage,
+            session_tracker=cloud_wiring.session_tracker,
+            cost_config=cloud_wiring.llm_config.cost,
+            retry_config=cloud_wiring.llm_config.retry,
+            temperature=float(inference_params.temperature),
+            max_tokens=inference_params.max_tokens,
+            timeout_seconds=inference_params.timeout_seconds,
+        )
+    if provider in _UNIMPLEMENTED_PROVIDERS:
         raise ValueError(
             f"provider={provider!r} not implemented yet "
-            "(only ollama ships in Stage 3.4a; cloud adapters land later)"
+            "(Stage 6.2 ships anthropic; openai/google land in 6.3/6.4)"
         )
-    if provider != "ollama":
-        raise ValueError(f"unknown provider {provider!r}")
-    prompt = load_prompt(Path(prompt_file))
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    return OllamaAdapter(
-        model=model,
-        prompt=prompt,
-        role=role,
-        base_url=base_url,
-        temperature=float(inference_params.temperature),
-        max_tokens=inference_params.max_tokens,
-        timeout_seconds=inference_params.timeout_seconds,
-    )
+    raise ValueError(f"unknown provider {provider!r}")
 
 
-def _build_expert_entry(expert: ExpertConfig) -> MoEExpertEntry:
-    adapter = _build_ollama_advisor(
+def _build_expert_entry(expert: ExpertConfig, cloud_wiring: _CloudWiring | None) -> MoEExpertEntry:
+    adapter = _build_advisor_adapter(
         provider=expert.provider,
         model=expert.model,
         prompt_file=expert.prompt_file,
         inference_params=expert.inference_params,
         role=expert.role,
+        cloud_wiring=cloud_wiring,
     )
     return MoEExpertEntry(name=expert.name, role=expert.role, advisor=adapter)
 
 
-def _build_arbitrator_entry(arbitrator: ArbitratorConfig) -> MoEExpertEntry:
-    adapter = _build_ollama_advisor(
+def _build_arbitrator_entry(
+    arbitrator: ArbitratorConfig, cloud_wiring: _CloudWiring | None
+) -> MoEExpertEntry:
+    adapter = _build_advisor_adapter(
         provider=arbitrator.provider,
         model=arbitrator.model,
         prompt_file=arbitrator.prompt_file,
         inference_params=arbitrator.inference_params,
         role="arbitrator",
+        cloud_wiring=cloud_wiring,
     )
     # Arbitrator's name slot in the audit log. Operator config doesn't
     # supply one (ArbitratorConfig has no `name` field) — the role is
@@ -143,13 +202,23 @@ def _build_arbitrator_entry(arbitrator: ArbitratorConfig) -> MoEExpertEntry:
     return MoEExpertEntry(name="arbitrator", role="arbitrator", advisor=adapter)
 
 
-def _build_advisor(advisor: AdvisorConfig, model_name_out: list[str]) -> AdvisorPort:
+def _build_advisor(
+    advisor: AdvisorConfig,
+    model_name_out: list[str],
+    *,
+    cloud_wiring: _CloudWiring | None = None,
+) -> AdvisorPort:
     """Construct the configured AdvisorPort.
 
     Dispatches on ``advisor.type``:
-    - ``single``: one ``OllamaAdapter`` (Stage 3.2 path).
-    - ``moe``: ``MoEAdvisorAdapter`` wrapping one ``OllamaAdapter`` per
+    - ``single``: one provider adapter (Stage 3.2 single-LLM path,
+      Stage 6.2+ for cloud providers).
+    - ``moe``: ``MoEAdvisorAdapter`` wrapping one adapter per
       configured expert; arbitrator wired iff ``aggregator="arbitrator"``.
+
+    ``cloud_wiring`` is required when any expert/arbitrator/single
+    provider is non-Ollama (``anthropic`` etc.); ``_build_advisor_adapter``
+    raises ``ValueError`` if a cloud provider is configured without it.
 
     The resolved model name is pushed into ``model_name_out[0]`` so the
     caller can persist it in ``AdvisorSuggestion.model_name``. For MoE
@@ -160,22 +229,23 @@ def _build_advisor(advisor: AdvisorConfig, model_name_out: list[str]) -> Advisor
         assert advisor.provider is not None  # validator enforces for type=single
         assert advisor.model is not None
         assert advisor.prompt_file is not None
-        ollama = _build_ollama_advisor(
+        adapter = _build_advisor_adapter(
             provider=advisor.provider,
             model=advisor.model,
             prompt_file=advisor.prompt_file,
             inference_params=advisor.inference_params,
             role="single",
+            cloud_wiring=cloud_wiring,
         )
         model_name_out.append(advisor.model)
-        return ollama
+        return adapter
 
     # type=moe
-    expert_entries = [_build_expert_entry(e) for e in advisor.experts]
+    expert_entries = [_build_expert_entry(e, cloud_wiring) for e in advisor.experts]
     arbitrator_entry: MoEExpertEntry | None = None
     if advisor.aggregator == "arbitrator":
         assert advisor.arbitrator is not None  # validator enforces for arbitrator
-        arbitrator_entry = _build_arbitrator_entry(advisor.arbitrator)
+        arbitrator_entry = _build_arbitrator_entry(advisor.arbitrator, cloud_wiring)
     moe = MoEAdvisorAdapter(
         experts=expert_entries,
         aggregator=advisor.aggregator,
@@ -385,11 +455,34 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
         _LOGGER.error("missing schedule", extra={"error": str(exc)})
         return 2
 
+    # Open the cost-ledger storage (operator.db) first if config.llm is
+    # set — cloud-provider adapters need it threaded through their
+    # constructors. Pure-Ollama deployments skip this entirely.
+    operator_storage: SQLiteStorageAdapter | None = None
+    cloud_wiring: _CloudWiring | None = None
+    if config.llm is not None:
+        if config.operator is None:
+            _LOGGER.error(
+                "settings.yml has an `llm:` block but no `operator:` block; "
+                "the operator.operator_db path is required to host the "
+                "cost ledger (ADR-014 decision 5)."
+            )
+            return 2
+        operator_storage = SQLiteStorageAdapter(config.operator.operator_db)
+        await operator_storage.connect()
+        cloud_wiring = _CloudWiring(
+            storage=operator_storage,
+            session_tracker=SessionCostTracker(),
+            llm_config=config.llm,
+        )
+
     model_name_holder: list[str] = []
     try:
-        advisor = _build_advisor(config.advisor, model_name_holder)
+        advisor = _build_advisor(config.advisor, model_name_holder, cloud_wiring=cloud_wiring)
     except (ValueError, FileNotFoundError) as exc:
         _LOGGER.error("advisor setup failed", extra={"error": str(exc)})
+        if operator_storage is not None:
+            await operator_storage.close()
         return 2
     model_name = model_name_holder[0]
 
@@ -442,6 +535,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
         await observe_storage.close()
         await news_storage.close()
         await advise_storage.close()
+        if operator_storage is not None:
+            await operator_storage.close()
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

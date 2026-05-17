@@ -367,7 +367,7 @@ class AssistantLLMConfig(BaseModel):
     adds cloud variants.
     """
 
-    provider: Literal["ollama"] = "ollama"
+    provider: Literal["ollama", "anthropic"] = "ollama"
     model: str = Field(min_length=1)
     prompt_file: str = Field(default="config/prompts/operator.md")
     base_url: str = Field(default="http://localhost:11434")

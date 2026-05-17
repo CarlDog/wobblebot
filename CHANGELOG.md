@@ -10,6 +10,73 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 6.2 — Anthropic adapter (2026-05-17)
+
+First real cloud-provider adapter under Phase 6. Both
+`AnthropicAdvisorAdapter` (AdvisorPort) and `AnthropicAssistantAdapter`
+(AssistantPort) ship with the full ADR-014 cost-tracking flow
+internalized: estimate → `check_budget` → `retry_with_backoff` (per
+ADR-015) → persist `LLMCallRecord` → update `SessionCostTracker`.
+No real API call yet — Stage 6.5 is the first.
+
+Three sub-slices, each landed in its own commit:
+
+**6.2.A — Anthropic shared client + AdvisorAdapter.** New
+`adapters/anthropic.py` carrying the shared Messages-API helpers
+(`estimate_cost_ceiling`, `parse_text_blocks`, `build_call_record`,
+`post_messages`) plus `AnthropicAdvisorAdapter`. Constructor takes
+storage + session_tracker + cost_config + retry_config alongside
+the usual model/prompt/role; `get_recommendation` runs the full
+flow inline. Anthropic thinking tokens recorded as
+`tokens_reasoning=None` (the API lumps them with `output_tokens` +
+bills at output rate; cost is correct via the pricing fallback).
+Reuses `extract_last_json_object` from `adapters/ollama`
+(module-public since Stage 5.3). New `SessionCostTracker` mutable
+class in `services/llm_cost_gate.py` — one per CLI process
+lifetime, shared across every adapter the CLI builds. 32 new
+unit tests covering pure helpers + happy paths + cost gate
+(daily + session caps, dry-run posture) + retry/backoff (5xx +
+429 transient, 4xx permanent, exhaustion propagates
+`LLMRetryExhausted`) + parse failures + construction guards.
+
+**6.2.B — AnthropicAssistantAdapter.** New
+`adapters/anthropic_assistant.py` implementing `AssistantPort`.
+System prompt = operator prompt body + engine state snapshot;
+recent turns mapped operator→user / assistant→assistant; current
+operator message as final user turn. Same cost-tracking flow as
+the advisor adapter, role=operator on every LLMCallRecord.
+Module-level `TypeAdapter[OperatorIntent]` for the two-level
+discriminator resolution. Constructor refuses non-operator-role
+prompts + empty api_key. 17 new unit tests covering every
+OperatorIntent variant + wire-shape verification + cost-tracking
++ retry + parse failures.
+
+**6.2.C — CLI dispatch wiring + stage close.**
+`cli/advise._build_ollama_advisor` → `_build_advisor_adapter`
+with provider dispatch (`ollama` / `anthropic`; `openai` and
+`google` still raise "not implemented"). New `_CloudWiring`
+frozen dataclass bundles storage + tracker + LLMConfig and
+threads through `_build_advisor` + `_build_expert_entry` +
+`_build_arbitrator_entry`. `_main_async` opens an extra
+operator.db storage when `config.llm` is set; errors at startup
+if `config.llm` is set without `config.operator`. `cli/operator`
+gains `_build_assistant` helper dispatching on
+`OperatorConfig.assistant.provider`. `AssistantLLMConfig.provider`
+Literal extends from `["ollama"]` to `["ollama", "anthropic"]`.
+Test refactor: `test_unimplemented_cloud_provider_rejected`
+switched from `anthropic` (now implemented) to `openai`; new
+sibling test `test_anthropic_without_cloud_wiring_rejected`
+verifies the clear error message when an `llm:` block is missing.
+
+**1379 unit tests** pass (up from 1334 at Stage 6.1 close; +45 across
+Stages 6.2's three sub-slices — 32 advisor + 17 assistant + 5
+SessionCostTracker, with -9 from refactor/dedup). mypy clean (76
+src files). pylint 10.00/10. black + isort clean. **No new
+runtime dependencies** — Anthropic adapter is pure httpx +
+pydantic. Phase 6 real-money cost still **$0.00** (Stage 6.5 is
+the first real API call); running project total **$0.08**
+unchanged from Phase 2 close.
+
 ### Stage 6.1 — Shared cloud-LLM infrastructure (2026-05-17)
 
 First Phase 6 implementation stage; pure foundation with **zero real

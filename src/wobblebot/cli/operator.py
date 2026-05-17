@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.discord_transport import (
     COLOR_ERROR,
     COLOR_INFO,
@@ -54,9 +56,10 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, load_operator_env
+from wobblebot.config.cli import OperatorConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
-from wobblebot.config.prompts import load_prompt
+from wobblebot.config.prompts import Prompt, load_prompt
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.assistant import (
@@ -81,6 +84,7 @@ from wobblebot.ports.operator import (
 )
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.operator_service import OperatorService
 
 _LOGGER = logging.getLogger("wobblebot.cli.operator")
@@ -765,6 +769,65 @@ async def _safe_save_turn(storage: StoragePort, turn: ConversationTurn) -> None:
 # --------------------------------------------------------------------- #
 
 
+def _build_assistant(
+    operator_cfg: OperatorConfig,
+    config: WobbleBotConfig,
+    operator_storage: SQLiteStorageAdapter,
+    prompt: Prompt,
+) -> AssistantPort | None:
+    """Construct the configured ``AssistantPort`` adapter.
+
+    Dispatches on ``operator_cfg.assistant.provider``. Returns
+    ``None`` and logs a startup error when the cloud path is
+    misconfigured — caller must `return 2` after closing storage.
+
+    Phase 5 ships Ollama. Phase 6 Stage 6.2 adds Anthropic.
+    Stages 6.3/6.4 will add OpenAI / Google.
+    """
+    asst_cfg = operator_cfg.assistant
+    if asst_cfg.provider == "ollama":
+        return OllamaAssistantAdapter(
+            model=asst_cfg.model,
+            prompt=prompt,
+            base_url=asst_cfg.base_url,
+            temperature=asst_cfg.temperature,
+            max_tokens=asst_cfg.max_tokens,
+            timeout_seconds=asst_cfg.timeout_seconds,
+        )
+    if asst_cfg.provider == "anthropic":
+        if config.llm is None:
+            _LOGGER.error(
+                "operator.assistant.provider='anthropic' but settings.yml "
+                "has no `llm:` block; Phase 6 / ADR-014 requires cost-cap "
+                "config for cloud providers."
+            )
+            return None
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            _LOGGER.error(
+                "ANTHROPIC_API_KEY missing from environment; required when "
+                "operator.assistant.provider=='anthropic'."
+            )
+            return None
+        return AnthropicAssistantAdapter(
+            model=asst_cfg.model,
+            prompt=prompt,
+            api_key=api_key,
+            storage=operator_storage,
+            session_tracker=SessionCostTracker(),
+            cost_config=config.llm.cost,
+            retry_config=config.llm.retry,
+            temperature=asst_cfg.temperature,
+            max_tokens=asst_cfg.max_tokens,
+            timeout_seconds=asst_cfg.timeout_seconds,
+        )
+    # Should never trip: AssistantLLMConfig.provider is a Literal[
+    # "ollama", "anthropic"] for Stage 6.2; widening it without adding
+    # the matching branch would surface here at runtime.
+    _LOGGER.error("unknown assistant provider", extra={"provider": asst_cfg.provider})
+    return None
+
+
 async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     config: WobbleBotConfig,
 ) -> int:
@@ -818,14 +881,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         )
         await operator_storage.close()
         return 2
-    assistant = OllamaAssistantAdapter(
-        model=operator_cfg.assistant.model,
-        prompt=prompt,
-        base_url=operator_cfg.assistant.base_url,
-        temperature=operator_cfg.assistant.temperature,
-        max_tokens=operator_cfg.assistant.max_tokens,
-        timeout_seconds=operator_cfg.assistant.timeout_seconds,
-    )
+    assistant = _build_assistant(operator_cfg, config, operator_storage, prompt)
+    if assistant is None:
+        await operator_storage.close()
+        return 2
 
     # Operator service for query answering. cli/operator has no engine,
     # so it constructs a stand-in via the existing OperatorService class
@@ -937,7 +996,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 await task
             except asyncio.CancelledError:
                 pass
-        await assistant.aclose()
+        aclose = getattr(assistant, "aclose", None)
+        if aclose is not None:
+            await aclose()
         await operator_storage.close()
         if live_storage is not None:
             await live_storage.close()
