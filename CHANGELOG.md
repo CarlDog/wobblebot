@@ -36,6 +36,120 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.6 — cli/operator Daemon (2026-05-16)
+
+Sixth Phase 5 slice. The long-running CLI that ties together every
+piece Phase 5 has shipped — DiscordTransport (5.2) +
+OllamaAssistantAdapter (5.3) + OperatorService (5.4) +
+SqliteNotifierAdapter (5.5). Four sub-slices + close:
+
+**5.6.A — conversation_turns table + StoragePort.** Third Phase 5
+SQLite table: id PK (UUID), channel_id, user_id, role (CHECK in
+operator/assistant), content, intent_json (nullable; populated
+for parsed operator turns), timestamp. Two indexes — composite
+(channel_id, user_id, timestamp) for the prompt-assembly scope
+read and (timestamp) for forensic queries. Three new StoragePort
+methods: save_conversation_turn (upsert via ON CONFLICT DO UPDATE
+so the typical save-on-receipt + re-save-with-intent flow works
+without losing the row), get_conversation_turns(channel_id,
+user_id, limit) (returns chronologically; when limit is set the
+adapter fetches newest-N via DESC+LIMIT then reverses in Python).
+row_to_conversation_turn uses a new module-level
+TypeAdapter[OperatorIntent] for discriminator rebuild. 10 new
+unit tests covering round-trip (operator with intent / assistant
+without), nested IntentCommand preservation, scope isolation,
+chronological ordering, limit returning newest-N-chronologically,
+CHECK rejects unknown role, upsert replaces content + intent.
+
+**5.6.B — OperatorConfig schema.** Three new Pydantic models in
+config/cli.py:
+- AssistantLLMConfig — provider (ollama for Phase 5), model,
+  prompt_file (default config/prompts/operator.md), base_url,
+  temperature (0.3 default per the operator.md hint), max_tokens
+  (512), timeout_seconds.
+- OperatorAuthConfig — bot_token_env_var (default
+  DISCORD_BOT_TOKEN), allowed_user_ids, allowed_channel_ids (both
+  frozenset, deny-by-default per ADR-013 decision 6),
+  outbound_channel_id (where confirm embeds + forwarded
+  notifications go; daemon validates at startup that it's in
+  allowed_channel_ids).
+- OperatorConfig composing both + operator_db (the daemon's own
+  pending_commands/notifications/conversation_turns DB) + optional
+  live_db/advise_db/news_db/harvest_db for cross-database queries
+  + the ADR-013 knobs (context_window_turns 10 capped 1-50,
+  confirm_ttl_seconds 300, forwarder_poll_seconds 2.0).
+WobbleBotConfig gains operator: OperatorConfig | None = None. 18
+new unit tests across defaults, required fields, bounds (temp 0-2,
+context window 1-50, positive TTL + poll), frozenness.
+
+**5.6.C — cli/operator daemon.** New cli/operator entry point with
+three concurrent concerns:
+
+  Notification forwarder (background asyncio.Task):
+  _forwarder_loop polls notifications WHERE forwarded=0 every
+  forwarder_poll_seconds, posts each as a color-coded Discord embed,
+  marks forwarded on success. Per-row failures logged + batch
+  continues — losing one forward beats stopping the daemon.
+
+  Conversation flow (Discord on_message handler):
+  _handle_inbound_message persists the operator turn, composes a
+  ConversationContext (current message + recent N turns from
+  storage + engine state snapshot from live_storage), calls
+  AssistantPort.parse_intent, re-saves the turn with parsed
+  intent, routes via match/case:
+  - IntentCommand → write PendingCommand (awaiting_confirmation)
+    + post confirm embed; record message_id → pending_id in
+    in-memory map for the reaction handler
+  - IntentQuery → OperatorService.answer_query + post result embed
+  - IntentConversational → post reply_text as plain message
+  - IntentUnparseable → surface "I couldn't parse that: <reason>"
+
+  Confirmation flow (Discord on_raw_reaction_add handler):
+  _handle_reaction looks up the in-memory map; on hit fetches the
+  pending row and transitions awaiting_confirmation → approved
+  (✅) or rejected (❌) with the confirming user_id + timestamp.
+  Already-transitioned rows ignored (idempotency vs duplicate
+  reactions). action='remove' ignored (we only care about adds).
+
+Per ADR-013 decision 3 cli/operator NEVER calls
+OperatorService.dispatch_command directly — every state mutation
+crosses pending_commands so cli/live's WHERE status='approved'
+poll (Stage 5.4's ADR-002 firewall) is the only path from intent
+to engine.
+
+_main_async wires storage + assistant + stub OperatorService +
+DiscordTransport + the forwarder Task + SIGINT/SIGTERM handlers.
+discord.py's Client.start() runs the Gateway connection until
+transport.close().
+
+v1 limitation documented in code: cli/operator's stub engine
+can't see cli/live's in-memory pause state, so StatusQuery
+reports all symbols as 'active'. Persisting pause state to
+storage is a future-stage enhancement.
+
+14 new unit tests for the testable seams (helper functions called
+directly with synthetic InboundMessage/ReactionEvent): summarizer
+output, forwarder happy path + empty + per-row failure isolation,
+message routing through each IntentVariant, reaction confirm /
+reject / unknown-id / double-reaction-no-overwrite /
+remove-action-ignored.
+
+**5.6.D — tools/show_pending.py + close.** Operator inspection
+script in the show_*.py family pattern. Args: --db-path (default
+data/wobblebot-operator.db), --status (filter to one of the six
+lifecycle states), --limit (default 20), --log-format. Safe
+against the live operator DB while cli/operator is running —
+SQLite handles concurrent readers; no write surface.
+
+**Health at Stage 5.6 close:** 1209 unit tests pass (was 1167 at
+Stage 5.5 close, +42 across the four sub-slices); 21 integration
+tests opt-in; mypy clean across 69 src files; pylint **10.00/10**
+with no outstanding warnings; black + isort clean.
+
+Running real-money cost unchanged at $0.08. cli/operator and
+cli/live haven't been wired end-to-end against the operator's real
+Discord + Kraken yet — that's Stage 5.7's integration check.
+
 ### Stage 5.5 — Outbound Notifications (2026-05-16)
 
 Fifth Phase 5 slice. Lands the persistence + wiring for outbound
