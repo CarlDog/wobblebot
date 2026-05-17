@@ -1,0 +1,929 @@
+"""Operator interaction daemon — Stage 5.6 (ADR-013).
+
+Long-running CLI that ties together every piece Phase 5 has shipped:
+
+- ``DiscordTransport`` (5.2): the Gateway client and message / reaction
+  surface.
+- ``OllamaAssistantAdapter`` (5.3): parses each inbound operator
+  message into a typed ``OperatorIntent``.
+- ``OperatorService`` (5.4): answers read-only queries; dispatch goes
+  through the pending_commands DB (cli/live polls and acts).
+- ``SqliteNotifierAdapter`` (5.5): cli/live and cli/harvest write
+  outbound events; this daemon's forwarder reads them and posts
+  to Discord.
+- ``conversation_turns`` (5.6.A) + ``OperatorConfig`` (5.6.B): multi-turn
+  prompt assembly + the operator-daemon-specific knobs.
+
+Three concurrent concerns:
+
+1. **Notification forwarder** — background task that drains
+   ``notifications WHERE forwarded=0`` and posts each to Discord
+   (color-coded by level), marking forwarded on success.
+2. **Conversation flow** — Discord message handler that builds
+   ``ConversationContext`` from the engine state snapshot + recent
+   turns, calls ``AssistantPort.parse_intent``, persists the operator
+   turn, then routes the intent: Command → confirm embed + pending
+   row; Query → answer immediately; Conversational → reply text;
+   Unparseable → ask for clarification.
+3. **Confirmation flow** — Discord reaction handler that looks up
+   pending_commands by confirm-message id (in-memory map) and
+   transitions ``awaiting_confirmation`` → ``approved``/``rejected``.
+
+Per ADR-013 decision 3 the daemon NEVER calls
+``OperatorService.dispatch_command`` directly — operator-driven state
+mutations always cross the pending_commands table so the ADR-002
+firewall in cli/live's poll layer (Stage 5.4) is the only path from
+intent to engine.
+
+Run as a module::
+
+    python -m wobblebot.cli.operator
+    python -m wobblebot.cli.operator --config /path/to/settings.yml
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import signal
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4
+
+from wobblebot.adapters.discord_transport import (
+    COLOR_ERROR,
+    COLOR_INFO,
+    COLOR_SUCCESS,
+    COLOR_WARNING,
+    CONFIRM_EMOJI,
+    REJECT_EMOJI,
+    DiscordTransport,
+    DiscordTransportConfig,
+    DiscordTransportError,
+    InboundMessage,
+    ReactionEvent,
+)
+from wobblebot.adapters.mock_exchange import MockExchangeAdapter
+from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
+from wobblebot.cli._common import add_config_args, load_operator_env
+from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.config.logging import configure_logging
+from wobblebot.config.prompts import load_prompt
+from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.assistant import (
+    AssistantPort,
+    ConversationContext,
+    ConversationTurn,
+    EngineStateSnapshot,
+    SymbolStateSnapshot,
+)
+from wobblebot.ports.exceptions import (
+    AssistantError,
+    OperatorError,
+    StorageError,
+)
+from wobblebot.ports.operator import (
+    IntentCommand,
+    IntentConversational,
+    IntentQuery,
+    IntentUnparseable,
+    OperatorIntent,
+    PendingCommand,
+)
+from wobblebot.ports.storage import StoragePort
+from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.operator_service import OperatorService
+
+_LOGGER = logging.getLogger("wobblebot.cli.operator")
+
+
+# --------------------------------------------------------------------- #
+# Notification forwarder                                                #
+# --------------------------------------------------------------------- #
+
+_LEVEL_TO_COLOR = {
+    "info": COLOR_INFO,
+    "warning": COLOR_WARNING,
+    "error": COLOR_ERROR,
+    "critical": COLOR_ERROR,
+}
+
+
+async def _forward_pending_notifications(
+    *,
+    storage: StoragePort,
+    transport: DiscordTransport,
+    channel_id: str,
+) -> int:
+    """Drain ``notifications WHERE forwarded=0``; post each to Discord.
+
+    Per-row failures (Discord post fails, mark-forwarded fails) are
+    logged and the loop continues — losing forward progress on one
+    row beats stopping the whole daemon. Returns the count of rows
+    successfully forwarded.
+    """
+    try:
+        rows = await storage.get_notifications(forwarded=False)
+    except StorageError as exc:
+        _LOGGER.error("forwarder: get_notifications failed", extra={"error": str(exc)})
+        return 0
+    forwarded = 0
+    for row in rows:
+        if row.id is None:  # defensive; persisted rows always have an id
+            continue
+        try:
+            await transport.send_embed(
+                channel_id,
+                title=row.notification.title,
+                description=row.notification.message,
+                color=_LEVEL_TO_COLOR.get(row.notification.level, COLOR_INFO),
+                fields=_render_context_fields(row.notification.context),
+                footer=f"level={row.notification.level} • id={row.id}",
+            )
+            await storage.mark_notification_forwarded(row.id, Timestamp(dt=datetime.now(UTC)))
+            forwarded += 1
+        except (DiscordTransportError, StorageError) as exc:
+            _LOGGER.error(
+                "forwarder: per-row forward failed; will retry next poll",
+                extra={
+                    "notification_id": row.id,
+                    "level": row.notification.level,
+                    "error": str(exc),
+                },
+            )
+    return forwarded
+
+
+def _render_context_fields(context: dict[str, Any], max_fields: int = 8) -> list[tuple[str, str]]:
+    """Render a context dict as Discord embed fields (name, value pairs).
+
+    Discord caps embeds at 25 fields and 1024 chars per value; we
+    self-limit to ``max_fields`` and truncate long values so a verbose
+    context dict doesn't blow up the embed.
+    """
+    fields: list[tuple[str, str]] = []
+    for idx, (key, value) in enumerate(context.items()):
+        if idx >= max_fields:
+            break
+        text = str(value)
+        if len(text) > 200:
+            text = text[:197] + "..."
+        fields.append((str(key), text))
+    return fields
+
+
+async def _forwarder_loop(
+    *,
+    storage: StoragePort,
+    transport: DiscordTransport,
+    channel_id: str,
+    poll_seconds: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Background task: poll + forward + sleep, until ``stop_event`` is set."""
+    _LOGGER.info(
+        "notification forwarder started",
+        extra={"channel_id": channel_id, "poll_seconds": poll_seconds},
+    )
+    try:
+        while not stop_event.is_set():
+            await _forward_pending_notifications(
+                storage=storage, transport=transport, channel_id=channel_id
+            )
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        _LOGGER.info("notification forwarder stopped")
+
+
+# --------------------------------------------------------------------- #
+# Conversation context assembly                                         #
+# --------------------------------------------------------------------- #
+
+
+async def _compose_engine_state_snapshot(
+    *,
+    live_storage: StoragePort | None,
+    active_symbols: tuple[str, ...] = (),
+) -> EngineStateSnapshot:
+    """Build a best-effort engine state snapshot for the assistant prompt.
+
+    Reads from live.db (open orders + latest balance) when available;
+    fills in zeros / empty lists when not. Per the Stage 5.6 v1
+    limitation noted in stage-5.1-design.md decision 8: pause state
+    is in-memory in cli/live's engine and not visible from
+    cli/operator, so all active symbols are reported as ``"active"``.
+    """
+    now = Timestamp(dt=datetime.now(UTC))
+    if live_storage is None:
+        return EngineStateSnapshot(
+            snapshot_at=now,
+            symbols=[],
+            total_usd_balance=0.0,
+            session_pnl=0.0,
+            session_runtime_seconds=0.0,
+        )
+    symbols: list[SymbolStateSnapshot] = []
+    for symbol_str in active_symbols:
+        try:
+            opens = await live_storage.get_open_orders()
+            # No Symbol-from-string parsing here; the engine_state
+            # snapshot's symbol field is the plain string form anyway.
+            open_for_symbol = sum(1 for o in opens if str(o.symbol) == symbol_str)
+        except StorageError:
+            open_for_symbol = 0
+        symbols.append(
+            SymbolStateSnapshot(
+                symbol=symbol_str,
+                state="active",
+                open_order_count=open_for_symbol,
+            )
+        )
+    try:
+        balances = await live_storage.get_latest_balance_snapshot()
+        usd_total = next((float(b.total) for b in balances if b.asset.upper() == "USD"), 0.0)
+    except StorageError:
+        usd_total = 0.0
+    return EngineStateSnapshot(
+        snapshot_at=now,
+        symbols=symbols,
+        total_usd_balance=usd_total,
+        session_pnl=0.0,
+        session_runtime_seconds=0.0,
+    )
+
+
+# --------------------------------------------------------------------- #
+# Conversation flow — message handler                                   #
+# --------------------------------------------------------------------- #
+
+
+async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-many-locals
+    message: InboundMessage,
+    *,
+    operator_storage: StoragePort,
+    live_storage: StoragePort | None,
+    assistant: AssistantPort,
+    operator_service: OperatorService,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+    context_window_turns: int,
+    confirm_ttl_seconds: int,
+    pending_message_map: dict[str, UUID],
+) -> None:
+    """Parse an inbound operator message + route the resulting intent.
+
+    Persists the operator turn (with parsed intent), then dispatches:
+      - IntentCommand: writes a PendingCommand row (awaiting_confirmation)
+        and posts a confirm embed; the reaction handler will transition
+        to approved/rejected.
+      - IntentQuery: calls operator_service.answer_query and posts an
+        embed with the structured result.
+      - IntentConversational: posts the reply_text as a plain message.
+      - IntentUnparseable: posts the reason as a "couldn't parse" reply.
+
+    Per-step failures are logged and surfaced to Discord; the daemon
+    continues. Assistant errors mark the operator turn with intent=None
+    and post an apology.
+    """
+    operator_turn = ConversationTurn(
+        id=uuid4(),
+        channel_id=message.channel_id,
+        user_id=message.user_id,
+        role="operator",
+        content=message.content,
+        intent=None,
+        timestamp=message.timestamp,
+    )
+    try:
+        await operator_storage.save_conversation_turn(operator_turn)
+    except StorageError as exc:
+        _LOGGER.error(
+            "failed to persist inbound operator turn; aborting parse",
+            extra={"channel_id": message.channel_id, "error": str(exc)},
+        )
+        return
+
+    snapshot = await _compose_engine_state_snapshot(live_storage=live_storage)
+    try:
+        recent = await operator_storage.get_conversation_turns(
+            message.channel_id, message.user_id, limit=context_window_turns
+        )
+    except StorageError as exc:
+        _LOGGER.warning(
+            "failed to read recent turns; proceeding without history",
+            extra={"channel_id": message.channel_id, "error": str(exc)},
+        )
+        recent = []
+    # Strip the just-saved operator turn from the history — assistant
+    # gets it as ``current_message`` instead of as a prior turn.
+    prior_turns = tuple(t for t in recent if t.id != operator_turn.id)
+
+    context = ConversationContext(
+        current_message=message.content,
+        channel_id=message.channel_id,
+        user_id=message.user_id,
+        recent_turns=prior_turns,
+        engine_state_snapshot=snapshot,
+    )
+
+    try:
+        intent = await assistant.parse_intent(context)
+    except AssistantError as exc:
+        _LOGGER.error(
+            "assistant parse failed",
+            extra={"channel_id": message.channel_id, "error": str(exc)},
+        )
+        await _safe_send_message(
+            transport,
+            outbound_channel_id,
+            f"Sorry, I couldn't process that. ({type(exc).__name__})",
+        )
+        return
+
+    # Re-save the operator turn with the parsed intent attached.
+    parsed_turn = operator_turn.model_copy(update={"intent": intent})
+    try:
+        await operator_storage.save_conversation_turn(parsed_turn)
+    except StorageError as exc:
+        _LOGGER.warning(
+            "failed to upsert operator turn with parsed intent",
+            extra={"turn_id": str(operator_turn.id), "error": str(exc)},
+        )
+
+    await _route_intent(
+        intent=intent,
+        channel_id=message.channel_id,
+        user_id=message.user_id,
+        operator_storage=operator_storage,
+        operator_service=operator_service,
+        transport=transport,
+        outbound_channel_id=outbound_channel_id,
+        confirm_ttl_seconds=confirm_ttl_seconds,
+        pending_message_map=pending_message_map,
+    )
+
+
+async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
+    *,
+    intent: OperatorIntent,
+    channel_id: str,
+    user_id: str,
+    operator_storage: StoragePort,
+    operator_service: OperatorService,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+    confirm_ttl_seconds: int,
+    pending_message_map: dict[str, UUID],
+) -> None:
+    """Dispatch the parsed intent to the right handler."""
+    match intent:
+        case IntentCommand():
+            await _handle_command_intent(
+                intent=intent,
+                channel_id=channel_id,
+                user_id=user_id,
+                operator_storage=operator_storage,
+                transport=transport,
+                outbound_channel_id=outbound_channel_id,
+                confirm_ttl_seconds=confirm_ttl_seconds,
+                pending_message_map=pending_message_map,
+            )
+        case IntentQuery():
+            await _handle_query_intent(
+                intent=intent,
+                channel_id=channel_id,
+                user_id=user_id,
+                operator_storage=operator_storage,
+                operator_service=operator_service,
+                transport=transport,
+                outbound_channel_id=outbound_channel_id,
+            )
+        case IntentConversational():
+            await _handle_conversational(
+                intent=intent,
+                channel_id=channel_id,
+                user_id=user_id,
+                operator_storage=operator_storage,
+                transport=transport,
+                outbound_channel_id=outbound_channel_id,
+            )
+        case IntentUnparseable():
+            await _handle_unparseable(
+                intent=intent,
+                channel_id=channel_id,
+                user_id=user_id,
+                operator_storage=operator_storage,
+                transport=transport,
+                outbound_channel_id=outbound_channel_id,
+            )
+        case _:
+            _LOGGER.error("unknown intent variant", extra={"intent_kind": type(intent).__name__})
+
+
+async def _handle_command_intent(  # pylint: disable=too-many-arguments
+    *,
+    intent: IntentCommand,
+    channel_id: str,
+    user_id: str,
+    operator_storage: StoragePort,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+    confirm_ttl_seconds: int,
+    pending_message_map: dict[str, UUID],
+) -> None:
+    """Persist a PendingCommand + post a confirm embed."""
+    now = datetime.now(UTC)
+    pending = PendingCommand(
+        id=uuid4(),
+        command=intent.command,
+        status="awaiting_confirmation",
+        channel_id=channel_id,
+        requesting_user_id=user_id,
+        ttl_expires_at=Timestamp(
+            dt=now.replace(microsecond=0) + timedelta(seconds=confirm_ttl_seconds)
+        ),
+        created_at=Timestamp(dt=now),
+    )
+    try:
+        await operator_storage.save_pending_command(pending)
+    except StorageError as exc:
+        _LOGGER.error(
+            "failed to persist pending command; abandoning",
+            extra={"command_kind": intent.command.kind, "error": str(exc)},
+        )
+        await _safe_send_message(
+            transport,
+            outbound_channel_id,
+            "Failed to record the command. Try again in a moment.",
+        )
+        return
+
+    summary = _summarize_command(intent)
+    try:
+        confirm_message_id = await transport.send_confirmation(
+            outbound_channel_id, summary=summary, ref_id=str(pending.id)
+        )
+    except DiscordTransportError as exc:
+        _LOGGER.error(
+            "failed to post confirmation embed",
+            extra={"pending_id": str(pending.id), "error": str(exc)},
+        )
+        return
+    pending_message_map[confirm_message_id] = pending.id
+
+    assistant_reply = ConversationTurn(
+        id=uuid4(),
+        channel_id=channel_id,
+        user_id=user_id,
+        role="assistant",
+        content=f"Posted confirmation for {summary}",
+        intent=None,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    await _safe_save_turn(operator_storage, assistant_reply)
+
+
+def _summarize_command(intent: IntentCommand) -> str:
+    """Render a concise one-line summary of a Command intent for the embed."""
+    command = intent.command
+    if command.kind in ("pause", "resume", "cancel_open_orders"):
+        symbol = getattr(command, "symbol", None)
+        symbol_str = str(symbol) if symbol is not None else "all symbols"
+        return f"`{command.kind}` on {symbol_str}"
+    return f"`{command.kind}`"
+
+
+async def _handle_query_intent(  # pylint: disable=too-many-arguments
+    *,
+    intent: IntentQuery,
+    channel_id: str,
+    user_id: str,
+    operator_storage: StoragePort,
+    operator_service: OperatorService,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+) -> None:
+    """Answer a Query via OperatorService and post an embed."""
+    try:
+        result = await operator_service.answer_query(intent.query)
+    except OperatorError as exc:
+        _LOGGER.error(
+            "query dispatch failed",
+            extra={"query_kind": intent.query.kind, "error": str(exc)},
+        )
+        await _safe_send_message(
+            transport,
+            outbound_channel_id,
+            f"Query failed: {exc}",
+        )
+        return
+
+    try:
+        await transport.send_embed(
+            outbound_channel_id,
+            title=f"Query: {intent.query.kind}",
+            description=_summarize_query_result(result),
+            color=COLOR_SUCCESS,
+        )
+    except DiscordTransportError as exc:
+        _LOGGER.error("failed to post query result", extra={"error": str(exc)})
+
+    assistant_reply = ConversationTurn(
+        id=uuid4(),
+        channel_id=channel_id,
+        user_id=user_id,
+        role="assistant",
+        content=_summarize_query_result(result),
+        intent=None,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    await _safe_save_turn(operator_storage, assistant_reply)
+
+
+def _summarize_query_result(result: Any) -> str:
+    """One-line summary of a QueryResult for the embed description.
+
+    Generic: just dumps the model as JSON. The Discord-side richer
+    rendering is a future enhancement; for v1 the JSON is enough.
+    """
+    try:
+        dumped: str = result.model_dump_json(indent=2)
+        return dumped[:1800]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return repr(result)[:1800]
+
+
+async def _handle_conversational(  # pylint: disable=too-many-arguments
+    *,
+    intent: IntentConversational,
+    channel_id: str,
+    user_id: str,
+    operator_storage: StoragePort,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+) -> None:
+    """Post the reply_text as a plain message + save the assistant turn."""
+    await _safe_send_message(transport, outbound_channel_id, intent.reply_text)
+    assistant_reply = ConversationTurn(
+        id=uuid4(),
+        channel_id=channel_id,
+        user_id=user_id,
+        role="assistant",
+        content=intent.reply_text,
+        intent=None,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    await _safe_save_turn(operator_storage, assistant_reply)
+
+
+async def _handle_unparseable(  # pylint: disable=too-many-arguments
+    *,
+    intent: IntentUnparseable,
+    channel_id: str,
+    user_id: str,
+    operator_storage: StoragePort,
+    transport: DiscordTransport,
+    outbound_channel_id: str,
+) -> None:
+    """Surface the assistant's "I didn't understand" reason to Discord."""
+    reply = f"I couldn't parse that: {intent.reason}"
+    await _safe_send_message(transport, outbound_channel_id, reply)
+    assistant_reply = ConversationTurn(
+        id=uuid4(),
+        channel_id=channel_id,
+        user_id=user_id,
+        role="assistant",
+        content=reply,
+        intent=None,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    await _safe_save_turn(operator_storage, assistant_reply)
+
+
+# --------------------------------------------------------------------- #
+# Confirmation flow — reaction handler                                  #
+# --------------------------------------------------------------------- #
+
+
+async def _handle_reaction(
+    event: ReactionEvent,
+    *,
+    operator_storage: StoragePort,
+    pending_message_map: dict[str, UUID],
+) -> None:
+    """Transition a PendingCommand based on a ✅ / ❌ reaction.
+
+    Lookups go through the in-memory ``pending_message_map``. If the
+    map doesn't have the message_id (daemon restarted; reaction is
+    on something other than a confirmation embed; etc.), the event
+    is ignored. Per ADR-013 the persisted pending_commands row's TTL
+    is the long-term safety net — an abandoned awaiting_confirmation
+    row expires on its own.
+    """
+    if event.action != "add":
+        return  # only add transitions
+    pending_id = pending_message_map.get(event.message_id)
+    if pending_id is None:
+        return  # not a confirmation reaction
+
+    try:
+        pending = await operator_storage.get_pending_command(pending_id)
+    except StorageError as exc:
+        _LOGGER.error(
+            "reaction handler: get_pending_command failed",
+            extra={"pending_id": str(pending_id), "error": str(exc)},
+        )
+        return
+    if pending is None:
+        return  # row already gone
+    if pending.status != "awaiting_confirmation":
+        return  # already transitioned (idempotency vs duplicate reaction)
+
+    now = Timestamp(dt=datetime.now(UTC))
+    if event.emoji == CONFIRM_EMOJI:
+        updated = pending.model_copy(
+            update={
+                "status": "approved",
+                "confirming_user_id": event.user_id,
+                "confirmed_at": now,
+            }
+        )
+    elif event.emoji == REJECT_EMOJI:
+        updated = pending.model_copy(
+            update={
+                "status": "rejected",
+                "confirming_user_id": event.user_id,
+                "confirmed_at": now,
+            }
+        )
+    else:
+        return  # other emoji; ignore
+
+    try:
+        await operator_storage.save_pending_command(updated)
+        _LOGGER.info(
+            "pending command transitioned by operator reaction",
+            extra={
+                "pending_id": str(pending_id),
+                "new_status": updated.status,
+                "confirming_user_id": event.user_id,
+            },
+        )
+    except StorageError as exc:
+        _LOGGER.error(
+            "reaction handler: save_pending_command failed",
+            extra={"pending_id": str(pending_id), "error": str(exc)},
+        )
+
+
+# --------------------------------------------------------------------- #
+# Safe-send helpers                                                     #
+# --------------------------------------------------------------------- #
+
+
+async def _safe_send_message(transport: DiscordTransport, channel_id: str, content: str) -> None:
+    """``transport.send_message`` with errors logged + swallowed."""
+    try:
+        await transport.send_message(channel_id, content)
+    except DiscordTransportError as exc:
+        _LOGGER.error("send_message failed", extra={"error": str(exc)})
+
+
+async def _safe_save_turn(storage: StoragePort, turn: ConversationTurn) -> None:
+    """``save_conversation_turn`` with errors logged + swallowed."""
+    try:
+        await storage.save_conversation_turn(turn)
+    except StorageError as exc:
+        _LOGGER.error(
+            "failed to save conversation turn",
+            extra={"turn_id": str(turn.id), "error": str(exc)},
+        )
+
+
+# --------------------------------------------------------------------- #
+# Lifecycle / wiring                                                    #
+# --------------------------------------------------------------------- #
+
+
+async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
+    config: WobbleBotConfig,
+) -> int:
+    if config.operator is None:
+        _LOGGER.error("settings.yml is missing the `operator:` section")
+        return 2
+    operator_cfg = config.operator
+
+    if operator_cfg.auth.outbound_channel_id not in operator_cfg.auth.allowed_channel_ids:
+        _LOGGER.error(
+            "operator.auth.outbound_channel_id must be in allowed_channel_ids",
+            extra={
+                "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
+                "allowed_channel_ids": sorted(operator_cfg.auth.allowed_channel_ids),
+            },
+        )
+        return 2
+
+    # Open the operator daemon's primary DB (pending_commands +
+    # notifications + conversation_turns all live here).
+    operator_storage = SQLiteStorageAdapter(operator_cfg.operator_db)
+    try:
+        await operator_storage.connect()
+    except StorageError as exc:
+        _LOGGER.error(
+            "failed to open operator db",
+            extra={"path": operator_cfg.operator_db, "error": str(exc)},
+        )
+        return 2
+
+    # Optional: open live.db (for queries that need order / balance data)
+    live_storage: SQLiteStorageAdapter | None = None
+    if operator_cfg.live_db is not None:
+        live_storage = SQLiteStorageAdapter(operator_cfg.live_db)
+        try:
+            await live_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open live db; queries needing it will return empty",
+                extra={"path": operator_cfg.live_db, "error": str(exc)},
+            )
+            live_storage = None
+
+    # Operator assistant LLM
+    try:
+        prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
+    except (FileNotFoundError, ValueError) as exc:
+        _LOGGER.error(
+            "failed to load operator prompt",
+            extra={"path": operator_cfg.assistant.prompt_file, "error": str(exc)},
+        )
+        await operator_storage.close()
+        return 2
+    assistant = OllamaAssistantAdapter(
+        model=operator_cfg.assistant.model,
+        prompt=prompt,
+        base_url=operator_cfg.assistant.base_url,
+        temperature=operator_cfg.assistant.temperature,
+        max_tokens=operator_cfg.assistant.max_tokens,
+        timeout_seconds=operator_cfg.assistant.timeout_seconds,
+    )
+
+    # Operator service for query answering. cli/operator has no engine,
+    # so it constructs a stand-in via the existing OperatorService class
+    # against the live_storage; pause/dispatch commands route through
+    # pending_commands (cli/live handles them).
+    # v1 limitation: status queries return symbols as 'active' because
+    # pause state lives in cli/live's in-memory engine, not in storage.
+    stub_engine = GridEngine(
+        MockExchangeAdapter(starting_balances={}, starting_prices={}),
+        live_storage or operator_storage,
+        config.grid,
+        config.safety,
+    )
+    operator_service = OperatorService(
+        engine=stub_engine,
+        storage=live_storage or operator_storage,
+        active_symbols=(),
+        grid_config=config.grid,
+        session_started_at=Timestamp(dt=datetime.now(UTC)),
+    )
+
+    # Discord transport
+    transport = DiscordTransport(
+        DiscordTransportConfig(
+            bot_token_env_var=operator_cfg.auth.bot_token_env_var,
+            allowed_user_ids=operator_cfg.auth.allowed_user_ids,
+            allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
+        )
+    )
+
+    # In-memory confirm_message_id → pending_id map. Persisted state
+    # survives restart (TTL covers); the map gets rebuilt as new
+    # confirmations are posted.
+    pending_message_map: dict[str, UUID] = {}
+
+    async def _on_message(msg: InboundMessage) -> None:
+        await _handle_inbound_message(
+            msg,
+            operator_storage=operator_storage,
+            live_storage=live_storage,
+            assistant=assistant,
+            operator_service=operator_service,
+            transport=transport,
+            outbound_channel_id=operator_cfg.auth.outbound_channel_id,
+            context_window_turns=operator_cfg.context_window_turns,
+            confirm_ttl_seconds=operator_cfg.confirm_ttl_seconds,
+            pending_message_map=pending_message_map,
+        )
+
+    async def _on_reaction(evt: ReactionEvent) -> None:
+        await _handle_reaction(
+            evt,
+            operator_storage=operator_storage,
+            pending_message_map=pending_message_map,
+        )
+
+    transport.on_message(_on_message)
+    transport.on_reaction(_on_reaction)
+
+    stop_event = asyncio.Event()
+    _install_signal_handlers(asyncio.get_running_loop(), stop_event)
+
+    forwarder_task = asyncio.create_task(
+        _forwarder_loop(
+            storage=operator_storage,
+            transport=transport,
+            channel_id=operator_cfg.auth.outbound_channel_id,
+            poll_seconds=operator_cfg.forwarder_poll_seconds,
+            stop_event=stop_event,
+        ),
+        name="operator-forwarder",
+    )
+
+    _LOGGER.info(
+        "operator daemon starting",
+        extra={
+            "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
+            "allowed_user_ids": sorted(operator_cfg.auth.allowed_user_ids),
+            "allowed_channel_ids": sorted(operator_cfg.auth.allowed_channel_ids),
+            "context_window_turns": operator_cfg.context_window_turns,
+            "confirm_ttl_seconds": operator_cfg.confirm_ttl_seconds,
+        },
+    )
+
+    exit_code = 0
+    try:
+        # discord.py's Client.start blocks until the connection terminates.
+        # SIGINT triggers transport.close() via the signal handler.
+        gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
+        await stop_event.wait()
+        await transport.close()
+        await gateway_task
+    except DiscordTransportError as exc:
+        _LOGGER.error("discord transport failed; exiting", extra={"error": str(exc)})
+        exit_code = 1
+    finally:
+        stop_event.set()
+        forwarder_task.cancel()
+        try:
+            await forwarder_task
+        except asyncio.CancelledError:
+            pass
+        await assistant.aclose()
+        await operator_storage.close()
+        if live_storage is not None:
+            await live_storage.close()
+    return exit_code
+
+
+def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
+    """SIGINT/SIGTERM → set stop_event. Windows asyncio falls back to KeyboardInterrupt."""
+
+    def _set_stop() -> None:
+        _LOGGER.info("signal received; initiating clean shutdown")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _set_stop)
+        except NotImplementedError:
+            return
+
+
+def _build_overrides(_args: argparse.Namespace) -> dict[str, Any]:
+    """Translate CLI flags into a config override dict. v1 has no flags."""
+    return {}
+
+
+def main() -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        prog="wobblebot.cli.operator",
+        description="Discord-backed operator interaction daemon (ADR-013).",
+    )
+    add_config_args(parser)
+    args = parser.parse_args()
+    load_operator_env()
+    try:
+        config = load_resolved_config(
+            config_path=args.config,
+            profile_name=args.profile,
+            cli_overrides=_build_overrides(args),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    log_format = config.operator.log_format if config.operator is not None else "plain"
+    configure_logging(level="INFO", log_format=log_format)
+    return asyncio.run(_main_async(config))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
