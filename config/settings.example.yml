@@ -383,6 +383,94 @@ harvester:
   proposal_max_age_hours: 24
 
 # ============================================================================
+# Operator interaction daemon (Phase 5 — Stage 5.6+; cli/operator)
+# ============================================================================
+# Bidirectional Discord interface per ADR-013. cli/operator maintains a
+# Gateway connection, parses operator messages via an LLM (Ollama in
+# Phase 5; cloud variants in Phase 6) into typed OperatorIntent
+# payloads, and routes:
+#   - Command (pause/resume/cancel/stop) → writes a PendingCommand row,
+#     posts a confirm embed; cli/live polls approved rows and dispatches
+#     (the ADR-002 confirm-before-execute firewall).
+#   - Query (status/open_orders/recent_fills/...) → answers immediately.
+#   - Conversational → posts reply text.
+#   - Unparseable → asks the operator to rephrase.
+# A background forwarder also drains the `notifications` SQLite table
+# (written by cli/live + cli/harvest) and posts each as a Discord
+# embed; a TTL expirer transitions abandoned awaiting_confirmation
+# rows to expired.
+#
+# Per ADR-013 decision 9 neither cli/live nor cli/harvest imports
+# discord.py — they write notification rows; cli/operator forwards.
+operator:
+  auth:
+    # Discord bot token env-var name. The actual token never appears in
+    # this file — it lives in .env (gitignored). Leave the env-var name
+    # if the default works; override only if you maintain multiple bots
+    # in the same .env.
+    bot_token_env_var: DISCORD_BOT_TOKEN
+    # Whitelist of Discord user IDs allowed to send the bot commands +
+    # confirm pending actions. Empty = deny everyone (no one can use the
+    # bot). Find a user's ID by right-clicking their name with Discord
+    # developer mode enabled.
+    allowed_user_ids: []
+    # Whitelist of Discord channel IDs the bot listens in. Empty = deny
+    # all channels. Find a channel's ID by right-clicking the channel
+    # with developer mode enabled.
+    allowed_channel_ids: []
+    # Where outbound notifications + confirmation embeds post. MUST be
+    # in allowed_channel_ids — the daemon validates at startup.
+    outbound_channel_id: "<your-discord-channel-id>"
+  assistant:
+    # LLM provider for intent parsing. Phase 5 ships ollama only;
+    # Phase 6 will add anthropic / openai / google.
+    provider: ollama
+    # Ollama model tag. phi4:14b-q8_0 is the operator's empirical
+    # default for conversational intent parsing (decent accuracy on
+    # the operator_intent_v1 schema; ~2-4s latency on a hobby box).
+    model: phi4:14b-q8_0
+    # Path to the operator prompt file. Ships at config/prompts/operator.md;
+    # operators edit freely — the only mechanical contract is the
+    # frontmatter declaring `role: operator` and
+    # `response_schema: operator_intent_v1`.
+    prompt_file: config/prompts/operator.md
+    base_url: http://localhost:11434
+    # Lower temperature than the advisor's 0.5 — intent parsing
+    # benefits from determinism. Bump if responses get too rigid.
+    temperature: 0.3
+    max_tokens: 512
+    timeout_seconds: 60.0
+  # Path to the daemon's own SQLite DB. Houses three tables:
+  # pending_commands (Stage 5.4), notifications (Stage 5.5), and
+  # conversation_turns (Stage 5.6).
+  operator_db: "data/wobblebot-operator.db"
+  # Optional paths to other CLIs' DBs. When set, cli/operator can
+  # answer queries that need data from those scopes (recent advisor
+  # suggestions, recent news headlines, harvester status / recent
+  # proposals). When unset, those queries return empty results —
+  # graceful degrade.
+  live_db: "data/wobblebot-live.db"
+  advise_db: "data/wobblebot-advise.db"
+  news_db: "data/wobblebot-news.db"
+  harvest_db: "data/wobblebot-harvest.db"
+  # ADR-013 decision 5: 10-turn multi-turn context window. Capped at
+  # 1-50 by the schema. Higher values give the LLM more history but
+  # cost more tokens per call.
+  context_window_turns: 10
+  # ADR-013 decision 3: confirmation TTL. After this many seconds
+  # without an operator confirm/reject reaction, an
+  # awaiting_confirmation row transitions to 'expired' via the
+  # daemon's background TTL expirer.
+  confirm_ttl_seconds: 300
+  # Notification forwarder poll cadence. Lower = faster Discord
+  # surfacing; higher = less CPU + DB load.
+  forwarder_poll_seconds: 2.0
+  # TTL expirer poll cadence. Doesn't need to be fast — the operator's
+  # expectation is "wait a minute, maybe two".
+  ttl_expirer_poll_seconds: 30.0
+  log_format: plain                       # plain | json
+
+# ============================================================================
 # Profiles (named overrides)
 # ============================================================================
 # Operator runs `cli/live --profile conservative` (or `cli/shadow

@@ -205,7 +205,11 @@ class TestExampleSelfConsistency:
 
     def test_settings_example_is_valid_yaml(self) -> None:
         # If this fails the bug is in the example commit, not operator drift.
-        assert isinstance(yaml.safe_load(_SETTINGS_EXAMPLE.read_text()), dict)
+        # Force utf-8: Python's default ``read_text()`` uses the locale
+        # codepage (cp1252 on Windows), which chokes on UTF-8 chars in
+        # comments. The file is UTF-8 on disk; asking for that explicitly
+        # makes the test portable.
+        assert isinstance(yaml.safe_load(_SETTINGS_EXAMPLE.read_text(encoding="utf-8")), dict)
 
     def test_env_example_has_at_least_one_documented_key(self) -> None:
         keys = _extract_env_keys(_ENV_EXAMPLE)
