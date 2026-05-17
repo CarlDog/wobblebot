@@ -1,44 +1,28 @@
 """Operator interaction daemon — Stage 5.6 (ADR-013).
 
-Long-running CLI that ties together every piece Phase 5 has shipped:
+Long-running CLI that ties together every Phase 5 component:
+``DiscordTransport`` (5.2) for Gateway I/O, ``OllamaAssistantAdapter``
+(5.3) for intent parsing, ``OperatorService`` (5.4) for query
+answering, ``SqliteNotifierAdapter`` (5.5) for outbound forwarding,
+plus ``conversation_turns`` (5.6.A) + ``OperatorConfig`` (5.6.B).
 
-- ``DiscordTransport`` (5.2): the Gateway client and message / reaction
-  surface.
-- ``OllamaAssistantAdapter`` (5.3): parses each inbound operator
-  message into a typed ``OperatorIntent``.
-- ``OperatorService`` (5.4): answers read-only queries; dispatch goes
-  through the pending_commands DB (cli/live polls and acts).
-- ``SqliteNotifierAdapter`` (5.5): cli/live and cli/harvest write
-  outbound events; this daemon's forwarder reads them and posts
-  to Discord.
-- ``conversation_turns`` (5.6.A) + ``OperatorConfig`` (5.6.B): multi-turn
-  prompt assembly + the operator-daemon-specific knobs.
+Three concurrent concerns: (1) **notification forwarder** drains
+``notifications WHERE forwarded=0`` and posts color-coded embeds;
+(2) **conversation flow** builds ``ConversationContext``, calls
+``AssistantPort.parse_intent``, routes by intent variant (Command →
+confirm embed + pending row; Query → answer; Conversational/Unparseable
+→ reply); (3) **confirmation flow** transitions
+``awaiting_confirmation`` → ``approved``/``rejected`` via reaction
+handler + in-memory message_id→pending_id map.
 
-Three concurrent concerns:
-
-1. **Notification forwarder** — background task that drains
-   ``notifications WHERE forwarded=0`` and posts each to Discord
-   (color-coded by level), marking forwarded on success.
-2. **Conversation flow** — Discord message handler that builds
-   ``ConversationContext`` from the engine state snapshot + recent
-   turns, calls ``AssistantPort.parse_intent``, persists the operator
-   turn, then routes the intent: Command → confirm embed + pending
-   row; Query → answer immediately; Conversational → reply text;
-   Unparseable → ask for clarification.
-3. **Confirmation flow** — Discord reaction handler that looks up
-   pending_commands by confirm-message id (in-memory map) and
-   transitions ``awaiting_confirmation`` → ``approved``/``rejected``.
-
-Per ADR-013 decision 3 the daemon NEVER calls
-``OperatorService.dispatch_command`` directly — operator-driven state
-mutations always cross the pending_commands table so the ADR-002
-firewall in cli/live's poll layer (Stage 5.4) is the only path from
+Per ADR-013 decision 3: cli/operator NEVER calls
+``OperatorService.dispatch_command`` directly. Commands cross
+``pending_commands`` so cli/live's ADR-002 firewall (the
+``WHERE status='approved'`` poll, Stage 5.4) is the only path from
 intent to engine.
 
-Run as a module::
-
-    python -m wobblebot.cli.operator
-    python -m wobblebot.cli.operator --config /path/to/settings.yml
+Run as a module: ``python -m wobblebot.cli.operator``
+(``--config /path/to/settings.yml`` to override the YAML path).
 """
 
 from __future__ import annotations
@@ -201,6 +185,74 @@ async def _forwarder_loop(
                 pass
     finally:
         _LOGGER.info("notification forwarder stopped")
+
+
+# --------------------------------------------------------------------- #
+# TTL expirer for pending_commands                                      #
+# --------------------------------------------------------------------- #
+
+
+async def _expire_stale_pending_commands(storage: StoragePort) -> int:
+    """Mark expired any ``awaiting_confirmation`` row past its TTL.
+
+    Per ADR-013 decision 3 the operator's ✅/❌ reaction is the only
+    way an awaiting_confirmation row becomes approved/rejected. If
+    the operator walks away (or the daemon was offline during
+    posting), the row's ``ttl_expires_at`` is the safety net — this
+    expirer transitions matches to ``expired`` so the audit table
+    doesn't accumulate stale awaiting rows forever.
+
+    Per-row failures (storage update fails) are logged and the loop
+    continues — losing one expiration beats stopping the daemon.
+    Returns the count of rows successfully expired.
+    """
+    try:
+        rows = await storage.get_pending_commands(status="awaiting_confirmation")
+    except StorageError as exc:
+        _LOGGER.error("ttl_expirer: get_pending_commands failed", extra={"error": str(exc)})
+        return 0
+    now = datetime.now(UTC)
+    expired_count = 0
+    for row in rows:
+        if row.ttl_expires_at.dt > now:
+            continue  # not yet expired
+        updated = row.model_copy(update={"status": "expired"})
+        try:
+            await storage.save_pending_command(updated)
+            expired_count += 1
+            _LOGGER.info(
+                "pending command expired",
+                extra={
+                    "pending_id": str(row.id),
+                    "command_kind": row.command.kind,
+                    "ttl_expires_at": row.ttl_expires_at.dt.isoformat(),
+                },
+            )
+        except StorageError as exc:
+            _LOGGER.error(
+                "ttl_expirer: per-row update failed",
+                extra={"pending_id": str(row.id), "error": str(exc)},
+            )
+    return expired_count
+
+
+async def _ttl_expirer_loop(
+    *,
+    storage: StoragePort,
+    poll_seconds: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Background task: scan + expire + sleep, until ``stop_event`` is set."""
+    _LOGGER.info("ttl expirer started", extra={"poll_seconds": poll_seconds})
+    try:
+        while not stop_event.is_set():
+            await _expire_stale_pending_commands(storage)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        _LOGGER.info("ttl expirer stopped")
 
 
 # --------------------------------------------------------------------- #
@@ -846,6 +898,14 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         ),
         name="operator-forwarder",
     )
+    ttl_expirer_task = asyncio.create_task(
+        _ttl_expirer_loop(
+            storage=operator_storage,
+            poll_seconds=operator_cfg.ttl_expirer_poll_seconds,
+            stop_event=stop_event,
+        ),
+        name="operator-ttl-expirer",
+    )
 
     _LOGGER.info(
         "operator daemon starting",
@@ -871,11 +931,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         exit_code = 1
     finally:
         stop_event.set()
-        forwarder_task.cancel()
-        try:
-            await forwarder_task
-        except asyncio.CancelledError:
-            pass
+        for task in (forwarder_task, ttl_expirer_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await assistant.aclose()
         await operator_storage.close()
         if live_storage is not None:

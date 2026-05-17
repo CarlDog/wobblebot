@@ -443,6 +443,12 @@ class OperatorConfig(BaseModel):
     # default for a hobby bot.
     forwarder_poll_seconds: float = Field(default=2.0, gt=0)
 
+    # TTL expirer poll cadence. Scans pending_commands WHERE
+    # status='awaiting_confirmation' AND ttl_expires_at < now and
+    # transitions matches to 'expired'. Doesn't need to be fast —
+    # the operator's expectation is "wait a minute, maybe two".
+    ttl_expirer_poll_seconds: float = Field(default=30.0, gt=0)
+
     log_format: LogFormat = "plain"
 
     class Config:
