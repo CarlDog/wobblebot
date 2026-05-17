@@ -260,4 +260,38 @@ CREATE INDEX IF NOT EXISTS idx_conversation_turns_scope
     ON conversation_turns(channel_id, user_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_conversation_turns_timestamp
     ON conversation_turns(timestamp);
+
+-- Stage 6.1 — cloud-LLM forensic cost ledger (Phase 6, ADR-014).
+-- One row per cloud-LLM API call; Ollama (free / local) calls bypass.
+-- The 24h-window cost gate in services/llm_cost_gate reads
+-- (timestamp, cost_usd) for its sliding-window total; per-provider /
+-- per-role rollups in tools/show_llm_costs use the secondary indexes.
+-- success / error_kind capture failed-but-billed calls (some providers
+-- charge for content-policy refusals).
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id                  TEXT PRIMARY KEY,
+    timestamp           TEXT NOT NULL,
+    role                TEXT NOT NULL CHECK (role IN (
+                            'operator', 'quant', 'risk', 'news',
+                            'arbitrator', 'single', 'unknown'
+                        )),
+    provider            TEXT NOT NULL CHECK (provider IN (
+                            'anthropic', 'openai', 'google'
+                        )),
+    model               TEXT NOT NULL,
+    tokens_in           INTEGER NOT NULL,
+    tokens_out          INTEGER NOT NULL,
+    tokens_reasoning    INTEGER,
+    cost_usd            TEXT NOT NULL,
+    request_id          TEXT,
+    success             INTEGER NOT NULL CHECK (success IN (0, 1)),
+    error_kind          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp
+    ON llm_calls(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_provider_model
+    ON llm_calls(provider, model, timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_role
+    ON llm_calls(role, timestamp);
 """

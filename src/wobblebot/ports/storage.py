@@ -9,6 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from wobblebot.domain.grid import GridState
+from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -654,6 +655,55 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Returns:
             Matching turns ordered by ``timestamp`` ASC. Empty list if
             no turns exist for the scope yet.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    # LLM cost-ledger operations (Stage 6.1 — Phase 6, ADR-014)
+    @abstractmethod
+    async def save_llm_call(self, record: LLMCallRecord) -> None:
+        """Persist one cloud-LLM call record to the forensic ledger.
+
+        Write-once. The caller mints ``record.id`` (Pydantic default
+        ``uuid4``). Ollama (local, free) calls do NOT pass through
+        this method — only the three cloud providers from ADR-014.
+
+        Args:
+            record: The forensic cost row.
+
+        Raises:
+            StorageError: If save fails (including a duplicate id).
+        """
+
+    @abstractmethod
+    async def get_llm_calls(
+        self,
+        since: Timestamp | None = None,
+        role: LLMRole | None = None,
+        provider: LLMProvider | None = None,
+        limit: int | None = None,
+    ) -> list[LLMCallRecord]:
+        """Query LLM call records with optional filters.
+
+        Consumed by ``services/llm_cost_gate.check_budget`` (with
+        ``since=now-24h``) and by ``tools/show_llm_costs`` (with any
+        combination of filters).
+
+        Args:
+            since: If set, return only rows with
+                ``timestamp >= since`` (inclusive). Used by the
+                24-hour sliding-window gate check per ADR-014
+                decision 2.
+            role: Optional role filter (operator | quant | risk |
+                news | arbitrator | single | unknown).
+            provider: Optional provider filter (anthropic | openai |
+                google).
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching rows ordered by ``timestamp`` DESC (newest
+            first). Empty list if no rows match.
 
         Raises:
             StorageError: If retrieval fails.

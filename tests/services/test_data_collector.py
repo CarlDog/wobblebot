@@ -233,6 +233,14 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def save_llm_call(self, record):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_llm_calls(  # type: ignore[no-untyped-def]
+        self, since=None, role=None, provider=None, limit=None
+    ):
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:

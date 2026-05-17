@@ -21,6 +21,7 @@ from uuid import UUID
 import aiosqlite
 from pydantic import TypeAdapter
 
+from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
@@ -287,4 +288,30 @@ def row_to_pending_command(row: aiosqlite.Row) -> PendingCommand:
         result=result,
         ttl_expires_at=Timestamp(dt=datetime.fromisoformat(row["ttl_expires_at"])),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+    )
+
+
+def row_to_llm_call_record(row: aiosqlite.Row) -> LLMCallRecord:
+    """Materialize an ``LLMCallRecord`` from an ``llm_calls`` row.
+
+    All non-null columns map directly; ``tokens_reasoning`` and
+    ``request_id`` and ``error_kind`` round-trip as ``None`` when the
+    row stored NULL. ``cost_usd`` is stored as a TEXT string to
+    preserve Decimal precision; convert back via ``Decimal`` ctor.
+    """
+    return LLMCallRecord(
+        id=UUID(row["id"]),
+        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+        role=row["role"],
+        provider=row["provider"],
+        model=row["model"],
+        tokens_in=int(row["tokens_in"]),
+        tokens_out=int(row["tokens_out"]),
+        tokens_reasoning=(
+            int(row["tokens_reasoning"]) if row["tokens_reasoning"] is not None else None
+        ),
+        cost_usd=Decimal(row["cost_usd"]),
+        request_id=row["request_id"],
+        success=bool(row["success"]),
+        error_kind=row["error_kind"],
     )

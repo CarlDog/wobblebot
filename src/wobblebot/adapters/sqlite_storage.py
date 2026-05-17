@@ -10,8 +10,14 @@ and a nullable Kraken txid for cross-system identification.
 Schema DDL lives in ``sqlite_storage_schema.py`` and row-to-domain mapping
 helpers live in ``sqlite_storage_rowmap.py``; both were split out in Slice
 5.1.C to keep this module under the pylint ``too-many-lines`` budget while
-preserving the public ``SQLiteStorageAdapter`` interface unchanged.
+preserving the public ``SQLiteStorageAdapter`` interface unchanged. Phase 6
+re-crossed the cap when Stage 6.1.A added the ``llm_calls`` adapter
+methods; the disable below treats the cap as guidance (the adapter is
+naturally many-methods, one per port API method) rather than splitting
+two cohesive methods across files.
 """
+
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -27,6 +33,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_advisor_suggestion,
     row_to_applied_suggestion,
     row_to_conversation_turn,
+    row_to_llm_call_record,
     row_to_news_item,
     row_to_notification,
     row_to_order,
@@ -39,6 +46,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
 )
 from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
+from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -933,7 +941,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         # SQLite has no easy "last N rows in ASC order" — fetch newest-first
         # with a LIMIT, then reverse in Python. Without a limit, plain
         # ASC is fine.
-        sql = "SELECT * FROM conversation_turns " "WHERE channel_id = ? AND user_id = ? "
+        sql = "SELECT * FROM conversation_turns WHERE channel_id = ? AND user_id = ? "
         params: list[object] = [channel_id, user_id]
         if limit is not None:
             sql += "ORDER BY timestamp DESC LIMIT ?"
@@ -949,6 +957,72 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if limit is not None:
             turns.reverse()  # newest-first → chronological
         return turns
+
+    # ----- llm_calls (Stage 6.1 — Phase 6, ADR-014 cost ledger) -----
+
+    async def save_llm_call(self, record: LLMCallRecord) -> None:
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO llm_calls (
+                    id, timestamp, role, provider, model,
+                    tokens_in, tokens_out, tokens_reasoning,
+                    cost_usd, request_id, success, error_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(record.id),
+                    record.timestamp.dt.isoformat(),
+                    record.role,
+                    record.provider,
+                    record.model,
+                    record.tokens_in,
+                    record.tokens_out,
+                    record.tokens_reasoning,
+                    str(record.cost_usd),
+                    record.request_id,
+                    1 if record.success else 0,
+                    record.error_kind,
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save llm_call {record.id}: {exc}") from exc
+
+    async def get_llm_calls(
+        self,
+        since: Timestamp | None = None,
+        role: LLMRole | None = None,
+        provider: LLMProvider | None = None,
+        limit: int | None = None,
+    ) -> list[LLMCallRecord]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[object] = []
+        if since is not None:
+            clauses.append("timestamp >= ?")
+            params.append(since.dt.isoformat())
+        if role is not None:
+            clauses.append("role = ?")
+            params.append(role)
+        if provider is not None:
+            clauses.append("provider = ?")
+            params.append(provider)
+        sql = "SELECT * FROM llm_calls"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY timestamp DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        try:
+            async with conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load llm_calls: {exc}") from exc
+        return [row_to_llm_call_record(row) for row in rows]
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

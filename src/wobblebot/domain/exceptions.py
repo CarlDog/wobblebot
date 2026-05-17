@@ -70,3 +70,36 @@ class InvalidAmount(WobbleBotDomainError):
     """Raised when amount validation fails."""
 
     pass
+
+
+class LLMCostCapExceeded(WobbleBotDomainError):
+    """Raised when a cloud-LLM call would exceed an ADR-014 cost cap.
+
+    The exception carries the budget state so the caller's
+    notification path can render a self-explanatory message without
+    re-querying.
+
+    Attributes:
+        cap_kind: Which cap tripped — ``daily`` or ``session``.
+        cap_value_usd: The configured cap.
+        daily_spent_usd: 24-hour sliding-window total at check time.
+        session_spent_usd: Running session total at check time.
+    """
+
+    def __init__(
+        self,
+        cap_kind: str,
+        cap_value_usd: Decimal,
+        daily_spent_usd: Decimal,
+        session_spent_usd: Decimal,
+        message: str | None = None,
+    ):
+        self.cap_kind = cap_kind
+        self.cap_value_usd = cap_value_usd
+        self.daily_spent_usd = daily_spent_usd
+        self.session_spent_usd = session_spent_usd
+        default_msg = (
+            f"LLM {cap_kind} cap ${cap_value_usd} exceeded "
+            f"(daily=${daily_spent_usd}, session=${session_spent_usd})"
+        )
+        super().__init__(message or default_msg)
