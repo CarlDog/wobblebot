@@ -27,6 +27,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_advisor_suggestion,
     row_to_applied_suggestion,
     row_to_news_item,
+    row_to_notification,
     row_to_order,
     row_to_pending_command,
     row_to_price_snapshot,
@@ -42,6 +43,7 @@ from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
 
@@ -813,6 +815,81 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load pending commands: {exc}") from exc
         return [row_to_pending_command(row) for row in rows]
+
+    # ----- notifications (Stage 5.5 — outbound notifications) -----
+
+    async def save_notification(self, notification: Notification) -> int:
+        conn = self._require_conn()
+        created_at = datetime.now(UTC).isoformat()
+        context_json = json.dumps(notification.context)
+        try:
+            cursor = await conn.execute(
+                """
+                INSERT INTO notifications (
+                    level, title, message, timestamp,
+                    context_json, forwarded, forwarded_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
+                """,
+                (
+                    notification.level,
+                    notification.title,
+                    notification.message,
+                    notification.timestamp.dt.isoformat(),
+                    context_json,
+                    created_at,
+                ),
+            )
+            await conn.commit()
+            row_id = cursor.lastrowid
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save notification: {exc}") from exc
+        if row_id is None:
+            raise StorageError("Notification insert returned no lastrowid")
+        return int(row_id)
+
+    async def get_notifications(
+        self,
+        forwarded: bool | None = None,
+        limit: int | None = None,
+    ) -> list[PersistedNotification]:
+        conn = self._require_conn()
+        sql = "SELECT * FROM notifications"
+        params: list[object] = []
+        if forwarded is not None:
+            sql += " WHERE forwarded = ?"
+            params.append(1 if forwarded else 0)
+        sql += " ORDER BY created_at ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        try:
+            async with conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load notifications: {exc}") from exc
+        return [row_to_notification(row) for row in rows]
+
+    async def mark_notification_forwarded(
+        self, notification_id: int, forwarded_at: Timestamp
+    ) -> None:
+        conn = self._require_conn()
+        try:
+            cursor = await conn.execute(
+                "UPDATE notifications SET forwarded = 1, forwarded_at = ? WHERE id = ?",
+                (forwarded_at.dt.isoformat(), notification_id),
+            )
+            await conn.commit()
+            rowcount = cursor.rowcount
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to mark notification {notification_id} forwarded: {exc}"
+            ) from exc
+        if rowcount == 0:
+            raise StorageError(f"Notification {notification_id} not found")
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

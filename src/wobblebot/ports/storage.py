@@ -13,6 +13,7 @@ from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Tra
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 
 
@@ -544,4 +545,70 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         Raises:
             StorageError: If retrieval fails.
+        """
+
+    # Notification operations (Stage 5.5 — outbound notifications)
+    @abstractmethod
+    async def save_notification(self, notification: Notification) -> int:
+        """Persist a ``Notification`` row; returns the assigned row id.
+
+        ``cli/live`` / ``cli/harvest`` (via ``SqliteNotifierAdapter``)
+        call this on every outbound event. ``forwarded`` defaults to
+        ``False`` at insert time and flips to ``True`` after
+        ``cli/operator`` (Stage 5.6) successfully posts the row to
+        Discord.
+
+        Args:
+            notification: Event payload.
+
+        Returns:
+            The row's auto-assigned integer id.
+
+        Raises:
+            StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def get_notifications(
+        self,
+        forwarded: bool | None = None,
+        limit: int | None = None,
+    ) -> list[PersistedNotification]:
+        """Query persisted notifications with optional forwarded filter.
+
+        ``cli/operator`` polls with ``forwarded=False`` to drain rows
+        for Discord posting; operator inspection may pass
+        ``forwarded=None`` for the full audit log.
+
+        Args:
+            forwarded: Optional filter. ``False`` returns rows still
+                awaiting Discord forward; ``True`` returns already-forwarded
+                rows; ``None`` returns both.
+            limit: Maximum rows to return. ``None`` means unbounded.
+
+        Returns:
+            Matching rows ordered by ``created_at`` ASC so the oldest
+            unforwarded event posts first.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def mark_notification_forwarded(
+        self, notification_id: int, forwarded_at: Timestamp
+    ) -> None:
+        """Mark a notification row as forwarded to Discord.
+
+        Idempotent — re-marking an already-forwarded row updates
+        ``forwarded_at`` but is otherwise a no-op. ``cli/operator``
+        calls this after a successful Discord post.
+
+        Args:
+            notification_id: Row id returned by ``save_notification``.
+            forwarded_at: Timestamp of the successful Discord post.
+
+        Raises:
+            StorageError: If the update fails (including the row not
+                existing).
         """

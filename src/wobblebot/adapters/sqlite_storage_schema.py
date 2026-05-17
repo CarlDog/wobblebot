@@ -217,4 +217,27 @@ CREATE INDEX IF NOT EXISTS idx_pending_commands_created
     ON pending_commands(created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_commands_ttl
     ON pending_commands(ttl_expires_at);
+
+-- Stage 5.5 — outbound notifications (operator interaction layer, ADR-013).
+-- cli/live and cli/harvest write rows via SqliteNotifierAdapter;
+-- cli/operator polls forwarded=0 rows and posts each to Discord.
+-- context_json holds the Notification's structured context dict;
+-- forwarded / forwarded_at track Discord forwarding status independent
+-- of the originating write.
+CREATE TABLE IF NOT EXISTS notifications (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    level           TEXT NOT NULL CHECK (level IN ('info', 'warning', 'error', 'critical')),
+    title           TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    context_json    TEXT NOT NULL DEFAULT '{}',
+    forwarded       INTEGER NOT NULL DEFAULT 0 CHECK (forwarded IN (0, 1)),
+    forwarded_at    TEXT,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_forwarded
+    ON notifications(forwarded, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_timestamp
+    ON notifications(timestamp);
 """

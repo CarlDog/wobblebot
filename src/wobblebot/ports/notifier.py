@@ -22,6 +22,36 @@ class Notification(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict, description="Additional context")
 
 
+class PersistedNotification(BaseModel):
+    """A ``Notification`` augmented with persistence + forwarding fields.
+
+    Stage 5.5: the SQLite ``notifications`` table stores one of these
+    per outbound event. ``cli/live`` / ``cli/harvest`` write rows via
+    ``SqliteNotifierAdapter``; ``cli/operator`` (Stage 5.6) polls rows
+    with ``forwarded=False`` and posts each to Discord, then marks
+    ``forwarded=True`` via ``StoragePort.mark_notification_forwarded``.
+
+    Attributes:
+        id: Storage-assigned row id (``None`` before insert).
+        notification: The original event payload.
+        forwarded: Whether ``cli/operator`` has posted this to Discord.
+        forwarded_at: Timestamp of the Discord post; ``None`` until
+            forwarded.
+        created_at: When the row was inserted into storage. May differ
+            from ``notification.timestamp`` if the writer queued the
+            event slightly before persisting.
+    """
+
+    id: int | None = None
+    notification: Notification
+    forwarded: bool = False
+    forwarded_at: Timestamp | None = None
+    created_at: Timestamp
+
+    class Config:
+        frozen = True
+
+
 class NotifierPort(ABC):
     """Abstract interface for notifications.
 

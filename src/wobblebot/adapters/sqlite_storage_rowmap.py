@@ -25,6 +25,7 @@ from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import CommandResult, OperatorCommand, PendingCommand
 
 # Module-level TypeAdapter — Pydantic discriminator resolution is the
@@ -193,6 +194,33 @@ def row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
         direction=row["direction"],
         asset=row["asset"],
         timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+    )
+
+
+def row_to_notification(row: aiosqlite.Row) -> PersistedNotification:
+    """Materialize a ``PersistedNotification`` from a ``notifications`` row.
+
+    Builds the inner :class:`Notification` from the persisted columns,
+    then wraps it with the row-level ``id`` / ``forwarded`` /
+    ``forwarded_at`` / ``created_at`` fields.
+    """
+    notification = Notification(
+        level=row["level"],
+        title=row["title"],
+        message=row["message"],
+        timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
+        context=json.loads(row["context_json"]),
+    )
+    return PersistedNotification(
+        id=row["id"],
+        notification=notification,
+        forwarded=bool(row["forwarded"]),
+        forwarded_at=(
+            Timestamp(dt=datetime.fromisoformat(row["forwarded_at"]))
+            if row["forwarded_at"]
+            else None
+        ),
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
     )
 
 

@@ -214,6 +214,17 @@ class _FailingStorage(StoragePort):
     async def get_pending_commands(self, status=None, limit=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def save_notification(self, notification):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_notifications(self, forwarded=None, limit=None):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def mark_notification_forwarded(  # type: ignore[no-untyped-def]
+        self, notification_id, forwarded_at
+    ):
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
