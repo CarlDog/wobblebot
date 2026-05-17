@@ -72,6 +72,24 @@ class InvalidAmount(WobbleBotDomainError):
     pass
 
 
+class LLMRetryExhausted(WobbleBotDomainError):
+    """Raised when an LLM call exhausts its retry budget per ADR-015.
+
+    Carries the attempt count + the last exception so callers can
+    surface both to the operator notification path.
+
+    Attributes:
+        attempts: Total attempts made (initial + retries).
+        last_error: The exception from the final attempt.
+    """
+
+    def __init__(self, attempts: int, last_error: Exception, message: str | None = None):
+        self.attempts = attempts
+        self.last_error = last_error
+        default_msg = f"LLM call failed after {attempts} attempts; last error: {last_error}"
+        super().__init__(message or default_msg)
+
+
 class LLMCostCapExceeded(WobbleBotDomainError):
     """Raised when a cloud-LLM call would exceed an ADR-014 cost cap.
 
