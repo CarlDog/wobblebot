@@ -36,6 +36,78 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.5 — Outbound Notifications (2026-05-16)
+
+Fifth Phase 5 slice. Lands the persistence + wiring for outbound
+notifications from cli/live and cli/harvest. cli/operator (Stage 5.6)
+will forward these rows to Discord; until then they accumulate in
+SQLite for operator inspection. Two sub-slices + close:
+
+**5.5.A — notifications table + SqliteNotifierAdapter.** New
+`notifications` SQLite table (id PK, level CHECK against the
+NotifierPort vocabulary, title + message + timestamp + context_json,
+forwarded flag + forwarded_at + created_at; two indexes — forwarded
++ created_at for cli/operator's poll, timestamp for forensic
+queries). New `PersistedNotification` value object in
+`ports/notifier.py` wraps a raw `Notification` with row-level
+fields. Three new `StoragePort` methods: `save_notification` (returns
+the assigned row id), `get_notifications(forwarded=..., limit=...)`
+(ordered by created_at ASC so cli/operator forwards the oldest
+unforwarded event first), and `mark_notification_forwarded`
+(idempotent UPDATE; raises StorageError if row not found).
+`adapters/sqlite_notifier.py` — thin SqliteNotifierAdapter wrapping
+any StoragePort. `send_notification` calls
+`storage.save_notification` and wraps StorageError as NotifierError.
+`send_error_alert` synthesizes a critical Notification from the
+exception (type name as title, str(exc) or repr(exc) as message,
+operator-supplied context dict). 14 new unit tests.
+
+**5.5.B — cli/live + cli/harvest notification wiring.** Both CLIs
+gain an `operator_db: str | None = None` config field; when set
+they open a second SQLiteStorageAdapter and wrap it with
+SqliteNotifierAdapter. Both CLIs gain a local `_notify(notifier, ...)`
+helper that swallows NotifierError / WobbleBotPortError so a broken
+notifier can NEVER break the engine loop — Phase 5 treats
+notifications as forensic ledger entries; losing one beats stopping
+trading.
+
+  cli/live emit points:
+  - **session start** (info): symbols / tick_seconds / caps / starting_usd
+  - **per-tick fills** (info): when `StepResult.fills > 0`, one
+    notification per (symbol, tick) pair with fills + counters_placed
+    counts
+  - **cap trip** (error): right before _run_one_tick returns True
+    on session-loss-cap path
+  - **session end** (info or error depending on exit_code): ticks /
+    duration / starting+ending USD / PnL / cancellation counts
+
+  cli/harvest emit points:
+  - **proposal generated** (info): every non-None TransferProposal
+    in _run_cycle includes proposal_id / direction / asset / amount /
+    rationale; message text hints "Run cli/harvest --execute <id>
+    to act"
+  - **withdrawal failed** (error): when Kraken /Withdraw rejects,
+    paired with the failed TransferResult audit row
+  - **withdrawal executed** (warning, not info — money moved, the
+    operator wants it surfaced loudly): refid + destination +
+    pending status
+
+8 new unit tests (3 cli/live + 5 cli/harvest) covering the helper's
+no-op-on-None behavior, persistence via SqliteNotifierAdapter, error
+swallowing when the notifier raises, _run_cycle emitting on proposal
+generation, and _run_cycle staying silent in the hold band.
+
+Full suite **1167** passes (was 1145 at Stage 5.4 close, +22). mypy
+clean across 68 src files. pylint **10.00/10** with no outstanding
+warnings. black + isort clean.
+
+Per ADR-013 decision 9 neither cli/live nor cli/harvest imports
+discord.py — they write to the notifications SQLite table only.
+cli/operator (Stage 5.6) is the only module that will ever read
+those rows and post them to Discord. Running real-money cost
+unchanged at $0.08 (notifications are forensic only; no
+state-mutating side effects).
+
 ### Stage 5.4 — Engine Integration (2026-05-16)
 
 Fourth Phase 5 slice. The first stage where Phase 5 code actually
