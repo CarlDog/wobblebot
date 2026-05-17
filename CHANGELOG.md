@@ -36,6 +36,95 @@ client), `docs/planning/stage-5.1-design.md` (full slicing plan and
 implementation-level decisions), and the roadmap rewrite to seven
 Phase 5 stages plus the new Phases 6 / 7 / 8.
 
+### Stage 5.7 — Phase 5 Integration Check + Phase 5 Close (2026-05-16)
+
+Seventh and final Phase 5 slice. Closes Phase 5 with TTL expirer +
+end-to-end integration test + the per-precedent phase summary
+document. Three sub-slices:
+
+**5.7.A+B (bundled — small enough to land together).**
+
+  **TTL expirer for pending_commands.** cli/operator gains a third
+  background asyncio.Task (alongside the notification forwarder and
+  Gateway client). The expirer scans pending_commands WHERE
+  status='awaiting_confirmation' AND ttl_expires_at < now every
+  ttl_expirer_poll_seconds (default 30s) and transitions matches to
+  'expired'. Per ADR-013 decision 3 the operator's ✅/❌ reaction is
+  the ONLY way out of awaiting_confirmation, so without TTL expiry
+  abandoned commands accumulate forever. OperatorConfig gains
+  ttl_expirer_poll_seconds: float = 30.0 (positive).
+
+  **End-to-end integration test suite.**
+  tests/integration/test_phase5_operator_e2e.py exercises the full
+  operator-interaction round-trip without a real Discord Gateway,
+  Ollama LLM, or Kraken exchange — the test stubs the LLM and the
+  Discord transport but uses real SQLite + real GridEngine + real
+  OperatorService + real cli/operator handler functions + real
+  cli/live poll helper.
+
+  Five scenarios covered:
+  - test_full_pause_round_trip: "pause BTC" → confirm embed → ✅ →
+    cli/live picks up approved command → engine actually pauses →
+    row marked dispatched with success.
+  - test_reject_flow_does_not_dispatch: ❌ reaction → marked
+    rejected → cli/live's poll skips it → engine never pauses.
+  - test_multi_turn_conversation_records_history: two operator
+    messages → 4 conversation_turns; second invocation's context
+    sees the first turn pair.
+  - test_notification_persisted_and_forwarded: SqliteNotifierAdapter
+    writes → forwarder reads + posts embed + marks forwarded.
+  - test_ttl_expiry_skipped_by_dispatch: expired commands never
+    dispatch even when cli/live polls.
+
+  5 + 5 new tests (5 unit for ttl_expirer + 5 integration for the
+  e2e suite). cli/operator module docstring trimmed to keep the
+  file under pylint's 1000-line cap (was 1006 after the expirer
+  addition; now 990).
+
+**5.7.C — Phase 5 close.** New
+docs/planning/phase-5-summary.md (~200 lines) consolidates:
+- Per-stage outcomes table for all seven stages + kickoff.
+- The Phase 5 reframe story (originally seven small stages →
+  one cohesive interaction-engine phase mid-kickoff).
+- ADR-013 commitments × shipped reality (all 10 ratified
+  commitments held intact).
+- v1 limitation flagged for the future: cli/operator's stub
+  engine can't see cli/live's in-memory pause state, so
+  StatusQuery reports all symbols as 'active'. Fix path
+  documented (~50-line slice persisting pause state to a shared
+  SQLite table). Probably Phase 8 hardening.
+- Test + code health delta (792 → 1214 unit tests, +422; 60 → 69
+  src modules; pylint 10.00/10 cleared the pre-existing
+  too-many-lines flag on sqlite_storage.py mid-stage).
+- Real-money cost ledger: Phase 5 added $0.00; running total
+  unchanged at $0.08.
+- Entry conditions for Phase 6 (Cloud LLM Integration): the
+  AssistantPort is provider-neutral by construction;
+  AssistantLLMConfig.provider extends from Literal["ollama"] to
+  include the cloud providers; no new SQLite tables needed for the
+  cloud adapters themselves, though Phase 6 likely adds an llm_calls
+  cost-tracking table.
+
+**Health at Phase 5 close:** 1214 unit tests pass (was 792 at
+Phase 4 close, +422 across Phase 5's seven stages); 26 integration
+tests opt-in (was 21, +5 from the e2e suite); mypy clean across 69
+src files (was 60, +9 new modules); pylint **10.00/10** with no
+outstanding warnings; black + isort clean. New runtime dep:
+`discord.py>=2.3,<3` (gated under operator interaction).
+
+**Phase 5 closing summary at `docs/planning/phase-5-summary.md`.**
+Mirrors phase-2/3/4 precedent.
+
+**Phase 5 total real-money cost: $0.00.** Every test stubs Discord
+/ Ollama / Kraken; the live verification "real operator types in
+real Discord" is operator-driven and tracked separately.
+
+Running project real-money cost still **$0.08** unchanged from
+Phase 2 close.
+
+Phase 5 stages closed: 5.1 / 5.2 / 5.3 / 5.4 / 5.5 / 5.6 / 5.7.
+Phase 6 entry conditions met.
+
 ### Stage 5.6 — cli/operator Daemon (2026-05-16)
 
 Sixth Phase 5 slice. The long-running CLI that ties together every
