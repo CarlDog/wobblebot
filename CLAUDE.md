@@ -230,13 +230,17 @@ to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
 
-- **All 7 CLIs handle deprived envs cleanly.** Cycle each CLI
+- **All 10 CLIs handle deprived envs cleanly.** Cycle each CLI
   through: no `.env`, no `config/settings.yml`, no `config/`
   directory at all, missing per-CLI section, empty credentials,
   bad `--config` path, bad `--profile` name. Expected: clean exit
   codes (2 for missing creds / config / section), no raw
-  tracebacks. Verification #24 established the baseline 2026-05-15;
-  add new entry points to the walkthrough as they ship.
+  tracebacks. Verification #24 established the baseline 2026-05-15
+  for the original 7 (sandbox / status / preflight / live /
+  observe / shadow / first_real_trade); cli/apply added at Stage
+  3.4b, cli/harvest at Stage 4.2, cli/operator at Stage 5.6 each
+  carried their own deprived-env coverage in their slice work.
+  When new entry points ship, add them to this walkthrough.
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their

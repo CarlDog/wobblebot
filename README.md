@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-792%20unit%20%2B%2021%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
+[![Tests](https://img.shields.io/badge/tests-1214%20unit%20%2B%2026%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
 ---
@@ -47,16 +47,18 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 4 / Stage 4.3** — Transfer proposal persistence + `tools/show_proposals.py` | ✅ closed 2026-05-15 |
 | **Phase 4 / Stage 4.4** — Active-mode withdrawals (`cli/harvest --execute`) | ✅ closed 2026-05-15 |
 | **Phase 4 / Stage 4.5** — Phase 4 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-4-summary.md)) |
-| **Phase 5** — UX, dashboard, hardening, v1.0 | next up |
-| **Phase 5** — UX, dashboard, hardening, v1.0 | gated on Phase 4 |
+| **Phase 5** — Operator Interaction Engine (Discord + LLM intent parsing; ADR-013) | ✅ closed 2026-05-16 ([summary](docs/planning/phase-5-summary.md)) |
+| **Phase 6** — Cloud LLM Integration | next up |
+| **Phase 7** — Web UI / Dashboard | provisional |
+| **Phase 8** — Hardening & v1.0 Release | provisional |
 
-**Health:** 792 unit tests pass by default; 21 integration tests opt-in. mypy clean (57 src files), black/isort clean, pylint **10.00/10**.
+**Health:** 1214 unit tests pass by default; 26 integration tests opt-in. mypy clean (69 src files), black/isort clean, pylint **10.00/10**.
 
 ---
 
 ## Operator Entry Points
 
-Nine CLIs cover the full operational surface. Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Eleven CLIs cover the full operational surface. Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
@@ -69,7 +71,21 @@ Nine CLIs cover the full operational surface. Every CLI accepts `--config PATH` 
 | `python -m wobblebot.cli.news` | 3.2.5 | ❌ | Long-running news poller (RSS feeds + CryptoCompare). Persists items to `news_items` with `(source, external_id)` dedup. Per-source fault isolation. |
 | `python -m wobblebot.cli.advise` | 3.3 / 3.4a | ❌ | Long-running advisor daemon. Builds a `PerformanceSummary` from observe + news on a `schedules.advise` cadence, calls the configured advisor (single-LLM Ollama OR MoE with 2+ experts + optional arbitrator), persists `AdvisorSuggestion` rows for operator review. **Never mutates running config** — that's `cli/apply`'s job. |
 | `python -m wobblebot.cli.apply` | 3.4b | ❌ (config writes) | Operator-in-the-loop auto-apply gate. Dry-run by default; `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving) and persists an `AppliedSuggestion` audit row. Gate defaults OFF (`auto_apply.enabled=False`); news-role suggestions never auto-apply per ADR-007. |
+| `python -m wobblebot.cli.harvest` | 4.2-4.4 | Daemon ❌ / `--execute` **✅ REAL MONEY** | Treasury monitor. Daemon mode polls Kraken USD balance, runs `propose_transfer()`, persists every non-None proposal to `transfer_proposals`, logs "HYPOTHETICAL proposal". `--execute <proposal-id>` runs seven defense layers, calls Kraken `/Withdraw`. The ONLY path by which money leaves the exchange. |
+| `python -m wobblebot.cli.operator` | 5.6 | ❌ (chat surface only) | Discord-backed operator interaction daemon (ADR-013). Maintains a Gateway connection, drains the `notifications` SQLite table to Discord, parses inbound operator messages via `OllamaAssistantAdapter` into typed `OperatorIntent` payloads — Command → writes `PendingCommand` + posts confirm embed (cli/live polls the approved rows; that's the ADR-002 firewall); Query → reads engine + storage state via `OperatorService` and replies; Conversational / Unparseable → text reply. Background TTL expirer transitions abandoned `awaiting_confirmation` rows to `expired`. |
 | `python tools/first_real_trade.py` | 2.3 | **✅ REAL MONEY** | One-shot diagnostic: marketable round-trip with hard caps. Used 2026-05-15 against the operator's account; total cost $0.08. |
+
+**Inspection tools** (read-only, safe against live DBs while their CLIs run):
+
+| Tool | Purpose |
+|---|---|
+| `python tools/show_proposals.py` | Print persisted `transfer_proposals` rows (Stage 4.3). `--direction` / `--asset` / `--since-hours` / `--limit` filters. |
+| `python tools/show_transfers.py` | Print persisted `transfer_results` rows (Stage 4.4d). `--status` / `--direction` / `--asset` filters. |
+| `python tools/show_pending.py` | Print persisted `pending_commands` rows (Stage 5.6.D). `--status` filter across the six lifecycle states. |
+| `python tools/show_suggestions.py` | Print persisted `advisor_suggestions` rows (Stage 3.3). `--symbol` / `--model` filters. |
+| `python tools/show_metrics.py` | Compute and print metrics windows from `price_snapshots` (Stage 3.1). |
+| `python tools/run_advisor.py` | One-shot advisor call against the observe DB; JSONL receipt to `data/` (Stage 3.2). |
+| `python tools/run_moe_check.py` | One-shot MoE advisor exerciser (Stage 3.4a). |
 
 ---
 
