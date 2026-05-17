@@ -56,6 +56,7 @@ from wobblebot.adapters.discord_transport import (
 )
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
+from wobblebot.adapters.openai import OpenAIAssistantAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import add_config_args, load_operator_env
 from wobblebot.config.cli import OperatorConfig
@@ -823,9 +824,38 @@ def _build_assistant(
             max_tokens=asst_cfg.max_tokens,
             timeout_seconds=asst_cfg.timeout_seconds,
         )
+    if asst_cfg.provider == "openai":
+        if config.llm is None:
+            _LOGGER.error(
+                "operator.assistant.provider='openai' but settings.yml "
+                "has no `llm:` block; Phase 6 / ADR-014 requires cost-cap "
+                "config for cloud providers."
+            )
+            return None
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            _LOGGER.error(
+                "OPENAI_API_KEY missing from environment; required when "
+                "operator.assistant.provider=='openai'."
+            )
+            return None
+        organization = os.environ.get("OPENAI_ORGANIZATION") or None
+        return OpenAIAssistantAdapter(
+            model=asst_cfg.model,
+            prompt=prompt,
+            api_key=api_key,
+            organization=organization,
+            storage=operator_storage,
+            session_tracker=SessionCostTracker(),
+            cost_config=config.llm.cost,
+            retry_config=config.llm.retry,
+            temperature=asst_cfg.temperature,
+            max_tokens=asst_cfg.max_tokens,
+            timeout_seconds=asst_cfg.timeout_seconds,
+        )
     # Should never trip: AssistantLLMConfig.provider is a Literal[
-    # "ollama", "anthropic"] for Stage 6.2; widening it without adding
-    # the matching branch would surface here at runtime.
+    # "ollama", "anthropic", "openai"] for Stage 6.3; widening it
+    # without adding the matching branch would surface here at runtime.
     _LOGGER.error("unknown assistant provider", extra={"provider": asst_cfg.provider})
     return None
 

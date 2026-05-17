@@ -380,12 +380,12 @@ class TestBuildAdvisorDispatch:
             _build_advisor(config, [])
 
     def test_unimplemented_cloud_provider_rejected(self, quant_prompt_path: str) -> None:
-        """openai / google adapters land in Stages 6.3 / 6.4 — until then
-        the dispatcher raises 'not implemented' at construction time."""
+        """google adapter lands in Stage 6.4 — until then the dispatcher
+        raises 'not implemented' at construction time."""
         config = AdvisorConfig(
             type="single",
-            provider="openai",
-            model="gpt-4o",
+            provider="google",
+            model="gemini-2.5-pro",
             prompt_file=quant_prompt_path,
             inference_params=InferenceParams(),
         )

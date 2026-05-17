@@ -10,6 +10,93 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 6.3 — OpenAI adapter + shared cloud-call helper (2026-05-17)
+
+Second cloud provider lands plus an extracted shared orchestrator
+so Stages 6.4 (Google) and any future cloud provider reuse the
+ADR-014/015 flow instead of re-implementing it. Three sub-slices:
+
+**6.3.A — Shared cloud-call helper + refactor Anthropic.** New
+`services/llm_cloud_call.py`:
+- `CloudCallContext` frozen dataclass bundles storage +
+  session_tracker + cost_config + retry_config + role + provider +
+  model (the per-adapter identity).
+- `classify_error(exc) -> str` pure function promoted out of the
+  Anthropic adapters where it was duplicated.
+- `execute_cloud_call(ctx, estimated_cost_usd, call_fn,
+  extract_tokens)` runs the full ADR-014/015 sequence: check_budget
+  → retry_with_backoff(call_fn) → on success build+persist
+  LLMCallRecord from extracted tokens + update tracker → on failure
+  build+persist failure record with classified error_kind + re-raise.
+  Provider-specific shape lives in two closures: `call_fn`
+  (zero-arg async returning the parsed envelope) and
+  `extract_tokens` (envelope → (in, out, reasoning, request_id)
+  tuple).
+
+Anthropic adapters refactored to use the helper — each
+`get_recommendation` / `parse_intent` shrinks ~80 lines of
+cost-flow boilerplate to ~30 lines of provider-specific body
+building + a single `execute_cloud_call` call. New module-level
+`extract_anthropic_tokens` carries the Anthropic-specific
+normalization (tokens_reasoning=None because the API lumps thinking
+with output). Zero behavior change — all 39 Anthropic tests stay
+green.
+
+21 new helper tests covering: classify_error matrix (parametrized
+5xx + 4xx codes + every transient httpx type + ValueError fallback),
+happy path (record persisted with real tokens + cost + tracker
+updated; reasoning tokens flow through the extractor), cost gate
+(daily + session trips before the call), failure path (permanent
+4xx + retry exhaustion + connect error all record failure with
+classified error_kind + re-raise).
+
+**6.3.B — OpenAI advisor + assistant adapters.** New
+`adapters/openai.py` with both `OpenAIAdvisorAdapter` (AdvisorPort)
+and `OpenAIAssistantAdapter` (AssistantPort). Provider-specific
+helpers:
+- `is_reasoning_model` — name-pattern detection (`o1`, `o3` prefixes).
+  Drops `temperature` from the request body for reasoning models;
+  always uses `max_completion_tokens` for forward-compat.
+- `extract_openai_tokens` — the meaningful provider-specific
+  normalization. OpenAI's o-series returns `completion_tokens` that
+  INCLUDES reasoning, with `completion_tokens_details.reasoning_tokens`
+  reporting the subset. To satisfy the
+  `tokens_reasoning is additive to tokens_out` convention, the
+  extractor subtracts reasoning from completion. Cost math via
+  `cost_for()` applies output rate to both — matching how OpenAI
+  bills o-series.
+- `parse_message_content` — pulls assistant text from
+  `choices[0].message.content`, handling both the string shape and
+  the multimodal list-of-parts shape.
+- `post_chat_completion` — `Authorization: Bearer <key>` (not
+  Anthropic's `x-api-key`) plus optional `OpenAI-Organization`
+  header.
+
+Both adapters ~530 lines total. 31 new unit tests covering pure
+helpers + wire shape + advisor happy path + reasoning-token
+recording + parse failures + assistant intent variants + multi-turn
+ordering + construction guards + cost-cap trip.
+
+**6.3.C — CLI dispatch wiring + stage close.**
+`cli/advise._build_advisor_adapter` adds `openai` branch with
+`OPENAI_API_KEY` + optional `OPENAI_ORGANIZATION` env-var reads.
+`cli/operator._build_assistant` does the same.
+`AssistantLLMConfig.provider` Literal extends from
+`["ollama", "anthropic"]` to
+`["ollama", "anthropic", "openai"]`. `_UNIMPLEMENTED_PROVIDERS`
+shrinks to `("google",)`. `.env.example` documents the optional
+`OPENAI_ORGANIZATION` env var. Test refactor:
+`test_unimplemented_cloud_provider_rejected` switched from `openai`
+(now implemented) to `google`.
+
+**1431 unit tests** pass (up from 1379 at Stage 6.2 close; +52 across
+Stage 6.3's three sub-slices — 21 helper + 31 OpenAI). mypy clean
+(78 src files). pylint 10.00/10. black + isort clean. **No new
+runtime dependencies** — OpenAI adapter is pure httpx + pydantic
+on existing dependencies. Phase 6 real-money cost still **$0.00**
+(Stage 6.5 is the first real API call); running project total
+**$0.08** unchanged from Phase 2 close.
+
 ### Stage 6.2 — Anthropic adapter (2026-05-17)
 
 First real cloud-provider adapter under Phase 6. Both
