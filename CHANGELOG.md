@@ -10,6 +10,93 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 6.4 — Google Gemini adapter (2026-05-17)
+
+Third and final cloud provider; closes the per-provider work
+ahead of Stage 6.5's integration check. Two sub-slices (down from
+three for the previous stages — the shared helper extracted in
+Stage 6.3.A has paid off enough that wiring + close fits in one
+slice).
+
+**6.4.A — Google advisor + assistant adapters.** New
+`adapters/google.py` with both `GoogleAdvisorAdapter` (AdvisorPort)
+and `GoogleAssistantAdapter` (AssistantPort) sharing all the
+Gemini-specific helpers in one module. API target is Google
+Generative AI REST (`generativelanguage.googleapis.com`); Vertex
+AI is out of scope (avoids the OAuth + GCP-project ceremony for
+a hobby-tier bot).
+
+Provider-specific helpers:
+- `extract_google_tokens` — the simplest reasoning-token
+  normalization of the three Phase 6 providers. Gemini reports
+  `thoughtsTokenCount` separately from `candidatesTokenCount` and
+  these are **additive natively** — no subtraction needed (unlike
+  OpenAI which had to subtract from completion, unlike Anthropic
+  which lumps inside output_tokens). The extractor records both
+  as-is.
+- `parse_candidate_text` — concatenates `text` parts from
+  `candidates[0].content.parts`, filtering non-text parts
+  (inlineData / executableCode / etc.).
+- `post_generate_content` — POST to
+  `/v1beta/models/{model}:generateContent` with `x-goog-api-key`
+  header (the v1beta-preferred shape; cleaner than the `?key=`
+  query-string fallback). Model id is embedded in the URL path,
+  not in the body.
+- `_build_generate_body` — composes the Gemini-shaped body:
+  `systemInstruction.parts` (separate top-level field, NOT a
+  message in `contents`), `contents` array of role+parts dicts,
+  `generationConfig` for temperature + maxOutputTokens.
+- `_user_part` + `_model_part` — note that Gemini uses role=`model`
+  (NOT `assistant`) for assistant turns. The assistant adapter
+  maps operator→user / assistant→model on the wire.
+
+24 new unit tests focused on the Google-specific bits:
+- Pure helpers: cost ceiling math vs gemini-2.5-pro pricing;
+  token extraction across no-thinking / additive-thinking /
+  zero-thinking / empty-usage / missing-responseId;
+  parse_candidate_text basic + multiple-parts + non-text-parts
+  filter + empty.
+- Wire shape: x-goog-api-key header + URL endpoint with model
+  embedded; systemInstruction separate from contents; user-vs-model
+  role mapping verified explicitly.
+- Advisor happy path: round-trip records cost (gemini-2.5-pro);
+  additive thinking tokens (100 visible + 300 thoughts both
+  recorded; cost uses the gemini-2.5-flash explicit thinking-rate
+  override from llm_pricing — $3.50/1M for thoughts vs $2.50/1M
+  for regular output); prose-wrapping JSON.
+- Advisor failures: 403 wraps as AdvisorError with http_403;
+  empty candidates raises.
+- Assistant: command + query intents round-trip; non-operator
+  prompt rejected; empty api_key rejected; cost-cap trips before
+  call.
+- Construction guards.
+
+**6.4.B — CLI dispatch wiring + Stage 6.4 close.**
+`cli/advise._build_advisor_adapter` adds the `google` branch with
+`GOOGLE_API_KEY` env-var validation; `cli/operator._build_assistant`
+does the same. `AssistantLLMConfig.provider` Literal closes with
+all four providers (`ollama`, `anthropic`, `openai`, `google`).
+`_UNIMPLEMENTED_PROVIDERS` is now empty — the only error path
+left in the dispatcher is "missing `llm:` block" for cloud
+providers. Test refactor:
+`test_unimplemented_cloud_provider_rejected` becomes
+`test_google_without_cloud_wiring_rejected` since the
+"not implemented" surface no longer exists.
+
+**1455 unit tests** pass (up from 1431 at Stage 6.3 close; +24 across
+Stage 6.4's two sub-slices). mypy clean (79 src files). pylint
+10.00/10. black + isort clean. **No new runtime dependencies** —
+Google adapter is pure httpx + pydantic. Phase 6 real-money cost
+still **$0.00** (Stage 6.5 is the first real API call); running
+project total **$0.08** unchanged.
+
+All three Phase 6 cloud providers now ship. Each adapter file
+lands at ~530-580 lines including both Advisor + Assistant
+implementations + provider helpers — the shared
+`execute_cloud_call` orchestrator carries the cost-flow weight.
+Stage 6.5 (Phase 6 integration check + first real API calls)
+remains.
+
 ### Stage 6.3 — OpenAI adapter + shared cloud-call helper (2026-05-17)
 
 Second cloud provider lands plus an extracted shared orchestrator

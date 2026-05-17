@@ -379,9 +379,10 @@ class TestBuildAdvisorDispatch:
         with pytest.raises(ValueError, match="no `llm:` block"):
             _build_advisor(config, [])
 
-    def test_unimplemented_cloud_provider_rejected(self, quant_prompt_path: str) -> None:
-        """google adapter lands in Stage 6.4 — until then the dispatcher
-        raises 'not implemented' at construction time."""
+    def test_google_without_cloud_wiring_rejected(self, quant_prompt_path: str) -> None:
+        """Phase 6 closed all four providers; the cloud-wiring guard
+        is now the only path that surfaces 'missing llm:' errors
+        (the per-provider 'not implemented' surface is gone)."""
         config = AdvisorConfig(
             type="single",
             provider="google",
@@ -389,7 +390,7 @@ class TestBuildAdvisorDispatch:
             prompt_file=quant_prompt_path,
             inference_params=InferenceParams(),
         )
-        with pytest.raises(ValueError, match="not implemented"):
+        with pytest.raises(ValueError, match="no `llm:` block"):
             _build_advisor(config, [])
 
     def test_moe_label_format(self, quant_prompt_path: str, risk_prompt_path: str) -> None:

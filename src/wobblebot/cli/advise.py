@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
+from wobblebot.adapters.google import GoogleAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.openai import OpenAIAdvisorAdapter
@@ -90,7 +91,7 @@ def _current_grid_from_config(config: WobbleBotConfig, symbol: Symbol) -> Curren
     )
 
 
-_UNIMPLEMENTED_PROVIDERS = ("google",)
+_UNIMPLEMENTED_PROVIDERS: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -194,11 +195,35 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             max_tokens=inference_params.max_tokens,
             timeout_seconds=inference_params.timeout_seconds,
         )
-    if provider in _UNIMPLEMENTED_PROVIDERS:
-        raise ValueError(
-            f"provider={provider!r} not implemented yet "
-            "(Stage 6.3 ships openai; google lands in 6.4)"
+    if provider == "google":
+        if cloud_wiring is None:
+            raise ValueError(
+                "Google provider configured but settings.yml has no `llm:` "
+                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
+                "providers; add an `llm:` block and ensure operator.operator_db "
+                "is set so the cost ledger can be written."
+            )
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY missing from environment; required when "
+                "advisor.provider=='google'."
+            )
+        return GoogleAdvisorAdapter(
+            model=model,
+            prompt=prompt,
+            role=role,  # type: ignore[arg-type]
+            api_key=api_key,
+            storage=cloud_wiring.storage,
+            session_tracker=cloud_wiring.session_tracker,
+            cost_config=cloud_wiring.llm_config.cost,
+            retry_config=cloud_wiring.llm_config.retry,
+            temperature=float(inference_params.temperature),
+            max_tokens=inference_params.max_tokens,
+            timeout_seconds=inference_params.timeout_seconds,
         )
+    if provider in _UNIMPLEMENTED_PROVIDERS:
+        raise ValueError(f"provider={provider!r} not implemented yet")
     raise ValueError(f"unknown provider {provider!r}")
 
 

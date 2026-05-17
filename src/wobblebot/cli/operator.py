@@ -54,6 +54,7 @@ from wobblebot.adapters.discord_transport import (
     InboundMessage,
     ReactionEvent,
 )
+from wobblebot.adapters.google import GoogleAssistantAdapter
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.adapters.openai import OpenAIAssistantAdapter
@@ -853,9 +854,37 @@ def _build_assistant(
             max_tokens=asst_cfg.max_tokens,
             timeout_seconds=asst_cfg.timeout_seconds,
         )
+    if asst_cfg.provider == "google":
+        if config.llm is None:
+            _LOGGER.error(
+                "operator.assistant.provider='google' but settings.yml "
+                "has no `llm:` block; Phase 6 / ADR-014 requires cost-cap "
+                "config for cloud providers."
+            )
+            return None
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            _LOGGER.error(
+                "GOOGLE_API_KEY missing from environment; required when "
+                "operator.assistant.provider=='google'."
+            )
+            return None
+        return GoogleAssistantAdapter(
+            model=asst_cfg.model,
+            prompt=prompt,
+            api_key=api_key,
+            storage=operator_storage,
+            session_tracker=SessionCostTracker(),
+            cost_config=config.llm.cost,
+            retry_config=config.llm.retry,
+            temperature=asst_cfg.temperature,
+            max_tokens=asst_cfg.max_tokens,
+            timeout_seconds=asst_cfg.timeout_seconds,
+        )
     # Should never trip: AssistantLLMConfig.provider is a Literal[
-    # "ollama", "anthropic", "openai"] for Stage 6.3; widening it
-    # without adding the matching branch would surface here at runtime.
+    # "ollama", "anthropic", "openai", "google"] for Stage 6.4 (every
+    # Phase 6 provider closed); widening it without adding the matching
+    # branch would surface here at runtime.
     _LOGGER.error("unknown assistant provider", extra={"provider": asst_cfg.provider})
     return None
 
