@@ -17,12 +17,11 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _process_pending_commands
 from wobblebot.config.cli import LiveConfig
-from wobblebot.config.grid import GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.operator import (
     PauseCommand,
@@ -71,43 +70,18 @@ async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     await adapter.close()
 
 
-def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal("1.0"),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal("10"),
-        )
-    )
-
-
-def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100000"),
-        max_daily_spend_usd=Decimal("100000"),
-        max_per_coin_exposure_usd=Decimal("100000"),
-        max_orders_per_coin=100,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
-    )
-
-
 def _operator_service(storage: SQLiteStorageAdapter) -> tuple[OperatorService, GridEngine]:
     exchange = MockExchangeAdapter(
         starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
         starting_prices={BTC_USD: Decimal("50000")},
     )
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     return (
         OperatorService(
             engine=engine,
             storage=storage,
             active_symbols=(BTC_USD,),
-            grid_config=_grid_config(),
+            grid_config=grid_config(),
         ),
         engine,
     )

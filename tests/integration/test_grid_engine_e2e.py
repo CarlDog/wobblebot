@@ -24,10 +24,12 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config as _shared_grid_config
+from tests.fixtures import safety_config as _shared_safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.grid import GridConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.value_objects import OrderSide, Symbol
 from wobblebot.services.grid_engine import GridEngine
 
@@ -53,28 +55,22 @@ NUM_OSCILLATIONS = 500
 
 
 def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=SPACING_PERCENTAGE,
-            levels_above=LEVELS_ABOVE,
-            levels_below=LEVELS_BELOW,
-            order_size_usd=ORDER_SIZE_USD,
-        ),
+    return _shared_grid_config(
+        spacing_pct=str(SPACING_PERCENTAGE),
+        above=LEVELS_ABOVE,
+        below=LEVELS_BELOW,
+        order_size=str(ORDER_SIZE_USD),
     )
 
 
 def _safety_config_loose() -> SafetyConfig:
     """Caps wide enough to never trip during the 1000-tick walk."""
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("1000"),  # 6 layout × $10 = $60 base
-        max_daily_spend_usd=Decimal("100000"),  # 500 BUY placements × $10 = $5000
-        max_per_coin_exposure_usd=Decimal("1000"),
-        max_orders_per_coin=20,  # layout (6) + counters in-flight; ample headroom
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
+    # 6 layout × $10 = $60 base; 500 BUY placements × $10 = $5000.
+    return _shared_safety_config(
+        max_total="1000",
+        max_daily="100000",
+        max_per_coin="1000",
+        max_orders=20,  # layout (6) + counters in-flight; ample headroom
     )
 
 

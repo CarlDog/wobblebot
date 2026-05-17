@@ -10,10 +10,11 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config as _grid_config
+from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.grid import CoinGridConfig
 from wobblebot.domain.value_objects import OrderSide, Symbol
 from wobblebot.services.grid_engine import GridEngine
 
@@ -21,47 +22,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 BTC_USD = Symbol(base="BTC", quote="USD")
-
-
-def _grid_config(
-    *,
-    spacing_pct: str = "1.0",
-    above: int = 3,
-    below: int = 3,
-    order_size: str = "10",
-    coins: dict[str, CoinGridConfig] | None = None,
-) -> GridConfig:
-    """Build a GridConfig with default-only or with explicit per-coin overrides."""
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal(spacing_pct),
-            levels_above=above,
-            levels_below=below,
-            order_size_usd=Decimal(order_size),
-        ),
-        coins=coins or {},
-    )
-
-
-def _safety_config(
-    *,
-    max_total: str = "100000",
-    max_daily: str = "100000",
-    max_per_coin: str = "100000",
-    max_orders: int = 100,
-) -> SafetyConfig:
-    """Permissive default — individual tests tighten one cap to test it."""
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal(max_total),
-        max_daily_spend_usd=Decimal(max_daily),
-        max_per_coin_exposure_usd=Decimal(max_per_coin),
-        max_orders_per_coin=max_orders,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
-    )
 
 
 def _exchange(

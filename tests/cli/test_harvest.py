@@ -10,13 +10,14 @@ from uuid import uuid4
 
 import pytest
 
+from tests.fixtures import grid_config as _grid_config
+from tests.fixtures import safety_config as _shared_safety_config
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.harvest import _classify_band, _execute_command, _read_usd_balance, _run_cycle
 from wobblebot.config.cli import HarvestConfig
-from wobblebot.config.grid import GridConfig, GridLevels
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Timestamp as _Timestamp
@@ -99,27 +100,13 @@ def _harvester_config() -> HarvesterConfig:
     )
 
 
-def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal("1.0"),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal("10"),
-        ),
-    )
-
-
 def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100"),
-        max_daily_spend_usd=Decimal("100"),
-        max_per_coin_exposure_usd=Decimal("50"),
-        max_orders_per_coin=10,
-        emergency_stop=EmergencyStopConfig(
-            max_loss_percentage=Decimal("5"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
+    return _shared_safety_config(
+        max_total="100",
+        max_daily="100",
+        max_per_coin="50",
+        max_orders=10,
+        max_loss_pct="5",
     )
 
 

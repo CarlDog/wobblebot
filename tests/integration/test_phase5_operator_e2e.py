@@ -42,6 +42,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.discord_transport import (
     CONFIRM_EMOJI,
     DiscordTransport,
@@ -57,8 +58,6 @@ from wobblebot.cli.operator import (
     _handle_inbound_message,
     _handle_reaction,
 )
-from wobblebot.config.grid import GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.assistant import (
     AssistantPort,
@@ -104,31 +103,6 @@ def _mock_transport() -> Any:
     return t
 
 
-def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal("1"),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal("10"),
-        )
-    )
-
-
-def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100000"),
-        max_daily_spend_usd=Decimal("100000"),
-        max_per_coin_exposure_usd=Decimal("100000"),
-        max_orders_per_coin=100,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
-    )
-
-
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     """One shared operator.db serves both cli/operator and cli/live's poll
@@ -161,12 +135,12 @@ async def test_full_pause_round_trip(storage: SQLiteStorageAdapter) -> None:
         starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
         starting_prices={BTC_USD: Decimal("50000")},
     )
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(
         engine=engine,
         storage=storage,
         active_symbols=(BTC_USD,),
-        grid_config=_grid_config(),
+        grid_config=grid_config(),
     )
     transport = _mock_transport()
     pending_map: dict[str, UUID] = {}
@@ -233,7 +207,7 @@ async def test_reject_flow_does_not_dispatch(storage: SQLiteStorageAdapter) -> N
         starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
         starting_prices={BTC_USD: Decimal("50000")},
     )
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(
         engine=engine,
         storage=storage,
@@ -286,7 +260,7 @@ async def test_multi_turn_conversation_records_history(
 ) -> None:
     """Two operator messages produce a full turn history in conversation_turns."""
     exchange = MockExchangeAdapter(starting_balances={}, starting_prices={})
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(engine=engine, storage=storage)
     transport = _mock_transport()
     assistant = _ScriptedAssistant(
@@ -384,7 +358,7 @@ async def test_ttl_expiry_skipped_by_dispatch(storage: SQLiteStorageAdapter) -> 
         starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
         starting_prices={BTC_USD: Decimal("50000")},
     )
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(engine=engine, storage=storage, active_symbols=(BTC_USD,))
     transport = _mock_transport()
     pending_map: dict[str, UUID] = {}

@@ -12,13 +12,15 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config as _shared_grid_config
+from tests.fixtures import safety_config as _shared_safety_config
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.apply import _run, _select_suggestion
 from wobblebot.config.advisor import AdvisorConfig, AutoApplyConfig, InferenceParams
 from wobblebot.config.cli import AdviseConfig
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
@@ -67,13 +69,9 @@ def _grid_config(
     spacing: str = "1.0",
     order_size: str = "10",
 ) -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal(spacing),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal(order_size),
-        ),
+    return _shared_grid_config(
+        spacing_pct=spacing,
+        order_size=order_size,
         coins={
             "BTC": CoinGridConfig(
                 spacing_percentage=Decimal(spacing),
@@ -87,15 +85,12 @@ def _grid_config(
 
 
 def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100"),
-        max_daily_spend_usd=Decimal("100"),
-        max_per_coin_exposure_usd=Decimal("50"),
-        max_orders_per_coin=10,
-        emergency_stop=EmergencyStopConfig(
-            max_loss_percentage=Decimal("5"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
+    return _shared_safety_config(
+        max_total="100",
+        max_daily="100",
+        max_per_coin="50",
+        max_orders=10,
+        max_loss_pct="5",
     )
 
 

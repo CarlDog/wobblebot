@@ -54,7 +54,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferResult
 from wobblebot.ports.notifier import NotifierPort

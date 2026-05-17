@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -23,6 +22,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.discord_transport import (
     CONFIRM_EMOJI,
     REJECT_EMOJI,
@@ -38,8 +38,6 @@ from wobblebot.cli.operator import (
     _handle_reaction,
     _summarize_command,
 )
-from wobblebot.config.grid import GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.assistant import (
     AssistantPort,
@@ -92,39 +90,14 @@ def _mock_transport() -> Any:
     return t
 
 
-def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal("1"),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal("10"),
-        )
-    )
-
-
-def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100000"),
-        max_daily_spend_usd=Decimal("100000"),
-        max_per_coin_exposure_usd=Decimal("100000"),
-        max_orders_per_coin=100,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
-    )
-
-
 def _operator_service(storage: SQLiteStorageAdapter) -> OperatorService:
     exchange = MockExchangeAdapter(starting_balances={}, starting_prices={})
-    engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
     return OperatorService(
         engine=engine,
         storage=storage,
         active_symbols=(Symbol(base="BTC", quote="USD"),),
-        grid_config=_grid_config(),
+        grid_config=grid_config(),
     )
 
 

@@ -9,11 +9,12 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config as _shared_grid_config
+from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
+from wobblebot.config.grid import CoinGridConfig, GridConfig
 from wobblebot.config.harvester import HarvesterConfig
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Amount, Symbol, Timestamp
 from wobblebot.ports.exceptions import OperatorError
@@ -49,13 +50,7 @@ ETH_USD = Symbol(base="ETH", quote="USD")
 
 
 def _grid_config() -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal("1.0"),
-            levels_above=3,
-            levels_below=3,
-            order_size_usd=Decimal("10"),
-        ),
+    return _shared_grid_config(
         coins={
             "ETH": CoinGridConfig(
                 spacing_percentage=Decimal("0.5"),
@@ -64,20 +59,6 @@ def _grid_config() -> GridConfig:
                 order_size_usd=Decimal("20"),
             ),
         },
-    )
-
-
-def _safety_config() -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("100000"),
-        max_daily_spend_usd=Decimal("100000"),
-        max_per_coin_exposure_usd=Decimal("100000"),
-        max_orders_per_coin=100,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
     )
 
 
