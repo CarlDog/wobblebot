@@ -53,6 +53,7 @@ from wobblebot.cli._common import (
     collect_overrides,
     identity,
     load_operator_env,
+    notify,
     parse_symbol_csv,
 )
 from wobblebot.config.cli import LiveConfig
@@ -62,7 +63,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import OperatorError, WobbleBotPortError
-from wobblebot.ports.notifier import Notification, NotifierPort
+from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
@@ -119,40 +120,7 @@ async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
     return bal.total if bal else Decimal("0")
 
 
-async def _notify(
-    notifier: NotifierPort | None,
-    *,
-    level: str,
-    title: str,
-    message: str,
-    context: dict[str, Any] | None = None,
-) -> None:
-    """Best-effort notification emit. Failures are logged, never raised.
-
-    Phase 5 notifications are forensic ledger entries — losing one
-    must NEVER break the trading loop. cli/live calls this from
-    session-start / session-end / fill / cap-trip hooks.
-    """
-    if notifier is None:
-        return
-    try:
-        await notifier.send_notification(
-            Notification(
-                level=level,
-                title=title,
-                message=message,
-                timestamp=Timestamp(dt=datetime.now(UTC)),
-                context=context or {},
-            )
-        )
-    except WobbleBotPortError as exc:
-        _LOGGER.warning(
-            "notification emit failed; continuing",
-            extra={"title": title, "error": str(exc)},
-        )
-
-
-async def _run_one_tick(  # pylint: disable=too-many-arguments
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -181,7 +149,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments
             # Stage 5.5: emit a notification on fills so the operator
             # sees activity in Discord without tailing logs.
             if result.fills > 0:
-                await _notify(
+                await notify(
                     notifier,
                     level="info",
                     title=f"Fills: {symbol} ({result.fills})",
@@ -218,7 +186,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments
                 "tick": tick,
             },
         )
-        await _notify(
+        await notify(
             notifier,
             level="error",
             title="Loss cap tripped — session ending",
@@ -335,7 +303,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             "starting_usd": str(started_usd),
         },
     )
-    await _notify(
+    await notify(
         notifier,
         level="info",
         title="Live session started",
@@ -410,7 +378,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 "exit_code": exit_code,
             },
         )
-        await _notify(
+        await notify(
             notifier,
             level="error" if exit_code != 0 else "info",
             title=f"Live session ended (exit {exit_code})",

@@ -32,13 +32,21 @@ sentinel ``None`` values.
 from __future__ import annotations
 
 import argparse
+import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
+from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.ports.notifier import Notification, NotifierPort
+
 T = TypeVar("T")
+
+_NOTIFY_LOGGER = logging.getLogger("wobblebot.cli.notify")
 
 
 def load_operator_env() -> None:
@@ -115,3 +123,47 @@ def parse_symbol_csv(raw: str) -> list[str]:
 def identity(value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
+
+
+async def notify(
+    notifier: NotifierPort | None,
+    *,
+    level: str,
+    title: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort outbound notification emit. Failures logged, never raised.
+
+    Phase 5 notifications are forensic ledger entries — losing one
+    must NEVER break the trading or harvester loop. ``cli/live`` and
+    ``cli/harvest`` call this from their session / fill / cap-trip /
+    proposal / withdrawal hooks; ``cli/operator`` (Stage 5.6) reads
+    the persisted rows and forwards them to Discord.
+
+    Args:
+        notifier: Where to write the row. ``None`` is a no-op (operator
+            ran without ``operator_db`` configured).
+        level: ``info | warning | error | critical``.
+        title: Short human label; appears as the Discord embed title.
+        message: Longer human message; appears as the embed description.
+        context: Optional structured context dict (rendered as embed
+            fields by the cli/operator forwarder).
+    """
+    if notifier is None:
+        return
+    try:
+        await notifier.send_notification(
+            Notification(
+                level=level,
+                title=title,
+                message=message,
+                timestamp=Timestamp(dt=datetime.now(UTC)),
+                context=context or {},
+            )
+        )
+    except WobbleBotPortError as exc:
+        _NOTIFY_LOGGER.warning(
+            "notification emit failed; continuing",
+            extra={"title": title, "error": str(exc)},
+        )

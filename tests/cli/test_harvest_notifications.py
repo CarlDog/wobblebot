@@ -2,7 +2,7 @@
 
 The full proposal-generated / withdrawal-executed / withdrawal-failed
 flow is covered by the Stage 5.7 integration check. These unit tests
-target the ``_notify`` helper in isolation plus the proposal-emit
+target the ``notify`` helper in isolation plus the proposal-emit
 path through ``_run_cycle`` against an in-memory storage.
 """
 
@@ -17,7 +17,8 @@ import pytest_asyncio
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.harvest import _notify, _run_cycle
+from wobblebot.cli._common import notify
+from wobblebot.cli.harvest import _run_cycle
 from wobblebot.config.cli import HarvestConfig
 from wobblebot.config.grid import GridConfig, GridLevels
 from wobblebot.config.harvester import HarvesterConfig
@@ -74,12 +75,12 @@ def _wob_config(*, harvester_enabled: bool = False) -> WobbleBotConfig:
 
 
 async def test_notify_with_none_is_noop() -> None:
-    await _notify(None, level="info", title="t", message="m")
+    await notify(None, level="info", title="t", message="m")
 
 
 async def test_notify_persists_via_storage(storage: SQLiteStorageAdapter) -> None:
     notifier = SqliteNotifierAdapter(storage)
-    await _notify(
+    await notify(
         notifier,
         level="warning",
         title="proposal generated",
@@ -102,7 +103,7 @@ async def test_notify_swallows_notifier_errors() -> None:
             pass
 
     # Should NOT raise.
-    await _notify(
+    await notify(
         _FailingNotifier(),  # type: ignore[arg-type]
         level="info",
         title="x",

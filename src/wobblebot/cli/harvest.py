@@ -42,7 +42,13 @@ from uuid import uuid4
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    notify,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -51,43 +57,10 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferResult
-from wobblebot.ports.notifier import Notification, NotifierPort
+from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 _LOGGER = logging.getLogger("wobblebot.cli.harvest")
-
-
-async def _notify(
-    notifier: NotifierPort | None,
-    *,
-    level: str,
-    title: str,
-    message: str,
-    context: dict[str, Any] | None = None,
-) -> None:
-    """Best-effort notification emit; failures logged, never raised.
-
-    Same shape as cli/live's helper. Harvester events must never break
-    the treasury loop — losing a notification is far less bad than
-    interrupting a balance poll or, worse, an in-flight withdrawal.
-    """
-    if notifier is None:
-        return
-    try:
-        await notifier.send_notification(
-            Notification(
-                level=level,
-                title=title,
-                message=message,
-                timestamp=Timestamp(dt=datetime.now(UTC)),
-                context=context or {},
-            )
-        )
-    except WobbleBotPortError as exc:
-        _LOGGER.warning(
-            "notification emit failed; continuing",
-            extra={"title": title, "error": str(exc)},
-        )
 
 
 async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
@@ -180,7 +153,7 @@ async def _run_cycle(
     # sees treasury suggestions in Discord without tailing logs. The
     # proposal is still HYPOTHETICAL — operator must run cli/harvest
     # --execute to actually move money.
-    await _notify(
+    await notify(
         notifier,
         level="info",
         title=f"Harvester proposal: {proposal.direction} {proposal.amount} {proposal.asset}",
@@ -452,7 +425,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
                 extra={"error": str(persist_exc)},
             )
         # Stage 5.5: surface the failure to the operator's Discord.
-        await _notify(
+        await notify(
             notifier,
             level="error",
             title=f"Withdrawal failed: {proposal.amount} {proposal.asset}",
@@ -514,7 +487,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     # Discord. Level "warning" not "info" because money moved — this is
     # the highest-value event the harvester emits and the operator
     # wants it surfaced loudly.
-    await _notify(
+    await notify(
         notifier,
         level="warning",
         title=f"Withdrawal submitted: {proposal.amount} {proposal.asset}",
