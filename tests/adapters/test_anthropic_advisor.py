@@ -20,8 +20,8 @@ import pytest_asyncio
 
 from wobblebot.adapters.anthropic import (
     AnthropicAdvisorAdapter,
-    build_call_record,
     estimate_cost_ceiling,
+    extract_anthropic_tokens,
     parse_text_blocks,
 )
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -178,36 +178,27 @@ class TestPureHelpers:
     def test_parse_text_blocks_empty(self) -> None:
         assert parse_text_blocks([]) == ""
 
-    def test_build_call_record_success(self) -> None:
-        record = build_call_record(
-            role="quant",
-            model="claude-sonnet-4-6",
-            usage={"input_tokens": 100, "output_tokens": 200},
-            request_id="msg_abc",
-            success=True,
-            error_kind=None,
-        )
-        assert record.tokens_in == 100
-        assert record.tokens_out == 200
-        assert record.tokens_reasoning is None
-        # 100 * 3/1M + 200 * 15/1M = 0.0003 + 0.003 = 0.0033
-        assert record.cost_usd == Decimal("0.003300")
-        assert record.success is True
-        assert record.request_id == "msg_abc"
+    def test_extract_anthropic_tokens(self) -> None:
+        """Anthropic-specific normalization: tokens_reasoning is None
+        because the API lumps thinking with output."""
+        envelope = {
+            "id": "msg_abc",
+            "usage": {"input_tokens": 100, "output_tokens": 200},
+        }
+        tokens_in, tokens_out, tokens_reasoning, request_id = extract_anthropic_tokens(envelope)
+        assert tokens_in == 100
+        assert tokens_out == 200
+        assert tokens_reasoning is None
+        assert request_id == "msg_abc"
 
-    def test_build_call_record_failure_zero_tokens(self) -> None:
-        record = build_call_record(
-            role="quant",
-            model="claude-sonnet-4-6",
-            usage={},
-            request_id=None,
-            success=False,
-            error_kind="rate_limited",
-        )
-        assert record.tokens_in == 0
-        assert record.tokens_out == 0
-        assert record.cost_usd == Decimal("0.000000")
-        assert record.success is False
+    def test_extract_anthropic_tokens_missing_usage(self) -> None:
+        """Defensive: missing usage block → zeros + no request_id."""
+        envelope: dict[str, object] = {}
+        tokens_in, tokens_out, tokens_reasoning, request_id = extract_anthropic_tokens(envelope)
+        assert tokens_in == 0
+        assert tokens_out == 0
+        assert tokens_reasoning is None
+        assert request_id is None
 
 
 # --------------------------------------------------------------------- #

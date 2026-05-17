@@ -35,17 +35,14 @@ never imports this module.
 from __future__ import annotations
 
 import json
-import logging
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.adapters.anthropic import (
-    build_call_record,
     estimate_cost_ceiling,
+    extract_anthropic_tokens,
     parse_text_blocks,
     post_messages,
 )
@@ -54,22 +51,16 @@ from wobblebot.adapters.ollama import (
     extract_last_json_object,
 )
 from wobblebot.config.prompts import Prompt
-from wobblebot.domain.exceptions import LLMCostCapExceeded
-from wobblebot.domain.llm_cost import LLMCallRecord
-from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
 from wobblebot.ports.exceptions import AssistantError
 from wobblebot.ports.operator import OperatorIntent
 from wobblebot.ports.storage import StoragePort
-from wobblebot.services.llm_cost_gate import (
-    GateDeny,
-    LLMCostConfig,
-    SessionCostTracker,
-    check_budget,
+from wobblebot.services.llm_cloud_call import (
+    CloudCallContext,
+    execute_cloud_call,
 )
-from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
-
-_LOGGER = logging.getLogger("wobblebot.adapters.anthropic_assistant")
+from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+from wobblebot.services.llm_retry import LLMRetryConfig
 
 # Match the sister advisor adapter's defaults. Re-declared locally so this
 # module doesn't depend on private symbols in adapters/anthropic.py.
@@ -152,10 +143,7 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         if self._owns_client:
             await self._client.aclose()
 
-    async def parse_intent(  # pylint: disable=too-many-locals
-        self,
-        context: ConversationContext,
-    ) -> OperatorIntent:
+    async def parse_intent(self, context: ConversationContext) -> OperatorIntent:
         """Send the conversation context to Anthropic and return a typed intent.
 
         Raises:
@@ -166,32 +154,12 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         """
         system_prompt = self._build_system_prompt(context)
         messages = self._build_messages(context)
-
-        # Cost-gate check before issuing the call. Estimate uses the
-        # concatenated prompt text plus max_tokens ceiling per
-        # ADR-014 decision 4. Anthropic system + messages are sent
-        # separately on the wire but both count toward input tokens.
         prompt_text = system_prompt + "\n\n" + "\n".join(m["content"] for m in messages)
         estimate = estimate_cost_ceiling(
             model=self._model,
             prompt_text=prompt_text,
             max_tokens=self._max_tokens,
         )
-        decision = await check_budget(
-            self._storage,
-            role="operator",
-            estimated_cost_usd=estimate,
-            session_spent_usd=self._session_tracker.total,
-            config=self._cost_config,
-        )
-        if isinstance(decision, GateDeny):
-            raise LLMCostCapExceeded(
-                cap_kind=decision.cap_kind,
-                cap_value_usd=decision.cap_value_usd,
-                daily_spent_usd=decision.daily_spent_usd,
-                session_spent_usd=decision.session_spent_usd,
-                message=decision.reason,
-            )
 
         body: dict[str, Any] = {
             "model": self._model,
@@ -210,29 +178,28 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
                 body=body,
             )
 
+        ctx = CloudCallContext(
+            storage=self._storage,
+            session_tracker=self._session_tracker,
+            cost_config=self._cost_config,
+            retry_config=self._retry_config,
+            role="operator",
+            provider="anthropic",
+            model=self._model,
+        )
         try:
-            envelope = await retry_with_backoff(_call, self._retry_config)
+            envelope = await execute_cloud_call(
+                ctx=ctx,
+                estimated_cost_usd=estimate,
+                call_fn=_call,
+                extract_tokens=extract_anthropic_tokens,
+            )
         except httpx.HTTPStatusError as exc:
-            await self._record_failure(exc)
             raise AssistantError(
                 f"Anthropic request failed: HTTP {exc.response.status_code}"
             ) from exc
         except httpx.HTTPError as exc:
-            await self._record_failure(exc)
             raise AssistantError(f"Anthropic transport error: {exc}") from exc
-
-        # Success: persist the real cost first, then parse the answer.
-        usage = envelope.get("usage", {}) or {}
-        record = build_call_record(
-            role="operator",
-            model=self._model,
-            usage=usage,
-            request_id=envelope.get("id"),
-            success=True,
-            error_kind=None,
-        )
-        await self._storage.save_llm_call(record)
-        self._session_tracker.add(record.cost_usd)
 
         inner = _extract_intent_dict(envelope)
         try:
@@ -280,47 +247,6 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
             )
         messages.append({"role": "user", "content": context.current_message})
         return messages
-
-    async def _record_failure(self, exc: Exception) -> None:
-        """Best-effort failure record. Swallows StorageError — losing one
-        forensic row must not mask the original API failure to the caller."""
-        error_kind = _classify_error(exc)
-        record = LLMCallRecord(
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-            role="operator",
-            provider="anthropic",
-            model=self._model,
-            tokens_in=0,
-            tokens_out=0,
-            tokens_reasoning=None,
-            cost_usd=Decimal("0"),
-            request_id=None,
-            success=False,
-            error_kind=error_kind,
-        )
-        try:
-            await self._storage.save_llm_call(record)
-        except Exception:  # pylint: disable=broad-exception-caught
-            _LOGGER.warning(
-                "failed to persist failure record; original error will still raise",
-                extra={"model": self._model, "error_kind": error_kind},
-            )
-
-
-def _classify_error(exc: Exception) -> str:
-    """Short label for the LLMCallRecord.error_kind column."""
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status == 429:
-            return "rate_limited"
-        if 500 <= status < 600:
-            return "server_error"
-        return f"http_{status}"
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-        return "connect_error"
-    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
-        return "timeout"
-    return type(exc).__name__
 
 
 def _extract_intent_dict(envelope: dict[str, Any]) -> dict[str, Any]:

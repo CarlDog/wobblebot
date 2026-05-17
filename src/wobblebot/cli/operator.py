@@ -25,6 +25,8 @@ Run as a module: ``python -m wobblebot.cli.operator``
 (``--config /path/to/settings.yml`` to override the YAML path).
 """
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import argparse
@@ -828,7 +830,7 @@ def _build_assistant(
     return None
 
 
-async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
+async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
     config: WobbleBotConfig,
 ) -> int:
     if config.operator is None:

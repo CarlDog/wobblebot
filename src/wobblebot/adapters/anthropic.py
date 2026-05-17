@@ -46,7 +46,6 @@ unchanged — it's its own domain error.
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -60,8 +59,7 @@ from wobblebot.adapters.ollama import (
     extract_last_json_object,
 )
 from wobblebot.config.prompts import Prompt
-from wobblebot.domain.exceptions import LLMCostCapExceeded
-from wobblebot.domain.llm_cost import LLMCallRecord, LLMRole
+from wobblebot.domain.llm_cost import LLMRole
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -70,16 +68,14 @@ from wobblebot.ports.advisor import (
 )
 from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.ports.storage import StoragePort
-from wobblebot.services.llm_cost_gate import (
-    GateDeny,
-    LLMCostConfig,
-    SessionCostTracker,
-    check_budget,
+from wobblebot.services.llm_cloud_call import (
+    CloudCallContext,
+    TokenTuple,
+    execute_cloud_call,
 )
+from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_pricing import cost_for
-from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
-
-_LOGGER = logging.getLogger("wobblebot.adapters.anthropic")
+from wobblebot.services.llm_retry import LLMRetryConfig
 
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_API_VERSION = "2023-06-01"
@@ -139,54 +135,6 @@ def parse_text_blocks(content: list[dict[str, Any]]) -> str:
             if isinstance(text, str):
                 parts.append(text)
     return "".join(parts)
-
-
-def build_call_record(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    *,
-    role: LLMRole,
-    model: str,
-    usage: dict[str, Any],
-    request_id: str | None,
-    success: bool,
-    error_kind: str | None,
-) -> LLMCallRecord:
-    """Build an ``LLMCallRecord`` from an Anthropic ``usage`` block.
-
-    Anthropic's usage shape:
-        {
-            "input_tokens": int,
-            "output_tokens": int,
-            "cache_creation_input_tokens": int (optional),
-            "cache_read_input_tokens": int (optional),
-        }
-
-    Cache tokens are folded into ``input_tokens`` for billing — we
-    record what the API reports without further normalization.
-    Thinking tokens are NOT separated (see module docstring); v1 sets
-    ``tokens_reasoning=None``.
-    """
-    tokens_in = int(usage.get("input_tokens", 0))
-    tokens_out = int(usage.get("output_tokens", 0))
-    cost = cost_for(
-        provider="anthropic",
-        model=model,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        tokens_reasoning=0,
-    )
-    return LLMCallRecord(
-        timestamp=Timestamp(dt=datetime.now(UTC)),
-        role=role,
-        provider="anthropic",
-        model=model,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        tokens_reasoning=None,
-        cost_usd=cost,
-        request_id=request_id,
-        success=success,
-        error_kind=error_kind,
-    )
 
 
 async def post_messages(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -279,7 +227,7 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         if self._owns_client:
             await self._client.aclose()
 
-    async def get_recommendation(  # pylint: disable=too-many-locals
+    async def get_recommendation(
         self,
         summary: PerformanceSummary,
         *,
@@ -293,29 +241,6 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         if extra_context:
             user_message = f"{user_message}\n\n{extra_context}"
 
-        # Step 1-3: estimate + gate-check.
-        full_prompt = f"{self._prompt.body}\n\n{user_message}"
-        estimate = estimate_cost_ceiling(
-            model=self._model,
-            prompt_text=full_prompt,
-            max_tokens=self._max_tokens,
-        )
-        decision = await check_budget(
-            self._storage,
-            role=self._role,
-            estimated_cost_usd=estimate,
-            session_spent_usd=self._session_tracker.total,
-            config=self._cost_config,
-        )
-        if isinstance(decision, GateDeny):
-            raise LLMCostCapExceeded(
-                cap_kind=decision.cap_kind,
-                cap_value_usd=decision.cap_value_usd,
-                daily_spent_usd=decision.daily_spent_usd,
-                session_spent_usd=decision.session_spent_usd,
-                message=decision.reason,
-            )
-
         body: dict[str, Any] = {
             "model": self._model,
             "system": self._prompt.body,
@@ -324,7 +249,6 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
             "temperature": self._temperature,
         }
 
-        # Step 4: retry-wrapped API call.
         async def _call() -> dict[str, Any]:
             return await post_messages(
                 client=self._client,
@@ -334,80 +258,59 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
                 body=body,
             )
 
+        full_prompt = f"{self._prompt.body}\n\n{user_message}"
+        estimate = estimate_cost_ceiling(
+            model=self._model,
+            prompt_text=full_prompt,
+            max_tokens=self._max_tokens,
+        )
+        ctx = CloudCallContext(
+            storage=self._storage,
+            session_tracker=self._session_tracker,
+            cost_config=self._cost_config,
+            retry_config=self._retry_config,
+            role=self._role,
+            provider="anthropic",
+            model=self._model,
+        )
         try:
-            envelope = await retry_with_backoff(_call, self._retry_config)
+            envelope = await execute_cloud_call(
+                ctx=ctx,
+                estimated_cost_usd=estimate,
+                call_fn=_call,
+                extract_tokens=extract_anthropic_tokens,
+            )
         except httpx.HTTPStatusError as exc:
-            await self._record_failure(exc)
             raise AdvisorError(
                 f"Anthropic request failed: HTTP {exc.response.status_code}"
             ) from exc
         except httpx.HTTPError as exc:
-            await self._record_failure(exc)
             raise AdvisorError(f"Anthropic transport error: {exc}") from exc
 
-        # Step 5: success path — record real cost, parse the answer.
-        usage = envelope.get("usage", {}) or {}
-        record = build_call_record(
-            role=self._role,
-            model=self._model,
-            usage=usage,
-            request_id=envelope.get("id"),
-            success=True,
-            error_kind=None,
-        )
-        await self._storage.save_llm_call(record)
-        self._session_tracker.add(record.cost_usd)
-
-        return _parse_recommendation(
-            envelope=envelope,
-            fallback_role=self._role,
-        )
+        return _parse_recommendation(envelope=envelope, fallback_role=self._role)
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.2 contract: parsing-success is the only check."""
         del recommendation
         return True
 
-    async def _record_failure(self, exc: Exception) -> None:
-        """Best-effort failure record. Swallows StorageError — losing one
-        forensic row must not mask the original API failure to the caller."""
-        error_kind = _classify_error(exc)
-        record = LLMCallRecord(
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-            role=self._role,
-            provider="anthropic",
-            model=self._model,
-            tokens_in=0,
-            tokens_out=0,
-            tokens_reasoning=None,
-            cost_usd=Decimal("0"),
-            request_id=None,
-            success=False,
-            error_kind=error_kind,
-        )
-        try:
-            await self._storage.save_llm_call(record)
-        except Exception:  # pylint: disable=broad-exception-caught
-            _LOGGER.warning(
-                "failed to persist failure record; original error will still raise",
-                extra={"model": self._model, "error_kind": error_kind},
-            )
 
+def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenTuple:
+    """Pull the ``TokenTuple`` from an Anthropic Messages-API response.
 
-def _classify_error(exc: Exception) -> str:
-    """Short label for the LLMCallRecord.error_kind column."""
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status == 429:
-            return "rate_limited"
-        if 500 <= status < 600:
-            return "server_error"
-        return f"http_{status}"
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-        return "connect_error"
-    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
-        return "timeout"
-    return type(exc).__name__
+    Anthropic lumps extended-thinking tokens into ``output_tokens`` and
+    bills them at the regular output rate, so v1 records
+    ``tokens_reasoning=None``; the pricing fallback (see
+    ``services/llm_pricing.cost_for``) covers it. Operator-visible
+    thinking-token counts queued as a v2 candidate.
+    """
+    usage = envelope.get("usage", {}) or {}
+    return (
+        int(usage.get("input_tokens", 0)),
+        int(usage.get("output_tokens", 0)),
+        None,
+        envelope.get("id"),
+    )
 
 
 def _parse_recommendation(
