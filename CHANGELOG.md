@@ -10,6 +10,126 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 6.1 — Shared cloud-LLM infrastructure (2026-05-17)
+
+First Phase 6 implementation stage; pure foundation with **zero real
+API calls**. Lays down the substrate every cloud-provider adapter
+(Stages 6.2-6.4) will consume: cost accounting, budget enforcement,
+retry/backoff, per-provider config schemas, and operator inspection.
+Five sub-slices, each landed in its own commit:
+
+**6.1.A — Cost-tracking domain + storage.** `LLMCallRecord` frozen
+Pydantic value object (caller-minted UUID id + timestamp + 7-way role
+Literal + 3-way provider Literal + tokens triple [in/out/reasoning] +
+Decimal cost_usd + request_id + success + error_kind). `llm_calls`
+SQLite table + three indexes (timestamp / provider+model / role).
+`StoragePort.save_llm_call` + `get_llm_calls(since, role, provider,
+limit)` with newest-first ordering. `LLMCostCapExceeded` domain
+exception carrying budget state for self-explanatory operator
+notifications. 33 new unit tests. Drive-by: fixed pre-existing
+`implicit-str-concat` in `sqlite_storage.get_conversation_turns`;
+file-level `# pylint: disable=too-many-lines` on sqlite_storage.py
+(now 1037 lines; adapter is naturally many-methods).
+
+**6.1.B — Pricing table + cost gate.** `services/llm_pricing.py`
+with the 8 in-scope models (Claude Sonnet 4.6 + Opus 4.7, gpt-4o +
+gpt-4o-mini + o1 + o3-mini, gemini-2.5-pro + gemini-2.5-flash), each
+entry comment-annotated with the provider's pricing-page URL and a
+`verified_date`. `cost_for()` applies (input + output + reasoning)
+rates with reasoning falling back to output rate unless overridden
+(Gemini-flash thinking carries an explicit higher rate). Unknown
+(provider, model) raises `PricingLookupError` — silent zero would
+defeat ADR-014. `services/llm_cost_gate.py` with `LLMCostConfig`
+(defaults $1.00/day + $0.50/session + `enforce=True`) and
+`check_budget(storage, role, estimated_cost_usd, session_spent_usd,
+config)` returning `GateAllow | GateDeny`. Session cap checked first
+(in-memory, no DB round-trip); daily cap uses sliding 24h window
+via `storage.get_llm_calls(since=now-24h)`. `enforce=False`
+short-circuits to allow (ADR-014 decision 8 dry-run posture).
+`test_pricing_freshness.py` watchdog fails CI when any entry's
+`verified_date` is >180 days behind today. 38 new unit tests.
+
+**6.1.C — Retry/backoff helper.** `services/llm_retry.py` with
+`LLMRetryConfig` (max_retries=3, initial_backoff_seconds=1.0,
+backoff_multiplier=2.0, all frozen + validated). `default_classifier`
+per ADR-015: httpx Connect/Read/Write/Pool/RemoteProtocol → transient;
+HTTPStatusError 429+5xx → transient, other 4xx → permanent; everything
+else permanent (don't retry bugs). `retry_with_backoff(fn, config, *,
+classifier, sleep_fn)` runs `fn` up to 1+max_retries times, sleeps
+between attempts with `initial * multiplier ** attempt`, re-raises
+permanent immediately, raises `LLMRetryExhausted` chaining `__cause__`
+when transient retries exhaust. `sleep_fn` injection keeps tests
+millisecond-fast. 36 new unit tests.
+
+**6.1.D — Config schemas + env wiring.** `config/llm.py` with
+`LLMConfig` composing `cost: LLMCostConfig` + `retry: LLMRetryConfig`
+(both children carry their own defaults). `WobbleBotConfig.llm:
+LLMConfig | None = None` (None = pure-Ollama deployment, gate
+inactive — opt-in posture matching ADR-012's `auto_apply.enabled`
+default). `.env.example` cloud-LLM-keys comment block refreshed for
+Phase 6 + ADR-014/015 framing alongside the existing Phase 3 MoE
+framing. `config/settings.example.yml` gains a documented `llm:`
+block between `operator:` and `profiles:` with comments explaining
+the dry-run posture and retry-defaults formula. Existing
+schema-drift tests guard example/operator alignment automatically.
+13 new unit tests.
+
+**6.1.E — Inspection tool + stage close.** `tools/show_llm_costs.py`
+operator inspection (`--db-path`, `--since-hours`, `--provider`,
+`--role`, `--limit`, mutex `--by-provider | --by-role`,
+`--log-format`). Default mode: per-row print + grand-total footer.
+Rollup modes sort desc by cost. Deprived-env walkthrough green:
+missing DB → exit 2; empty table → exit 0 + "no rows match"; seeded
+rows → properly formatted output; mutex flags enforced by argparse.
+Roadmap / CLAUDE.md / project_state memory updated.
+
+**1334 unit tests** pass (up from 1214 at Phase 5 close; +120 across
+Stage 6.1's five sub-slices). mypy clean (74 src files). pylint
+10.00/10. black + isort clean. No new runtime dependencies — pricing
+table is data, everything else is pure Python on existing httpx +
+pydantic. Real-money cost still **$0.00 for Phase 6** (Stages 6.2-6.5
+are the first to make actual API calls); running project total
+**$0.08** unchanged from Phase 2 close.
+
+### Phase 6 kickoff — Cloud LLM Integration (ADR-014 + ADR-015) (2026-05-17)
+
+After Phase 5 close + the Phase 8.0 refactor slot decision, Phase 6
+(Cloud LLM Integration) needed two architectural decisions ratified
+before code, mirroring the Phase 5 kickoff pattern (ADR-013 +
+`stage-5.1-design.md`).
+
+**ADR-014 — LLM cost caps.** Per-day + per-session USD caps via
+`services/llm_cost_gate.check_budget` against a new `llm_calls`
+SQLite table in `operator.db`. Hard-stop on cap trip (raises
+`LLMCostCapExceeded`). Single-pool across roles in v1; per-role
+split deferred. Pricing table is **code, not config** — entries
+carry `verified_date` + comment-annotated pricing-page URLs; a
+`test_pricing_freshness` watchdog fails CI when entries are >180
+days old. `enforce=False` dry-run posture for the first week of
+cloud usage.
+
+**ADR-015 — Cloud LLM provider failover policy.** Default policy:
+fail loudly + retry on transient errors only. Transient = HTTP 429 /
+5xx + httpx connection/timeout exceptions. Permanent = HTTP 4xx
+(non-429) + every other exception class. Up to 3 retries with
+exponential backoff (1s, 2s, 4s by default formula
+`initial * multiplier ** attempt`). **No cross-provider failover.**
+**No silent cloud-to-Ollama failover** — silent model substitution
+breaks audit provenance. Retries draw from the same ADR-014 cost
+pool (one budget check per logical call, not per attempt).
+Per-provider auth lives in env (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
+/ `GOOGLE_API_KEY`). Single shared `LLMRetryConfig` across providers
+in v1.
+
+**Stage 6.1 design + roadmap rewrite.**
+`docs/planning/stage-6.1-design.md` slices Stage 6.1 into five
+sub-slices. Roadmap drops the "provisional" tag from Phase 6 and
+expands the five stages (6.1 infrastructure → 6.2 Anthropic → 6.3
+OpenAI → 6.4 Google → 6.5 integration check). CLAUDE.md Project
+Status moves Phase 6 from "Next:" to "in progress 2026-05-17."
+
+No code in the kickoff commit. Stage 6.1 sub-slice work follows.
+
 ### Phase 5 kickoff — Operator Interaction Engine (ADR-013) (2026-05-16)
 
 After Phase 4 close, the operator surfaced a broader vision than the

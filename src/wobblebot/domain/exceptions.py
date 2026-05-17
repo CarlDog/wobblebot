@@ -104,7 +104,7 @@ class LLMCostCapExceeded(WobbleBotDomainError):
         session_spent_usd: Running session total at check time.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         cap_kind: str,
         cap_value_usd: Decimal,
