@@ -16,10 +16,11 @@ from wobblebot.services.llm_cost_gate import (
     GateAllow,
     GateDeny,
     LLMCostConfig,
+    SessionCostTracker,
     check_budget,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+pytestmark = pytest.mark.unit
 
 
 @pytest_asyncio.fixture
@@ -61,6 +62,7 @@ def _config(
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestAllow:
     async def test_under_both_caps_allows(self, storage: SQLiteStorageAdapter) -> None:
         decision = await check_budget(
@@ -100,6 +102,7 @@ class TestAllow:
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestSessionCap:
     async def test_session_cap_trips(self, storage: SQLiteStorageAdapter) -> None:
         decision = await check_budget(
@@ -138,6 +141,7 @@ class TestSessionCap:
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestDailyCap:
     async def test_daily_cap_trips_with_recent_history(self, storage: SQLiteStorageAdapter) -> None:
         # 4 calls at $0.30 = $1.20 already spent.
@@ -217,6 +221,7 @@ class TestDailyCap:
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestDryRunPosture:
     async def test_enforce_false_allows_over_cap(self, storage: SQLiteStorageAdapter) -> None:
         # Both caps would trip; enforce=False short-circuits to allow.
@@ -237,6 +242,7 @@ class TestDryRunPosture:
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.asyncio
 class TestDenyReason:
     async def test_session_deny_includes_role_and_projected_total(
         self, storage: SQLiteStorageAdapter
@@ -269,3 +275,34 @@ class TestDenyReason:
         assert isinstance(decision, GateDeny)
         assert "risk" in decision.reason
         assert "1.00" in decision.reason
+
+
+# --------------------------------------------------------------------- #
+# SessionCostTracker (Stage 6.2.A)                                      #
+# --------------------------------------------------------------------- #
+
+
+class TestSessionCostTracker:
+    def test_default_initial_zero(self) -> None:
+        t = SessionCostTracker()
+        assert t.total == Decimal("0")
+
+    def test_initial_value_carried(self) -> None:
+        t = SessionCostTracker(initial=Decimal("0.25"))
+        assert t.total == Decimal("0.25")
+
+    def test_add_accumulates(self) -> None:
+        t = SessionCostTracker()
+        t.add(Decimal("0.10"))
+        t.add(Decimal("0.05"))
+        assert t.total == Decimal("0.15")
+
+    def test_negative_amount_rejected(self) -> None:
+        t = SessionCostTracker()
+        with pytest.raises(ValueError, match="negative"):
+            t.add(Decimal("-0.01"))
+
+    def test_zero_amount_allowed(self) -> None:
+        t = SessionCostTracker()
+        t.add(Decimal("0"))
+        assert t.total == Decimal("0")

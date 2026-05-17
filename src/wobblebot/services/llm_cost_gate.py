@@ -66,6 +66,38 @@ class LLMCostConfig(BaseModel):
         frozen = True
 
 
+class SessionCostTracker:
+    """Mutable in-memory running total of cloud-LLM spend for one CLI session.
+
+    A "session" is one CLI process lifetime (one ``cli/advise`` tick,
+    one ``cli/operator`` daemon run, etc.). The CLI mints one tracker
+    at startup and passes it to every cloud adapter it constructs;
+    each adapter adds its real cost to the tracker after a successful
+    call. The cost gate reads ``.total`` on the next ``check_budget``
+    call to enforce ADR-014's per-session cap.
+
+    Restart-reset is the expected semantic (ADR-014 design decision 3
+    in the Stage 6.1 design doc) — the table still has all rows for
+    cross-session forensic queries.
+
+    Deliberately a tiny mutable class rather than a Pydantic model;
+    Pydantic's frozen=True would block ``add()``.
+    """
+
+    def __init__(self, initial: Decimal | None = None) -> None:
+        self._total: Decimal = initial if initial is not None else Decimal("0")
+
+    @property
+    def total(self) -> Decimal:
+        return self._total
+
+    def add(self, amount: Decimal) -> None:
+        """Increment the running total. Negative amounts rejected."""
+        if amount < 0:
+            raise ValueError(f"SessionCostTracker.add(): negative amount {amount}")
+        self._total += amount
+
+
 @dataclass(frozen=True)
 class GateAllow:
     """The call is within budget; the caller may proceed."""
