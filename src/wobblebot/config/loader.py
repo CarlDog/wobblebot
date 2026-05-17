@@ -35,6 +35,7 @@ from wobblebot.config.cli import (
 )
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
+from wobblebot.config.llm import LLMConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 
@@ -64,6 +65,7 @@ class WobbleBotConfig(BaseModel):
     harvest: HarvestConfig | None = None
     harvester: HarvesterConfig | None = None
     operator: OperatorConfig | None = None
+    llm: LLMConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     class Config:

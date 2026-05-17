@@ -471,6 +471,50 @@ operator:
   log_format: plain                       # plain | json
 
 # ============================================================================
+# Cloud LLM cost caps + retry policy (Phase 6 — ADR-014 + ADR-015)
+# ============================================================================
+# Cross-cutting block applied to every cloud-LLM call regardless of
+# which CLI (cli/advise, cli/operator, ...) or role drove it. Ollama
+# (local, free) calls bypass — only the three cloud providers
+# (anthropic, openai, google) are gated.
+#
+# Leave the block omitted entirely (or set to null) for a pure-Ollama
+# deployment — the gate is inactive and zero config is needed. The
+# presence of `llm:` is the opt-in signal that cloud usage is in
+# scope.
+#
+# Per ADR-014 decision 8, set `cost.enforce: false` for the first
+# week of cloud usage so the gate records every call (forensic
+# audit trail in operator.db's llm_calls table) but never denies.
+# Flip to true once you've seen real cost numbers and confirmed the
+# caps fit your usage.
+llm:
+  cost:
+    # Sliding 24-hour USD cap across all roles + providers. Trips
+    # raise LLMCostCapExceeded; the calling CLI catches and skips
+    # the call (cli/advise) or posts an operator notification
+    # (cli/operator).
+    max_spend_per_day_usd: "1.00"
+    # Per-CLI-invocation USD cap. In-memory tally, resets per
+    # process start. Catches runaway loops that the daily cap
+    # wouldn't notice fast enough.
+    max_spend_per_session_usd: "0.50"
+    # Dry-run kill switch. true = gate enforces; false = gate
+    # records calls but never denies (ADR-014 decision 8 — see
+    # block-level comment above).
+    enforce: true
+  retry:
+    # Total cloud-LLM call attempts = 1 + max_retries. Transient
+    # errors (429 / 5xx / network) retry; permanent (other 4xx)
+    # raise immediately. ADR-015 default policy.
+    max_retries: 3
+    # First retry waits this long; subsequent retries multiply.
+    # Defaults give 1s / 2s / 4s for max_retries=3 — total ~7s
+    # worst-case retry window.
+    initial_backoff_seconds: 1.0
+    backoff_multiplier: 2.0
+
+# ============================================================================
 # Profiles (named overrides)
 # ============================================================================
 # Operator runs `cli/live --profile conservative` (or `cli/shadow
