@@ -10,6 +10,58 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.1 close — Reliability & Recovery (2026-05-18)
+
+Three sub-slices closed (A kickoff already in unreleased above;
+B persistence-on-cancel; C reconciler + CLI wiring) plus this
+close commit (D). cli/live + cli/shadow now have robust
+startup-reconciliation against the exchange's authoritative
+view + proper persistence-on-cancel at shutdown.
+
+**The 2026-05-18 shadow-session repro is fixed.** Run a fresh
+shadow session, inspect shadow.db at exit: all cancelled orders
+show `status="canceled"`. Run a second session immediately
+after — the reconciler reports `storage_canceled=0,
+orphan_count=0` because the previous session left the storage
+view clean.
+
+**ADR-018 in action.** Real-data path:
+
+- Shutdown: cli/live + cli/shadow now call
+  `storage.save_order(o.model_copy(update={"status": "canceled"}))`
+  after every successful `adapter.cancel_order()`. Don't-lie-in-the-
+  audit-trail: cancel-raised → storage stays open so the reconciler
+  catches it next session.
+- Startup: cli/live + cli/shadow call
+  `services.reconciler.apply_reconciliation()` between storage
+  open and signal handler install, AFTER adapter construct and
+  BEFORE engine first tick. Adapter timeout inherits (10s for
+  Kraken); failure propagates → daemon exits with code 1 rather
+  than ticking against unreconciled state.
+- Reconciler diff classes: **storage_only** (storage has open,
+  exchange doesn't) → marked canceled with reason
+  `not_on_exchange_at_startup`. **exchange_only** (exchange has,
+  storage doesn't) → logged at ERROR with per-orphan line +
+  one summary line; engine does NOT adopt; operator manually
+  reviews via Kraken Pro per ADR-018 decision 3.
+- Configured-symbols filter: orphan logging filters to the
+  engine's actual trade set; manual orders on unrelated coins
+  stay silent. Storage-only reconciliation still scans ALL
+  storage rows regardless of the filter (stale rows in any
+  symbol should clear).
+
+**Numbers.** 1732 unit tests pass (1711 → 1732, +21: 5 persistence
++ 16 reconciler). mypy clean across 101 src files (+1 reconciler
+module). pylint **10.00/10**; black + isort clean. **Stage 8.1
+real-money cost: $0.00** (shutdown discipline + read-only adapter
+queries; no live engine operations triggered).
+
+Stage 8.2 (Background Maintenance Worker) follows. Persistence-on-
+cancel + startup reconciliation give 8.2's maintenance worker a
+known-good state to assume at boot — the worker can VACUUM /
+prune / backup without tripping over stale-open rows from a
+prior session's shutdown bug.
+
 ### Stage 8.1 kickoff — Reliability & Recovery (ADR-018) (2026-05-18)
 
 Phase 8 continues. Stage 8.0 (deferred refactors) just closed
