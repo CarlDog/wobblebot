@@ -10,6 +10,65 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.4 kickoff — Phase 8 / v1.0 Release Check (2026-05-18)
+
+Final pre-v1.0 stage opens. Stage 8.3 closed all behavior /
+performance work for v1.0; Stage 8.4 is the release ceremony
+plus the multi-week operator-driven soak that gates the v1.0.0
+tag.
+
+**No new ADR.** Release ceremony, not architectural change. The
+known-limitations doc *captures* prior ADR-deferred decisions
+(single-operator web auth, no separate banking adapter,
+harvester reconciler deferred, etc.) — it doesn't introduce new
+ones. Decisions ratified in `docs/planning/stage-8.4-design.md`
+only.
+
+**Design ratifies 10 implementation decisions:**
+
+1. Soak duration is operator-decided, not Claude-mandated — the
+   runbook describes *what to watch for*, not *how long to
+   watch*.
+2. Low-risk soak configuration ratified in the runbook (single
+   coin, conservative order_size_usd + spacing, hard caps tuned
+   via cli/recalibrate, harvester enabled).
+3. Documentation freeze, not codebase freeze — if the soak
+   surfaces a defect, fix it in a focused commit, update v1.0
+   docs to reflect corrected behavior, then tag.
+4. Known-limitations doc covers every ADR-deferred decision +
+   v1.0-specific items (CryptoCompare 90-day eval still pending
+   2026-08-13, no CI perf regression check, no remote backup
+   destinations in v1.0, etc.).
+5. Future-improvements doc grouped by motivation: earned by
+   soak data / earned by operator feedback / earned by code
+   review.
+6. Pre-1.0 audit findings ship in focused commits per the global
+   phase-end-audit rule, not an omnibus cleanup commit.
+7. Author-identity audit is across all branches + history via
+   `git log --all --pretty='%ae' | sort -u`.
+8. Phase 4 Harvester-key separation verified live with the
+   operator (ADR-003 load-bearing invariant).
+9. v1.0.0 tag is annotated (`git tag -a`), not lightweight;
+   signed (`-s`) if operator's GPG configured.
+10. `pyproject.toml` version bump goes in the same commit as the
+    tag annotation so `git show v1.0.0` includes the version-bump
+    diff.
+
+**Slicing:** 8.4.A kickoff (this commit) → 8.4.B known-limitations
++ future-improvements docs → 8.4.C pre-1.0 one-shot audit →
+8.4.D soak runbook → 8.4.E operator-driven multi-week soak
+(deferred from Claude-session scope) → 8.4.F post-soak release
+ceremony (`phase-8-summary.md` + CHANGELOG `[Unreleased]` →
+`[1.0.0] - YYYY-MM-DD` + `pyproject.toml` 1.0.0 + annotated
+`v1.0.0` tag).
+
+**Explicitly out of scope:** new code, new tests, new ADRs, new
+features the operator asks for during the soak (logged as
+future-improvements candidates), refactor "while we're here"
+drift, a v1.0.1 plan, CI / GitHub Actions setup.
+
+No code in this commit. Stage 8.4.B work follows.
+
 ### Stage 8.3 close — Performance & Resource Tuning (2026-05-18)
 
 Three sub-slices closed (A kickoff already in unreleased below;
