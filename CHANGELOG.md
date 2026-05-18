@@ -10,6 +10,61 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.1 kickoff — Reliability & Recovery (ADR-018) (2026-05-18)
+
+Phase 8 continues. Stage 8.0 (deferred refactors) just closed
+green; Stage 8.1 takes on the reliability work the refactors set
+up.
+
+**ADR-018 — Engine reconciliation strategy.** Seven decisions
+ratified at kickoff:
+
+1. Exchange (Kraken / synthetic ledger) is authoritative for
+   "what orders exist." Storage gets updated to match.
+2. Storage-only orders (not on exchange) → marked `canceled` at
+   startup. Fixes both the 2026-05-18 shutdown bug AND
+   out-of-band exchange cancellations during downtime.
+3. Exchange-only orders (on exchange, not in storage) → log
+   loud ERROR + continue startup. Do NOT adopt. WobbleBot
+   doesn't manage orders it didn't place; operator must
+   manually review via Kraken Pro.
+4. Reconciliation runs once at engine startup. The engine tick
+   logic handles ongoing drift.
+5. Same policy applies to cli/shadow against its synthetic
+   adapter ledger.
+6. Harvester pending-transfer reconciliation deferred to v1.1.
+   Operator manually reconciles via Kraken Pro in v1.0.
+7. Policy lives in a pure `services/reconciler.py` module +
+   thin async orchestrator; CLI wiring is one helper call.
+
+Plus an 8-decision implementation contract in
+`docs/planning/stage-8.1-design.md` covering:
+
+- Per-symbol vs global reconciliation pass (global, one Kraken
+  call).
+- Persistence-on-cancel uses in-memory `Order` object, not a
+  storage re-read.
+- Reconciliation runs as the LAST step before engine kickoff,
+  AFTER storage + adapter ready but BEFORE signal handlers
+  install.
+- Pure function `reconcile_open_orders()` + async wrapper
+  `apply_reconciliation()` (same Stage 2.2 split that paid off
+  for grid layout).
+- `ReconciliationReport` carries metrics for session-start
+  logging.
+- Per-orphan ERROR logging + one summary line ("review Kraken Pro").
+- No special timeout — reconciliation inherits adapter timeout;
+  refusing to start on Kraken-down is correct.
+- Symbol scope: orphans outside the configured-symbols set are
+  silently skipped (operator's manual orders on unrelated coins).
+
+**Slicing:** 8.1.A (this commit) → 8.1.B (persistence-on-cancel
+fix, ~1h) → 8.1.C (reconciler module + wiring, ~2-3h) → 8.1.D
+(close). Estimated ~4-5 hours; ~19 new tests; no real-money
+risk.
+
+No code in this commit. Stage 8.1.B work follows.
+
 ### Stage 8.0 close — Deferred Phase-5-audit refactors (2026-05-18)
 
 Three medium refactors landed in sub-slices A → B → C, with this

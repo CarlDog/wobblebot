@@ -1034,3 +1034,217 @@ just another table next to ``pending_commands`` /
 - Starlette SessionMiddleware:
   https://www.starlette.io/middleware/#sessionmiddleware
 
+## ADR-018 — Engine Reconciliation Strategy
+
+**Status:** Ratified 2026-05-18 at Stage 8.1 kickoff.
+
+**Context:** WobbleBot maintains two views of "what orders exist":
+
+1. **Storage** (live.db / shadow.db) — local SQLite tables
+   populated by the engine as it places orders, observes fills,
+   and processes cancellations.
+2. **Exchange** (Kraken's order book, or the synthetic ledger
+   inside ``ShadowExchangeAdapter``) — the canonical record of
+   what's actually committed.
+
+In normal operation the two stay in sync because every place /
+fill / cancel goes through ``adapter.X(...)`` immediately followed
+by ``storage.save_order(...)`` inside the same engine tick. But
+they can drift in four scenarios:
+
+1. **Shutdown drift.** ``cli/live`` / ``cli/shadow`` call
+   ``adapter.cancel_order(o)`` in the shutdown finally-block, but
+   don't write the resulting ``status="canceled"`` back to storage
+   (concrete bug surfaced 2026-05-18 in a 60-minute shadow
+   session: 3 BUYs cancelled per log, all 3 still
+   ``status="open"`` in shadow.db at exit).
+2. **Out-of-band exchange cancellation.** Kraken can cancel an
+   order while the daemon is offline (expiry, manual cancel via
+   Kraken Pro, exchange-side incident). Next startup, storage
+   shows the row as open; Kraken doesn't have it.
+3. **Out-of-band exchange placement.** Operator places an order
+   manually via Kraken Pro (or runs a second bot against the same
+   key). Storage doesn't have the row; Kraken does.
+4. **Crash mid-tick.** Daemon exits between ``adapter.place_order``
+   and ``storage.save_order`` (or between ``adapter.cancel_order``
+   and the status update). One side has the change, the other
+   doesn't.
+
+Phase 8.1's charter is to make WobbleBot robust against all four.
+Stage 8.1.B fixes scenario 1 (the concrete shutdown bug).
+Stage 8.1.C handles scenarios 2-4 at startup by reconciling
+storage against the exchange.
+
+This ADR ratifies the reconciliation policy — *which side wins
+when they disagree, and how each kind of drift is resolved*.
+
+**Decisions:**
+
+1. **Exchange is authoritative for "what orders exist."** When
+   storage and exchange disagree about an order's existence,
+   exchange wins. Storage gets updated to match.
+
+   *Why:* Kraken's record is the canonical source — that's the
+   ledger holding the actual money. Storage is our local
+   bookkeeping that can drift on crash, shutdown bug, or network
+   issue. Trusting storage over Kraken means trading on a fiction.
+
+2. **Storage-only orders → mark canceled.** On engine startup,
+   for every storage row with ``status="open"`` that is NOT
+   present in ``adapter.get_open_orders()``, transition status to
+   ``"canceled"`` with ``updated_at = now()``. Log the
+   reconciliation with structured fields.
+
+   *Why:* The order isn't on the exchange. Either the engine
+   cancelled it and didn't persist (scenario 1), or Kraken
+   cancelled it out-of-band (scenario 2). Either way, it's not
+   active anymore. The status transition matches reality.
+
+3. **Exchange-only orders → log loud error + DO NOT adopt.** On
+   engine startup, for every order in ``adapter.get_open_orders()``
+   that is NOT matched to a storage row (by ``exchange_id``), log
+   an ERROR-level message with the order details. Continue
+   startup; do not adopt the order into the engine's tracking.
+
+   *Why:* WobbleBot's engine doesn't place orders outside its own
+   ticks. An order on Kraken we don't track means one of three
+   things:
+
+   - Manual order via Kraken Pro UI (operator deliberate).
+   - A second bot or instance running against the same key.
+   - A serious bug (the engine placed it and lost track).
+
+   None of those are "the engine should start managing this
+   order". Adopting an orphan risks:
+
+   - Doubling up positions if the operator's other tooling
+     also manages it.
+   - Cancelling the operator's deliberate manual order on next
+     grid re-layout.
+   - Treating a buggy place-without-persist as if it were
+     correct, masking the underlying bug.
+
+   Log + continue lets the operator notice and make the call.
+   Alternative considered: refuse to start. Too disruptive — the
+   operator may have legitimate non-engine orders (large hand-
+   sized limit orders, OCO bracket, etc.) that should coexist
+   with the engine's grid. Refusing to boot forces the operator
+   to manually clear those before starting the bot. Hard-no.
+
+4. **Reconciliation runs once at engine startup, not per tick.**
+   The Stage 2.2 engine already reconciles fills + state on every
+   tick via ``adapter.get_open_orders()`` + storage diff.
+   Reconciliation handles the *startup drift gap* only — once the
+   engine is running, the tick logic catches ongoing drift.
+
+   *Why:* Avoid duplicating work. Tick logic + startup
+   reconciliation are complementary; the tick handles the live
+   case, the startup handles the recovery case.
+
+5. **Same policy for cli/shadow.** Shadow's "exchange" is the
+   synthetic ledger inside ``ShadowExchangeAdapter``. Same
+   reconciliation logic applies: query
+   ``shadow_adapter.get_open_orders()``, diff against shadow.db's
+   storage, mark missing rows canceled, log orphans.
+
+   *Why:* Consistency. One reconciliation policy across both
+   CLIs is easier to reason about than two slightly different
+   ones. Shadow's ledger is in-memory and dies with the process
+   — but the storage view persists across runs, so reconciliation
+   on shadow startup is genuinely useful for "I shadow-tested
+   yesterday; today the engine should start clean".
+
+6. **Harvester pending-transfer reconciliation deferred to v1.1.**
+   ``transfer_results`` rows can also drift (``status="pending"``
+   in storage; Kraken settled or failed it while daemon was
+   down). In v1.0, the operator manually reconciles via Kraken
+   Pro's withdrawal history. No automated reconciliation on
+   cli/harvest startup.
+
+   *Why:* Harvester transfers are infrequent (operator-approved,
+   ad-hoc cadence — not the 5-second engine tick). The drift
+   surface is small; the operator already inspects Kraken Pro
+   for the actual settlement. Adding automated reconciliation
+   requires the ``Kraken /0/private/WithdrawStatus`` API path
+   plus a "what's the pending row's match in Kraken's history"
+   mapping that doesn't fit the Stage 8.1 scope. Defer to
+   v1.1 backlog; document the manual reconciliation procedure
+   in v1.0 release notes.
+
+7. **Reconciliation policy lives in a pure service.** The
+   per-CLI wiring is thin: ``cli/live._main_async`` calls
+   ``services.reconciler.reconcile_open_orders(adapter, storage)``
+   after storage open + adapter construct but before engine first
+   tick. Same call site in ``cli/shadow._main_async``. The
+   reconciler is testable in isolation against mocked adapters
+   + in-memory storage.
+
+   *Why:* Stage 2.2's pure-function bias (``compute_grid_levels``,
+   ``next_counter_action``, etc.) has paid off. Same shape:
+   the policy is a pure function over (adapter open orders,
+   storage open orders) returning a diff to apply. CLI wiring
+   is one async helper call.
+
+**Alternatives considered + rejected:**
+
+- **Storage authoritative for cancelled orders, exchange for
+  open orders** (hybrid). Asymmetric. Rejected because it
+  doesn't simplify the implementation but does complicate the
+  mental model. If storage says "open" and Kraken says
+  "doesn't exist", the answer is "not open" — not "we need to
+  go figure out whether storage was right".
+
+- **Refuse to start on any reconciliation discrepancy.** Too
+  disruptive (rejected in Decision 3 reasoning).
+
+- **Adopt exchange-only orders into engine tracking.** Rejected
+  in Decision 3 reasoning. Particularly bad because adoption
+  would have the engine try to manage manual orders the
+  operator didn't intend to delegate.
+
+- **Per-tick reconciliation instead of startup-only.** Rejected
+  in Decision 4 reasoning. The tick already does this for live
+  drift; doing it again across tick boundaries is redundant.
+
+- **Automated harvester reconciliation in v1.0.** Rejected in
+  Decision 6 reasoning. Manual reconciliation suffices for the
+  v1.0 surface.
+
+**Consequences:**
+
+- **Positive:** Engine startup is robust against shutdown bugs,
+  out-of-band cancels, and crashes. The "Phase 8.1 reliability"
+  promise becomes concrete.
+- **Positive:** Operator's manual Kraken Pro orders coexist with
+  the engine. The engine logs orphans but doesn't fight them.
+- **Positive:** Single ``services.reconciler`` module is the one
+  edit point for any future reconciliation refinement (matching
+  Stage 8.0.C's "one edit point" payoff for the poll loop).
+- **Negative:** No safety net for harvester pending transfers in
+  v1.0. Operator must inspect Kraken Pro after every withdrawal.
+  Acceptable given the operator-approved cadence; documented.
+- **Negative:** Orphan-order detection logs an error but doesn't
+  block startup. Operator must read the log to notice. Acceptable
+  given the operator's existing log-monitoring discipline; the
+  alternative (refuse to start) is worse.
+
+**Compliance:**
+
+- Aligns with ADR-001 (reconciler is a pure service consuming
+  ``ExchangePort`` + ``StoragePort`` — no adapter-layer
+  bypassing).
+- Aligns with ADR-005 (status value is ``"canceled"``, American
+  spelling per Kraken).
+- Aligns with ADR-002 (no LLM involvement; reconciliation is
+  engine-state operations only).
+- Reinforces ADR-003's harvester-separation invariant by
+  explicitly NOT touching harvester reconciliation in this ADR
+  — the harvester key boundary stays clean.
+
+**References:**
+
+- ``docs/planning/stage-8.1-design.md`` — Stage 8.1 slicing
+  (where the persistence-on-cancel fix + reconciler land).
+- ``docs/planning/roadmap.md`` Stage 8.1 entry — the concrete
+  shadow-session repro that surfaced the shutdown bug.
+
