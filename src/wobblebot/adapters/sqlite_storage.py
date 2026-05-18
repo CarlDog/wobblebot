@@ -87,6 +87,14 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         sqlite traceback. Special paths (``:memory:`` and the empty
         string Python uses for an anonymous on-disk DB) are passed
         through unchanged.
+
+        For on-disk DBs, applies Stage 8.3.B performance pragmas:
+        ``journal_mode=WAL`` and ``synchronous=NORMAL``. WAL enables
+        concurrent readers (cli/maintenance backup can read while
+        cli/live writes); NORMAL drops the per-commit fsync to a per-
+        checkpoint fsync. Skipped for ``:memory:`` and anonymous on-
+        disk DBs — WAL is a no-op for in-memory and confuses fixtures
+        that introspect ``journal_mode``.
         """
         if self._conn is not None:
             return
@@ -101,6 +109,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # unreliable and version-dependent in aiosqlite.
             self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA foreign_keys = ON")
+            if self._db_path not in (":memory:", ""):
+                await self._conn.execute("PRAGMA journal_mode = WAL")
+                await self._conn.execute("PRAGMA synchronous = NORMAL")
             await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await self._conn.commit()

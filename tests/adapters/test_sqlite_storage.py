@@ -175,6 +175,83 @@ class TestConnectionLifecycle:
             await adapter.close()
 
 
+class TestStage83Pragmas:
+    """Stage 8.3.B — performance pragmas applied at connect().
+
+    On-disk DBs get ``journal_mode=WAL`` + ``synchronous=NORMAL`` for
+    concurrent-reader and commit-throughput wins; in-memory DBs skip
+    those two (no fsync to drop, no WAL file to write). foreign_keys
+    is enabled for every connection regardless.
+    """
+
+    async def test_on_disk_journal_mode_is_wal(self, tmp_path: Path) -> None:
+        adapter = SQLiteStorageAdapter(tmp_path / "wal.db")
+        try:
+            await adapter.connect()
+            conn = adapter._require_conn()  # pylint: disable=protected-access
+            async with conn.execute("PRAGMA journal_mode") as cur:
+                row = await cur.fetchone()
+            assert row is not None
+            assert str(row[0]).lower() == "wal"
+        finally:
+            await adapter.close()
+
+    async def test_on_disk_synchronous_is_normal(self, tmp_path: Path) -> None:
+        adapter = SQLiteStorageAdapter(tmp_path / "sync.db")
+        try:
+            await adapter.connect()
+            conn = adapter._require_conn()  # pylint: disable=protected-access
+            async with conn.execute("PRAGMA synchronous") as cur:
+                row = await cur.fetchone()
+            # SQLite reports synchronous as integer: 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA.
+            assert row is not None
+            assert int(row[0]) == 1
+
+        finally:
+            await adapter.close()
+
+    async def test_on_disk_foreign_keys_on(self, tmp_path: Path) -> None:
+        adapter = SQLiteStorageAdapter(tmp_path / "fk.db")
+        try:
+            await adapter.connect()
+            conn = adapter._require_conn()  # pylint: disable=protected-access
+            async with conn.execute("PRAGMA foreign_keys") as cur:
+                row = await cur.fetchone()
+            assert row is not None
+            assert int(row[0]) == 1
+        finally:
+            await adapter.close()
+
+    async def test_in_memory_journal_mode_not_wal(self) -> None:
+        # WAL is a no-op for in-memory DBs; the design doc decision 4
+        # says skip the pragma so fixtures that introspect journal_mode
+        # see the engine default ("memory") rather than "wal".
+        adapter = SQLiteStorageAdapter(":memory:")
+        try:
+            await adapter.connect()
+            conn = adapter._require_conn()  # pylint: disable=protected-access
+            async with conn.execute("PRAGMA journal_mode") as cur:
+                row = await cur.fetchone()
+            assert row is not None
+            assert str(row[0]).lower() != "wal"
+        finally:
+            await adapter.close()
+
+    async def test_in_memory_foreign_keys_still_on(self) -> None:
+        # foreign_keys is applied regardless of in-memory vs on-disk —
+        # only WAL + synchronous are conditional.
+        adapter = SQLiteStorageAdapter(":memory:")
+        try:
+            await adapter.connect()
+            conn = adapter._require_conn()  # pylint: disable=protected-access
+            async with conn.execute("PRAGMA foreign_keys") as cur:
+                row = await cur.fetchone()
+            assert row is not None
+            assert int(row[0]) == 1
+        finally:
+            await adapter.close()
+
+
 class TestOrders:
     async def test_save_and_get_order(self, storage: SQLiteStorageAdapter) -> None:
         order = _make_order()
