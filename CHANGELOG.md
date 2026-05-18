@@ -10,6 +10,63 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.2 close — Background Maintenance Worker (2026-05-18)
+
+Four sub-slices closed (A kickoff already in unreleased above; B
+maintenance services; C backup service; D cli/maintenance daemon
++ log rotation) plus this close commit (E).
+
+**Fifteenth operator entry point lands:** `python -m
+wobblebot.cli.maintenance`. Long-running daemon with three
+concurrent scheduled tasks (vacuum / prune+archive / backup) via
+the Stage 8.0.C `run_poll_loop` helper. Each task pulls its
+cadence from the `schedules:` block (defaults 7d / 1d / 1d).
+
+**B — services/maintenance.py.** Three helpers: `vacuum_database`
+(raw `sqlite3.execute("VACUUM")` with explicit close() to dodge
+the unraisable-warning trap on Windows asyncio); `archive_price_snapshots_to_csv`
+(pure CSV writer that refuses to overwrite); `prune_price_snapshots`
+(archive-then-delete discipline; rows only get DELETEd after the
+CSV write succeeds). New `StoragePort.delete_price_snapshots(before)`
+method per ADR-001 hex-layer discipline. 9 new tests.
+
+**C — services/backuper.py.** `backup_database_locally` uses
+SQLite's online `.backup` API for atomic point-in-time copies
+without locking the source DB — `cli/live` can keep ticking
+through the backup window. `prune_old_backups` retention with
+per-db-stem scoping (multiple DBs each get independent retention).
+`BackupDestination` Protocol declared for v1.1 remote variants
+(S3 / rclone). 10 new tests.
+
+**D — cli/maintenance daemon + log rotation.** New
+`MaintenanceConfig` Pydantic block (7 knobs). `asyncio.gather`
+runs three `run_poll_loop` tasks concurrently; SIGINT/SIGTERM
+flips the shared stop_event so every task exits cleanly at its
+next loop check. Per-cycle error isolation: missing DBs are
+logged + skipped (not fatal); one bad backup doesn't kill the
+others. `configure_logging` gains opt-in `rotating_file_path`
+kwarg using `TimedRotatingFileHandler` ALONGSIDE the stderr
+stream handler. Idempotent handler replacement closes the old
+file descriptor BEFORE installing the new one (surfaced during
+test development; fixed in both the production helper-replace
+loop AND the test fixture). 13 new tests.
+
+**Settings:** `settings.example.yml` + `settings.yml` gain the
+new `maintenance:` block (7 knobs) and three new schedule keys
+under `schedules:` (`maintenance_vacuum: 7d`, `maintenance_prune:
+1d`, `maintenance_backup: 1d`). Schema-drift tests stay green.
+
+**Numbers.** 1763 unit tests pass (was 1732 at Stage 8.2 entry,
++31 across B + C + D). mypy clean across 104 src files (was 101 —
+three new modules). pylint **10.00/10**. black + isort clean.
+**Stage 8.2 real-money cost: $0.00** (pure local-FS + SQLite
+operations).
+
+Stage 8.3 (Performance & Resource Tuning) follows. The 8.2
+maintenance daemon's VACUUM cadence + retention pruning give 8.3
+a stable baseline against which to profile heavy processes
+(metrics computation, multi-coin tick).
+
 ### Stage 8.2 kickoff — Background Maintenance Worker (2026-05-18)
 
 Phase 8 continues. Stage 8.1 closed reliability + reconciliation;

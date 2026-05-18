@@ -119,6 +119,9 @@ schedules:
   news: 30m                           # cli/news: poll every enabled source
   advise: 4h                          # cli/advise (Stage 3.3): advisor invocation cadence
   harvest: 1h                         # cli/harvest (Stage 4.2): balance-monitor cadence
+  maintenance_vacuum: 7d              # cli/maintenance (Stage 8.2): VACUUM cadence
+  maintenance_prune: 1d               # cli/maintenance: price_snapshots prune+archive cadence
+  maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -569,6 +572,63 @@ web:
   observe_db: "data/wobblebot-observe.db"
   news_db: "data/wobblebot-news.db"
   log_format: plain                       # plain | json
+
+# ============================================================================
+# Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
+# ============================================================================
+# Long-running daemon with three concurrent scheduled tasks:
+# vacuum / prune+archive / backup. Operator-started; not auto-spawned
+# by any other daemon. Cadences pulled from `schedules:` block above
+# (maintenance_vacuum / maintenance_prune / maintenance_backup) with
+# per-task defaults (7d / 1d / 1d) when missing.
+#
+# Per stage-8.2-design.md decision 3 only `price_snapshots` gets
+# pruned in v1.0. Every audit table (orders, trades, llm_calls, etc.)
+# stays forever; archive is the operator's manual concern there.
+#
+# Per decision 4 only local backups ship in v1.0. SQLite's online
+# `.backup` API produces atomic point-in-time copies without
+# locking cli/live's writers. Operator can rclone/rsync the
+# backup_dir to offsite storage if they want.
+maintenance:
+  # Every DB the daemon should VACUUM + back up. Add the operator's
+  # active DBs; missing files are skipped (logged WARNING) so partial
+  # deployments work.
+  target_dbs:
+    - "data/wobblebot-live.db"
+    - "data/wobblebot-shadow.db"
+    - "data/wobblebot-operator.db"
+    - "data/wobblebot-observe.db"
+    - "data/wobblebot-advise.db"
+    - "data/wobblebot-harvest.db"
+    - "data/wobblebot-news.db"
+
+  # Snapshots older than this many days get archived + deleted.
+  # Default 30 matches the typical advisor-metrics rolling window.
+  prune_price_snapshots_older_than_days: 30
+
+  # Source DB for the prune task. Typically observe.db (where
+  # cli/observe writes the price tape). The maintenance daemon
+  # won't infer this — set it explicitly.
+  prune_source_db: "data/wobblebot-observe.db"
+
+  # Where pruned snapshots are archived BEFORE delete. Created if
+  # missing. CSV format with stable header.
+  archive_dir: "data/archive"
+
+  # Where SQLite .backup output goes. Created if missing.
+  backup_dir: "data/backups"
+
+  # Newest N backups per source DB are kept; older ones are deleted
+  # after each successful backup write.
+  keep_n_daily_backups: 7
+
+  log_format: plain                       # plain | json
+
+  # Optional rotating-file log destination. When set, the daemon
+  # also writes to this file with daily rotation (7 day retention).
+  # Leave commented to keep stdout-only behavior.
+  # log_file_path: "data/logs/maintenance.log"
 
 # ============================================================================
 # Profiles (named overrides)
