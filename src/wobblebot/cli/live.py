@@ -62,7 +62,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol, Timestamp
-from wobblebot.ports.exceptions import OperatorError, WobbleBotPortError
+from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
@@ -79,10 +79,19 @@ _LOGGER = logging.getLogger("wobblebot.cli.live")
 
 async def _cancel_all_open(
     adapter: KrakenAdapter,
+    storage: StoragePort,
     symbols: tuple[Symbol, ...],
 ) -> tuple[int, int]:
-    """Cancel every open order across all configured ``symbols``. Returns
-    ``(cancelled, failed)`` summed across symbols."""
+    """Cancel every open order across all configured ``symbols``.
+
+    After each successful ``adapter.cancel_order()``, persist the
+    ``status="canceled"`` transition back to storage (Stage 8.1.B /
+    ADR-018). Storage failures log and continue — losing the audit
+    write doesn't undo the cancellation; the next-startup reconciler
+    catches stragglers.
+
+    Returns ``(cancelled, failed)`` summed across symbols.
+    """
     cancelled = 0
     failed = 0
     for symbol in symbols:
@@ -106,6 +115,27 @@ async def _cancel_all_open(
                 failed += 1
                 _LOGGER.error(
                     "shutdown cancel failed",
+                    extra={
+                        "symbol": str(symbol),
+                        "exchange_id": o.exchange_id,
+                        "error": str(exc),
+                    },
+                )
+                continue
+            # Stage 8.1.B: persist the status transition so the
+            # storage view matches what we just did to the exchange.
+            try:
+                await storage.save_order(
+                    o.model_copy(
+                        update={
+                            "status": "canceled",
+                            "updated_at": Timestamp(dt=datetime.now(UTC)),
+                        }
+                    )
+                )
+            except StorageError as exc:
+                _LOGGER.error(
+                    "shutdown cancel persistence failed; reconciler will catch on next start",
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": o.exchange_id,
@@ -270,6 +300,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
+    storage: StoragePort,
     stop_event: asyncio.Event,
     *,
     operator_service: OperatorService | None = None,
@@ -362,7 +393,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 pass  # normal — tick interval elapsed
     finally:
         ended_usd = await _session_usd_balance(adapter)
-        cancelled, failed = await _cancel_all_open(adapter, tuple(live.symbols))
+        cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
         session_pnl = ended_usd - started_usd
         duration_seconds = round(time.monotonic() - started_at, 1)
         _LOGGER.info(
@@ -473,6 +504,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
             adapter=adapter,
             engine=engine,
             live=config.live,
+            storage=storage,
             stop_event=stop_event,
             operator_service=operator_service,
             operator_storage=operator_storage,

@@ -56,6 +56,7 @@ import logging
 import signal
 import sys
 import time
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -74,8 +75,9 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Symbol
-from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
+from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
 
 _LOGGER = logging.getLogger("wobblebot.cli.shadow")
@@ -88,10 +90,21 @@ _LOGGER = logging.getLogger("wobblebot.cli.shadow")
 
 async def _cancel_all_open(
     adapter: ShadowExchangeAdapter,
+    storage: StoragePort,
     symbols: tuple[Symbol, ...],
 ) -> tuple[int, int]:
     """Cancel every open shadow order across all configured symbols.
-    Same discipline as cli/live. Returns ``(cancelled, failed)``."""
+
+    After each successful ``adapter.cancel_order()``, persist the
+    ``status="canceled"`` transition back to storage (Stage 8.1.B /
+    ADR-018). For shadow this is largely cosmetic — the synthetic
+    ledger inside ``ShadowExchangeAdapter`` is the ground truth —
+    but matching cli/live's discipline keeps the two paths' code
+    shape identical and validates the same forensic-audit property
+    in the test harness.
+
+    Returns ``(cancelled, failed)``.
+    """
     cancelled = 0
     failed = 0
     for symbol in symbols:
@@ -115,6 +128,28 @@ async def _cancel_all_open(
                 failed += 1
                 _LOGGER.error(
                     "shutdown cancel failed",
+                    extra={
+                        "symbol": str(symbol),
+                        "exchange_id": o.exchange_id,
+                        "error": str(exc),
+                    },
+                )
+                continue
+            # Stage 8.1.B: persist the status transition so shadow.db's
+            # storage view matches what we just did to the synthetic
+            # ledger. Matches cli/live's discipline.
+            try:
+                await storage.save_order(
+                    o.model_copy(
+                        update={
+                            "status": "canceled",
+                            "updated_at": Timestamp(dt=datetime.now(UTC)),
+                        }
+                    )
+                )
+            except StorageError as exc:
+                _LOGGER.error(
+                    "shutdown cancel persistence failed; reconciler will catch on next start",
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": o.exchange_id,
@@ -185,6 +220,7 @@ async def _run_loop(
     adapter: ShadowExchangeAdapter,
     engine: GridEngine,
     shadow: ShadowConfig,
+    storage: StoragePort,
     stop_event: asyncio.Event,
 ) -> int:
     started_usd = await _shadow_usd_balance(adapter)
@@ -231,7 +267,7 @@ async def _run_loop(
                 pass
     finally:
         ended_usd = await _shadow_usd_balance(adapter)
-        cancelled, failed = await _cancel_all_open(adapter, tuple(shadow.symbols))
+        cancelled, failed = await _cancel_all_open(adapter, storage, tuple(shadow.symbols))
         _LOGGER.info(
             "shadow session end",
             extra={
@@ -297,6 +333,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
             adapter=shadow_adapter,
             engine=engine,
             shadow=config.shadow,
+            storage=storage,
             stop_event=stop_event,
         )
     finally:
