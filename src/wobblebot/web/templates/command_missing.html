@@ -1,0 +1,17 @@
+{# Shown when the operator follows a stale confirm link. #}
+{% extends "layout.html" %}
+
+{% block title %}Command not found — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Command not found</h1>
+<div class="card">
+  <p class="muted">
+    No pending command with id <code>{{ pending_id }}</code> exists.
+    It may have already been resolved, expired, or never created.
+  </p>
+  <div class="form-actions">
+    <a class="btn btn-secondary" href="/dashboard">Back to dashboard</a>
+  </div>
+</div>
+{% endblock %}

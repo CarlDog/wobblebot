@@ -1,0 +1,31 @@
+{# Dashboard — combined operator-actions card + live status card.
+   Stage 7.2 replaces the 7.1 stub. Cost lives on its own /cost page. #}
+{% extends "layout.html" %}
+
+{% block title %}Dashboard — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Operator actions</div>
+  </div>
+  <p class="muted">
+    Per-symbol pause/resume + emergency stop. Every action creates a
+    pending command that you confirm before it reaches the engine
+    (ADR-013 firewall preserved).
+  </p>
+  <div class="actions">
+    <a class="btn btn-warn" href="/commands/pause">Pause symbol…</a>
+    <a class="btn btn-ok" href="/commands/resume">Resume symbol…</a>
+    <a class="btn btn-fail" href="/commands/stop">Emergency stop</a>
+  </div>
+</div>
+
+<div hx-get="/status/card"
+     hx-trigger="every 15s"
+     hx-swap="outerHTML">
+  {% include "_status_card.html" %}
+</div>
+{% endblock %}

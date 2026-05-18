@@ -1,0 +1,34 @@
+{# Cost card fragment — rendered standalone for HTMX polling AND
+   included from cost.html for the full-page load. #}
+<div class="card" id="cost-card">
+  <div class="card-header">
+    <div class="card-title">LLM cost — last 24h</div>
+    <div class="card-meta">{{ snapshot.call_count_24h }} calls</div>
+  </div>
+  {% if snapshot.error %}
+    <p class="error">{{ snapshot.error }}</p>
+  {% else %}
+    <div class="metric">
+      <div class="metric-value">${{ "%.6f"|format(snapshot.total_24h_usd) }}</div>
+      <div class="metric-label">spent in the last 24 hours</div>
+    </div>
+    {% if snapshot.per_provider_role %}
+      <table class="data compact">
+        <thead>
+          <tr><th>provider / role</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>
+        </thead>
+        <tbody>
+          {% for g in snapshot.per_provider_role %}
+            <tr>
+              <td>{{ g.key }}</td>
+              <td class="num">{{ g.call_count }}</td>
+              <td class="num">${{ "%.6f"|format(g.cost_usd) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="placeholder">No cloud LLM calls in the last 24 hours.</p>
+    {% endif %}
+  {% endif %}
+</div>

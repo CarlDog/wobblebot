@@ -1,0 +1,57 @@
+{# Post-confirm-or-reject result page. #}
+{% extends "layout.html" %}
+
+{% block title %}Command {{ pending.status }} — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Command {{ pending.status }}</h1>
+<div class="card">
+  {% if error is defined %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+  {% if already %}
+    <p class="muted">
+      This command had already been transitioned to
+      <code>{{ pending.status }}</code> before your decision arrived
+      (the operator may have approved or rejected via Discord first).
+      No further action taken.
+    </p>
+  {% else %}
+    <p class="muted">
+      {% if pending.status == "approved" %}
+        Approved. cli/live picks up <code>approved</code> rows on its
+        next tick (per the ADR-013 firewall in cli/live's poll
+        layer).
+      {% elif pending.status == "rejected" %}
+        Rejected. Nothing reaches the engine.
+      {% endif %}
+    </p>
+  {% endif %}
+  <dl class="kv">
+    <dt>Status</dt>
+    <dd>
+      <span class="tag
+        {% if pending.status == 'approved' %}ok
+        {% elif pending.status == 'rejected' %}fail
+        {% else %}warn{% endif %}">{{ pending.status }}</span>
+    </dd>
+    <dt>Command</dt>
+    <dd>{{ pending.command.kind }}</dd>
+    {% if pending.command.kind in ("pause", "resume") %}
+      <dt>Symbol</dt>
+      <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
+    {% endif %}
+    <dt>Pending ID</dt>
+    <dd><code>{{ pending.id }}</code></dd>
+    {% if pending.confirming_user_id %}
+      <dt>Confirmed by</dt>
+      <dd>{{ pending.confirming_user_id }}</dd>
+      <dt>Confirmed at</dt>
+      <dd>{{ pending.confirmed_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+    {% endif %}
+  </dl>
+  <div class="form-actions">
+    <a class="btn btn-secondary" href="/dashboard">Back to dashboard</a>
+  </div>
+</div>
+{% endblock %}

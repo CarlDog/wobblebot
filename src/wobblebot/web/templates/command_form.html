@@ -1,0 +1,33 @@
+{# Mutation form — symbol-required (pause/resume) or symbol-free (stop). #}
+{% extends "layout.html" %}
+
+{% block title %}{{ page_title }} — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>{{ page_title }}</h1>
+<div class="card">
+  {% if error %}
+    <p class="error">{{ error }}</p>
+  {% endif %}
+  <p class="muted">
+    Submitting will create a pending command. You'll review the
+    details on the next page before it reaches the engine.
+  </p>
+  <form method="post" action="{{ form_action }}" class="command">
+    {{ csrf_input(request) }}
+    {% if needs_symbol %}
+      <label for="symbol">Symbol (BASE/QUOTE)</label>
+      <input id="symbol" name="symbol" type="text" required autofocus
+             placeholder="BTC/USD" maxlength="32"
+             pattern="[A-Za-z0-9]+/[A-Za-z0-9]+">
+    {% else %}
+      <p class="muted"><strong>Emergency stop</strong> — cli/live will
+      finish the current tick, cancel open orders, and exit.</p>
+    {% endif %}
+    <div class="form-actions">
+      <button type="submit" class="btn btn-warn">{{ verb_label }}</button>
+      <a class="btn btn-secondary" href="/dashboard">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

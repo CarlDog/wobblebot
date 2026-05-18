@@ -1,0 +1,44 @@
+{# Full cost dashboard page (Stage 7.2.A). #}
+{% extends "layout.html" %}
+
+{% block title %}Cost — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Cost</h1>
+
+{# HTMX-polled 24h card. The hx-* attributes auto-refresh on the
+   configured poll cadence; without HTMX the card still renders once
+   from the initial page load. #}
+<div hx-get="/cost/card"
+     hx-trigger="every 15s"
+     hx-swap="outerHTML">
+  {% include "_cost_card.html" %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Spend by day (last 7 days)</div>
+    <div class="card-meta">{{ snapshot.call_count_7d }} calls / ${{ "%.6f"|format(snapshot.total_7d_usd) }} total</div>
+  </div>
+  {% if snapshot.error %}
+    <p class="error">{{ snapshot.error }}</p>
+  {% elif snapshot.per_day %}
+    <table class="data">
+      <thead>
+        <tr><th>day (UTC)</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>
+      </thead>
+      <tbody>
+        {% for d in snapshot.per_day %}
+          <tr>
+            <td>{{ d.day }}</td>
+            <td class="num">{{ d.call_count }}</td>
+            <td class="num">${{ "%.6f"|format(d.cost_usd) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="placeholder">No cloud LLM calls in the last 7 days.</p>
+  {% endif %}
+</div>
+{% endblock %}

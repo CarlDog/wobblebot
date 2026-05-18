@@ -133,6 +133,142 @@ h2 {
   font-style: italic;
 }
 
+.card-meta {
+  color: #65676b;
+  font-size: 12px;
+}
+
+.metric {
+  margin-bottom: 12px;
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: #1c1e21;
+  letter-spacing: -0.02em;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #65676b;
+  margin-top: 2px;
+}
+
+table.data td.num,
+table.data th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.data.compact th,
+table.data.compact td {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.muted {
+  color: #65676b;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #e7eaef;
+  color: #1c1e21;
+}
+
+.tag.ok { background: #e6f4ea; color: #1e7d32; }
+.tag.warn { background: #fff4e5; color: #b06000; }
+.tag.fail { background: #fde8e8; color: #c80000; }
+
+.card-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+  color: #1c1e21;
+}
+
+/* ---- Buttons + action rows ------------------------------------- */
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.btn {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 13px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: #1877f2;
+  color: #ffffff;
+}
+
+.btn:hover { filter: brightness(0.95); }
+.btn-ok { background: #1e7d32; }
+.btn-warn { background: #b06000; }
+.btn-fail { background: #c80000; }
+.btn-secondary {
+  background: #ffffff;
+  color: #1c1e21;
+  border-color: #ccd0d5;
+}
+
+/* ---- Forms (mutation pages) ----------------------------------- */
+
+form.command label {
+  display: block;
+  margin: 12px 0 4px;
+  font-weight: 500;
+}
+
+form.command input[type="text"],
+form.command select {
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 12px;
+  border: 1px solid #ccd0d5;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+form.command .form-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- Confirm summary list ------------------------------------- */
+
+dl.kv {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+}
+
+dl.kv dt {
+  color: #65676b;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+dl.kv dd {
+  margin: 0;
+  font-weight: 500;
+}
+
 /* ---- Tables ---------------------------------------------------- */
 
 table.data {

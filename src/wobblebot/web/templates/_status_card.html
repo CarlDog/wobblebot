@@ -1,0 +1,80 @@
+{# Status card fragment — open orders + recent fills.
+   Rendered standalone for HTMX polling AND included from
+   dashboard.html for the full-page load. #}
+<div class="card" id="status-card">
+  <div class="card-header">
+    <div class="card-title">Live trading status</div>
+    {% if snapshot.last_fill_age_seconds is not none %}
+      <div class="card-meta">
+        last fill {{ "%.0f"|format(snapshot.last_fill_age_seconds) }}s ago
+      </div>
+    {% endif %}
+  </div>
+  {% if not snapshot.live_wired %}
+    <p class="placeholder">
+      The web UI's <code>live_db</code> path is unset; open orders +
+      recent fills are unavailable. Configure
+      <code>web.live_db</code> in settings.yml to enable.
+    </p>
+  {% elif snapshot.error %}
+    <p class="error">{{ snapshot.error }}</p>
+  {% else %}
+    <h2 class="card-subtitle">Open orders ({{ snapshot.open_orders|length }})</h2>
+    {% if snapshot.open_orders %}
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th>symbol</th>
+            <th>side</th>
+            <th class="num">price</th>
+            <th class="num">amount</th>
+            <th class="num">filled</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in snapshot.open_orders %}
+            <tr>
+              <td>{{ o.symbol.base }}/{{ o.symbol.quote }}</td>
+              <td><span class="tag {% if o.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ o.side.value }}</span></td>
+              <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
+              <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
+              <td class="num">{{ "%.8f"|format(o.filled_amount) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="placeholder">No open orders.</p>
+    {% endif %}
+
+    <h2 class="card-subtitle">Recent fills (last {{ snapshot.recent_trades|length }})</h2>
+    {% if snapshot.recent_trades %}
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th>when (UTC)</th>
+            <th>symbol</th>
+            <th>side</th>
+            <th class="num">price</th>
+            <th class="num">amount</th>
+            <th class="num">cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in snapshot.recent_trades %}
+            <tr>
+              <td>{{ t.executed_at.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+              <td>{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
+              <td><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
+              <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>
+              <td class="num">{{ "%.8f"|format(t.amount.value) }}</td>
+              <td class="num">${{ "%.4f"|format(t.cost) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="placeholder">No recent fills.</p>
+    {% endif %}
+  {% endif %}
+</div>

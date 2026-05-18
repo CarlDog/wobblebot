@@ -1,0 +1,44 @@
+{# Confirm-or-reject page — summarizes the pending command and offers
+   two buttons. The "Approve" button transitions status →
+   ``approved``, after which cli/live's poll picks the row up. #}
+{% extends "layout.html" %}
+
+{% block title %}Confirm command — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Confirm command</h1>
+<div class="card">
+  <p class="muted">
+    Review the pending command before approving. Approve transitions
+    the row to <code>approved</code>; cli/live picks it up on the
+    next tick (ADR-013 firewall). Reject marks the row
+    <code>rejected</code>; nothing reaches the engine.
+  </p>
+  <dl class="kv">
+    <dt>Command</dt>
+    <dd>{{ pending.command.kind }}</dd>
+    {% if pending.command.kind in ("pause", "resume") %}
+      <dt>Symbol</dt>
+      <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
+    {% endif %}
+    <dt>Pending ID</dt>
+    <dd><code>{{ pending.id }}</code></dd>
+    <dt>Requested by</dt>
+    <dd>{{ pending.requesting_user_id }}</dd>
+    <dt>Channel</dt>
+    <dd>{{ pending.channel_id }}</dd>
+    <dt>Created</dt>
+    <dd>{{ pending.created_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+    <dt>Expires</dt>
+    <dd>{{ pending.ttl_expires_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+  </dl>
+  <form method="post" action="/commands/{{ pending.id }}/confirm" class="command">
+    {{ csrf_input(request) }}
+    <div class="form-actions">
+      <button type="submit" name="decision" value="approve" class="btn btn-ok">Approve</button>
+      <button type="submit" name="decision" value="reject" class="btn btn-fail">Reject</button>
+      <a class="btn btn-secondary" href="/dashboard">Back to dashboard</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

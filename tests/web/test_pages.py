@@ -87,7 +87,7 @@ class TestRootRedirect:
 # --------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("path", ["/dashboard", "/cost", "/audit"])
+@pytest.mark.parametrize("path", ["/audit"])
 class TestStubAuth:
     def test_anonymous_redirects_to_login(self, client: TestClient, path: str) -> None:
         resp = client.get(path)
@@ -121,19 +121,6 @@ class TestStubAuth:
 
 
 class TestStubContent:
-    def test_dashboard_mentions_phase_72(self, client: TestClient) -> None:
-        _login(client)
-        resp = client.get("/dashboard")
-        assert "Phase 7.2" in resp.text
-        assert "Dashboard" in resp.text
-
-    def test_cost_mentions_phase_72(self, client: TestClient) -> None:
-        _login(client)
-        resp = client.get("/cost")
-        assert "Phase 7.2" in resp.text
-        assert "Cost" in resp.text
-        assert "LLM cost" in resp.text
-
     def test_audit_mentions_phase_74(self, client: TestClient) -> None:
         _login(client)
         resp = client.get("/audit")
