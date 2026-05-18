@@ -72,6 +72,51 @@ from wobblebot.ports.operator import (
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
 
+# --------------------------------------------------------------------- #
+# Degraded-result factories (Stage 8.0.B — R3)                          #
+# --------------------------------------------------------------------- #
+#
+# When a query's cross-DB storage isn't wired (cli/operator started
+# without that DB configured), return one of these factories' output
+# from the query handler. Centralizing the "what does empty look like"
+# knowledge in one place — adding a new graceful-degrade is a single
+# edit here plus the call-site guard.
+#
+# Each factory takes the source query so it can echo back the query's
+# filter knobs (symbol, lookback_hours, etc.) in the empty result,
+# letting the operator see "0 results FOR THIS FILTER" instead of a
+# context-free empty payload. Per the ADR-013 / Stage 5.6.C
+# graceful-degrade contract, empty list is success, not failure —
+# the operator decides whether "no results" is informative.
+#
+# HarvesterStatusQuery's degraded shape is genuinely different (it
+# still fetches the live balance and classifies a band) and stays
+# inline in ``_answer_harvester_status``; the factories below cover
+# the three simple-shape cases.
+
+
+def _empty_recent_suggestions(query: RecentSuggestionsQuery) -> RecentSuggestionsResult:
+    """Degraded result when advise.db isn't wired."""
+    return RecentSuggestionsResult(
+        symbol=str(query.symbol) if query.symbol else None,
+        suggestions=[],
+    )
+
+
+def _empty_recent_news(query: RecentNewsQuery) -> RecentNewsResult:
+    """Degraded result when news.db isn't wired."""
+    return RecentNewsResult(lookback_hours=query.lookback_hours, items=[])
+
+
+def _empty_recent_proposals(query: RecentProposalsQuery) -> RecentProposalsResult:
+    """Degraded result when harvest.db isn't wired."""
+    return RecentProposalsResult(
+        direction=query.direction,
+        lookback_hours=query.lookback_hours,
+        proposals=[],
+    )
+
+
 # Static help payload — assembled once and reused. Keep in sync with the
 # command + query catalogs in ports/operator.py and the operator prompt
 # (config/prompts/operator.md). Test asserts the kind set matches.
@@ -364,10 +409,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         self, query: RecentSuggestionsQuery
     ) -> RecentSuggestionsResult:
         if self._advise_storage is None:
-            return RecentSuggestionsResult(
-                symbol=str(query.symbol) if query.symbol else None,
-                suggestions=[],
-            )
+            return _empty_recent_suggestions(query)
         try:
             rows = await self._advise_storage.get_advisor_suggestions(limit=query.limit)
         except StorageError as exc:
@@ -397,7 +439,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
 
     async def _answer_recent_news(self, query: RecentNewsQuery) -> RecentNewsResult:
         if self._news_storage is None:
-            return RecentNewsResult(lookback_hours=query.lookback_hours, items=[])
+            return _empty_recent_news(query)
         cutoff = datetime.now(UTC) - timedelta(hours=query.lookback_hours)
         try:
             items = await self._news_storage.get_news_items(since=cutoff, limit=query.limit)
@@ -444,11 +486,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
 
     async def _answer_recent_proposals(self, query: RecentProposalsQuery) -> RecentProposalsResult:
         if self._harvest_storage is None:
-            return RecentProposalsResult(
-                direction=query.direction,
-                lookback_hours=query.lookback_hours,
-                proposals=[],
-            )
+            return _empty_recent_proposals(query)
         cutoff = datetime.now(UTC) - timedelta(hours=query.lookback_hours)
         try:
             proposals = await self._harvest_storage.get_transfer_proposals(
