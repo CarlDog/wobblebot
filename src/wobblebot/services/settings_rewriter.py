@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import difflib
 import os
+from collections.abc import Mapping
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -109,6 +110,94 @@ def apply_grid_overrides(
     os.replace(tmp_path, path)
 
     return _unified_diff(before_text, after_buffer, path=path)
+
+
+def apply_dotted_overrides(
+    path: Path,
+    *,
+    overrides: Mapping[str, Decimal | int | float],
+) -> str:
+    """Apply dotted-path overrides spanning multiple top-level sections.
+
+    Companion to :func:`apply_grid_overrides`. Where that function is
+    grid-aware (per-coin lookup + default fallback), this one is
+    section-agnostic: each key is a fully-qualified dotted path into
+    the YAML document (e.g. ``"safety.max_total_exposure_usd"`` or
+    ``"harvester.topup_threshold_usd"`` or
+    ``"grid.coins.DOGE.order_size_usd"``).
+
+    Used by ``cli/recalibrate --commit`` (Stage 7.6.B) to write the
+    calibrator's :class:`RecalibrationProposal` changes back to
+    settings.yml in one atomic round-trip.
+
+    Args:
+        path: Absolute or relative path to the settings YAML.
+        overrides: Map from dotted path to scalar value. Each path
+            must already exist in the document — this function will
+            NOT create new keys (a typo'd path raises rather than
+            silently appending a new field).
+
+    Returns:
+        Unified diff (string) of the change. Empty when no keys
+        changed (e.g. proposed values matched current).
+
+    Raises:
+        SettingsRewriteError: When a dotted path doesn't resolve in
+            the document, or the file structure is otherwise
+            surprising.
+        FileNotFoundError: If ``path`` doesn't exist.
+    """
+    if not overrides:
+        return ""
+
+    before_text = path.read_text(encoding="utf-8")
+    yaml = YAML(typ="rt")
+    yaml.preserve_quotes = True
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    document = yaml.load(before_text)
+
+    if document is None:
+        raise SettingsRewriteError(f"settings file {path} parsed as empty / null")
+
+    for dotted_path, raw_value in overrides.items():
+        _write_dotted_path(document, dotted_path, raw_value)
+
+    after_buffer = _dump_to_string(yaml, document)
+    if after_buffer == before_text:
+        return ""
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(after_buffer, encoding="utf-8")
+    os.replace(tmp_path, path)
+
+    return _unified_diff(before_text, after_buffer, path=path)
+
+
+def _write_dotted_path(document: Any, dotted_path: str, raw_value: Decimal | int | float) -> None:
+    """Walk ``document`` to the parent of the final key and write."""
+    parts = dotted_path.split(".")
+    if not parts:
+        raise SettingsRewriteError(f"empty dotted path: {dotted_path!r}")
+    cursor: Any = document
+    for part in parts[:-1]:
+        if not hasattr(cursor, "get") or cursor.get(part) is None:
+            raise SettingsRewriteError(
+                f"dotted path {dotted_path!r} does not resolve: " f"missing {part!r} in document"
+            )
+        cursor = cursor[part]
+    leaf = parts[-1]
+    if not hasattr(cursor, "get"):
+        raise SettingsRewriteError(
+            f"dotted path {dotted_path!r} parent is not a mapping; " f"cannot write {leaf!r}"
+        )
+    if leaf not in cursor:
+        raise SettingsRewriteError(
+            f"dotted path {dotted_path!r} does not resolve: "
+            f"missing leaf {leaf!r}. The rewriter will not create new "
+            "keys; verify the path against settings.yml."
+        )
+    existing = cursor.get(leaf)
+    cursor[leaf] = _yaml_scalar(raw_value, existing=existing)
 
 
 def _resolve_grid_target(grid_section: Any, *, symbol: str) -> Any:

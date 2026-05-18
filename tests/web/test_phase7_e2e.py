@@ -53,9 +53,7 @@ _PENDING_ID_RE = re.compile(r"/commands/([0-9a-f-]+)/confirm")
 async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(
-        _TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10)
-    )
+    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
     # Pre-seed an LLM cost row + a notification so the cost +
     # audit pages have something to render.
     await adapter.save_llm_call(
@@ -295,9 +293,7 @@ class TestE2EWalkthrough:
 
         loop = asyncio.new_event_loop()
         try:
-            row = loop.run_until_complete(
-                operator_storage.get_pending_command(UUID(pid))
-            )
+            row = loop.run_until_complete(operator_storage.get_pending_command(UUID(pid)))
         finally:
             loop.close()
         assert row is not None
