@@ -10,6 +10,61 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.3 close — Performance & Resource Tuning (2026-05-18)
+
+Three sub-slices closed (A kickoff already in unreleased below;
+B SQLite pragmas; C index audit + profile harness) plus this
+close commit (D). Universal SQLite easy wins land + an operator-
+runnable measurement tool against which Stage 8.4's soak test
+will compare.
+
+**B — SQLite performance pragmas.** `SQLiteStorageAdapter.connect()`
+applies two new pragmas after the existing `foreign_keys=ON` step:
+`PRAGMA journal_mode=WAL` (concurrent readers don't block the
+writer — cli/maintenance's backup task can read while cli/live
+ticks) and `PRAGMA synchronous=NORMAL` (fsync at WAL checkpoint
+boundaries instead of per-commit; ~50x faster commit throughput
+per published SQLite guidance). Both skip for `:memory:` and
+anonymous on-disk DBs — WAL is a no-op there and confuses test
+fixtures that introspect `journal_mode`. 5 new tests in
+`TestStage83Pragmas`.
+
+**C — Index audit + `tools/profile_storage.py`.** Six
+`EXPLAIN QUERY PLAN` audits in `TestStage83IndexAudit` assert
+every hot read uses `SEARCH` (index access), never `SCAN` (full
+table scan). All six queries clean against the current schema —
+`get_open_orders(symbol)` hits `idx_orders_symbol`,
+`get_trades(symbol+time)` hits `idx_trades_symbol`,
+`pending_commands by status` hits `idx_pending_commands_status`,
+`notifications forwarder` hits `idx_notifications_forwarded`,
+`llm_calls 24h window` hits `idx_llm_calls_timestamp`, and
+`price_snapshots by symbol+time` hits
+`idx_price_snapshots_symbol_time`. No new indexes needed; the
+tests act as a regression gate so future query additions can't
+silently slip into table-scan territory.
+
+New `tools/profile_storage.py` operator-runnable harness times
+each hot operation N times against an in-memory or operator-
+specified on-disk DB (the latter copied to a temp file first so
+the live DB can't be polluted with fixture rows). Reports one
+structured log record per operation:
+`{operation, n, p50_ms, p99_ms, mean_ms, total_seconds}`. Pre-
+seeds 1000 closed orders / 20 open / 200 trades by default so
+timings reflect realistic index-vs-scan behavior under load
+instead of the empty-table O(1) zone. Smoke-tested locally:
+`get_open_orders` p50 0.26ms / p99 0.60ms against 1020 seeded
+rows; `save_order` p50 0.06ms. Operator's Synology numbers will
+differ — Stage 8.4's soak test has its baseline. 11 new tests
+for the timing helpers (5 percentile_ms + 2 summarize + 3
+_profile_op + 1 _seed_fixtures).
+
+**Numbers.** 1785 unit tests pass (was 1763 at Stage 8.3 entry,
++22). mypy clean across 104 src files; pylint **10.00/10**.
+black + isort clean across `src/` + `tests/`. **No new operator
+entry points** — `tools/profile_storage.py` is a diagnostic per
+design decision 7, not a daemon. **Stage 8.3 total real-money
+cost: $0.00.** Running project cost stays at **$0.085018**.
+
 ### Stage 8.3 kickoff — Performance & Resource Tuning (2026-05-18)
 
 Phase 8 continues. Stage 8.2 stabilized DB hygiene; Stage 8.3
