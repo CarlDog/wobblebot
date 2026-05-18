@@ -62,6 +62,107 @@ close). CLAUDE.md Project Status moves Phase 7 from "Next:" to
 
 No code in this commit. Stage 7.1 sub-slice work follows.
 
+### Stage 7.1 — Web app skeleton + auth (2026-05-17)
+
+Five sub-slices delivered the web layer substrate Phase 7's feature
+stages will wedge into. Thirteenth operator entry point landed:
+`python -m wobblebot.cli.web` with `serve` (default) + `create-user`
+subcommands. **No real data dashboards yet** — Stage 7.2+ lights up
+cost / status / advisor / harvester / news / audit views against
+this scaffold.
+
+**Architecture.** Per ADR-016 the FastAPI app lives at
+`src/wobblebot/web/`, sibling to `cli/`, exposing `create_app(...)`
+as a factory so each test gets a fresh instance. Routes consume
+ports via FastAPI DI — no business logic in handlers. Three
+navigable empty stub pages (`/dashboard`, `/cost`, `/audit`) prove
+the shell ships; each renders the layout chrome + a "Phase 7.X
+placeholder" body. The `/` root redirects to `/dashboard` which
+auth-redirects to `/auth/login` if no session.
+
+**Auth (ADR-017).** Single-operator-v1: bcrypt-hashed password
+stored in `operator.db`'s new `users` table; session cookie signed
+by Starlette's `SessionMiddleware` (itsdangerous under the hood);
+per-IP login rate-limit (5 attempts / 60s by default); CSRF
+synchronizer-token middleware (`csrf_input` Jinja2 global so every
+form gets a token without per-template wiring). CSRF token rotates
+on login + logout (session-fixation guard).
+
+**Sub-slices:**
+- **7.1.A — Users table + domain model + StoragePort methods.**
+  `domain/users.py` ships `User` + `UserCredentials` Pydantic
+  models (both `frozen=True`). New `users` SQLite table with
+  `UNIQUE(username)` + `CHECK(length(password_hash) > 0)`. Three
+  StoragePort methods: `create_user(username, password_hash)`,
+  `get_user_by_username(username) -> User | None`,
+  `update_user_last_login(user_id, last_login_at)`. 28 new unit
+  tests; pure persistence, no web.
+- **7.1.B — WebConfig + web/ package scaffolding.** `WebConfig`
+  Pydantic block in `config/cli.py` (13 fields across serving /
+  auth / presentation / cross-DB-path groups; bounds-checked
+  validators). `WobbleBotConfig.web: WebConfig | None`. Six new
+  runtime deps in `pyproject.toml`: `fastapi>=0.115`,
+  `uvicorn[standard]>=0.30`, `jinja2>=3.1`,
+  `python-multipart>=0.0.12`, `bcrypt>=4.2`, `itsdangerous>=2.2`
+  (biggest dep-add since Phase 5's `discord.py`). New
+  `src/wobblebot/web/` package — `app.py` factory skeleton,
+  `middleware.py` + `auth.py` skeletons, `dependencies.py` (8 DI
+  factories), `routes/__init__.py` + empty `auth.py` / `pages.py`.
+  `templates/base.html` + `templates/layout.html` + `static/htmx.min.js`
+  placeholder + `static/base.css` (login + dashboard styles)
+  committed. 25 new unit tests for the config block.
+- **7.1.C — Login / logout / session middleware / CSRF.**
+  `web/auth.py` — `hash_password` / `verify_password` (bcrypt
+  direct, no `passlib`), `current_user` + `require_user` FastAPI
+  deps, `AuthRedirectRequired` exception. `web/middleware.py` —
+  CSRF synchronizer-token helpers (`get_or_create_csrf_token`,
+  `require_csrf_token`, `rotate_csrf_token`) + `LoginRateLimit`
+  (`asyncio.Lock`-guarded per-IP token bucket; resets on
+  successful login). `web/routes/auth.py` — `GET /auth/login`
+  renders form with CSRF; `POST /auth/login` runs rate-limit →
+  CSRF → bcrypt → session set → last-login bump → 302 /dashboard;
+  `POST /auth/logout` clears session + rotates CSRF. `web/app.py`
+  registers the `AuthRedirectRequired` exception handler +
+  instantiates `LoginRateLimit` on `app.state` + exposes
+  `csrf_input` as a Jinja2 global. `templates/login.html` extends
+  `base.html` directly (not `layout.html`) so the nav chrome
+  doesn't appear pre-auth. 108 new unit tests (FastAPI
+  `TestClient` against in-memory SQLite).
+- **7.1.D — `cli/web` daemon + create-user + stub pages.**
+  `cli/web.py` with two argparse subcommands. `serve` (default)
+  opens `operator.db` plus four optional cross-DB paths and hands
+  the FastAPI app to `uvicorn.run`. `create-user` prompts on
+  stdin for username + on the terminal (via `getpass.getpass`)
+  for password — twice for confirmation — hashes via bcrypt at
+  the configured cost, inserts via `StoragePort.create_user`.
+  Duplicate username + EOF + DB-open failures all exit 2 with a
+  clean error message — no raw tracebacks. `web/routes/pages.py`
+  fleshed out: `/` → 302 /dashboard, plus three auth-gated stubs
+  using `require_user` so anonymous round-trips to /auth/login.
+  New shared `templates/stub.html`. 40 new unit tests (14 pages +
+  26 cli/web). Per-test logger-state-restore fixture keeps
+  `configure_logging` side effects from leaking into downstream
+  caplog-based tests.
+- **7.1.E — Stage close.** Roadmap + CLAUDE.md + this CHANGELOG
+  + `config/settings.example.yml` (new `web:` block) + `.env.example`
+  (new `WOBBLEBOT_WEB_SESSION_SECRET` var) + project_state memory
+  all reflect Stage 7.1 ✅. Schema-drift tests pass clean.
+
+**Deprived-env walkthrough green** (`cli/web` exit codes, all exit
+2 with no tracebacks): bad `--config` path; bad `--profile` name;
+missing `web:` block in settings; missing
+`WOBBLEBOT_WEB_SESSION_SECRET` env var (error includes the
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`
+mint command); EOF on stdin during `create-user`.
+
+**Numbers.** 1608 unit tests pass (was 1460 at Phase 6 close,
++148 across the five sub-slices); 29 integration tests opt-in;
+mypy clean across 89 src files; pylint **10.00/10**; black +
+isort clean. **Stage 7.1 total real-money cost: $0.00** (no live
+ops; the dashboard is read-mostly and mutations are firewalled
+per ADR-013). Running project cost **$0.085018** unchanged from
+Phase 6 close.
+
 ### Stage 6.5 — Phase 6 integration check + close (2026-05-17)
 
 Closing stage of Phase 6. Two sub-slices: smoke-test scaffold +

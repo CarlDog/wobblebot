@@ -515,6 +515,62 @@ llm:
     backoff_multiplier: 2.0
 
 # ============================================================================
+# Web UI (Phase 7 — Stage 7.1+, required for cli/web)
+# ============================================================================
+# Server-rendered FastAPI + Jinja2 dashboard with HTMX-polled cards.
+# Operator-managed reverse proxy fronts this on the LAN (ADR-016);
+# bind_host defaults to 127.0.0.1 so the daemon is loopback-only out
+# of the box. Auth is single-operator-v1: session cookie + bcrypt
+# password seeded via `cli/web create-user`. CSRF synchronizer-token
+# middleware + per-IP login rate-limit defend the auth surface
+# (ADR-017).
+#
+# Leave the block omitted entirely (or set to null) when not running
+# the web UI — the dashboard is opt-in. The required env var
+# `WOBBLEBOT_WEB_SESSION_SECRET` only matters when `cli/web serve`
+# starts up (mint via `python -c "import secrets;
+# print(secrets.token_urlsafe(32))"`).
+web:
+  # ---- serving ----
+  # 127.0.0.1 = loopback-only. Operator runs their reverse proxy in
+  # front for TLS + LAN exposure. Set 0.0.0.0 only if the host is
+  # already firewalled and TLS is terminated elsewhere.
+  bind_host: 127.0.0.1
+  bind_port: 8000
+  # ---- session / auth (ADR-017) ----
+  # Env var holding the cookie-signing key. Never the key itself —
+  # the key lives in .env (gitignored).
+  session_secret_env_var: WOBBLEBOT_WEB_SESSION_SECRET
+  # Sliding session lifetime. Cookie expires after this many days of
+  # inactivity. 1-90 enforced by the schema.
+  session_max_age_days: 7
+  # Per-IP login attempts allowed in `rate_limit_window_seconds`
+  # before further attempts return 429. 1-100 enforced.
+  rate_limit_attempts: 5
+  rate_limit_window_seconds: 60
+  # Bcrypt cost factor for new password hashes. 12 is the ADR-017
+  # default. Bump to 13 / 14 if the operator's hardware warrants;
+  # 10-15 enforced.
+  bcrypt_cost: 12
+  # ---- presentation ----
+  # HTMX polling cadence for the cost ledger + open-orders cards.
+  # Static-ish pages (news, audit log) ignore this — they're
+  # full-reload-on-navigation.
+  htmx_poll_seconds: 15.0
+  # ---- cross-DB paths ----
+  # operator.db is REQUIRED (users table + pending_commands +
+  # notifications + llm_calls). The other four are optional per the
+  # OperatorService graceful-degrade pattern (Stage 5.6.C) — cards
+  # that need the missing DB don't render.
+  operator_db: "data/wobblebot-operator.db"
+  live_db: "data/wobblebot-live.db"
+  advise_db: "data/wobblebot-advise.db"
+  harvest_db: "data/wobblebot-harvest.db"
+  observe_db: "data/wobblebot-observe.db"
+  news_db: "data/wobblebot-news.db"
+  log_format: plain                       # plain | json
+
+# ============================================================================
 # Profiles (named overrides)
 # ============================================================================
 # Operator runs `cli/live --profile conservative` (or `cli/shadow
