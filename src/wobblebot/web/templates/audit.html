@@ -1,0 +1,101 @@
+{# Audit log view (Stage 7.4.B). Pending commands + notifications
+   from operator.db. The /audit stub from Stage 7.1.D is replaced. #}
+{% extends "layout.html" %}
+
+{% block title %}Audit — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Audit</h1>
+
+{% if snapshot.error %}
+  <div class="card"><p class="error">{{ snapshot.error }}</p></div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Pending commands ({{ snapshot.pending_commands|length }})</div>
+    <div class="card-meta">newest first</div>
+  </div>
+  {% if snapshot.pending_commands %}
+    <table class="data compact">
+      <thead>
+        <tr>
+          <th>created (UTC)</th>
+          <th>command</th>
+          <th>status</th>
+          <th>channel</th>
+          <th>requested by</th>
+          <th>confirmed by</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in snapshot.pending_commands %}
+          <tr>
+            <td>{{ p.created_at.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>
+              {{ p.command.kind }}
+              {% if p.command.kind in ("pause", "resume") %}
+                <code>{{ p.command.symbol.base }}/{{ p.command.symbol.quote }}</code>
+              {% endif %}
+            </td>
+            <td>
+              <span class="tag
+                {% if p.status == 'approved' or p.status == 'dispatched' %}ok
+                {% elif p.status == 'awaiting_confirmation' %}warn
+                {% else %}fail{% endif %}">{{ p.status }}</span>
+            </td>
+            <td><span class="tag">{{ p.channel_id }}</span></td>
+            <td>{{ p.requesting_user_id }}</td>
+            <td>{{ p.confirming_user_id or "—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="placeholder">No pending commands on record.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Notifications ({{ snapshot.notifications|length }})</div>
+    <div class="card-meta">newest first</div>
+  </div>
+  {% if snapshot.notifications %}
+    <table class="data compact">
+      <thead>
+        <tr>
+          <th>timestamp (UTC)</th>
+          <th>level</th>
+          <th>title</th>
+          <th>forwarded</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pn in snapshot.notifications %}
+          {% set n = pn.notification %}
+          <tr>
+            <td>{{ n.timestamp.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>
+              <span class="tag
+                {% if n.level == 'info' %}ok
+                {% elif n.level == 'warning' %}warn
+                {% else %}fail{% endif %}">{{ n.level }}</span>
+            </td>
+            <td>{{ n.title }}</td>
+            <td>
+              {% if pn.forwarded %}
+                <span class="tag ok">forwarded</span>
+              {% else %}
+                <span class="tag warn">pending</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="placeholder">No notifications on record.</p>
+  {% endif %}
+</div>
+{% endblock %}

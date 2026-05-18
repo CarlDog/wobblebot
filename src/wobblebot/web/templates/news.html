@@ -1,0 +1,73 @@
+{# News headlines view (Stage 7.4.A). Filterable by source + coin. #}
+{% extends "layout.html" %}
+
+{% block title %}News — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>News</h1>
+
+{% if not snapshot.wired %}
+  <div class="card">
+    <p class="placeholder">
+      <code>web.news_db</code> is unset; news items are unavailable.
+      Configure it in settings.yml to enable.
+    </p>
+  </div>
+{% elif snapshot.error %}
+  <div class="card"><p class="error">{{ snapshot.error }}</p></div>
+{% else %}
+  <div class="card">
+    <form method="get" action="/news" class="filters">
+      <label for="source">Source</label>
+      <select id="source" name="source">
+        <option value="">All sources</option>
+        {% for s in snapshot.sources %}
+          <option value="{{ s }}"
+            {% if s == snapshot.source_filter %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <label for="coin">Coin</label>
+      <input id="coin" name="coin" type="text" maxlength="16"
+             placeholder="BTC" value="{{ snapshot.coin_filter or '' }}">
+      <button type="submit" class="btn btn-secondary">Filter</button>
+      {% if snapshot.source_filter or snapshot.coin_filter %}
+        <a class="btn btn-secondary" href="/news">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Headlines ({{ snapshot.items|length }})</div>
+    </div>
+    {% if snapshot.items %}
+      <table class="data">
+        <thead>
+          <tr>
+            <th>published (UTC)</th>
+            <th>source</th>
+            <th>headline</th>
+            <th>coins</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in snapshot.items %}
+            <tr>
+              <td>{{ item.published_at.dt.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td><span class="tag">{{ item.source }}</span></td>
+              <td>{{ item.headline }}</td>
+              <td>
+                {% for c in item.mentioned_coins %}
+                  <code>{{ c }}</code>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="placeholder">No news items match the current filters.</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

@@ -28,6 +28,7 @@ hidden ``csrf_token`` input via the ``csrf_input`` Jinja2 global.
 inspection can distinguish web-originated commands from Discord-
 originated ones.
 """
+
 # pylint: disable=too-many-arguments,too-many-positional-arguments
 # FastAPI's Depends-based DI naturally produces handlers with many
 # parameters; the pattern is canonical and not a code smell.

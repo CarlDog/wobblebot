@@ -34,10 +34,12 @@ from wobblebot.web.middleware import (
     get_or_create_csrf_token,
 )
 from wobblebot.web.routes import advisor as advisor_routes
+from wobblebot.web.routes import audit as audit_routes
 from wobblebot.web.routes import auth as auth_routes
 from wobblebot.web.routes import commands as command_routes
 from wobblebot.web.routes import cost as cost_routes
 from wobblebot.web.routes import harvester as harvester_routes
+from wobblebot.web.routes import news as news_routes
 from wobblebot.web.routes import pages as page_routes
 from wobblebot.web.routes import status as status_routes
 
@@ -152,6 +154,8 @@ def create_app(
     app.include_router(command_routes.router)
     app.include_router(advisor_routes.router)
     app.include_router(harvester_routes.router)
+    app.include_router(news_routes.router)
+    app.include_router(audit_routes.router)
     app.include_router(page_routes.router)
 
     return app

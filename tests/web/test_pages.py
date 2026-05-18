@@ -1,7 +1,7 @@
-"""Tests for the three stub pages — /dashboard, /cost, /audit (Stage 7.1.D).
+"""Tests for the root redirect (Stage 7.1.D).
 
-Verifies auth gate (anonymous → 302 /auth/login), authenticated render
-(layout chrome + placeholder copy), and the / → /dashboard redirect.
+Once Stages 7.2-7.4 land their real routes, the only thing in
+``pages.py`` is the bare ``/`` redirect.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from wobblebot.web.auth import hash_password
 pytestmark = pytest.mark.unit
 
 
-_TEST_BCRYPT_COST = 4
 _TEST_USERNAME = "operator"
 _TEST_PASSWORD = "hunter2"
 
@@ -30,7 +29,7 @@ _TEST_PASSWORD = "hunter2"
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=_TEST_BCRYPT_COST))
+    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -38,7 +37,7 @@ async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
 @pytest.fixture
 def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
     app = create_app(
-        config=WebConfig(),
+        config=WebConfig(bcrypt_cost=10),
         operator_storage=storage,
         session_secret="x" * 64,
     )
@@ -64,11 +63,6 @@ def _login(client: TestClient) -> None:
     assert resp.status_code == 302
 
 
-# --------------------------------------------------------------------- #
-# /                                                                     #
-# --------------------------------------------------------------------- #
-
-
 class TestRootRedirect:
     def test_anonymous_root_redirects_to_dashboard(self, client: TestClient) -> None:
         resp = client.get("/")
@@ -80,49 +74,3 @@ class TestRootRedirect:
         resp = client.get("/")
         assert resp.status_code == 302
         assert resp.headers["location"] == "/dashboard"
-
-
-# --------------------------------------------------------------------- #
-# /dashboard, /cost, /audit — auth-gated                                #
-# --------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize("path", ["/audit"])
-class TestStubAuth:
-    def test_anonymous_redirects_to_login(self, client: TestClient, path: str) -> None:
-        resp = client.get(path)
-        assert resp.status_code == 302
-        assert resp.headers["location"] == "/auth/login"
-
-    def test_authenticated_renders_layout(self, client: TestClient, path: str) -> None:
-        _login(client)
-        resp = client.get(path)
-        assert resp.status_code == 200
-        # Layout chrome present
-        assert "WobbleBot" in resp.text
-        assert 'href="/dashboard"' in resp.text
-        assert 'href="/cost"' in resp.text
-        assert 'href="/audit"' in resp.text
-        # Logout form has CSRF token + sign-out button
-        assert 'action="/auth/logout"' in resp.text
-        assert "Sign out" in resp.text
-        # Stub-specific placeholder copy
-        assert "placeholder" in resp.text.lower()
-
-    def test_authenticated_renders_username(self, client: TestClient, path: str) -> None:
-        _login(client)
-        resp = client.get(path)
-        assert _TEST_USERNAME in resp.text
-
-
-# --------------------------------------------------------------------- #
-# Page-specific copy                                                    #
-# --------------------------------------------------------------------- #
-
-
-class TestStubContent:
-    def test_audit_mentions_phase_74(self, client: TestClient) -> None:
-        _login(client)
-        resp = client.get("/audit")
-        assert "Phase 7.4" in resp.text
-        assert "Audit" in resp.text
