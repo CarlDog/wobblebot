@@ -10,6 +10,138 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Phase 7 close — Web UI / Dashboard (2026-05-18)
+
+Phase 7 complete. Five stages closed across two evenings (7.1 →
+7.5). Server-rendered FastAPI + Jinja2 + HTMX dashboard ships
+end-to-end: auth-protected shell → cost + status dashboards +
+ADR-013-firewalled mutation flow → advisor + harvester read-only
+views → news + audit-log views → integration check.
+
+**Phase 7 spent $0.00 of real money.** Dashboard is read-mostly;
+mutations are firewalled per ADR-013 (web UI never calls
+`OperatorService.dispatch_command` directly — every state mutation
+crosses `pending_commands` so cli/live's `WHERE status='approved'`
+poll remains the single source of truth for "intent → engine").
+Running project total: **$0.085018** unchanged from Phase 6 close.
+
+**Stage 7.5 — Phase 7 close + integration check (2026-05-18).**
+This commit. End-to-end TestClient walkthrough in
+`tests/web/test_phase7_e2e.py` exercises every Phase 7 surface in
+a single test: anonymous root redirect → login → all six pages
+(dashboard / cost / advisor / harvester / news / audit) →
+pause→confirm→approve mutation flow → **ADR-013 firewall verification**
+(the row is now `approved` in operator.db, which is what cli/live's
+`WHERE status='approved'` poll picks up) → logout → re-verified
+session gone. One test, many assertions. Plus Phase 7 closing
+summary at `docs/planning/phase-7-summary.md` mirroring
+phase-{2,3,4,5,6}-summary.md precedent. Roadmap +
+CLAUDE.md + project_state memory updates.
+
+**Numbers.** 1656 unit tests pass (1460 at Phase 6 close →
+1656 at Phase 7 close, +196 across the five stages). 29 integration
+tests opt-in (unchanged — Phase 7's e2e walkthrough is a unit test
+against in-memory storage). mypy clean across 96 src files; pylint
+**10.00/10**; black + isort clean.
+
+**Six new runtime deps** in Stage 7.1.B (biggest dep-add since
+Phase 5's `discord.py`): `fastapi>=0.115`, `uvicorn[standard]>=0.30`,
+`jinja2>=3.1`, `python-multipart>=0.0.12`, `bcrypt>=4.2`,
+`itsdangerous>=2.2`.
+
+Next: **Phase 8 — Hardening & v1.0 Release.** Five stages: 8.0
+deferred Phase-5-audit refactors (R5 ports/operator.py split, R3
+storage-fallback helper, R2 generic poll-loop helper) → 8.1
+reliability & recovery → 8.2 background maintenance worker → 8.3
+performance & resource tuning → 8.4 v1.0 soak + tag.
+
+### Stage 7.4 — News + audit log views (2026-05-18)
+
+The final two read-only Phase 7 surfaces.
+
+**7.4.A — `/news`.** `routes/news.py` reads `news.db`'s
+`news_items` (limit 100). Filter form: source dropdown (populated
+from a wider unfiltered slice so the dropdown stays stable across
+filtered views) + free-text coin filter that runs case-insensitive
+substring match against `NewsItem.mentioned_coins` server-side.
+Graceful-degrades when `news_storage` is unwired.
+
+**7.4.B — `/audit`.** `routes/audit.py` reads `operator.db`'s
+`pending_commands` + `notifications` (limit 100 each, newest first).
+Replaces the Stage 7.1.D `/audit` stub. Each pending command shows
+its lifecycle state with a color-coded status tag; each notification
+shows level + forwarded state.
+
+Cleanup: `pages.py` shrinks to just `/` → `/dashboard`;
+`templates/stub.html` removed. Layout nav adds `/news`.
+
+13 new unit tests (7 news + 4 audit + 2 refactored root tests).
+Total 1655 (was 1648); mypy clean across 96 src files; pylint
+**10.00/10**; black + isort clean.
+
+### Stage 7.3 — Advisor + harvester views (2026-05-17)
+
+Two read-only views surface the Phase 3 advisor output + Phase 4
+treasury activity.
+
+**Advisor.** `routes/advisor.py` reads `advise.db`'s
+`advisor_suggestions` (limit 50, newest first). Template renders
+the aggregated recommendation per row + per-expert opinions when
+MoE-derived (`AdvisorRecommendation.expert_opinions` populated by
+`MoEAdvisorAdapter` per ADR-007). Single-LLM rows hide the opinions
+section. Confidence tags color-coded.
+
+**Harvester.** `routes/harvester.py` reads `harvest.db`'s
+`transfer_proposals` + `transfer_results` (limit 50 each). Template
+renders two cards: proposals (with direction + rationale + balance
+context) and executed withdrawals (with status tags + refid).
+Read-only — per ADR-003 `cli/harvest --execute` remains the only
+path that moves money.
+
+Both routes graceful-degrade when their cross-DB storage is
+unwired. Nav links added to layout.html.
+
+11 new unit tests. Total 1648 (was 1637); mypy clean across 94
+src files; pylint **10.00/10**.
+
+### Stage 7.2 — Cost + status dashboards + mutation flow (2026-05-17)
+
+Three sub-slices delivered the first real-data dashboards + the
+architecturally significant mutation flow.
+
+**7.2.A — Cost dashboard.** `routes/cost.py` reads `operator.db`'s
+`llm_calls` (Phase 6 ledger), rolls up to 24h totals + per-day
+trends + per-provider/role breakdown. Pure-function `_rollup`
+keeps the math testable. Two routes: `/cost` (full page) and
+`/cost/card` (HTMX fragment for polled refresh).
+
+**7.2.B — Status dashboard.** `routes/status.py` replaces the 7.1
+`/dashboard` stub. Reads `live.db`'s open orders + recent 20 trades
+via the optional `live_storage` dep; degrades gracefully to an
+"unwired" card when `live_db` isn't configured. `dashboard.html`
+combines operator-actions card + HTMX-polled status card.
+
+**7.2.C — Mutation flow.** `routes/commands.py` wires
+pause/resume/stop through the ADR-013 firewall:
+
+1. GET /commands/<verb> renders a form.
+2. POST creates a `PendingCommand` row in `awaiting_confirmation`
+   (`channel_id="web"` to distinguish from Discord-originated rows).
+3. GET /commands/<id>/confirm summarizes the pending command.
+4. POST /commands/<id>/confirm transitions to `approved` or
+   `rejected`.
+
+The web UI **NEVER** calls `OperatorService.dispatch_command`
+directly; every mutation crosses `pending_commands` so cli/live's
+`WHERE status='approved'` poll stays the single source of truth.
+Idempotency: re-confirming a row already in a terminal state
+surfaces the existing status, never mutates twice (handles the
+Discord-confirmed-first race). 10-minute TTL on web-originated
+rows. CSRF protected on every POST.
+
+29 new unit tests. Total 1637 (was 1608); mypy clean across 92 src
+files; pylint **10.00/10**; black + isort clean.
+
 ### Phase 7 kickoff — Web UI / Dashboard (ADR-016 + ADR-017) (2026-05-17)
 
 After Phase 6 closed, Phase 7 needed two architectural decisions
