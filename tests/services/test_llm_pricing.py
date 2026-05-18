@@ -12,6 +12,7 @@ from wobblebot.services.llm_pricing import (
     PricingLookupError,
     all_price_points,
     cost_for,
+    estimate_cost_ceiling,
     get_price_point,
 )
 
@@ -186,4 +187,69 @@ class TestPricePointValidation:
                 input_per_million_usd=Decimal("1"),
                 output_per_million_usd=Decimal("1"),
                 verified_date=date(2026, 1, 1),
+            )
+
+
+# --------------------------------------------------------------------- #
+# estimate_cost_ceiling (Stage 6.5.A close-audit consolidation)         #
+# --------------------------------------------------------------------- #
+
+
+class TestEstimateCostCeiling:
+    """The estimator was duplicated across the three cloud adapters
+    until the Stage 6.5.A close audit; this test class pins the shared
+    implementation. Per-provider tests in tests/adapters/test_*.py
+    cover the provider-specific dispatch."""
+
+    def test_dispatches_to_anthropic(self) -> None:
+        # 1000 chars / 4 = 250 in; max_tokens=500
+        # claude-sonnet-4-6: $3/1M in, $15/1M out
+        # 250 * 3 + 500 * 15 = 8250 → $0.008250
+        cost = estimate_cost_ceiling(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            prompt_text="a" * 1000,
+            max_tokens=500,
+        )
+        assert cost == Decimal("0.008250")
+
+    def test_dispatches_to_openai(self) -> None:
+        # gpt-4o: $2.50/1M in, $10/1M out
+        # 250 * 2.5 + 500 * 10 = 5625 → $0.005625
+        cost = estimate_cost_ceiling(
+            provider="openai",
+            model="gpt-4o",
+            prompt_text="a" * 1000,
+            max_tokens=500,
+        )
+        assert cost == Decimal("0.005625")
+
+    def test_dispatches_to_google(self) -> None:
+        # gemini-2.5-pro: $1.25/1M in, $10/1M out
+        # 250 * 1.25 + 500 * 10 = 5312.5 → quantize HALF_UP to $0.005313
+        cost = estimate_cost_ceiling(
+            provider="google",
+            model="gemini-2.5-pro",
+            prompt_text="a" * 1000,
+            max_tokens=500,
+        )
+        assert cost == Decimal("0.005313")
+
+    def test_empty_prompt_uses_at_least_one_input_token(self) -> None:
+        cost = estimate_cost_ceiling(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            prompt_text="",
+            max_tokens=10,
+        )
+        # 1 * 3/1M + 10 * 15/1M = 0.000003 + 0.00015 = 0.000153
+        assert cost == Decimal("0.000153")
+
+    def test_unknown_model_raises(self) -> None:
+        with pytest.raises(PricingLookupError):
+            estimate_cost_ceiling(
+                provider="anthropic",
+                model="claude-mystery",
+                prompt_text="x",
+                max_tokens=10,
             )

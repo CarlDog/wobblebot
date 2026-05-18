@@ -29,19 +29,24 @@ provider-shape logic next to the request body it builds.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
+from wobblebot.adapters.ollama import OllamaJsonExtractError, extract_last_json_object
 from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.exceptions import StorageError
+from wobblebot.ports.advisor import AdvisorRecommendation
+from wobblebot.ports.exceptions import AdvisorError, AssistantError, StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cost_gate import (
     GateDeny,
@@ -234,3 +239,116 @@ async def execute_cloud_call(  # pylint: disable=too-many-arguments,too-many-pos
     await ctx.storage.save_llm_call(record)
     ctx.session_tracker.add(record.cost_usd)
     return envelope
+
+
+# ===================================================================== #
+# Shared response-parsing helpers (Stage 6.5.A close-audit extraction)  #
+# ===================================================================== #
+#
+# Each cloud adapter pre-extracts the model's text from its
+# provider-specific envelope shape (Anthropic content blocks /
+# OpenAI choices / Google candidate parts). The text-to-dict and
+# dict-to-domain-object steps below are identical across providers
+# differing only in the provider name in error messages — promoted
+# here at the Stage 6.5.A refactor pass.
+
+
+def _parse_json_from_text(
+    raw_text: str,
+    *,
+    provider_name: str,
+    error_factory: Callable[[str], Exception],
+) -> dict[str, Any]:
+    """Walk ``raw_text`` for a JSON object; raise via ``error_factory``.
+
+    The walk uses ``adapters.ollama.extract_last_json_object`` (the
+    thinking-mode-aware extractor promoted in Stage 5.3). On extractor
+    failure we fall back to ``json.loads`` for bare-JSON responses
+    that don't need walking; on parse failure we wrap as the
+    port-specific error type.
+
+    ``error_factory`` is either ``AdvisorError`` or ``AssistantError``
+    so each port's contract surfaces with its own type.
+    """
+    if not raw_text.strip():
+        raise error_factory(f"{provider_name} response empty")
+    try:
+        return extract_last_json_object(raw_text)
+    except OllamaJsonExtractError as exc:
+        try:
+            parsed: Any = json.loads(raw_text)
+        except json.JSONDecodeError as json_exc:
+            raise error_factory(str(exc)) from json_exc
+        if not isinstance(parsed, dict):
+            raise error_factory(
+                f"{provider_name} response is JSON but not an object: " f"{type(parsed).__name__}"
+            ) from exc
+        return parsed
+
+
+def parse_advisor_recommendation(
+    raw_text: str,
+    *,
+    fallback_role: str,
+    provider_name: str,
+) -> AdvisorRecommendation:
+    """Build an ``AdvisorRecommendation`` from raw LLM text.
+
+    Shared across every cloud advisor adapter — three byte-identical
+    copies pre-Stage-6.5.A. The provider-specific bit is the text
+    extraction from the envelope (Anthropic / OpenAI / Google each
+    have their own); after that the path is identical.
+
+    Args:
+        raw_text: The concatenated response text from the LLM.
+        fallback_role: Role to record on the recommendation when the
+            LLM omits ``role`` from its JSON.
+        provider_name: For error messages — ``"Anthropic"`` /
+            ``"OpenAI"`` / ``"Google"``.
+
+    Raises:
+        AdvisorError: Empty text, unparseable JSON, missing required
+            field, or Pydantic validation failure.
+    """
+    inner = _parse_json_from_text(
+        raw_text,
+        provider_name=provider_name,
+        error_factory=AdvisorError,
+    )
+    try:
+        return AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role=str(inner.get("role", fallback_role)),
+            recommendations=inner.get("recommendations") or {},
+            rationale=str(inner.get("rationale", "")),
+            confidence=inner["confidence"],
+        )
+    except KeyError as exc:
+        raise AdvisorError(
+            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
+        ) from exc
+    except ValidationError as exc:
+        raise AdvisorError(
+            f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
+        ) from exc
+
+
+def parse_intent_dict(
+    raw_text: str,
+    *,
+    provider_name: str,
+) -> dict[str, Any]:
+    """Parse raw LLM text into a dict, raising ``AssistantError`` on failure.
+
+    Caller (per-port adapter) runs the dict through its
+    ``TypeAdapter[OperatorIntent]`` to validate against the
+    operator_intent_v1 discriminated union — that validation stays at
+    the call site since it requires the adapter's port-specific
+    TypeAdapter import.
+    """
+    return _parse_json_from_text(
+        raw_text,
+        provider_name=provider_name,
+        error_factory=AssistantError,
+    )

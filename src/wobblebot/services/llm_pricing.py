@@ -223,3 +223,39 @@ def all_price_points() -> list[LLMPricePoint]:
     """Return every modeled price point. Used by the freshness test
     and ``tools/show_llm_costs`` for per-model summaries."""
     return list(_PRICING.values())
+
+
+def estimate_cost_ceiling(
+    *,
+    provider: LLMProvider,
+    model: str,
+    prompt_text: str,
+    max_tokens: int,
+) -> Decimal:
+    """Conservative cost ceiling for any cloud-LLM call (ADR-014 decision 4).
+
+    Used by every cloud adapter's pre-call gate-check. The estimate is
+    a worst-case upper bound for plain-completion calls and a
+    conservative under-bound for thinking-mode calls (where the
+    runtime ``thoughtsTokenCount`` isn't predictable):
+
+    - Tokens in = ``len(prompt_text) // 4`` (standard rule-of-thumb;
+      provider tokenizers vary ~10% from this for English text).
+    - Tokens out = ``max_tokens`` (the model's hard ceiling).
+    - Reasoning tokens = 0 (folded into max_tokens at output rate for
+      Anthropic + OpenAI; for Gemini-flash thinking the actual rate is
+      higher than output, so accumulated overshoot is caught by the
+      daily-cap sliding window rather than the per-call estimate).
+
+    Promoted from per-adapter copies at Stage 6.5.A close audit —
+    three adapters had byte-identical implementations differing only
+    in the provider literal.
+    """
+    tokens_in_est = max(1, len(prompt_text) // 4)
+    return cost_for(
+        provider=provider,
+        model=model,
+        tokens_in=tokens_in_est,
+        tokens_out=max_tokens,
+        tokens_reasoning=0,
+    )

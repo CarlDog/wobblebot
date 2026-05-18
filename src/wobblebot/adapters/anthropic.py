@@ -45,22 +45,12 @@ unchanged — it's its own domain error.
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
-from uuid import uuid4
 
 import httpx
-from pydantic import ValidationError
 
-from wobblebot.adapters.ollama import (
-    OllamaJsonExtractError,
-    extract_last_json_object,
-)
 from wobblebot.config.prompts import Prompt
 from wobblebot.domain.llm_cost import LLMRole
-from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
@@ -72,44 +62,15 @@ from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenTuple,
     execute_cloud_call,
+    parse_advisor_recommendation,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
-from wobblebot.services.llm_pricing import cost_for
+from wobblebot.services.llm_pricing import estimate_cost_ceiling
 from wobblebot.services.llm_retry import LLMRetryConfig
 
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_API_VERSION = "2023-06-01"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-
-
-def estimate_cost_ceiling(
-    *,
-    model: str,
-    prompt_text: str,
-    max_tokens: int,
-) -> Decimal:
-    """Estimate the worst-case cost of an Anthropic call.
-
-    Per ADR-014 decision 4 (Stage 6.1 design): the gate check sees a
-    conservative upper bound, not the realistic mean — so the budget
-    refuses anything that *could* tip over even if the actual response
-    is cheaper.
-
-    - Tokens in = ``len(prompt_text) // 4`` (the standard rule of
-      thumb; Anthropic's actual tokenizer is BPE-like and within ~10%
-      of this for English).
-    - Tokens out = ``max_tokens`` (the model's hard ceiling).
-    - Reasoning tokens = 0 (Anthropic lumps thinking with output;
-      already covered by max_tokens).
-    """
-    tokens_in_est = max(1, len(prompt_text) // 4)
-    return cost_for(
-        provider="anthropic",
-        model=model,
-        tokens_in=tokens_in_est,
-        tokens_out=max_tokens,
-        tokens_reasoning=0,
-    )
 
 
 def parse_text_blocks(content: list[dict[str, Any]]) -> str:
@@ -260,6 +221,7 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
 
         full_prompt = f"{self._prompt.body}\n\n{user_message}"
         estimate = estimate_cost_ceiling(
+            provider="anthropic",
             model=self._model,
             prompt_text=full_prompt,
             max_tokens=self._max_tokens,
@@ -287,7 +249,12 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         except httpx.HTTPError as exc:
             raise AdvisorError(f"Anthropic transport error: {exc}") from exc
 
-        return _parse_recommendation(envelope=envelope, fallback_role=self._role)
+        raw_text = parse_text_blocks(envelope.get("content", []) or [])
+        return parse_advisor_recommendation(
+            raw_text,
+            fallback_role=self._role,
+            provider_name="Anthropic",
+        )
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.2 contract: parsing-success is the only check."""
@@ -311,50 +278,3 @@ def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenTuple:
         None,
         envelope.get("id"),
     )
-
-
-def _parse_recommendation(
-    *,
-    envelope: dict[str, Any],
-    fallback_role: str,
-) -> AdvisorRecommendation:
-    """Pull the JSON answer out of an Anthropic envelope + build an
-    ``AdvisorRecommendation`` from it."""
-    raw_text = parse_text_blocks(envelope.get("content", []) or [])
-    if not raw_text.strip():
-        raise AdvisorError(
-            f"Anthropic response empty across content blocks; " f"envelope keys: {sorted(envelope)}"
-        )
-
-    # Walk for the final JSON object — handles thinking-mode preambles
-    # + code-fenced examples + illustrative shapes in the prose.
-    try:
-        inner = extract_last_json_object(raw_text)
-    except OllamaJsonExtractError as exc:
-        # Fallback: maybe the model emitted bare JSON without prose.
-        try:
-            inner = json.loads(raw_text)
-        except json.JSONDecodeError as json_exc:
-            raise AdvisorError(str(exc)) from json_exc
-        if not isinstance(inner, dict):
-            raise AdvisorError(
-                f"Anthropic response is JSON but not an object: {type(inner).__name__}"
-            ) from exc
-
-    try:
-        return AdvisorRecommendation(
-            recommendation_id=str(uuid4()),
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-            role=str(inner.get("role", fallback_role)),
-            recommendations=inner.get("recommendations") or {},
-            rationale=str(inner.get("rationale", "")),
-            confidence=inner["confidence"],
-        )
-    except KeyError as exc:
-        raise AdvisorError(
-            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
-        ) from exc
-    except ValidationError as exc:
-        raise AdvisorError(
-            f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
-        ) from exc

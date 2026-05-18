@@ -33,7 +33,6 @@ import pytest_asyncio
 from wobblebot.adapters.openai import (
     OpenAIAdvisorAdapter,
     OpenAIAssistantAdapter,
-    estimate_cost_ceiling,
     extract_openai_tokens,
     is_reasoning_model,
     parse_message_content,
@@ -51,6 +50,7 @@ from wobblebot.ports.assistant import (
 from wobblebot.ports.exceptions import AdvisorError, AssistantError
 from wobblebot.ports.operator import IntentCommand, IntentQuery, PauseCommand, StatusQuery
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+from wobblebot.services.llm_pricing import estimate_cost_ceiling
 from wobblebot.services.llm_retry import LLMRetryConfig
 
 pytestmark = pytest.mark.unit
@@ -239,7 +239,9 @@ class TestPureHelpers:
         # gpt-4o: $2.50/1M in, $10.00/1M out
         # 1000 chars / 4 = 250 input tokens; max_tokens=500
         # 250 * 2.5 / 1M + 500 * 10 / 1M = 0.000625 + 0.005 = 0.005625
-        cost = estimate_cost_ceiling(model="gpt-4o", prompt_text="a" * 1000, max_tokens=500)
+        cost = estimate_cost_ceiling(
+            provider="openai", model="gpt-4o", prompt_text="a" * 1000, max_tokens=500
+        )
         assert cost == Decimal("0.005625")
 
     def test_extract_openai_tokens_no_reasoning(self) -> None:

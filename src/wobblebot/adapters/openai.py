@@ -41,22 +41,13 @@ supplies its ``call_fn`` closure + the OpenAI-specific
 
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
-from uuid import uuid4
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from wobblebot.adapters.ollama import (
-    OllamaJsonExtractError,
-    extract_last_json_object,
-)
 from wobblebot.config.prompts import Prompt
 from wobblebot.domain.llm_cost import LLMRole
-from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
@@ -70,9 +61,11 @@ from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenTuple,
     execute_cloud_call,
+    parse_advisor_recommendation,
+    parse_intent_dict,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
-from wobblebot.services.llm_pricing import cost_for
+from wobblebot.services.llm_pricing import estimate_cost_ceiling
 from wobblebot.services.llm_retry import LLMRetryConfig
 
 _DEFAULT_BASE_URL = "https://api.openai.com"
@@ -101,31 +94,6 @@ def is_reasoning_model(model: str) -> bool:
     """
     name = model.lower()
     return any(name.startswith(p) for p in _REASONING_MODEL_PREFIXES)
-
-
-def estimate_cost_ceiling(
-    *,
-    model: str,
-    prompt_text: str,
-    max_tokens: int,
-) -> Decimal:
-    """Conservative cost ceiling for an OpenAI call (ADR-014 decision 4).
-
-    Same shape as ``adapters.anthropic.estimate_cost_ceiling``: input
-    tokens estimated at ``len/4``, output ceiling = ``max_tokens``.
-    For reasoning models we cannot estimate reasoning tokens in
-    advance (the model decides at runtime); the conservative posture
-    just folds whatever reasoning emerges into the output budget at
-    output rate, which is exactly how OpenAI bills it.
-    """
-    tokens_in_est = max(1, len(prompt_text) // 4)
-    return cost_for(
-        provider="openai",
-        model=model,
-        tokens_in=tokens_in_est,
-        tokens_out=max_tokens,
-        tokens_reasoning=0,
-    )
 
 
 def extract_openai_tokens(envelope: dict[str, Any]) -> TokenTuple:
@@ -341,6 +309,7 @@ class OpenAIAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
 
         full_prompt = f"{self._prompt.body}\n\n{user_message}"
         estimate = estimate_cost_ceiling(
+            provider="openai",
             model=self._model,
             prompt_text=full_prompt,
             max_tokens=self._max_tokens,
@@ -366,7 +335,12 @@ class OpenAIAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
         except httpx.HTTPError as exc:
             raise AdvisorError(f"OpenAI transport error: {exc}") from exc
 
-        return _parse_recommendation(envelope=envelope, fallback_role=self._role)
+        raw_text = parse_message_content(envelope)
+        return parse_advisor_recommendation(
+            raw_text,
+            fallback_role=self._role,
+            provider_name="OpenAI",
+        )
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         del recommendation
@@ -448,6 +422,7 @@ class OpenAIAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
 
         prompt_text = "\n".join(m["content"] for m in messages)
         estimate = estimate_cost_ceiling(
+            provider="openai",
             model=self._model,
             prompt_text=prompt_text,
             max_tokens=self._max_tokens,
@@ -489,79 +464,11 @@ class OpenAIAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         except httpx.HTTPError as exc:
             raise AssistantError(f"OpenAI transport error: {exc}") from exc
 
-        inner = _extract_intent_dict(envelope)
+        raw_text = parse_message_content(envelope)
+        inner = parse_intent_dict(raw_text, provider_name="OpenAI")
         try:
             return _INTENT_ADAPTER.validate_python(inner)
         except ValidationError as exc:
             raise AssistantError(
                 f"LLM output failed operator_intent_v1 schema validation: {exc}"
             ) from exc
-
-
-# ===================================================================== #
-# Internal parse helpers                                                #
-# ===================================================================== #
-
-
-def _parse_recommendation(
-    *,
-    envelope: dict[str, Any],
-    fallback_role: str,
-) -> AdvisorRecommendation:
-    """Pull the JSON answer out of an OpenAI envelope + build an
-    ``AdvisorRecommendation``."""
-    raw_text = parse_message_content(envelope)
-    if not raw_text.strip():
-        raise AdvisorError(
-            f"OpenAI response empty across choices; envelope keys: {sorted(envelope)}"
-        )
-    try:
-        inner = extract_last_json_object(raw_text)
-    except OllamaJsonExtractError as exc:
-        try:
-            parsed = json.loads(raw_text)
-        except json.JSONDecodeError as json_exc:
-            raise AdvisorError(str(exc)) from json_exc
-        if not isinstance(parsed, dict):
-            raise AdvisorError(
-                f"OpenAI response is JSON but not an object: {type(parsed).__name__}"
-            ) from exc
-        inner = parsed
-
-    try:
-        return AdvisorRecommendation(
-            recommendation_id=str(uuid4()),
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-            role=str(inner.get("role", fallback_role)),
-            recommendations=inner.get("recommendations") or {},
-            rationale=str(inner.get("rationale", "")),
-            confidence=inner["confidence"],
-        )
-    except KeyError as exc:
-        raise AdvisorError(
-            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
-        ) from exc
-    except ValidationError as exc:
-        raise AdvisorError(
-            f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
-        ) from exc
-
-
-def _extract_intent_dict(envelope: dict[str, Any]) -> dict[str, Any]:
-    raw_text = parse_message_content(envelope)
-    if not raw_text.strip():
-        raise AssistantError(
-            f"OpenAI response empty across choices; envelope keys: {sorted(envelope)}"
-        )
-    try:
-        return extract_last_json_object(raw_text)
-    except OllamaJsonExtractError as exc:
-        try:
-            parsed: Any = json.loads(raw_text)
-        except json.JSONDecodeError as json_exc:
-            raise AssistantError(str(exc)) from json_exc
-        if not isinstance(parsed, dict):
-            raise AssistantError(
-                f"OpenAI response is JSON but not an object: {type(parsed).__name__}"
-            ) from exc
-        return parsed

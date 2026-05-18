@@ -34,21 +34,15 @@ never imports this module.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.adapters.anthropic import (
-    estimate_cost_ceiling,
     extract_anthropic_tokens,
     parse_text_blocks,
     post_messages,
-)
-from wobblebot.adapters.ollama import (
-    OllamaJsonExtractError,
-    extract_last_json_object,
 )
 from wobblebot.config.prompts import Prompt
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
@@ -58,8 +52,10 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     execute_cloud_call,
+    parse_intent_dict,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+from wobblebot.services.llm_pricing import estimate_cost_ceiling
 from wobblebot.services.llm_retry import LLMRetryConfig
 
 # Match the sister advisor adapter's defaults. Re-declared locally so this
@@ -156,6 +152,7 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         messages = self._build_messages(context)
         prompt_text = system_prompt + "\n\n" + "\n".join(m["content"] for m in messages)
         estimate = estimate_cost_ceiling(
+            provider="anthropic",
             model=self._model,
             prompt_text=prompt_text,
             max_tokens=self._max_tokens,
@@ -201,7 +198,8 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         except httpx.HTTPError as exc:
             raise AssistantError(f"Anthropic transport error: {exc}") from exc
 
-        inner = _extract_intent_dict(envelope)
+        raw_text = parse_text_blocks(envelope.get("content", []) or [])
+        inner = parse_intent_dict(raw_text, provider_name="Anthropic")
         try:
             return _INTENT_ADAPTER.validate_python(inner)
         except ValidationError as exc:
@@ -247,29 +245,3 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
             )
         messages.append({"role": "user", "content": context.current_message})
         return messages
-
-
-def _extract_intent_dict(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Pull the LLM's JSON object out of the Anthropic envelope.
-
-    The model sometimes wraps the JSON in explanatory prose; the
-    extract_last_json_object helper walks for the final ``{...}`` block.
-    Falls back to a direct ``json.loads`` for bare-JSON responses.
-    """
-    raw_text = parse_text_blocks(envelope.get("content", []) or [])
-    if not raw_text.strip():
-        raise AssistantError(
-            f"Anthropic response empty across content blocks; " f"envelope keys: {sorted(envelope)}"
-        )
-    try:
-        return extract_last_json_object(raw_text)
-    except OllamaJsonExtractError as exc:
-        try:
-            parsed: Any = json.loads(raw_text)
-        except json.JSONDecodeError as json_exc:
-            raise AssistantError(str(exc)) from json_exc
-        if not isinstance(parsed, dict):
-            raise AssistantError(
-                f"Anthropic response is JSON but not an object: {type(parsed).__name__}"
-            ) from exc
-        return parsed

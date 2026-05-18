@@ -20,7 +20,6 @@ import pytest_asyncio
 
 from wobblebot.adapters.anthropic import (
     AnthropicAdvisorAdapter,
-    estimate_cost_ceiling,
     extract_anthropic_tokens,
     parse_text_blocks,
 )
@@ -30,6 +29,7 @@ from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
 from wobblebot.ports.advisor import PerformanceSummary
 from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+from wobblebot.services.llm_pricing import estimate_cost_ceiling
 from wobblebot.services.llm_retry import LLMRetryConfig
 
 pytestmark = pytest.mark.unit
@@ -146,6 +146,7 @@ class TestPureHelpers:
         # 1000 chars / 4 = 250 input tokens; max_tokens=500 → cost reflects both.
         prompt = "a" * 1000
         cost = estimate_cost_ceiling(
+            provider="anthropic",
             model="claude-sonnet-4-6",
             prompt_text=prompt,
             max_tokens=500,
@@ -156,7 +157,12 @@ class TestPureHelpers:
 
     def test_estimate_cost_minimum_input_tokens(self) -> None:
         # Empty prompt → at least 1 input token estimated.
-        cost = estimate_cost_ceiling(model="claude-sonnet-4-6", prompt_text="", max_tokens=10)
+        cost = estimate_cost_ceiling(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            prompt_text="",
+            max_tokens=10,
+        )
         # 1 input + 10 output: 1 * 3/1M + 10 * 15/1M = 0.000003 + 0.00015 = 0.000153
         assert cost == Decimal("0.000153")
 
