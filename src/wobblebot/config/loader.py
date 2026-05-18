@@ -32,6 +32,7 @@ from wobblebot.config.cli import (
     SandboxConfig,
     ShadowConfig,
     StatusConfig,
+    WebConfig,
 )
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
@@ -66,6 +67,7 @@ class WobbleBotConfig(BaseModel):
     harvester: HarvesterConfig | None = None
     operator: OperatorConfig | None = None
     llm: LLMConfig | None = None
+    web: WebConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     class Config:

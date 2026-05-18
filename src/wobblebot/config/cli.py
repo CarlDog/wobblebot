@@ -455,6 +455,71 @@ class OperatorConfig(BaseModel):
         frozen = True
 
 
+class WebConfig(BaseModel):
+    """Phase 7 web UI configuration (ADR-016 + ADR-017).
+
+    Composed onto ``WobbleBotConfig.web: WebConfig | None`` (None =
+    no web layer). Knobs split into four groups: serving (bind /
+    port), auth (session secret + lifetime + rate-limit),
+    presentation (htmx poll cadence), and the cross-DB paths the
+    dashboard needs.
+
+    Per ADR-016 decision 7, ``bind_host`` defaults to ``127.0.0.1`` —
+    the operator's reverse proxy is responsible for LAN exposure.
+    Per ADR-017 decision 3, ``session_secret_env_var`` points at an
+    env var holding 32+ random bytes (use
+    ``python -c "import secrets; print(secrets.token_urlsafe(32))"``
+    to mint one); ``cli/web`` refuses to start if the env var is
+    unset.
+    """
+
+    # ---- serving ---------------------------------------------------- #
+
+    bind_host: str = Field(default="127.0.0.1", min_length=1)
+    bind_port: int = Field(default=8000, ge=1, le=65535)
+
+    # ---- session / auth (ADR-017) ----------------------------------- #
+
+    # Env var holding the cookie-signing key. Not the key itself.
+    session_secret_env_var: str = Field(default="WOBBLEBOT_WEB_SESSION_SECRET", min_length=1)
+    # Sliding session lifetime. Cookie expires after this many days of
+    # inactivity.
+    session_max_age_days: int = Field(default=7, ge=1, le=90)
+    # Per-IP login attempts allowed in `rate_limit_window_seconds`
+    # before further attempts return 429.
+    rate_limit_attempts: int = Field(default=5, ge=1, le=100)
+    rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    # Bcrypt cost factor for new password hashes. 12 is the ADR-017
+    # default. Bump to 13 / 14 if the operator's hardware warrants.
+    bcrypt_cost: int = Field(default=12, ge=10, le=15)
+
+    # ---- presentation ---------------------------------------------- #
+
+    # How often HTMX-polled cards refresh (e.g. cost ledger, open
+    # orders). Static-ish pages (news headlines, audit logs) ignore
+    # this — they're full-reload-on-navigation.
+    htmx_poll_seconds: float = Field(default=15.0, gt=0.0, le=300.0)
+
+    # ---- cross-DB paths -------------------------------------------- #
+
+    # The dashboard reads from up to five DBs. operator.db is required
+    # (users table + pending_commands + notifications + llm_calls);
+    # the other four are optional per the OperatorService graceful-
+    # degrade pattern (Stage 5.6.C). When unset, cards that would
+    # query the missing DB simply don't render.
+    operator_db: str = Field(default="data/wobblebot-operator.db", min_length=1)
+    live_db: str | None = None
+    advise_db: str | None = None
+    harvest_db: str | None = None
+    observe_db: str | None = None
+    news_db: str | None = None
+
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+
 __all__ = [
     "AdviseConfig",
     "AssistantLLMConfig",
@@ -471,4 +536,5 @@ __all__ = [
     "SandboxConfig",
     "ShadowConfig",
     "StatusConfig",
+    "WebConfig",
 ]

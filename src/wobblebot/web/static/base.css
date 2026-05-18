@@ -1,0 +1,217 @@
+/* WobbleBot dashboard base styles (Stage 7.1.B).
+   Minimal scaffold — Stage 7.2+ adds feature-area styles.
+   Goal: legible default rendering; the operator can override via
+   their reverse proxy if they want custom branding. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1c1e21;
+  background: #f5f6f7;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Top nav --------------------------------------------------- */
+
+.topnav {
+  background: #1c1e21;
+  color: #ffffff;
+  border-bottom: 1px solid #0d0e10;
+}
+
+.topnav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.brand {
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 16px;
+}
+
+nav.primary {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+}
+
+nav.primary a {
+  color: #c4c7cc;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+nav.primary a:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+form.logout {
+  margin: 0;
+}
+
+form.logout button {
+  background: transparent;
+  border: 1px solid #4a4d52;
+  color: #c4c7cc;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+form.logout button:hover {
+  border-color: #c4c7cc;
+  color: #ffffff;
+}
+
+/* ---- Main content ---------------------------------------------- */
+
+main.content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  width: 100%;
+  flex: 1;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 24px 0 12px;
+}
+
+/* ---- Cards ----------------------------------------------------- */
+
+.card {
+  background: #ffffff;
+  border: 1px solid #dadde1;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.placeholder {
+  color: #65676b;
+  font-style: italic;
+}
+
+/* ---- Tables ---------------------------------------------------- */
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.data th,
+table.data td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ebedf0;
+}
+
+table.data th {
+  font-size: 12px;
+  font-weight: 600;
+  color: #65676b;
+  text-transform: uppercase;
+}
+
+/* ---- Login form (Stage 7.1.C) ---------------------------------- */
+
+.login-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-card {
+  background: #ffffff;
+  border: 1px solid #dadde1;
+  border-radius: 8px;
+  padding: 32px;
+  width: 360px;
+}
+
+.login-card h1 {
+  margin-top: 0;
+  text-align: center;
+}
+
+.login-card label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.login-card input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ccd0d5;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.login-card button {
+  width: 100%;
+  background: #1877f2;
+  color: #ffffff;
+  border: none;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-card button:hover {
+  background: #166fe5;
+}
+
+.error {
+  color: #c80000;
+  background: #ffe5e5;
+  padding: 10px 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}

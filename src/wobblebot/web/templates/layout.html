@@ -1,0 +1,26 @@
+{# Standard authenticated-page layout — extends base.html with the
+   nav chrome + content slot. Use this for every page after login;
+   the login form itself extends base.html directly. #}
+{% extends "base.html" %}
+
+{% block body %}
+<div class="page">
+  <header class="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="/dashboard">WobbleBot</a>
+      <nav class="primary">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/cost">Cost</a>
+        <a href="/audit">Audit</a>
+      </nav>
+      <form class="logout" method="post" action="/auth/logout">
+        {# CSRF token will land here in Stage 7.1.C. #}
+        <button type="submit">Sign out</button>
+      </form>
+    </div>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

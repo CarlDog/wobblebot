@@ -44,6 +44,20 @@ dependencies = [
     # only by cli/operator — cli/live stays Discord-ignorant per
     # ADR-013 decision 9.
     "discord.py>=2.3.0,<3",
+    # Stage 7.1 — Phase 7 web UI (ADR-016 + ADR-017). FastAPI app
+    # at src/wobblebot/web/ served by uvicorn from cli/web; Jinja2
+    # for server-rendered HTML; python-multipart for form POSTs
+    # (login + mutation flows); bcrypt for password hashing per
+    # ADR-017; itsdangerous for the signed session cookie used by
+    # Starlette's SessionMiddleware. Lockstep deps — bumping
+    # fastapi without also bumping starlette / uvicorn breaks the
+    # middleware chain in practice.
+    "fastapi>=0.115.0,<1",
+    "uvicorn[standard]>=0.30.0,<1",
+    "jinja2>=3.1.0,<4",
+    "python-multipart>=0.0.12,<1",
+    "bcrypt>=4.2.0,<5",
+    "itsdangerous>=2.2.0,<3",
 ]
 
 [project.optional-dependencies]
