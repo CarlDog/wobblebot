@@ -11,6 +11,7 @@ from uuid import UUID
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
@@ -707,4 +708,71 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         Raises:
             StorageError: If retrieval fails.
+        """
+
+    # User-account operations (Stage 7.1.A — Phase 7 web UI, ADR-017)
+    @abstractmethod
+    async def create_user(self, username: str, password_hash: str) -> User:
+        """Persist a new operator account and return the populated row.
+
+        Username uniqueness is enforced by the schema's ``UNIQUE``
+        constraint; duplicate inserts raise ``StorageError`` so the
+        ``cli/web create-user`` subcommand can surface a clear
+        "username taken" message.
+
+        ``password_hash`` is the bcrypt ``$2b$``-prefixed string;
+        callers (Stage 7.1.C's ``web/auth.py``) hash via the
+        ``bcrypt`` package before reaching this method. The plaintext
+        password is NEVER passed through StoragePort.
+
+        Args:
+            username: Operator-chosen handle. Non-empty.
+            password_hash: Bcrypt hash. Non-empty.
+
+        Returns:
+            The persisted ``User`` with ``id`` set by SQLite's
+            AUTOINCREMENT and ``created_at`` set to the insert time.
+            ``last_login_at`` is ``None`` until the first successful
+            login.
+
+        Raises:
+            StorageError: Unique-constraint violation, write failure,
+                or empty fields.
+        """
+
+    @abstractmethod
+    async def get_user_by_username(self, username: str) -> User | None:
+        """Look up an operator account by username.
+
+        Hot path for every login attempt; the ``UNIQUE(username)``
+        index makes this O(log n) with n=1 in production.
+
+        Args:
+            username: Username to look up.
+
+        Returns:
+            The ``User`` row if present (including the bcrypt
+            ``password_hash`` for the caller's
+            ``bcrypt.checkpw`` comparison); ``None`` if no row matches.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def update_user_last_login(self, user_id: int, last_login_at: Timestamp) -> None:
+        """Bump ``last_login_at`` on the user's row after a successful
+        login.
+
+        Idempotent — multiple calls just overwrite the column.
+
+        Args:
+            user_id: Row id of the user (from ``User.id`` returned by
+                ``get_user_by_username``).
+            last_login_at: When the operator authenticated.
+
+        Raises:
+            StorageError: If the row is missing (caller programming
+                error — Stage 7.1.C should never reach this after an
+                already-validated login).
         """

@@ -42,12 +42,14 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_trade,
     row_to_transfer_proposal,
     row_to_transfer_result,
+    row_to_user,
     serialize_expert_opinions,
 )
 from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
@@ -1023,6 +1025,66 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load llm_calls: {exc}") from exc
         return [row_to_llm_call_record(row) for row in rows]
+
+    # ----- users (Stage 7.1.A — Phase 7 web UI auth, ADR-017) -----
+
+    async def create_user(self, username: str, password_hash: str) -> User:
+        conn = self._require_conn()
+        created_at_dt = datetime.now(UTC)
+        created_at_iso = created_at_dt.isoformat()
+        try:
+            cursor = await conn.execute(
+                """
+                INSERT INTO users (
+                    username, password_hash, created_at, last_login_at
+                ) VALUES (?, ?, ?, NULL)
+                """,
+                (username, password_hash, created_at_iso),
+            )
+            await conn.commit()
+            row_id = cursor.lastrowid
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to create user {username!r}: {exc}") from exc
+        if row_id is None:
+            raise StorageError("User insert returned no lastrowid")
+        return User(
+            id=int(row_id),
+            username=username,
+            password_hash=password_hash,
+            created_at=Timestamp(dt=created_at_dt),
+            last_login_at=None,
+        )
+
+    async def get_user_by_username(self, username: str) -> User | None:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load user {username!r}: {exc}") from exc
+        if row is None:
+            return None
+        return row_to_user(row)
+
+    async def update_user_last_login(self, user_id: int, last_login_at: Timestamp) -> None:
+        conn = self._require_conn()
+        try:
+            cursor = await conn.execute(
+                "UPDATE users SET last_login_at = ? WHERE id = ?",
+                (last_login_at.dt.isoformat(), user_id),
+            )
+            await conn.commit()
+            rowcount = cursor.rowcount
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to update last_login_at for user {user_id}: {exc}") from exc
+        if rowcount == 0:
+            raise StorageError(f"User {user_id} not found")
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

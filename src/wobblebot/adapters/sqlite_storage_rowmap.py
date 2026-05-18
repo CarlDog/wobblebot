@@ -23,6 +23,7 @@ from pydantic import TypeAdapter
 
 from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
@@ -314,4 +315,24 @@ def row_to_llm_call_record(row: aiosqlite.Row) -> LLMCallRecord:
         request_id=row["request_id"],
         success=bool(row["success"]),
         error_kind=row["error_kind"],
+    )
+
+
+def row_to_user(row: aiosqlite.Row) -> User:
+    """Materialize a ``User`` from a ``users`` row.
+
+    ``last_login_at`` round-trips as ``None`` when NULL (the operator
+    hasn't logged in since the row was created). All other columns
+    are non-null per the schema's CHECK + NOT NULL constraints.
+    """
+    return User(
+        id=int(row["id"]),
+        username=row["username"],
+        password_hash=row["password_hash"],
+        created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        last_login_at=(
+            Timestamp(dt=datetime.fromisoformat(row["last_login_at"]))
+            if row["last_login_at"]
+            else None
+        ),
     )

@@ -294,4 +294,19 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_provider_model
     ON llm_calls(provider, model, timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_role
     ON llm_calls(role, timestamp);
+
+-- Stage 7.1 — operator accounts for the Phase 7 web UI (ADR-017).
+-- v1 has one row in production; the UNIQUE(username) index supports
+-- the login-lookup path. password_hash is the $2b$-prefixed bcrypt
+-- output (~60 chars); the plaintext password is NEVER stored
+-- anywhere. The CHECK guard catches "empty hash" misuse at the SQL
+-- layer; Pydantic's min_length on User.password_hash is the
+-- primary defense.
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL CHECK (length(password_hash) > 0),
+    created_at      TEXT NOT NULL,
+    last_login_at   TEXT
+);
 """
