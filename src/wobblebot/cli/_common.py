@@ -32,6 +32,7 @@ sentinel ``None`` values.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -167,3 +168,53 @@ async def notify(
             "notification emit failed; continuing",
             extra={"title": title, "error": str(exc)},
         )
+
+
+async def run_poll_loop(
+    do_one_cycle: Callable[[], Any],
+    *,
+    interval_seconds: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Run ``do_one_cycle`` on a fixed interval until ``stop_event`` is set.
+
+    Shared shape for the five long-running CLI daemons (``cli/observe``,
+    ``cli/news``, ``cli/advise``, ``cli/harvest``, plus ``cli/operator``'s
+    notification forwarder + TTL expirer). Each daemon previously
+    hand-rolled the same body — Stage 8.0.C consolidates so shutdown
+    discipline lives in one place.
+
+    Loop semantics:
+
+    - Outer condition: ``while not stop_event.is_set()``.
+    - Per-cycle: ``await do_one_cycle()`` — any exception propagates
+      back to the caller. The caller's ``try/finally`` handles
+      session-end logging; per-cycle fault isolation is the
+      caller's job (e.g. ``cli/observe`` catches ``WobbleBotPortError``
+      inside ``_poll_prices`` itself).
+    - Interruptible sleep: ``await asyncio.wait_for(stop_event.wait(),
+      timeout=interval_seconds)``. SIGINT/SIGTERM sets the event;
+      the sleep returns immediately and the next loop check exits.
+      Without the interruptible sleep an operator pressing Ctrl-C
+      mid-interval would wait up to ``interval_seconds`` for clean
+      shutdown — unacceptable for a 1-hour harvest interval.
+
+    Signal handler installation stays at the CLI level — each daemon
+    owns its own ``signal.SIGINT`` / ``signal.SIGTERM`` wiring that
+    flips the shared ``stop_event``.
+
+    Args:
+        do_one_cycle: Async callable that does one tick of work. Its
+            return value is ignored; raising propagates.
+        interval_seconds: Seconds between consecutive cycle starts
+            (measured from cycle-finish to next cycle-start, since
+            the sleep happens after the work).
+        stop_event: External shutdown signal. Set by the daemon's
+            signal handler.
+    """
+    while not stop_event.is_set():
+        await do_one_cycle()
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            pass

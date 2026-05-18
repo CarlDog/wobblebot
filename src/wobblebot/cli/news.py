@@ -42,7 +42,13 @@ from typing import Any
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    run_poll_loop,
+)
 from wobblebot.config.cli import NewsConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -135,19 +141,22 @@ async def _run_loop(
             "db_path": news.db,
         },
     )
-    try:
-        while not stop_event.is_set():
-            for source in sources:
-                if stop_event.is_set():
-                    break
-                fetched, saved = await _poll_source(source, storage)
-                total_fetched += fetched
-                total_saved += saved
 
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-            except asyncio.TimeoutError:
-                pass
+    async def _one_cycle() -> None:
+        nonlocal total_fetched, total_saved
+        for source in sources:
+            if stop_event.is_set():
+                break
+            fetched, saved = await _poll_source(source, storage)
+            total_fetched += fetched
+            total_saved += saved
+
+    try:
+        await run_poll_loop(
+            _one_cycle,
+            interval_seconds=interval_seconds,
+            stop_event=stop_event,
+        )
     finally:
         _LOGGER.info(
             "news session end",

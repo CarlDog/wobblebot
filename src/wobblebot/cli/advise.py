@@ -53,6 +53,7 @@ from wobblebot.cli._common import (
     identity,
     load_operator_env,
     parse_symbol_csv,
+    run_poll_loop,
 )
 from wobblebot.config.advisor import (
     AdvisorConfig,
@@ -441,34 +442,38 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             "model_name": model_name,
         },
     )
+
+    async def _one_cycle() -> None:
+        nonlocal sweeps_run, cycles_run, cycles_succeeded
+        sweeps_run += 1
+        for symbol in symbols:
+            if stop_event.is_set():
+                break
+            cycles_run += 1
+            # Per-symbol cycle errors are surfaced inside _run_cycle
+            # (logged with structured fields, returns False). One
+            # bad coin can't kill the sweep — Stage 2.4 discipline.
+            ok = await _run_cycle(
+                advisor,
+                summary_builder,
+                advise_storage,
+                symbol=symbol,
+                metrics_lookback=metrics_lookback,
+                news_lookback=news_lookback,
+                news_limit=news_limit,
+                news_match_coin=news_match_coin,
+                current_grid=current_grids[symbol.base],
+                model_name=model_name,
+            )
+            if ok:
+                cycles_succeeded += 1
+
     try:
-        while not stop_event.is_set():
-            sweeps_run += 1
-            for symbol in symbols:
-                if stop_event.is_set():
-                    break
-                cycles_run += 1
-                # Per-symbol cycle errors are surfaced inside _run_cycle
-                # (logged with structured fields, returns False). One
-                # bad coin can't kill the sweep — Stage 2.4 discipline.
-                ok = await _run_cycle(
-                    advisor,
-                    summary_builder,
-                    advise_storage,
-                    symbol=symbol,
-                    metrics_lookback=metrics_lookback,
-                    news_lookback=news_lookback,
-                    news_limit=news_limit,
-                    news_match_coin=news_match_coin,
-                    current_grid=current_grids[symbol.base],
-                    model_name=model_name,
-                )
-                if ok:
-                    cycles_succeeded += 1
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-            except asyncio.TimeoutError:
-                pass
+        await run_poll_loop(
+            _one_cycle,
+            interval_seconds=interval_seconds,
+            stop_event=stop_event,
+        )
     finally:
         _LOGGER.info(
             "advise session end",

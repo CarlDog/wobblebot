@@ -48,6 +48,7 @@ from wobblebot.cli._common import (
     identity,
     load_operator_env,
     notify,
+    run_poll_loop,
 )
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -223,16 +224,20 @@ async def _run_loop(  # pylint: disable=too-many-arguments
             "persistence_enabled": storage is not None,
         },
     )
+
+    async def _one_cycle() -> None:
+        nonlocal ticks_run, ticks_succeeded
+        ticks_run += 1
+        ok = await _run_cycle(adapter, config=config, storage=storage, notifier=notifier)
+        if ok:
+            ticks_succeeded += 1
+
     try:
-        while not stop_event.is_set():
-            ticks_run += 1
-            ok = await _run_cycle(adapter, config=config, storage=storage, notifier=notifier)
-            if ok:
-                ticks_succeeded += 1
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-            except asyncio.TimeoutError:
-                pass
+        await run_poll_loop(
+            _one_cycle,
+            interval_seconds=interval_seconds,
+            stop_event=stop_event,
+        )
     finally:
         _LOGGER.info(
             "harvest session end",

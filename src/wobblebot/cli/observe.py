@@ -47,6 +47,7 @@ from wobblebot.cli._common import (
     identity,
     load_operator_env,
     parse_symbol_csv,
+    run_poll_loop,
 )
 from wobblebot.config.cli import ObserveConfig
 from wobblebot.config.kraken import KrakenConfig
@@ -130,23 +131,26 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
             "db_path": observe.db,
         },
     )
+
+    async def _one_cycle() -> None:
+        nonlocal price_polls, balance_polls, last_balance_poll
+        persisted = await _poll_prices(adapter, storage, list(observe.symbols))
+        price_polls += persisted
+
+        if balance_interval_seconds > 0:
+            elapsed_since_balance = time.monotonic() - last_balance_poll
+            if elapsed_since_balance >= balance_interval_seconds:
+                persisted_b = await _poll_balances(adapter, storage)
+                if persisted_b > 0:
+                    balance_polls += 1
+                last_balance_poll = time.monotonic()
+
     try:
-        while not stop_event.is_set():
-            persisted = await _poll_prices(adapter, storage, list(observe.symbols))
-            price_polls += persisted
-
-            if balance_interval_seconds > 0:
-                elapsed_since_balance = time.monotonic() - last_balance_poll
-                if elapsed_since_balance >= balance_interval_seconds:
-                    persisted_b = await _poll_balances(adapter, storage)
-                    if persisted_b > 0:
-                        balance_polls += 1
-                    last_balance_poll = time.monotonic()
-
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=price_interval_seconds)
-            except asyncio.TimeoutError:
-                pass
+        await run_poll_loop(
+            _one_cycle,
+            interval_seconds=price_interval_seconds,
+            stop_event=stop_event,
+        )
     finally:
         _LOGGER.info(
             "observe session end",

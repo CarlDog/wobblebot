@@ -59,7 +59,7 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.adapters.openai import OpenAIAssistantAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, load_operator_env
+from wobblebot.cli._common import add_config_args, load_operator_env, run_poll_loop
 from wobblebot.config.cli import OperatorConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -182,15 +182,14 @@ async def _forwarder_loop(
         "notification forwarder started",
         extra={"channel_id": channel_id, "poll_seconds": poll_seconds},
     )
+
+    async def _one_cycle() -> None:
+        await _forward_pending_notifications(
+            storage=storage, transport=transport, channel_id=channel_id
+        )
+
     try:
-        while not stop_event.is_set():
-            await _forward_pending_notifications(
-                storage=storage, transport=transport, channel_id=channel_id
-            )
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
-            except asyncio.TimeoutError:
-                pass
+        await run_poll_loop(_one_cycle, interval_seconds=poll_seconds, stop_event=stop_event)
     finally:
         _LOGGER.info("notification forwarder stopped")
 
@@ -252,13 +251,12 @@ async def _ttl_expirer_loop(
 ) -> None:
     """Background task: scan + expire + sleep, until ``stop_event`` is set."""
     _LOGGER.info("ttl expirer started", extra={"poll_seconds": poll_seconds})
+
+    async def _one_cycle() -> None:
+        await _expire_stale_pending_commands(storage)
+
     try:
-        while not stop_event.is_set():
-            await _expire_stale_pending_commands(storage)
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
-            except asyncio.TimeoutError:
-                pass
+        await run_poll_loop(_one_cycle, interval_seconds=poll_seconds, stop_event=stop_event)
     finally:
         _LOGGER.info("ttl expirer stopped")
 
