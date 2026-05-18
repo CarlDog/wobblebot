@@ -10,6 +10,70 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.0 close — Deferred Phase-5-audit refactors (2026-05-18)
+
+Three medium refactors landed in sub-slices A → B → C, with this
+close commit (8.0.D) doing the doc updates.
+
+**Why three sub-slices, why now.** The Phase 5 close audit punch
+list surfaced R5 (split ports/operator.py), R3 (storage-fallback
+helper), R2 (poll-loop helper). Each was queued for proper
+planning rather than silent reworking during the audit. After
+Phase 6 + Phase 7 + Phase 7.6 polish proved the patterns kept
+accreting — and with Phase 8.1's reliability work about to edit
+shutdown discipline across seven CLIs — it was time to consolidate.
+
+**Pure code organization. Zero behavior change.** Every existing
+test stays green. Every existing import path keeps resolving.
+No operator-facing surface changes; no new CLIs; no config
+changes.
+
+**8.0.A — ports/operator.py split.** 734-line file became three
+focused modules. `ports/operator_intents.py` (367 lines) carries
+Command + Query + Intent variants plus the three discriminated
+unions. `ports/operator_results.py` (302 lines) carries per-query
+Result types + entry types + QueryResult + CommandResult. The
+surviving `ports/operator.py` (244 lines) keeps the OperatorPort
+ABC + PendingCommand + module-level re-exports preserving every
+existing import path. All 41 backward-compat names resolve from
+`wobblebot.ports.operator`.
+
+**8.0.B — degraded-result factories.** Three module-level factory
+functions in `services/operator_service.py`
+(`_empty_recent_suggestions`, `_empty_recent_news`,
+`_empty_recent_proposals`) centralize the "what does graceful-
+degrade look like" contract. Each query handler's degraded-path
+shrinks from ~5 lines of inline result construction to one
+`return _empty_X(query)`. `HarvesterStatusQuery` stays inline —
+its degraded path is genuinely different (still fetches balance +
+classifies band). 6 new factory tests.
+
+**8.0.C — `cli/_common.run_poll_loop` helper.** Six loops across
+five daemons (cli/observe, cli/news, cli/advise, cli/harvest, plus
+cli/operator's notification forwarder + TTL expirer) used to
+hand-roll the same `while not stop_event.is_set(): await do_one();
+await wait_for(stop, interval)` body. They now share one helper.
+Each migration is structural: the inner per-cycle work moves into
+an async closure so the surrounding scope's counter increments
+and mid-sweep stop_event checks stay in place; the helper wraps
+the loop. Session-start/end try/finally stays at the call site
+since metrics shape varies. **Phase 8.1's reliability refinement
+now has one edit point for shutdown-discipline changes instead
+of seven** — the persistence-on-cancel fix queued in the
+8.1 backlog (`docs/planning/roadmap.md` Stage 8.1) fits this
+pattern. 5 new helper tests.
+
+**Numbers.** 1711 unit tests pass (was 1700 at Stage 8.0 entry,
++11 across A + B + C). mypy clean across 100 src files (was 98).
+pylint **10.00/10** maintained throughout. black + isort clean.
+**Stage 8.0 real-money cost: $0.00**; running project cost stays
+at **$0.085018** unchanged from Phase 6 close.
+
+Stage 8.1 (Reliability & Recovery) follows. Existing backlog:
+the persistence-on-cancel fix surfaced 2026-05-18 in the
+shadow-session repro; the broader stale-open reconciliation
+question across cli/live + cli/shadow startup paths.
+
 ### Phase 8 kickoff — Hardening & v1.0 Release (2026-05-18)
 
 After Phase 7 + Stage 7.6 polish closed, Phase 8 needed a design
