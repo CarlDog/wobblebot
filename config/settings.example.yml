@@ -136,6 +136,11 @@ live:
   max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 5.0           # USD-balance delta abort threshold
   log_format: plain                   # plain | json
+  # Stage 5.4: wires cli/live to the operator interaction layer. With
+  # this set, cli/live writes session/fill/cap notifications to the
+  # notifications table AND polls pending_commands WHERE status='approved'
+  # (the ADR-002 firewall). Set to null to run Discord-ignorant.
+  operator_db: "data/wobblebot-operator.db"
 
 # ============================================================================
 # Per-CLI: shadow (cli/shadow)
@@ -334,6 +339,10 @@ advisor:
 harvest:
   db: "data/wobblebot-harvest.db"       # transfer_proposals lands here
   log_format: plain                     # plain | json
+  # Stage 5.5: wires cli/harvest to the notifications table so proposal
+  # generated / withdrawal failed / withdrawal executed events surface
+  # to Discord via cli/operator's forwarder. Set to null to run silent.
+  operator_db: "data/wobblebot-operator.db"
 
 # ============================================================================
 # Harvester (Phase 4 — Stage 4.1 schema landed; operational from 4.2+)
