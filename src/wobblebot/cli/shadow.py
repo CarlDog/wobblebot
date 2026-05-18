@@ -79,6 +79,7 @@ from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.reconciler import apply_reconciliation
 
 _LOGGER = logging.getLogger("wobblebot.cli.shadow")
 
@@ -324,6 +325,30 @@ async def _main_async(config: WobbleBotConfig) -> int:
         taker_fee_rate=config.shadow.taker_fee_rate,
     )
     engine = GridEngine(shadow_adapter, storage, config.grid, config.safety)
+
+    # Stage 8.1.C: startup reconciliation per ADR-018. Same shape
+    # as cli/live's path; the synthetic ledger is authoritative for
+    # shadow.
+    configured_symbols = frozenset(s.base.upper() for s in config.shadow.symbols)
+    try:
+        report = await apply_reconciliation(
+            shadow_adapter, storage, configured_symbols=configured_symbols
+        )
+    except WobbleBotPortError as exc:
+        _LOGGER.error(
+            "startup reconciliation failed; refusing to start",
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return 1
+    if report.storage_canceled_count or report.orphan_count:
+        _LOGGER.info(
+            "startup reconciliation complete (shadow)",
+            extra={
+                "storage_canceled": report.storage_canceled_count,
+                "storage_persistence_failures": report.storage_persistence_failures,
+                "orphan_count": report.orphan_count,
+            },
+        )
 
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)

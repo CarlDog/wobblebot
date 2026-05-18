@@ -68,6 +68,7 @@ from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.operator_service import OperatorService
+from wobblebot.services.reconciler import apply_reconciliation
 
 _LOGGER = logging.getLogger("wobblebot.cli.live")
 
@@ -494,6 +495,32 @@ async def _main_async(config: WobbleBotConfig) -> int:
         _LOGGER.info(
             "operator interaction enabled",
             extra={"operator_db": config.live.operator_db},
+        )
+
+    # Stage 8.1.C: startup reconciliation per ADR-018. Run between
+    # storage open + adapter construct and engine first tick. Refuses
+    # to start if the adapter is unreachable — booting against
+    # unreconciled state is what this stage exists to prevent. The
+    # configured-symbols filter narrows orphan logging to the engine's
+    # actual trade set (operator manual orders on other coins stay
+    # silent per stage-8.1-design.md decision 8).
+    configured_symbols = frozenset(s.base.upper() for s in config.live.symbols)
+    try:
+        report = await apply_reconciliation(adapter, storage, configured_symbols=configured_symbols)
+    except WobbleBotPortError as exc:
+        _LOGGER.error(
+            "startup reconciliation failed; refusing to start",
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return 1
+    if report.storage_canceled_count or report.orphan_count:
+        _LOGGER.info(
+            "startup reconciliation complete",
+            extra={
+                "storage_canceled": report.storage_canceled_count,
+                "storage_persistence_failures": report.storage_persistence_failures,
+                "orphan_count": report.orphan_count,
+            },
         )
 
     stop_event = asyncio.Event()
