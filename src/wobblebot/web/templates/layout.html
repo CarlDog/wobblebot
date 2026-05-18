@@ -14,7 +14,7 @@
         <a href="/audit">Audit</a>
       </nav>
       <form class="logout" method="post" action="/auth/logout">
-        {# CSRF token will land here in Stage 7.1.C. #}
+        {{ csrf_input(request) }}
         <button type="submit">Sign out</button>
       </form>
     </div>

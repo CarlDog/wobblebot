@@ -1,0 +1,27 @@
+{# Login form — extends base.html (not layout.html) so the nav chrome
+   doesn't appear before authentication. CSRF token comes from the
+   ``csrf_input`` Jinja2 global registered in app.py. #}
+{% extends "base.html" %}
+
+{% block title %}Sign in — WobbleBot{% endblock %}
+
+{% block body %}
+<div class="login-shell">
+  <div class="login-card">
+    <h1>WobbleBot</h1>
+    {% if error %}
+      <div class="error" role="alert">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/auth/login" autocomplete="on">
+      {{ csrf_input(request) }}
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" required autofocus
+             autocomplete="username" maxlength="64">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required
+             autocomplete="current-password">
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
