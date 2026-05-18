@@ -10,6 +10,69 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 7.6 — cli/recalibrate (operator-initiated balance scaling) (2026-05-18)
+
+Polish slice inserted between Phase 7 close and Phase 8 start. Doesn't
+reopen Phase 7's commitments; adds operational ergonomics on top.
+**14th operator entry point:** `python -m wobblebot.cli.recalibrate`.
+
+The operator's settings.yml encodes a policy calibrated for a
+particular starting balance. When the balance moves (drawdown,
+intentional scale-down for a small-balance experiment), every
+USD-denominated knob should move proportionally to keep the same risk
+posture. Stage 7.6 is the math + CLI that does it.
+
+**7.6.A — Calibrator service.** New
+`services/calibrator.recalibrate()` pure function takes current
+balance + target balance + current `WobbleBotConfig`, computes the
+scale factor (`target/current`), walks every USD knob in the config,
+and emits a frozen `RecalibrationProposal` enumerating per-knob
+deltas. Scales:
+
+- `grid.default.order_size_usd` + every `grid.coins.<COIN>.order_size_usd`
+- `safety.max_{total,daily,per_coin}_exposure_usd`
+- `safety.emergency_stop.min_exchange_balance_usd` (skipped when 0)
+- `live.max_session_loss_usd`
+- All four `harvester.*_usd` thresholds
+
+Does NOT scale (policy invariants, not money): spacing percentages,
+level counts, `max_orders_per_coin`, `max_loss_percentage`,
+`max_runtime_minutes`, the entire `shadow.*` block. Quantizes to cents.
+Preserves the harvester `min<topup<surplus` ordering invariant since
+scaling by a positive ratio preserves ordering. 22 new unit tests.
+
+**7.6.B — `cli/recalibrate` dry-run + commit.** Default reads live
+Kraken USD balance via the read-only `KRAKEN_API_KEY` (same path
+`cli/status` uses); `--current-balance` overrides for what-if analysis
+without hitting the API. Dry-run prints a per-knob delta table;
+`--commit` rewrites `settings.yml` via the new
+`apply_dotted_overrides()` companion to `apply_grid_overrides()` in
+`services/settings_rewriter` — round-trips ruamel.yaml preserving
+every comment + quoting style + atomic temp-file-rename. Refuses to
+create new keys (a typo'd path raises rather than silently appending
+a new field).
+
+Exit codes: 0 dry-run/commit success; 1 Kraken balance read failed;
+2 config/argparse/rewriter refusal.
+
+Per ADR-012's auto-tuning gate: this is operator-initiated (explicit
+CLI invocation), not LLM-initiated, so the gate's bounds don't apply.
+The gate exists to defend against LLM proposals slipping through, not
+against the operator's own intent.
+
+18 new unit tests. Live verification against operator's real $99.92
+balance: `--target-balance 10` produces 14 changes including
+`grid.default.order_size_usd $10→$1.00`,
+`harvester.surplus_threshold_usd $500→$50.04`. Kraken balance read
+verified working end-to-end.
+
+**Numbers.** 1694 unit tests pass (was 1656 at Phase 7 close, +38
+across the two sub-slices); mypy clean across 98 src files; pylint
+**10.00/10**; black + isort clean. **Stage 7.6 total real-money cost:
+$0.00** (read-only Kraken balance read; no orders, no withdrawals).
+Running project cost stays at **$0.085018** unchanged from Phase 6
+close.
+
 ### Phase 7 close — Web UI / Dashboard (2026-05-18)
 
 Phase 7 complete. Five stages closed across two evenings (7.1 →
