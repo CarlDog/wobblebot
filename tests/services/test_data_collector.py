@@ -144,6 +144,9 @@ class _FailingStorage(StoragePort):
     ):
         raise StorageError(self._message)
 
+    async def delete_price_snapshots(self, *, before: datetime) -> int:
+        raise StorageError(self._message)
+
     async def save_news_item(self, item):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

@@ -725,6 +725,20 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load price snapshots: {exc}") from exc
 
+    async def delete_price_snapshots(self, *, before: datetime) -> int:
+        conn = self._require_conn()
+        cutoff_iso = before.astimezone(UTC).isoformat()
+        try:
+            async with conn.execute(
+                "DELETE FROM price_snapshots WHERE observed_at <= ?",
+                (cutoff_iso,),
+            ) as cursor:
+                deleted = cursor.rowcount
+            await conn.commit()
+            return int(deleted or 0)
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to delete price snapshots: {exc}") from exc
+
     async def get_grid_state(self, symbol: Symbol) -> GridState | None:
         conn = self._require_conn()
         try:

@@ -491,6 +491,29 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
         pass
 
+    @abstractmethod
+    async def delete_price_snapshots(self, *, before: datetime) -> int:
+        """Delete price snapshots older than ``before`` (Stage 8.2.B).
+
+        Called by ``services/maintenance.prune_price_snapshots`` AFTER
+        a successful archive write — the maintenance worker's
+        archive-then-delete discipline guarantees no row is dropped
+        until the CSV write has succeeded.
+
+        Args:
+            before: Inclusive upper bound on ``observed_at``. Snapshots
+                with ``observed_at <= before`` are deleted; newer ones
+                stay. Must be tz-aware.
+
+        Returns:
+            Count of rows deleted.
+
+        Raises:
+            StorageError: If the DELETE fails. Caller treats this as
+                "archive succeeded but DB still has the rows" — the
+                operator's next maintenance run retries; no data loss.
+        """
+
     # Pending command operations (Stage 5.4 — Operator interaction)
     @abstractmethod
     async def save_pending_command(self, pending: PendingCommand) -> None:
