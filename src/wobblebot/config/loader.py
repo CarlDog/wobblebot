@@ -25,6 +25,7 @@ from wobblebot.config.cli import (
     AdviseConfig,
     HarvestConfig,
     LiveConfig,
+    MaintenanceConfig,
     NewsConfig,
     ObserveConfig,
     OperatorConfig,
@@ -68,6 +69,7 @@ class WobbleBotConfig(BaseModel):
     operator: OperatorConfig | None = None
     llm: LLMConfig | None = None
     web: WebConfig | None = None
+    maintenance: MaintenanceConfig | None = None
     profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     class Config:

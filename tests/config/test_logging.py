@@ -21,12 +21,24 @@ def _reset_wobblebot_logger():
     configure_logging is idempotent for *its* own handler, but tests
     can still leak handlers added by other code paths. Snapshot and
     restore.
+
+    Stage 8.2.D: any TimedRotatingFileHandler the test installed
+    keeps an open file handle that needs explicit close before
+    restoration — otherwise pytest's unraisable-exception hook
+    catches the leak on session teardown.
     """
     logger = logging.getLogger("wobblebot")
     original_handlers = logger.handlers[:]
     original_level = logger.level
     original_propagate = logger.propagate
     yield
+    # Close any handlers the test added so file descriptors don't leak.
+    for handler in logger.handlers:
+        if handler not in original_handlers:
+            try:
+                handler.close()
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
     logger.handlers = original_handlers
     logger.level = original_level
     logger.propagate = original_propagate
@@ -140,3 +152,49 @@ class TestConfigureLoggingContract:
         output = buf.getvalue()
         assert "should be filtered" not in output
         assert "[WARNING] wobblebot.test: should appear" in output
+
+
+class TestRotatingFileHandler:
+    """Stage 8.2.D — opt-in rotating-file log destination."""
+
+    def test_no_file_path_keeps_stdout_only(self, tmp_path):
+        """Default (rotating_file_path=None) doesn't create a file."""
+        buf = io.StringIO()
+        configure_logging(log_format="plain", stream=buf)
+        logger = logging.getLogger("wobblebot.test")
+        logger.info("stream-only")
+        # No file written anywhere under tmp_path.
+        files = list(tmp_path.iterdir())
+        assert files == []
+
+    def test_writes_to_rotating_file_when_set(self, tmp_path):
+        log_path = tmp_path / "wobblebot.log"
+        buf = io.StringIO()
+        configure_logging(log_format="plain", stream=buf, rotating_file_path=log_path)
+        logger = logging.getLogger("wobblebot.test")
+        logger.info("hello to the rotated log")
+        # File exists + has the message (handler flushes on emit).
+        for h in logging.getLogger("wobblebot").handlers:
+            h.flush()
+        assert log_path.exists()
+        text = log_path.read_text(encoding="utf-8")
+        assert "hello to the rotated log" in text
+        # Stream handler still got it too.
+        assert "hello to the rotated log" in buf.getvalue()
+
+    def test_creates_parent_dir(self, tmp_path):
+        nested = tmp_path / "logs" / "deep" / "maintenance.log"
+        assert not nested.parent.exists()
+        configure_logging(rotating_file_path=nested)
+        assert nested.parent.exists()
+
+    def test_idempotent_replaces_rotating_handler(self, tmp_path):
+        """Calling twice replaces the rotating handler (no stacking)."""
+        log1 = tmp_path / "first.log"
+        log2 = tmp_path / "second.log"
+        configure_logging(rotating_file_path=log1)
+        configure_logging(rotating_file_path=log2)
+        root = logging.getLogger("wobblebot")
+        rotating_handlers = [h for h in root.handlers if h.get_name() == "wobblebot.rotating-file"]
+        # Only one rotating handler installed.
+        assert len(rotating_handlers) == 1

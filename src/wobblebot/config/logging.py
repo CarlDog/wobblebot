@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import IO, Literal
 
 LogFormat = Literal["plain", "json"]
@@ -64,12 +66,16 @@ class JsonFormatter(logging.Formatter):
 
 
 _PLAIN_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_ROTATING_HANDLER_NAME = "wobblebot.rotating-file"
 
 
-def configure_logging(
+def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     level: str | None = None,
     log_format: LogFormat | None = None,
     stream: IO[str] | None = None,
+    rotating_file_path: Path | None = None,
+    rotate_when: str = "midnight",
+    rotate_backup_count: int = 7,
 ) -> None:
     """Configure the root logger for the wobblebot package.
 
@@ -80,9 +86,21 @@ def configure_logging(
             object per line). Defaults to ``$WOBBLEBOT_LOG_FORMAT`` or
             ``"plain"``.
         stream: Output stream. Defaults to ``sys.stderr``.
+        rotating_file_path: Optional path for a rotating-file log
+            handler (Stage 8.2.D). When set, a
+            ``TimedRotatingFileHandler`` is added alongside the
+            stderr stream handler — the operator gets both stdout
+            tailability AND a persisted file with retention. Parent
+            directory is created if missing.
+        rotate_when: Rotation trigger string passed to
+            ``TimedRotatingFileHandler``. Default ``"midnight"``
+            rotates daily at UTC midnight. ``"H"`` (hourly), ``"D"``
+            (daily), ``"W0"``–``"W6"`` (weekly) all supported.
+        rotate_backup_count: Number of rotated backups to keep.
+            Default 7 = one week of daily rotated logs.
 
-    Idempotent. Calling twice replaces the existing handler rather
-    than stacking a second one.
+    Idempotent. Calling twice replaces the existing handlers rather
+    than stacking new ones.
     """
     resolved_level = (level or os.environ.get("WOBBLEBOT_LOG_LEVEL") or "INFO").upper()
     resolved_format: LogFormat = (
@@ -105,8 +123,37 @@ def configure_logging(
     root = logging.getLogger("wobblebot")
     root.setLevel(resolved_level)
 
-    # Idempotency: drop any prior handler we installed before adding the new one.
-    root.handlers = [h for h in root.handlers if h.get_name() != _HANDLER_NAME]
+    # Idempotency: drop any prior handlers we installed before
+    # adding new ones. Both the stream handler AND the rotating
+    # file handler are tracked by named handlers so re-runs replace
+    # cleanly. Close() FIRST so the rotating handler's open file
+    # descriptor doesn't leak across the replacement.
+    kept_handlers = []
+    for h in root.handlers:
+        if h.get_name() in (_HANDLER_NAME, _ROTATING_HANDLER_NAME):
+            try:
+                h.close()
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+        else:
+            kept_handlers.append(h)
+    root.handlers = kept_handlers
     root.addHandler(handler)
+
+    # Optional rotating-file handler (Stage 8.2.D). Added ALONGSIDE
+    # the stream handler — the operator gets both streams.
+    if rotating_file_path is not None:
+        rotating_file_path.parent.mkdir(parents=True, exist_ok=True)
+        rotating = logging.handlers.TimedRotatingFileHandler(
+            filename=str(rotating_file_path),
+            when=rotate_when,
+            backupCount=rotate_backup_count,
+            encoding="utf-8",
+            utc=True,
+        )
+        rotating.setFormatter(formatter)
+        rotating.set_name(_ROTATING_HANDLER_NAME)
+        root.addHandler(rotating)
+
     # Do not propagate to the stdlib root logger - we own our subtree's output.
     root.propagate = False

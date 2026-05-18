@@ -520,6 +520,76 @@ class WebConfig(BaseModel):
         frozen = True
 
 
+# ---------------------------------------------------------------------------
+# Maintenance worker (Phase 8 — Stage 8.2)
+# ---------------------------------------------------------------------------
+
+
+class MaintenanceConfig(BaseModel):
+    """Phase 8.2 — operator-tunable knobs for ``cli/maintenance``.
+
+    Three concurrent scheduled tasks (vacuum / prune+archive /
+    backup) each pull their cadence from ``schedules:`` (keys
+    ``maintenance_vacuum`` / ``maintenance_prune`` /
+    ``maintenance_backup``); this block holds the per-task
+    parameters those cadences operate against.
+
+    Per ``stage-8.2-design.md`` decision 7 the maintenance daemon
+    is operator-started — not auto-spawned by any other daemon.
+
+    Per decisions 4 + 5 only local backups ship in v1.0 with a
+    ``keep_n_daily`` retention.
+
+    Per decision 3 only ``price_snapshots`` gets pruned in v1.0;
+    every audit table (``orders``, ``trades``, ``llm_calls``, etc.)
+    stays forever.
+    """
+
+    # ---- DBs to maintain ---- #
+
+    # List of (db_path, "stem") pairs. The CLI iterates these for
+    # each scheduled task. Default empty list = no DBs configured;
+    # daemon refuses to start.
+    target_dbs: list[str] = Field(default_factory=list)
+
+    # ---- Prune ---- #
+
+    # Snapshots older than this many days get archived + deleted
+    # from price_snapshots. Default 30 days matches the typical
+    # advisor-metrics rolling window.
+    prune_price_snapshots_older_than_days: int = Field(default=30, gt=0, le=3650)
+
+    # Source DB for price snapshots. Typically the same as
+    # observe.db. The maintenance daemon won't infer this from
+    # observe; operator passes explicitly so multi-instance
+    # deployments stay clear.
+    prune_source_db: str | None = None
+
+    # Destination directory for archive CSVs.
+    archive_dir: str = "data/archive"
+
+    # ---- Backup ---- #
+
+    # Destination directory for SQLite .backup output.
+    backup_dir: str = "data/backups"
+
+    # How many newest daily backups to keep per source DB. Older
+    # backups are deleted after each backup write.
+    keep_n_daily_backups: int = Field(default=7, ge=0, le=365)
+
+    # ---- Logging ---- #
+
+    log_format: LogFormat = "plain"
+
+    # Optional rotating-file log destination. When set, configure_logging
+    # adds a TimedRotatingFileHandler alongside stderr. Default None
+    # keeps stdout-only behavior.
+    log_file_path: str | None = None
+
+    class Config:
+        frozen = True
+
+
 __all__ = [
     "AdviseConfig",
     "AssistantLLMConfig",
@@ -527,6 +597,7 @@ __all__ = [
     "HarvestConfig",
     "LiveConfig",
     "LogFormat",
+    "MaintenanceConfig",
     "NewsConfig",
     "ObserveConfig",
     "OperatorAuthConfig",
