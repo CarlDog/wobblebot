@@ -10,6 +10,58 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Phase 7 kickoff — Web UI / Dashboard (ADR-016 + ADR-017) (2026-05-17)
+
+After Phase 6 closed, Phase 7 needed two architectural decisions
+ratified before code, mirroring the Phase 5 + Phase 6 kickoff
+pattern (ADR-013 + Phase 5 design doc; ADR-014/015 + Phase 6
+design doc).
+
+**ADR-016 — Web UI architectural commitments.** FastAPI + Jinja2 +
+HTMX (no SPA / no Node / no build step). Server-rendered HTML
+with HTMX for partial updates where useful. Routes consume the
+existing ports via DI; **no business logic in route handlers**.
+Read-mostly with ADR-013-firewalled mutations: pause/resume/stop
+buttons create `PendingCommand` rows in `awaiting_confirmation`
+(same state machine as Discord's ✅/❌); a UI-side two-click
+confirm flow transitions to `approved`. **The ADR-002 firewall
+stays intact** — `cli/live`'s `WHERE status='approved'` poll
+remains the only path from intent to engine. New `cli/web` daemon
+runs uvicorn bound to 127.0.0.1:8000 by default; operator opens
+to LAN via their own reverse proxy. v1 mutation catalog: Pause,
+Resume, Stop (per-symbol pause/resume + global stop).
+
+**ADR-017 — Web UI authentication.** Session cookies (Starlette
+`SessionMiddleware` + `itsdangerous`-signed) + single-operator
+bcrypt-hashed password (cost factor 12) in a new `users` SQLite
+table in operator.db. Password seeded via `cli/web create-user`
+subcommand (interactive stdin prompt; refuses duplicate usernames).
+Login form + CSRF protection via synchronizer-token middleware.
+Rate-limited login: 5 attempts / 60s per IP. Session lifetime
+7 days sliding. Cookie attributes: HttpOnly + SameSite=lax +
+Secure (set when X-Forwarded-Proto=https). TLS is the operator's
+reverse proxy (no bundled TLS).
+
+**Stage 7.1 design** at `docs/planning/stage-7.1-design.md` slices
+the substrate work into five sub-slices: 7.1.A users table +
+domain model + StoragePort; 7.1.B WebConfig + web infrastructure
+scaffolding; 7.1.C login/logout/session/CSRF + bcrypt; 7.1.D
+`cli/web` daemon + `--create-user` + three stub pages; 7.1.E
+stage close. ~10-12 hours; ~80-100 new unit tests planned.
+
+**Roadmap rewrite** drops the "provisional" tag from Phase 7 and
+expands the five stages (7.1 skeleton+auth → 7.2 cost+status +
+mutation buttons → 7.3 advisor+harvester → 7.4 news+audit → 7.5
+close). CLAUDE.md Project Status moves Phase 7 from "Next:" to
+"in progress 2026-05-17."
+
+**Six new runtime dependencies will land in Stage 7.1** —
+`fastapi`, `uvicorn[standard]`, `jinja2`, `python-multipart`,
+`bcrypt`, `itsdangerous`. Biggest dep-add since Phase 5's
+`discord.py>=2.3,<3`.
+
+No code in this commit. Stage 7.1 sub-slice work follows.
+
 ### Stage 6.5 — Phase 6 integration check + close (2026-05-17)
 
 Closing stage of Phase 6. Two sub-slices: smoke-test scaffold +

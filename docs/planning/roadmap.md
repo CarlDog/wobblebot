@@ -96,9 +96,28 @@ WobbleBot’s development is organized into **five phases**, each containing **f
 - Per-role budget split (deferred per ADR-014; v2 candidate).
 - Web-UI cost dashboard (Phase 7).
 
-## Phase 7 – Web UI / Dashboard *(provisional — flesh out at Phase 6 close)*
+## Phase 7 – Web UI / Dashboard
 
-**Goal:** Web UI for observability and configuration review. FastAPI app at `src/wobblebot/web/`, sibling to `cli/`; both presentation layers consume the existing ports (no business logic in templates / routes). Tentative scope: balance + PnL + cycle dashboards; recent advisor suggestions surface; harvester proposal + transfer history; news headlines; auth shape TBD. The old Phase 5 framing for this stage lives in roadmap history (pre-2026-05-16 commit `ec7b15d`).
+**Goal:** At-a-glance browser-based observability + the most-frequent operator mutations (pause / resume / stop) without leaving the dashboard. FastAPI app at `src/wobblebot/web/`, sibling to `cli/`; both presentation layers consume the existing ports (no business logic in templates / routes). Server-rendered Jinja2 + HTMX (no SPA / no build pipeline). Session-cookie auth with bcrypt-hashed-password (single-operator v1). Read-mostly with ADR-013-firewalled mutations: pause/resume/stop buttons create `PendingCommand` rows in `awaiting_confirmation` (same state machine as Discord's ✅/❌); a two-click confirm flow transitions to `approved`. **The ADR-002 firewall stays intact** — `cli/live`'s `WHERE status='approved'` poll remains the only path from intent to engine.
+
+**Kickoff commit (2026-05-17)** ratifies ADR-016 (Web UI architectural commitments — FastAPI + Jinja2 + HTMX, port-DI in routes, mutations via `pending_commands`, `cli/web` daemon binding 127.0.0.1 by default with operator-managed reverse proxy) + ADR-017 (auth model — session cookie + bcrypt password in `operator.db`'s `users` table; CSRF synchronizer-token middleware; per-IP rate-limit on login) + `docs/planning/stage-7.1-design.md`, mirroring the Phase 5 + Phase 6 kickoff pattern.
+
+Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fastapi`, `uvicorn[standard]`, `jinja2`, `python-multipart`, `bcrypt`, `itsdangerous`. All in pyproject.toml's standard `[dependencies]` array.
+
+1. **Stage 7.1 — Web app skeleton + auth.** `src/wobblebot/web/` package: `app.py` (FastAPI factory), `middleware.py` (CSRF + rate-limit), `auth.py` (login/logout/password hashing), `dependencies.py` (FastAPI DI), `routes/auth.py`, `templates/` (Jinja2 base + login + layout), `static/` (HTMX + base.css). New `users` SQLite table in `operator.db` + `User` domain model + `StoragePort.create_user` / `get_user_by_username` / `update_user_last_login`. New `cli/web` daemon with two subcommands: `serve` (default; runs uvicorn) + `create-user` (interactive seed). Three navigable empty stub pages (`/dashboard`, `/cost`, `/audit`) prove the shell ships. **No real data yet.** Slicing in `docs/planning/stage-7.1-design.md`.
+2. **Stage 7.2 — Cost + status dashboards + mutation buttons.** Cost dashboard reads `operator.db`'s `llm_calls` (per-day rollups by provider/role, refreshed via HTMX polling every 15s). Status page reads from `cli/live`'s sources (open orders + recent fills + current grid params + balance) via the existing storage adapters + OperatorService graceful-degrade pattern. **Pause/Resume per-symbol + Emergency Stop buttons** route through `PendingCommand` rows in `awaiting_confirmation` → confirmation page → `approved`. ADR-013 firewall preserved (`cli/live`'s `WHERE status='approved'` poll is still the only mutation path).
+3. **Stage 7.3 — Advisor + harvester views.** Recent advisor suggestions page (reads `advisor_suggestions` from `advise.db`; shows recommendation per symbol + per-expert opinions + audit trail). Harvester history page (reads `transfer_proposals` + `transfer_results` from `harvest.db`; per-proposal status + transfer outcome).
+4. **Stage 7.4 — News + audit log views.** Recent news headlines (reads `news_items` from `news.db`; per-source filter + per-coin filter). Pending-commands audit log (reads `pending_commands` from `operator.db`; status filter + per-channel filter). Notifications log (reads `notifications` from `operator.db`).
+5. **Stage 7.5 — Phase 7 close + integration check.** End-to-end smoke walkthrough: start `cli/web`, log in, navigate every page, exercise the pause→confirm→approve flow against a stubbed `cli/live`, verify the HTMX-polled cards refresh. Phase 7 closing summary doc at `docs/planning/phase-7-summary.md` mirroring phase-{2,3,4,5,6}-summary.md precedent.
+
+**Explicitly out of Phase 7 scope** (each documented here so it doesn't get pulled in mid-stage):
+- Multi-user authentication / per-user permissions (Phase 8+ candidate).
+- Password reset / change-password UI (operator deletes + re-seeds via `create-user`).
+- WebSocket / SSE real-time updates (HTMX polling at 15s is sufficient).
+- Bundled TLS (operator-managed reverse proxy).
+- Custom 404 / 500 error pages with full chrome (FastAPI defaults are fine).
+- Config-editing through the UI (settings.yml is operator-edited; `cli/apply --commit` is the only mutation surface for grid params per ADR-012).
+- Web-UI-mediated trading mutations beyond pause/resume/stop (PauseAll, ResumeAll, CancelOpenOrders stay on Discord / CLI paths for v1).
 
 ## Phase 8 – Hardening & v1.0 Release *(provisional — flesh out at Phase 7 close)*
 

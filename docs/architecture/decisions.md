@@ -622,3 +622,415 @@ The shape of this decision matters because the wrong answer has compounding impl
 - ADR-013 — Operator notification pipe (where permanent failures surface).
 - ADR-009 — Config consolidation (where the per-provider env vars are documented in `.env.example`).
 
+## ADR-016 — Web UI Architectural Commitments
+**Status:** Accepted (planned for Phase 7)
+**Date:** 2026-05-17
+
+**Context:** Phase 6 closed the cloud-LLM integration; the cost ledger
+(`llm_calls`), the advisor history (`advisor_suggestions`), the
+harvester history (`transfer_proposals` + `transfer_results`), the
+news ingestion (`news_items`), the audit trail (`pending_commands`),
+the notifications log, and the trade history (`trades`) are all
+forensically complete in SQLite tables across observe.db / advise.db
+/ harvest.db / operator.db. Inspection today happens via
+``tools/show_*.py`` scripts — one per concern. That works but
+requires SSH-to-the-NAS-and-run-a-command for every check; it's
+neither at-a-glance nor browseable.
+
+Phase 7 carves off the original-Phase-5-roadmap "Dashboard" stage
+(per ADR-013's reorg) and brings it to life. The architectural
+decisions below shape every Phase 7 stage; the auth model gets its
+own ADR-017.
+
+The non-obvious decisions for a single-operator observability surface
+that also needs to support pause/resume mutations:
+
+- **What stack?** FastAPI vs Flask vs Starlette vs plain WSGI. Going
+  with FastAPI — async-native (matches every existing CLI's asyncio
+  shape), typed (matches the project's pydantic-everywhere posture),
+  dependency-injection-friendly (matches the hex-architecture
+  port-DI pattern).
+- **Templating shape?** Server-rendered Jinja2 + HTMX vs full SPA
+  (React/Vue/Svelte). For single-operator scope, server-rendered
+  HTML + targeted HTMX swaps is dramatically simpler than a SPA
+  with build pipeline, frontend state, and CORS plumbing. No Node,
+  no webpack, no separate frontend repo. Pages are full reloads
+  with HTMX where partial updates pay off.
+- **Read-only or include mutations?** Web UI mutations (operator
+  decision 2026-05-17): pause/resume per symbol + emergency stop.
+  These route through `pending_commands` (preserves the ADR-013
+  confirm-before-execute firewall) with a UI-side two-click flow
+  that mirrors Discord's ✅/❌ reaction pattern.
+- **TLS termination?** Operator-managed reverse proxy (nginx,
+  Caddy, Cloudflare Tunnel). Not bundled. FastAPI binds
+  127.0.0.1:8000 by default; operator exposes via the proxy.
+- **Real-time updates?** HTMX polling for the cost-ledger card +
+  the open-orders card (every 10-30s). No SSE / WebSocket in v1.
+- **Daemon shape?** New `cli/web` runs `uvicorn` — sibling to
+  `cli/operator`, `cli/live`, `cli/harvest`. Same per-CLI-daemon
+  pattern established by Phase 3-5.
+
+**Decision:** Adopt the following commitments for Phase 7. Stable
+across stages 7.1-7.5; revisit only via a follow-on ADR.
+
+1. **FastAPI + Jinja2 + HTMX, no SPA.** ``src/wobblebot/web/`` is
+   a sibling of ``src/wobblebot/cli/``. FastAPI app instance built
+   via a factory function (``create_app(...)`` taking config + storage
+   adapters) so tests can construct an isolated app per test.
+   Jinja2 templates live under ``src/wobblebot/web/templates/``;
+   static assets (HTMX, base CSS) under ``src/wobblebot/web/static/``.
+   No build step. No Node. No frontend bundler. HTMX is a single
+   ~14kb static file committed alongside the project's CSS.
+
+2. **Routes consume ports via DI; no business logic in handlers.**
+   FastAPI's dependency-injection system wires StoragePort /
+   OperatorService / etc. into route handlers exactly the way
+   constructor-DI wires them into ``cli/operator``. Handlers do:
+   parse request → call port method → render template. They never
+   compute metrics, aggregate data, or implement domain rules —
+   that all lives in ``services/`` or ``domain/``. Same hex rule
+   as every other presentation layer.
+
+3. **Read-mostly + ADR-013-firewalled mutations.** Every state-
+   mutating action (Pause / Resume / Stop in v1) creates a
+   ``PendingCommand`` row in ``operator.db`` with status
+   ``awaiting_confirmation``, exactly the same way ``cli/operator``
+   does. The web UI never calls ``OperatorService.dispatch_command``
+   directly — it routes through ``pending_commands`` so
+   ``cli/live``'s existing ``WHERE status='approved'`` poll
+   remains the only path from intent to engine. **The ADR-002
+   firewall is preserved unchanged.**
+
+4. **Two-click confirmation for mutations.** Clicking "Pause BTC"
+   opens a confirmation page summarizing the parsed command;
+   clicking "Confirm" transitions the row from
+   ``awaiting_confirmation`` to ``approved`` (same state machine
+   as Discord's ✅ reaction). The two-click flow keeps the
+   operator-acknowledges-twice safety property symmetric with
+   the Discord interaction layer. ❌-equivalent is a "Cancel"
+   button that transitions the row to ``rejected``.
+
+5. **v1 mutation catalog: Pause, Resume, Stop.** The most common
+   operator interactions. Less-frequent commands (PauseAll,
+   ResumeAll, CancelOpenOrders) stay on the Discord / CLI paths
+   for now; they can be added to the UI catalog later without an
+   ADR change since the mutation pattern is established.
+
+6. **HTMX polling for live cards.** The cost ledger and open-orders
+   panels refresh every 15s by default (configurable per
+   ``WebConfig.htmx_poll_seconds``). Pages don't auto-refresh
+   wholesale — only the cards that show fast-moving data poll.
+   Static-ish pages (news headlines, audit logs, advisor history)
+   are full-reload-on-navigation.
+
+7. **127.0.0.1 by default, reverse-proxied for LAN access.** The
+   FastAPI app binds to localhost only by default
+   (``WebConfig.bind_host="127.0.0.1"``). Exposing to the LAN is
+   the operator's choice and goes through their reverse proxy
+   (which also handles TLS termination + any auth-front-side
+   policies). Documented in ``.env.example`` + ``settings.example.yml``.
+
+8. **`cli/web` daemon runs uvicorn.** New CLI entry point
+   ``python -m wobblebot.cli.web``; same lifecycle shape as
+   ``cli/operator`` (signal-handled clean shutdown, structured
+   logging, ``--config`` / ``--profile`` flags via the shared
+   _common.py helpers). The daemon loads WobbleBotConfig +
+   opens the appropriate SQLite adapters (operator.db, advise.db,
+   harvest.db, observe.db, news.db) + constructs the FastAPI
+   app + runs ``uvicorn.run(app)``.
+
+9. **Cross-DB queries via OperatorService graceful-degrade.**
+   The web UI inherits Stage 5.6.C's pattern: if ``observe.db``
+   isn't configured, the "current price" card just doesn't render
+   (vs raising). Same shape as ``OperatorService.answer_query``.
+
+10. **Phase 5 limitation carried forward.** ``cli/live``'s
+    in-memory pause state isn't visible to the web UI for the
+    same reason it wasn't visible to cli/operator in Stage 5.6 —
+    pause state is per-session in-memory. The web UI shows the
+    *audit log* of pause commands (pending_commands rows with
+    ``command_kind='pause'``); the *live state* surfaces as
+    "active" for all symbols until the deferred Phase 8 fix
+    persists pause state to disk.
+
+**Alternatives Considered:**
+
+- **Django instead of FastAPI.** Heavier; brings an ORM that
+  conflicts with the project's StoragePort + Pydantic-everywhere
+  posture; sync-by-default is awkward against the asyncio-native
+  ports. FastAPI is the natural fit.
+- **Plain Starlette without FastAPI.** Leaner — FastAPI is mostly
+  Starlette + auto-validation + OpenAPI. Rejected because
+  FastAPI's DI system is the load-bearing piece for clean
+  port-injection into routes; building it manually in Starlette
+  is 50-100 LOC of fragile glue.
+- **SPA front-end (React / Vue / Svelte).** Rejected on complexity
+  budget: build pipeline, Node, CORS plumbing, frontend state
+  management — all of it overhead for a single-operator
+  observability surface. HTMX gets ~80% of "interactive web app"
+  feel at 5% of the cost.
+- **Read-only v1, no mutations.** Considered. Rejected by operator
+  decision: pause/resume is the most-frequent operator
+  interaction, and forcing it through Discord/CLI when the
+  operator is already looking at the trading dashboard is
+  workflow friction. Preserving ADR-013's firewall via the
+  PendingCommand path + two-click confirmation gets the
+  mutation safety without losing the dashboard's utility.
+- **Mutations bypass the PendingCommand table** (i.e., the web
+  UI calls dispatch_command directly). Rejected — violates
+  ADR-013 decision 3. The firewall is load-bearing; every entry
+  point honors it.
+- **Single-click mutations (no confirmation page).** Considered.
+  Rejected for the same reason Discord requires ✅ — the
+  operator-clicks-twice safety property is cheap insurance against
+  accidental fat-finger pauses during live trading.
+- **WebSocket / SSE real-time updates.** Premature. HTMX polling
+  at 15s gets the same UX with one fewer transport layer.
+  Revisit if Phase 8 reliability ever shows the polling load
+  costs more than the WebSocket setup.
+- **Bundled TLS via uvicorn's ssl-keyfile/ssl-certfile.**
+  Rejected — cert-rotation, ACME plumbing, and HTTP-to-HTTPS
+  redirects are exactly what a reverse proxy is for. Don't
+  reinvent.
+- **Public-facing internet exposure (binding to 0.0.0.0 by default).**
+  Rejected for the operator's security posture; the proxy /
+  Cloudflare Tunnel layer is the right place to make that
+  decision per-deployment, not bake into the daemon's defaults.
+
+**Consequences:**
+
+- **Positive:** At-a-glance observability across every Phase 1-6
+  data store. Cost ledger visible. Recent fills + open orders
+  visible. Pause / resume + emergency stop available without
+  switching to Discord. The operator's most common workflows
+  collapse into one tab.
+- **Positive:** Architecture-discipline preserved. Routes consume
+  ports. Mutations cross ``pending_commands``. No business logic
+  in handlers. New layer, same hex rules.
+- **Positive:** No build pipeline. Edit a template, refresh the
+  browser. No Node, no npm, no webpack, no separate frontend
+  repo to keep in sync.
+- **Positive:** HTMX polling means a forgotten browser tab won't
+  hammer the engine — polls are cheap reads against SQLite.
+- **Positive:** Single-operator scope means no multi-user
+  permission complexity; everyone with the password sees
+  everything.
+- **Negative:** Six new runtime deps (``fastapi``,
+  ``uvicorn[standard]``, ``jinja2``, ``python-multipart``,
+  ``bcrypt``, ``itsdangerous``). Biggest dep-add since Phase 5's
+  ``discord.py``. Documented in pyproject.toml; the bcrypt +
+  itsdangerous transitive surface is small + stable.
+- **Negative:** Another long-running daemon to operate
+  (``cli/web``). Mitigated by Phase 8's planned maintenance
+  worker (process supervision is part of that stage's scope).
+- **Negative:** Schema lifecycle now needs a fifth DB
+  consideration: the web UI reads operator.db (pending_commands +
+  notifications + conversation_turns + llm_calls + future users
+  table) + advise.db + harvest.db + observe.db + news.db. Each
+  read-only connection is independent; SQLite WAL mode handles
+  the concurrent-readers + the occasional write from web mutation.
+- **Negative:** Web UI is yet another writer to operator.db's
+  ``pending_commands`` table (was just cli/operator pre-Phase 7).
+  SQLite handles concurrent writers via WAL; both writers append
+  rows (never UPDATE simultaneously) so contention is minimal.
+- **Negative:** v1 pause-state limitation carried forward — the
+  status dashboard can't show "is BTC currently paused" because
+  that's cli/live's in-memory state. Shows the audit log
+  instead. Fix path documented; lands in Phase 8 reliability.
+- **Negative:** CSRF protection on POSTs requires a custom
+  middleware (Starlette doesn't ship one). ~30 lines. Documented
+  in the Stage 7.1 design doc; tested as part of the auth flow.
+
+**Compliance:** Aligns with ADR-001 (web/ is a sibling presentation
+layer; depends on ports, never on adapters directly). Aligns with
+ADR-002 (LLM is advisory-only; the web UI doesn't surface LLM
+decisions as actions — those go through the existing advisor →
+auto-apply gate). Aligns with ADR-013 (the operator interaction
+engine's confirm-before-execute firewall is honored; the web UI
+is just another entry point that creates PendingCommand rows in
+``awaiting_confirmation``). **Refines** ADR-013 by adding web as
+a second writer to ``pending_commands`` alongside cli/operator —
+both honor the same state machine and ADR-002 firewall.
+
+**References:**
+- ``docs/planning/stage-7.1-design.md`` — first stage slicing
+  (web app skeleton + auth; no features).
+- ``docs/planning/roadmap.md`` — Phase 7 stage list (7.1-7.5).
+- ADR-001 — Hexagonal architecture (web/ as a sibling presentation
+  layer).
+- ADR-002 — LLM advisory-only (preserved; web UI surfaces advisor
+  history but never executes from it).
+- ADR-013 — Operator Interaction Engine (the confirm-before-execute
+  firewall this ADR extends to the web entry point).
+- ADR-017 — Web UI authentication (the auth-specific decisions).
+- FastAPI: https://fastapi.tiangolo.com/
+- HTMX: https://htmx.org/
+
+## ADR-017 — Web UI Authentication
+**Status:** Accepted (planned for Phase 7)
+**Date:** 2026-05-17
+
+**Context:** ADR-016 ratifies the Web UI architectural shape;
+authentication is a load-bearing detail that warrants its own ADR.
+The decisions below shape the login flow + session lifecycle +
+password storage + CSRF protection, all of which surface in
+Stage 7.1.
+
+The constraints:
+
+- **Single-operator, single-bot.** Multi-user collaboration is
+  not in scope for v1 (matches ADR-013 decision 6's stance on
+  the Discord allowlist). The operator may run multiple browser
+  sessions but they all authenticate as the same identity.
+- **Local-network deployment by default** with optional LAN /
+  reverse-proxy exposure. The proxy may add its own auth layer
+  (Cloudflare Access, oauth2_proxy, etc.); the FastAPI app's
+  auth is the inner perimeter.
+- **The operator already has Kraken trade keys + Discord bot
+  tokens + cloud LLM API keys in `.env`.** Adding one more
+  secret (a web password) is acceptable as long as the storage
+  + handling discipline is comparable.
+- **Mutation routes exist** (pause / resume / stop per ADR-016
+  decision 5). CSRF protection is non-optional for forms.
+
+**Decision:** Adopt the following commitments for Phase 7 auth.
+
+1. **Session cookie + bcrypt-hashed-password.** The operator
+   logs in via a form POST (``/login`` route); on success the
+   server creates a signed session cookie via Starlette's
+   ``SessionMiddleware`` (``itsdangerous``-signed under the hood).
+   Subsequent requests carry the cookie; an auth dependency
+   checks ``session["user_id"]`` is set and rejects with 302
+   to ``/login`` if not. Logout is a POST to ``/logout`` that
+   clears the session.
+
+2. **Single ``users`` SQLite table in ``operator.db``.** Columns:
+   ``id`` INTEGER PK AUTOINCREMENT, ``username`` TEXT UNIQUE NOT
+   NULL, ``password_hash`` TEXT NOT NULL (bcrypt hash;
+   ``$2b$``-prefixed), ``created_at`` TEXT NOT NULL,
+   ``last_login_at`` TEXT NULL. v1 has one row in production
+   but the table is keyed by username so multi-user could land
+   later without schema work. CHECK constraint enforces
+   ``length(password_hash) > 0``.
+
+3. **Password seeded via ``cli/web --create-user``.** Operator
+   creates the initial account via a one-shot CLI subcommand
+   that prompts for username + password (twice for confirmation,
+   matching unix conventions), bcrypts the password, persists
+   the row. The bot daemon (``cli/web`` without that flag) refuses
+   to start if no user exists — operator must seed before serving.
+
+4. **Bcrypt cost factor 12.** Default for the ``bcrypt`` package.
+   Cheap enough that login isn't slow (~50ms on modern hardware)
+   + expensive enough that brute-force is impractical. Bumpable
+   per ``settings.yml`` if Phase 8 hardening wants higher.
+
+5. **Session lifetime: 7 days, sliding.** Cookie expires 7 days
+   after last activity. Operator who hasn't touched the dashboard
+   in a week re-logs in. ``SessionMiddleware`` handles the
+   sliding-window math; we just set ``max_age``.
+
+6. **Cookie attributes:** ``HttpOnly`` (no JS access),
+   ``SameSite=lax`` (allow top-level navigation but block
+   cross-site POSTs), ``Secure`` flag set conditionally based
+   on ``X-Forwarded-Proto`` (so the reverse proxy can terminate
+   TLS and the cookie still flags Secure for browsers). Cookie
+   name: ``wobblebot_session``.
+
+7. **CSRF protection via synchronizer token.** Every form GET
+   includes a random token in the session + a hidden form input;
+   POST handlers validate the form's token matches the session's.
+   Mismatch → 403. ~30 lines of middleware + a Jinja2 macro for
+   the form-input. Standard pattern; no library.
+
+8. **Login form is rate-limited to 5 attempts / 60 seconds per
+   IP.** Simple in-memory counter (per-IP bucket) reset on
+   successful login. Brute-force defense against the local
+   network. Restart-resets is acceptable — the operator isn't
+   running a public-facing login form.
+
+9. **Constant-time password comparison.** ``bcrypt.checkpw``
+   handles this automatically; the auth code never short-circuits
+   on length mismatch or first-character mismatch.
+
+10. **No password reset flow in v1.** If the operator forgets
+    the password, they delete the row via SQL and re-create via
+    ``cli/web --create-user``. Multi-user password reset (email
+    recovery, etc.) is out of scope.
+
+**Alternatives Considered:**
+
+- **HTTP Basic auth.** Browser-native popup; no login page; no
+  CSRF needed (auth is in every request header). Rejected for
+  UX — no logout, popup styling can't be customized, less
+  obvious to the operator that they're logged in.
+- **OAuth (Discord / GitHub / etc.).** Heavier; adds a callback
+  flow, client-secret management, third-party dependency on the
+  auth provider's uptime. For single-operator scope, password is
+  simpler.
+- **JWT in cookie instead of opaque session cookie.** JWT means
+  the cookie carries claims; revoke-on-logout requires a JWT
+  blocklist or short TTL + refresh dance. The signed-session
+  approach (server-side state, opaque cookie) is simpler for
+  single-operator scope.
+- **Bcrypt vs argon2 vs scrypt.** Bcrypt is the conservative
+  choice — battle-tested, well-supported in Python, no
+  GPU-resistance properties for a non-public-facing form means
+  argon2's advantages are mostly theoretical. Bcrypt + cost 12
+  is plenty.
+- **Password stored in settings.yml.** Considered. Rejected —
+  settings.yml is operator-edited in plain text; a hash there
+  reads as more "secret" than necessary and a typo during an
+  edit could lock the operator out without a re-seed path.
+  Storing in operator.db's users table matches the project's
+  pattern of "operator-managed secrets live in DB or .env, not
+  YAML".
+- **Multi-user permission system.** Out of scope for v1 (same
+  call as Discord allowlist). Schema is per-user-keyed so the
+  follow-on is just role-checking middleware + a roles column.
+
+**Consequences:**
+
+- **Positive:** Standard, well-understood auth pattern. Session
+  cookie + bcrypt password are the boring defaults; deviating
+  from them needs a reason and we don't have one.
+- **Positive:** Logout is a real action (clear session); operator
+  can deliberately log out of a shared machine.
+- **Positive:** CSRF protection on forms means the operator's
+  authenticated session can't be tricked into a cross-site POST
+  that pauses BTC via image-tag exploitation.
+- **Positive:** Rate-limiting buys time against brute-force —
+  combined with bcrypt cost 12, the local-network attacker would
+  need years for an 8-char password.
+- **Negative:** One more secret for the operator to remember /
+  store. Mitigated by the seed-via-CLI flow giving the operator
+  the option of using a long random password from a password
+  manager (no in-UI password generation is provided; out of
+  scope).
+- **Negative:** Restart-reset rate-limit means a sufficiently
+  patient attacker could restart the daemon (somehow) to clear
+  the counter. Edge case for a non-public-facing dashboard;
+  Phase 8 reliability may add persistent rate limit state if
+  it ever becomes relevant.
+- **Negative:** ``cli/web --create-user`` is an interactive
+  subcommand (prompts on stdin); operators running in
+  fully-headless setups need to think about how to seed (e.g.
+  ``echo password | cli/web --create-user --stdin``). Document
+  in the deprived-env walkthrough.
+
+**Compliance:** Aligns with ADR-001 (auth state lives in
+``operator.db`` next to the other operator-state tables; reads /
+writes go through StoragePort like every other entity). Aligns with
+ADR-013 (operator.db is the operator-state database; ``users`` is
+just another table next to ``pending_commands`` /
+``conversation_turns`` / ``notifications`` / ``llm_calls``).
+
+**References:**
+- ADR-016 — Web UI architectural commitments (the larger context
+  this auth model fits inside).
+- ``docs/planning/stage-7.1-design.md`` — Stage 7.1 slicing
+  (where the users table + login form + middleware land).
+- bcrypt: https://github.com/pyca/bcrypt
+- Starlette SessionMiddleware:
+  https://www.starlette.io/middleware/#sessionmiddleware
+
