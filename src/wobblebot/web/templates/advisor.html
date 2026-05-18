@@ -1,0 +1,95 @@
+{# Recent advisor suggestions (Stage 7.3.A).
+   Shows aggregated recommendation + per-expert opinions per row. #}
+{% extends "layout.html" %}
+
+{% block title %}Advisor — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Advisor</h1>
+
+{% if not snapshot.wired %}
+  <div class="card">
+    <p class="placeholder">
+      <code>web.advise_db</code> is unset; advisor suggestions are
+      unavailable. Configure it in settings.yml to enable.
+    </p>
+  </div>
+{% elif snapshot.error %}
+  <div class="card"><p class="error">{{ snapshot.error }}</p></div>
+{% elif not snapshot.suggestions %}
+  <div class="card">
+    <p class="placeholder">
+      No advisor suggestions yet. Start <code>cli/advise</code> to
+      begin generating them.
+    </p>
+  </div>
+{% else %}
+  {% for s in snapshot.suggestions %}
+    {% set rec = s.recommendation %}
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          {{ s.input_summary.get("symbol", "?") }} —
+          <span class="muted">{{ rec.timestamp.dt.strftime("%Y-%m-%d %H:%M UTC") }}</span>
+        </div>
+        <div class="card-meta">
+          {{ s.model_name }} ·
+          <span class="tag
+            {% if rec.confidence == 'high' %}ok
+            {% elif rec.confidence == 'medium' %}warn
+            {% else %}fail{% endif %}">{{ rec.confidence }}</span> ·
+          role={{ rec.role }}
+        </div>
+      </div>
+      {% if rec.recommendations %}
+        <dl class="kv">
+          {% for k, v in rec.recommendations.items() %}
+            <dt>{{ k }}</dt>
+            <dd>{{ v }}</dd>
+          {% endfor %}
+        </dl>
+      {% else %}
+        <p class="muted">No parameter changes proposed.</p>
+      {% endif %}
+      <p class="muted">{{ rec.rationale }}</p>
+
+      {% if rec.expert_opinions %}
+        <h2 class="card-subtitle">Per-expert opinions ({{ rec.expert_opinions|length }})</h2>
+        <table class="data compact">
+          <thead>
+            <tr>
+              <th>role</th>
+              <th>confidence</th>
+              <th>proposed</th>
+              <th>rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for o in rec.expert_opinions %}
+              <tr>
+                <td>{{ o.role }}</td>
+                <td>
+                  <span class="tag
+                    {% if o.confidence == 'high' %}ok
+                    {% elif o.confidence == 'medium' %}warn
+                    {% else %}fail{% endif %}">{{ o.confidence }}</span>
+                </td>
+                <td>
+                  {% if o.recommendations %}
+                    {% for k, v in o.recommendations.items() %}
+                      <code>{{ k }}={{ v }}</code>{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+                <td class="muted">{{ o.rationale }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}
