@@ -10,6 +10,58 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Phase 8 kickoff — Hardening & v1.0 Release (2026-05-18)
+
+After Phase 7 + Stage 7.6 polish closed, Phase 8 needed a design
+doc for Stage 8.0 (deferred Phase-5-audit refactors) before any
+code, mirroring the Phase 5/6/7 kickoff pattern.
+
+**Phase 8 doesn't introduce cross-cutting ADRs at kickoff.** The
+existing ADRs cover Phase 8 scope. Stage 8.1's reliability work
+(reconciliation logic + the persistence-on-cancel fix already
+queued from the 2026-05-18 shadow session) may warrant an ADR-018
+at its own stage kickoff; that decision defers to 8.1.
+
+**Stage 8.0 design ratified** (`docs/planning/stage-8.0-design.md`):
+
+- **8.0.A (R5)** — split `ports/operator.py` (734 lines) into
+  three focused modules: `operator_intents.py` (Command + Query +
+  Intent variants + three discriminated unions),
+  `operator_results.py` (per-query Result types + entry types +
+  CommandResult), and a slimmer `operator.py` (OperatorError +
+  PendingCommandStatus + PendingCommand + OperatorPort ABC).
+  Module-level re-exports preserve every existing import path.
+- **8.0.B (R3)** — extract an async context manager around the ~6
+  near-identical graceful-degrade blocks in
+  `services/operator_service.answer_query`.
+- **8.0.C (R2)** — extract `cli/_common.run_poll_loop()` shared
+  across five CLI daemons (`cli/operator`'s forwarder + TTL
+  expirer, `cli/harvest`, `cli/observe`, `cli/news`,
+  `cli/advise`). Phase 8.1 then has one edit point for any
+  shutdown-discipline refinement instead of seven.
+- **8.0.D** — stage close.
+
+Five sub-slices total (A/B/C are refactors, D is close). Zero
+behavior change across all of them; goal is "every existing test
+stays green." ~10-15 new tests possible for refactor mechanics
+(re-export coverage, context-manager helper, poll-loop helper) but
+no new feature surface. pylint 10.00/10 + mypy clean + black +
+isort all stay green as acceptance signals.
+
+Phase 8 remaining roadmap (per `docs/planning/roadmap.md`):
+
+- 8.1 Reliability & Recovery — startup/shutdown reconciliation,
+  including the persistence-on-cancel fix surfaced 2026-05-18
+  during a 60-minute shadow session.
+- 8.2 Background Maintenance Worker — `cli/maintenance --loop` for
+  DB hygiene, log rotation, local + remote backups.
+- 8.3 Performance & Resource Tuning — Synology NAS resource
+  constraints, profiling heavy processes.
+- 8.4 Phase 8 / v1.0 Release Check — extended soak test, v1.0 tag,
+  v1.0 changelog, known-limitations doc.
+
+No code in this commit. Stage 8.0.A work follows.
+
 ### Stage 7.6 — cli/recalibrate (operator-initiated balance scaling) (2026-05-18)
 
 Polish slice inserted between Phase 7 close and Phase 8 start. Doesn't
