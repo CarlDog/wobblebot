@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-1214%20unit%20%2B%2026%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
+[![Tests](https://img.shields.io/badge/tests-1785%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
 ---
@@ -48,17 +48,22 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Phase 4 / Stage 4.4** — Active-mode withdrawals (`cli/harvest --execute`) | ✅ closed 2026-05-15 |
 | **Phase 4 / Stage 4.5** — Phase 4 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-4-summary.md)) |
 | **Phase 5** — Operator Interaction Engine (Discord + LLM intent parsing; ADR-013) | ✅ closed 2026-05-16 ([summary](docs/planning/phase-5-summary.md)) |
-| **Phase 6** — Cloud LLM Integration | next up |
-| **Phase 7** — Web UI / Dashboard | provisional |
-| **Phase 8** — Hardening & v1.0 Release | provisional |
+| **Phase 6** — Cloud LLM Integration (Anthropic / OpenAI / Google adapters; cost gate; ADR-014 + ADR-015) | ✅ closed 2026-05-17 ([summary](docs/planning/phase-6-summary.md)) |
+| **Phase 7** — Web UI / Dashboard (FastAPI + Jinja2 + HTMX; ADR-016 + ADR-017) | ✅ closed 2026-05-18 ([summary](docs/planning/phase-7-summary.md)) |
+| **Stage 7.6** — `cli/recalibrate` operator tool (balance-scaling polish) | ✅ closed 2026-05-18 |
+| **Stage 8.0** — Deferred Phase-5-audit refactors (ports/operator split; run_poll_loop helper) | ✅ closed 2026-05-18 |
+| **Stage 8.1** — Reliability & Recovery (engine reconciliation; ADR-018) | ✅ closed 2026-05-18 |
+| **Stage 8.2** — Background Maintenance Worker (`cli/maintenance`; VACUUM + prune + backup) | ✅ closed 2026-05-18 |
+| **Stage 8.3** — Performance & Resource Tuning (SQLite pragmas + index audit + profile harness) | ✅ closed 2026-05-18 |
+| **Stage 8.4** — Phase 8 / v1.0 Release Check | in progress 2026-05-18 |
 
-**Health:** 1214 unit tests pass by default; 26 integration tests opt-in. mypy clean (69 src files), black/isort clean, pylint **10.00/10**.
+**Health:** 1785 unit tests pass by default; 29 integration tests opt-in. mypy clean (104 src files), black/isort clean, pylint **10.00/10**.
 
 ---
 
 ## Operator Entry Points
 
-Eleven CLIs cover the full operational surface. Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Fifteen entry points cover the full operational surface (fourteen `cli/` daemons + `tools/run_cloud_check.py` counted as the twelfth per Phase 6's close prose). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
@@ -73,7 +78,11 @@ Eleven CLIs cover the full operational surface. Every CLI accepts `--config PATH
 | `python -m wobblebot.cli.apply` | 3.4b | ❌ (config writes) | Operator-in-the-loop auto-apply gate. Dry-run by default; `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving) and persists an `AppliedSuggestion` audit row. Gate defaults OFF (`auto_apply.enabled=False`); news-role suggestions never auto-apply per ADR-007. |
 | `python -m wobblebot.cli.harvest` | 4.2-4.4 | Daemon ❌ / `--execute` **✅ REAL MONEY** | Treasury monitor. Daemon mode polls Kraken USD balance, runs `propose_transfer()`, persists every non-None proposal to `transfer_proposals`, logs "HYPOTHETICAL proposal". `--execute <proposal-id>` runs seven defense layers, calls Kraken `/Withdraw`. The ONLY path by which money leaves the exchange. |
 | `python -m wobblebot.cli.operator` | 5.6 | ❌ (chat surface only) | Discord-backed operator interaction daemon (ADR-013). Maintains a Gateway connection, drains the `notifications` SQLite table to Discord, parses inbound operator messages via `OllamaAssistantAdapter` into typed `OperatorIntent` payloads — Command → writes `PendingCommand` + posts confirm embed (cli/live polls the approved rows; that's the ADR-002 firewall); Query → reads engine + storage state via `OperatorService` and replies; Conversational / Unparseable → text reply. Background TTL expirer transitions abandoned `awaiting_confirmation` rows to `expired`. |
+| `python -m wobblebot.cli.web` | 7.1 | ❌ (read-mostly; ADR-013-firewalled mutations) | FastAPI + Jinja2 + HTMX dashboard. `serve` subcommand boots uvicorn against `127.0.0.1:8000` (operator's reverse proxy fronts the LAN); `create-user` seeds a bcrypt-hashed `users` row. Status / cost / advisor / harvester / news / audit views. Pause/resume/stop buttons create `PendingCommand` rows in `awaiting_confirmation` — cli/live's `WHERE status='approved'` poll stays the only path from intent to engine. |
+| `python -m wobblebot.cli.recalibrate` | 7.6 | ❌ (config writes) | Scales every USD-denominated knob in `settings.yml` proportionally to a new `--target-balance`. Reads live Kraken USD balance via the read-only key by default; `--current-balance X` overrides for what-if analysis. `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving, atomic). Spacing %, level counts, max_loss_percentage, shadow:* are policy invariants and stay constant. |
+| `python -m wobblebot.cli.maintenance` | 8.2 | ❌ | Background maintenance daemon. Three concurrent scheduled tasks via `asyncio.gather` over `run_poll_loop`: VACUUM (default 7d cadence) → `services.maintenance.vacuum_database`; prune+archive (1d) → archive-then-delete `price_snapshots` to CSV; backup (1d) → SQLite online `.backup` API to `data/backups/`. Opt-in log rotation via `TimedRotatingFileHandler` ALONGSIDE stderr. |
 | `python tools/first_real_trade.py` | 2.3 | **✅ REAL MONEY** | One-shot diagnostic: marketable round-trip with hard caps. Used 2026-05-15 against the operator's account; total cost $0.08. |
+| `python tools/run_cloud_check.py` | 6.5 | **✅ REAL MONEY** (tiny) | One-shot cloud-LLM smoke test (`--provider anthropic|openai|google` / `--role` / `--model`). Counted as the 12th entry point per Phase 6's close prose; lives under `tools/` (diagnostic, not daemon). |
 
 **Inspection tools** (read-only, safe against live DBs while their CLIs run):
 
@@ -84,8 +93,10 @@ Eleven CLIs cover the full operational surface. Every CLI accepts `--config PATH
 | `python tools/show_pending.py` | Print persisted `pending_commands` rows (Stage 5.6.D). `--status` filter across the six lifecycle states. |
 | `python tools/show_suggestions.py` | Print persisted `advisor_suggestions` rows (Stage 3.3). `--symbol` / `--model` filters. |
 | `python tools/show_metrics.py` | Compute and print metrics windows from `price_snapshots` (Stage 3.1). |
+| `python tools/show_llm_costs.py` | Print persisted `llm_calls` rows (Stage 6.1). `--provider` / `--role` / `--since-hours` filters; daily / session cost rollups. |
 | `python tools/run_advisor.py` | One-shot advisor call against the observe DB; JSONL receipt to `data/` (Stage 3.2). |
 | `python tools/run_moe_check.py` | One-shot MoE advisor exerciser (Stage 3.4a). |
+| `python tools/profile_storage.py` | Storage-layer latency harness (Stage 8.3.C). Reports p50/p99 ms per operation; pre-seeds fixtures so timings reflect realistic index-vs-scan behavior. Safe against live DBs (copies to temp file first). |
 
 ---
 
@@ -116,7 +127,7 @@ pip install -e ".[dev]"
 # scripts\install-hooks.ps1     # Windows PowerShell
 
 # 5. Verify the install
-pytest                          # 792 unit tests; takes ~3s
+pytest                          # 1785 unit tests; ~20s with coverage
 black --check src/ tests/
 mypy src/
 ```
@@ -156,7 +167,7 @@ wobblebot/
 │   ├── services/          # Orchestrators wiring ports to flows
 │   ├── cli/               # Operator entry points
 │   └── config/            # Pydantic schemas + YAML loader + profile resolver
-├── tests/                 # 792 unit + 21 integration; mirrors src/
+├── tests/                 # 1785 unit + 29 integration; mirrors src/
 ├── docs/                  # Architecture, planning, implementation, reference
 │   ├── architecture/      # System design, constraints, ADRs
 │   ├── implementation/    # Coding guidelines, module specs, deployment guide
@@ -173,9 +184,9 @@ wobblebot/
 ### Running Tests
 
 ```bash
-pytest                       # default — 792 unit tests, integration excluded
+pytest                       # default — 1785 unit tests, integration excluded
 pytest -m unit               # explicitly unit only
-pytest -m integration        # opt-in: 21 integration tests (some hit live Kraken)
+pytest -m integration        # opt-in: 29 integration tests (some hit live Kraken)
 pytest tests/path/to/test_file.py::TestClass::test_name   # one test
 ```
 
@@ -209,7 +220,7 @@ WobbleBot follows **hexagonal architecture** with strict layer boundaries:
 
 All cross-module wiring happens via constructor dependency injection of port interfaces.
 
-See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the nine ADRs that drive code structure.
+See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the eighteen ADRs that drive code structure.
 
 ---
 
