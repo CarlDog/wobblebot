@@ -10,6 +10,48 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.3 kickoff — Performance & Resource Tuning (2026-05-18)
+
+Phase 8 continues. Stage 8.2 stabilized DB hygiene; Stage 8.3
+ships universal performance easy wins + a baseline measurement
+tool against which Stage 8.4's soak test can compare.
+
+**No new ADR.** Operational tuning, not cross-cutting policy.
+Decisions ratified in `docs/planning/stage-8.3-design.md` only.
+
+**Design ratifies 8 implementation decisions:**
+
+1. WAL mode for all on-disk DBs — concurrent readers don't block
+   writers (Stage 8.2's backup task can run while cli/live ticks).
+2. `synchronous=NORMAL` over the default `FULL` — ~50x faster
+   commits per the SQLite docs; durability tradeoff acceptable
+   for this use case (Stage 8.1's reconciliation catches last-
+   tick drift on next startup).
+3. `foreign_keys=ON` — cheap v1.1 insurance; no current FK
+   constraints but enabling now avoids legacy-default surprise.
+4. Skip pragmas for in-memory DBs — irrelevant + can confuse
+   test fixtures that introspect journal_mode.
+5. Index audit covers engine hot path first (`get_open_orders`,
+   `get_trades`, `save_order`); verify via `EXPLAIN QUERY PLAN`.
+6. Profile harness reports p50/p99 in ms — operator's mental
+   model, not statistician's.
+7. `tools/profile_storage.py` not `cli/profile_storage` —
+   diagnostic, not daemon (convention from `tools/show_*`).
+8. No CI perf regression check in v1.0 — CI runner variance
+   makes it untrustworthy. Operator's deployment is the canonical
+   measurement surface.
+
+**Slicing:** 8.3.A (this commit) → 8.3.B SQLite pragmas → 8.3.C
+index audit + profile harness → 8.3.D close. ~15 new tests. No
+new operator entry points.
+
+**Explicitly out of scope** (defer until Stage 8.4 soak provides
+measurement data): caching layers, async query parallelism, batch
+APIs, connection pooling, Synology-specific tuning hardcoded into
+defaults.
+
+No code in this commit. Stage 8.3.B work follows.
+
 ### Stage 8.2 close — Background Maintenance Worker (2026-05-18)
 
 Four sub-slices closed (A kickoff already in unreleased above; B
