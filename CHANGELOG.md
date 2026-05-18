@@ -10,6 +10,82 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 6.5 — Phase 6 integration check + close (2026-05-17)
+
+Closing stage of Phase 6. Two sub-slices: smoke-test scaffold +
+audit-driven refactor (6.5.A); live verification + closing summary
+(6.5.B). All three cloud providers validated end-to-end against
+real APIs under live cost-cap enforcement. **$0.005018 of real
+money spent** across three smoke-test calls.
+
+**6.5.A — Smoke-test scaffold + audit-driven refactor.**
+
+*Audit-driven refactor pass* (Phase-6-close per the global rule).
+Three more shared patterns promoted out of per-provider modules
+on top of Stage 6.3.A's `execute_cloud_call` extraction:
+- `services/llm_pricing.estimate_cost_ceiling(provider, model,
+  prompt_text, max_tokens)` — three byte-identical copies pre-
+  refactor.
+- `services/llm_cloud_call.parse_advisor_recommendation(raw_text,
+  fallback_role, provider_name)` — three byte-identical copies
+  pre-refactor for the AdvisorPort parse path.
+- `services/llm_cloud_call.parse_intent_dict(raw_text,
+  provider_name)` — three byte-identical copies pre-refactor for
+  the AssistantPort parse path.
+
+Net: ~270 LOC of mechanical duplication collapsed. Per-provider
+modules now own only their genuinely-different surface — HTTP wire
+shape, token-count normalization, response text extraction.
+
+*Operator smoke-test tool.* `tools/run_cloud_check.py` — one-shot
+live smoke test against any of the three cloud providers. Args:
+`--provider` / `--role` / `--model` (cheap defaults) /
+`--max-tokens 100` (low floor) / `--dry-run` (gate-disable, NOT
+no-call) / `--daily-cap` / `--session-cap` / `--log-format`. Reads
+provider-specific API key from env; clean exit 2 on missing key.
+Persists the receipt to operator.db's `llm_calls` table.
+
+*Integration test stubs.* `tests/integration/test_cloud_llm_live.py`
+— three integration-marked tests (one per provider), each opt-in
+via the provider's API-key env var. Same shape as
+`test_kraken_trading_live.py` skip-when-key-missing pattern.
+
+*Live verification.* Operator's environment had all three keys
+loaded via `.env`; smoke test ran against each provider:
+
+  | Provider  | Model              | In   | Out | Reason | Cost USD  |
+  | --------- | ------------------ | ---- | --- | ------ | --------- |
+  | anthropic | claude-sonnet-4-6  | 1321 |  19 |      0 | 0.004248  |
+  | openai    | gpt-4o-mini        | 1171 |  15 |      0 | 0.000185  |
+  | google    | gemini-2.5-flash   | 1281 |  20 |     43 | 0.000585  |
+
+Google's `tokens_reasoning=43` correctly normalized through the
+additive convention from `extract_google_tokens`.
+
+**6.5.B — Phase 6 close.** Closing summary at
+`docs/planning/phase-6-summary.md` (~250 lines; mirrors
+phase-{2,3,4,5}-summary.md precedent). Roadmap closes Phase 6 ✅
+and Stage 6.5 ✅. CLAUDE.md Project Status updated. project_state
+memory bump. CryptoCompare 90-day evaluation **deferred to its
+scheduled 2026-08-13 date per ADR-010** — the proper observation
+window hasn't elapsed yet; closing it now without 90 days of
+real usage would be premature.
+
+**1460 unit tests** pass (was 1455 at Stage 6.4 close; +5 from
+`estimate_cost_ceiling` test class); 29 integration tests opt-in
+(was 26; +3 cloud-llm-live); mypy clean (79 src files); pylint
+10.00/10; black + isort clean. **No new runtime deps**. Phase 6
+real-money cost: **$0.005018** (smoke test); running project total
+$0.08 → **$0.085018**.
+
+**Phase 6 architectural payoff:** three providers on one shared
+orchestrator (`services/llm_cloud_call.py`). Adding a fourth
+provider in any future phase would cost ~250-500 LOC — just the
+provider-specific HTTP shape + token normalization + response
+parsing, plus the dispatch branch wiring. Cost-tracking, retry,
+persistence, session tracking, and JSON parsing all stay in
+`services/`.
+
 ### Stage 6.4 — Google Gemini adapter (2026-05-17)
 
 Third and final cloud provider; closes the per-provider work
