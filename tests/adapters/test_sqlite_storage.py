@@ -252,6 +252,98 @@ class TestStage83Pragmas:
             await adapter.close()
 
 
+class TestStage83IndexAudit:
+    """Stage 8.3.C — every hot read uses an index, not a table scan.
+
+    Runs ``EXPLAIN QUERY PLAN`` on the engine's per-tick reads
+    (cli/live, cli/operator, cli/maintenance) and asserts the output
+    contains ``SEARCH`` (index access) and never ``SCAN`` (full table
+    scan). A regression here means a new query slipped past the
+    schema's index coverage and will degrade as row count grows.
+
+    These tests use the ``storage`` fixture's in-memory DB — the
+    planner sees the same schema either way; the actual disk-vs-memory
+    distinction is for pragma behavior, not query planning.
+    """
+
+    @staticmethod
+    async def _eqp(storage: SQLiteStorageAdapter, sql: str, params: tuple) -> str:
+        conn = storage._require_conn()  # pylint: disable=protected-access
+        async with conn.execute(f"EXPLAIN QUERY PLAN {sql}", params) as cur:
+            rows = await cur.fetchall()
+        return "\n".join(str(r[3]) for r in rows)
+
+    async def test_get_open_orders_by_symbol_uses_index(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        plan = await self._eqp(
+            storage,
+            "SELECT * FROM orders WHERE status IN ('pending', 'open') "
+            "AND symbol_base = ? AND symbol_quote = ? ORDER BY created_at",
+            ("BTC", "USD"),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+    async def test_get_trades_by_symbol_and_time_uses_index(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        plan = await self._eqp(
+            storage,
+            "SELECT * FROM trades WHERE symbol_base=? AND symbol_quote=? "
+            "AND executed_at >= ? ORDER BY executed_at DESC LIMIT ?",
+            ("BTC", "USD", "2026-01-01T00:00:00+00:00", 100),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+    async def test_pending_commands_by_status_uses_index(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # cli/live polls WHERE status='approved'; cli/operator's TTL
+        # expirer polls WHERE status='awaiting_confirmation'.
+        plan = await self._eqp(
+            storage,
+            "SELECT * FROM pending_commands WHERE status = ? ORDER BY created_at",
+            ("approved",),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+    async def test_notifications_forwarder_uses_index(self, storage: SQLiteStorageAdapter) -> None:
+        # cli/operator's forwarder polls WHERE forwarded=0.
+        plan = await self._eqp(
+            storage,
+            "SELECT * FROM notifications WHERE forwarded = 0 " "ORDER BY created_at LIMIT ?",
+            (50,),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+    async def test_llm_calls_24h_window_uses_index(self, storage: SQLiteStorageAdapter) -> None:
+        # services/llm_cost_gate's sliding-window cost total.
+        plan = await self._eqp(
+            storage,
+            "SELECT cost_usd FROM llm_calls WHERE timestamp >= ?",
+            ("2026-01-01T00:00:00+00:00",),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+    async def test_price_snapshots_by_symbol_time_uses_index(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # cli/maintenance's prune query reads observed_at < cutoff.
+        plan = await self._eqp(
+            storage,
+            "SELECT * FROM price_snapshots WHERE symbol_base=? "
+            "AND symbol_quote=? AND observed_at >= ? ORDER BY observed_at",
+            ("BTC", "USD", "2026-01-01T00:00:00+00:00"),
+        )
+        assert "SEARCH" in plan
+        assert "SCAN" not in plan
+
+
 class TestOrders:
     async def test_save_and_get_order(self, storage: SQLiteStorageAdapter) -> None:
         order = _make_order()
