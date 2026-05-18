@@ -8,7 +8,7 @@ import pytest
 
 from tests.fixtures import grid_config as _grid_config
 from tests.fixtures import safety_config as _safety_config
-from wobblebot.config.cli import LiveConfig
+from wobblebot.config.cli import LiveConfig, ShadowConfig
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -28,17 +28,31 @@ def _full_config(
     safety: SafetyConfig | None = None,
     live: LiveConfig | None = None,
     harvester: HarvesterConfig | None = None,
+    shadow: ShadowConfig | None = None,
 ) -> WobbleBotConfig:
     """Build a WobbleBotConfig with optional explicit blocks.
 
-    Defaults: a permissive grid + safety, no live/harvester. Tests
-    override individual sections.
+    Defaults: a permissive grid + safety, no live/harvester/shadow.
+    Tests override individual sections.
     """
     return WobbleBotConfig(
         grid=grid or _grid_config(),
         safety=safety or _safety_config(),
         live=live,
         harvester=harvester,
+        shadow=shadow,
+    )
+
+
+def _shadow(
+    *,
+    initial_usd: str = "10000",
+    max_session_loss: str = "100",
+) -> ShadowConfig:
+    return ShadowConfig(
+        symbols=[Symbol(base="BTC", quote="USD")],
+        initial_balances={"USD": Decimal(initial_usd)},
+        max_session_loss_usd=Decimal(max_session_loss),
     )
 
 
@@ -362,6 +376,102 @@ class TestHarvesterScaling:
         )
         paths = {c.yaml_path for c in prop.changes}
         assert all(not p.startswith("harvester.") for p in paths)
+
+
+# --------------------------------------------------------------------- #
+# Shadow scaling — snap-to-target semantics                             #
+# --------------------------------------------------------------------- #
+
+
+class TestShadowScaling:
+    def test_snaps_initial_usd_to_target(self) -> None:
+        cfg = _full_config(shadow=_shadow(initial_usd="10000"))
+        prop = recalibrate(
+            current_balance=Decimal("99.92"),
+            target_balance=Decimal("99.92"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path: c for c in prop.changes}
+        assert "shadow.initial_balances.USD" in paths
+        # Sets directly to target, regardless of where it started.
+        assert paths["shadow.initial_balances.USD"].proposed_value == Decimal("99.92")
+
+    def test_max_session_loss_scales_by_shadow_ratio(self) -> None:
+        """1% of $10000 ($100) should stay 1% of $50 ($0.50)."""
+        cfg = _full_config(shadow=_shadow(initial_usd="10000", max_session_loss="100"))
+        prop = recalibrate(
+            current_balance=Decimal("99.92"),
+            target_balance=Decimal("50"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path: c for c in prop.changes}
+        assert "shadow.max_session_loss_usd" in paths
+        # 100 * (50 / 10000) = 0.5
+        assert paths["shadow.max_session_loss_usd"].proposed_value == Decimal("0.50")
+
+    def test_shadow_ratio_independent_of_live_ratio(self) -> None:
+        """current==target keeps live ratio at 1.0 (no live changes)
+        but shadow still snaps from its baseline to target."""
+        cfg = _full_config(
+            shadow=_shadow(initial_usd="10000", max_session_loss="100"),
+            live=_live(max_session_loss="5"),
+        )
+        prop = recalibrate(
+            current_balance=Decimal("99.92"),
+            target_balance=Decimal("99.92"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path for c in prop.changes}
+        # Live untouched (ratio 1.0)
+        assert "live.max_session_loss_usd" not in paths
+        # Shadow snapped
+        assert "shadow.initial_balances.USD" in paths
+        assert "shadow.max_session_loss_usd" in paths
+
+    def test_no_shadow_block_emits_no_shadow_changes(self) -> None:
+        cfg = _full_config(shadow=None)
+        prop = recalibrate(
+            current_balance=Decimal("100"),
+            target_balance=Decimal("50"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path for c in prop.changes}
+        assert all(not p.startswith("shadow.") for p in paths)
+
+    def test_target_equals_shadow_baseline_emits_no_changes(self) -> None:
+        """When target matches shadow's existing USD, nothing changes."""
+        cfg = _full_config(shadow=_shadow(initial_usd="500"))
+        prop = recalibrate(
+            current_balance=Decimal("99.92"),
+            target_balance=Decimal("500"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path for c in prop.changes}
+        # Shadow USD already at target → no change
+        assert "shadow.initial_balances.USD" not in paths
+
+    def test_does_not_scale_non_usd_initial_balances(self) -> None:
+        """BTC / ETH entries in initial_balances are asset units, not USD."""
+        shadow = ShadowConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            initial_balances={
+                "USD": Decimal("10000"),
+                "BTC": Decimal("0.5"),
+                "ETH": Decimal("5"),
+            },
+            max_session_loss_usd=Decimal("100"),
+        )
+        cfg = _full_config(shadow=shadow)
+        prop = recalibrate(
+            current_balance=Decimal("99.92"),
+            target_balance=Decimal("100"),
+            current_config=cfg,
+        )
+        paths = {c.yaml_path for c in prop.changes}
+        # Only USD scales
+        assert "shadow.initial_balances.USD" in paths
+        assert "shadow.initial_balances.BTC" not in paths
+        assert "shadow.initial_balances.ETH" not in paths
 
 
 # --------------------------------------------------------------------- #

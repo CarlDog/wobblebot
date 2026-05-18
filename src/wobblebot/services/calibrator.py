@@ -38,7 +38,24 @@ not USD amounts):
 - ``safety.max_orders_per_coin`` (count)
 - ``safety.emergency_stop.max_loss_percentage`` (already a percentage)
 - ``live.max_runtime_minutes`` (time, not money)
-- ``shadow.*`` (synthetic balances; operator manages independently)
+- ``shadow.initial_balances`` keys OTHER than USD (BTC / ETH etc are
+  asset units, not USD)
+
+**Shadow scaling** (separate ratio, snap-to-target semantics):
+
+The shadow world is calibrated independently of live — operators
+typically run shadow at a much larger synthetic balance (e.g.
+``initial_balances.USD: 10000``) for high-resolution sandboxing.
+When the operator wants shadow to mirror live's scale, the live
+ratio (``target / current_balance``) is the wrong factor — it would
+leave shadow at $10000 when current==target.
+
+Shadow's scale factor uses ``target_balance / shadow.initial_balances.USD``
+instead. ``shadow.initial_balances.USD`` is set directly to the
+target balance; ``shadow.max_session_loss_usd`` scales by the shadow
+ratio so its proportion to the shadow starting balance is preserved.
+Net effect: one CLI invocation harmonizes live + shadow to the same
+operating scale.
 
 The proposal is pure data — no I/O. ``cli/recalibrate`` (Stage 7.6.B)
 threads it through ``services/settings_rewriter`` for ``--commit``.
@@ -183,6 +200,7 @@ def recalibrate(
     changes.extend(_safety_changes(current_config, ratio))
     changes.extend(_live_changes(current_config, ratio))
     changes.extend(_harvester_changes(current_config, ratio))
+    changes.extend(_shadow_changes(current_config, target_balance))
 
     return RecalibrationProposal(
         current_balance=current_balance,
@@ -258,6 +276,54 @@ def _live_changes(config: WobbleBotConfig, ratio: Decimal) -> Iterable[Recalibra
         yaml_path="live.max_session_loss_usd",
         current=current,
         proposed=proposed,
+    )
+    if change is not None:
+        yield change
+
+
+def _shadow_changes(
+    config: WobbleBotConfig, target_balance: Decimal
+) -> Iterable[RecalibrationChange]:
+    """Snap shadow's USD-denominated knobs to ``target_balance``.
+
+    Shadow uses its OWN scale ratio
+    (``target_balance / shadow.initial_balances.USD``) so a one-shot
+    invocation can simultaneously keep live's calibration intact AND
+    snap shadow from its bigger synthetic baseline down to live's
+    operating scale.
+
+    - ``shadow.initial_balances.USD`` is set directly to
+      ``target_balance`` (quantized to cents).
+    - ``shadow.max_session_loss_usd`` scales by the shadow ratio so
+      its proportion to the starting USD is preserved.
+
+    Non-USD entries in ``initial_balances`` (BTC, ETH, etc) are
+    asset units, not USD — they don't scale.
+    """
+    if config.shadow is None:
+        return
+    shadow = config.shadow
+    shadow_usd_baseline = shadow.initial_balances.get("USD")
+    if shadow_usd_baseline is None or shadow_usd_baseline <= Decimal("0"):
+        # ShadowConfig's _require_usd validator already enforces USD
+        # presence + positivity at load time; this defensive guard is
+        # for completeness rather than expected runtime behavior.
+        return
+    target_quantized = target_balance.quantize(_QUANTIZE, rounding=ROUND_HALF_UP)
+    change = _change_if_different(
+        yaml_path="shadow.initial_balances.USD",
+        current=shadow_usd_baseline,
+        proposed=target_quantized,
+    )
+    if change is not None:
+        yield change
+
+    shadow_ratio = target_balance / shadow_usd_baseline
+    scaled_loss = _scaled(shadow.max_session_loss_usd, shadow_ratio)
+    change = _change_if_different(
+        yaml_path="shadow.max_session_loss_usd",
+        current=shadow.max_session_loss_usd,
+        proposed=scaled_loss,
     )
     if change is not None:
         yield change
