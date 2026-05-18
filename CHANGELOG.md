@@ -10,6 +10,45 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.2 kickoff — Background Maintenance Worker (2026-05-18)
+
+Phase 8 continues. Stage 8.1 closed reliability + reconciliation;
+Stage 8.2 builds the long-running maintenance daemon on top.
+
+**No new ADR.** The four subsystems (VACUUM, prune + archive,
+backup, log rotation) carry implementation-level decisions but
+none are cross-cutting commitments future stages need to re-ratify.
+Decisions land in `docs/planning/stage-8.2-design.md` only.
+
+**Design ratifies 10 implementation-level decisions:**
+
+1. One daemon, multiple scheduled tasks (three concurrent
+   `asyncio.Task`s via the Stage 8.0.C `run_poll_loop` helper).
+2. CSV archive format. Zero new deps; operator converts to
+   parquet downstream if they want.
+3. Only `price_snapshots` gets pruned in v1.0. Every audit
+   table (`orders`, `trades`, `llm_calls`, etc.) stays forever.
+4. Local-only backups in v1.0. `BackupDestination` Protocol
+   for v1.1 remote variants.
+5. Backup retention: keep last N daily (default 7). Tiered
+   retention deferred to v1.1.
+6. VACUUM uses raw `sqlite3.Connection.execute("VACUUM")` —
+   can't run inside `aiosqlite`'s transaction wrapper.
+7. Operator-started daemon (matching `cli/live`, `cli/operator`,
+   etc.) — not auto-spawned.
+8. Default cadences: vacuum 7d, prune 1d, backup 1d.
+9. Archive + backup live under `data/archive/` + `data/backups/`.
+10. Log rotation opt-in via `configure_logging(rotating_file_path=...)`.
+    Default stays stdout-only.
+
+**Slicing:** 8.2.A (this commit) → 8.2.B (services/maintenance.py
+with vacuum + prune + archive) → 8.2.C (services/backuper.py with
+local SQLite .backup) → 8.2.D (cli/maintenance daemon + log
+rotation) → 8.2.E (close). ~25-35 new tests. **Fifteenth operator
+entry point** lands at close: `python -m wobblebot.cli.maintenance`.
+
+No code in this commit. Stage 8.2.B work follows.
+
 ### Stage 8.1 close — Reliability & Recovery (2026-05-18)
 
 Three sub-slices closed (A kickoff already in unreleased above;
