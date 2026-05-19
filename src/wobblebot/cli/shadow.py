@@ -217,7 +217,7 @@ async def _run_one_tick(
     return False
 
 
-async def _run_loop(
+async def _run_loop(  # pylint: disable=too-many-locals
     adapter: ShadowExchangeAdapter,
     engine: GridEngine,
     shadow: ShadowConfig,
@@ -267,16 +267,39 @@ async def _run_loop(
             except asyncio.TimeoutError:
                 pass
     finally:
-        ended_usd = await _shadow_usd_balance(adapter)
-        cancelled, failed = await _cancel_all_open(adapter, storage, tuple(shadow.symbols))
+        # Stage 8.4 hotfix: same structural fix as cli/live.py — each
+        # cleanup step gets its own try/except so a failure in one
+        # doesn't skip the others. Shadow's balance fetch is synthetic
+        # (no network) so the failure surface is narrower than cli/live,
+        # but the pattern matches for consistency.
+        try:
+            ended_usd = await _shadow_usd_balance(adapter)
+            ended_usd_known = True
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "shadow session_end balance fetch failed; PnL unavailable",
+                extra={"error": str(exc)},
+            )
+            ended_usd = started_usd
+            ended_usd_known = False
+        try:
+            cancelled, failed = await _cancel_all_open(adapter, storage, tuple(shadow.symbols))
+        except WobbleBotPortError as exc:
+            _LOGGER.error(
+                "shadow session_end cancel_all_open raised; reconciler will catch",
+                extra={"error": str(exc)},
+            )
+            cancelled, failed = 0, 0
+        ending_usd_str = str(ended_usd) if ended_usd_known else "unknown"
+        session_pnl_str = str(ended_usd - started_usd) if ended_usd_known else "unknown"
         _LOGGER.info(
             "shadow session end",
             extra={
                 "ticks": tick,
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "starting_usd_synthetic": str(started_usd),
-                "ending_usd_synthetic": str(ended_usd),
-                "session_pnl_usd_synthetic": str(ended_usd - started_usd),
+                "ending_usd_synthetic": ending_usd_str,
+                "session_pnl_usd_synthetic": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,
                 "exit_code": exit_code,

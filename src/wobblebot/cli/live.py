@@ -393,18 +393,44 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             except asyncio.TimeoutError:
                 pass  # normal — tick interval elapsed
     finally:
-        ended_usd = await _session_usd_balance(adapter)
-        cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
-        session_pnl = ended_usd - started_usd
+        # Stage 8.4 hotfix: each cleanup step gets its own try/except so a
+        # transient failure in one (e.g. DNS down during a power outage
+        # firing _session_usd_balance) can't skip the others. Order
+        # cancellation is the most safety-critical cleanup; it must run
+        # even if the balance fetch craters. Per the runbook §"Hard stop":
+        # "cli/live shutdown leaves orders open on Kraken" is a hard stop
+        # — surfaced during the 2026-05-19 soak outage where DNS failed
+        # mid-finally and three open BUYs were never cancelled.
+        try:
+            ended_usd = await _session_usd_balance(adapter)
+            ended_usd_known = True
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "session_end balance fetch failed; PnL unavailable",
+                extra={"error": str(exc)},
+            )
+            ended_usd = started_usd
+            ended_usd_known = False
+        try:
+            cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
+        except WobbleBotPortError as exc:
+            _LOGGER.error(
+                "session_end cancel_all_open raised; reconciler will catch stragglers",
+                extra={"error": str(exc)},
+            )
+            cancelled, failed = 0, 0
+        session_pnl = ended_usd - started_usd if ended_usd_known else Decimal("0")
         duration_seconds = round(time.monotonic() - started_at, 1)
+        ending_usd_str = str(ended_usd) if ended_usd_known else "unknown"
+        session_pnl_str = str(session_pnl) if ended_usd_known else "unknown"
         _LOGGER.info(
             "session end",
             extra={
                 "ticks": tick,
                 "duration_seconds": duration_seconds,
                 "starting_usd": str(started_usd),
-                "ending_usd": str(ended_usd),
-                "session_pnl_usd": str(session_pnl),
+                "ending_usd": ending_usd_str,
+                "session_pnl_usd": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,
                 "exit_code": exit_code,
@@ -416,15 +442,15 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             title=f"Live session ended (exit {exit_code})",
             message=(
                 f"{tick} tick(s), {duration_seconds}s runtime. "
-                f"PnL {session_pnl} USD ({started_usd} -> {ended_usd}). "
+                f"PnL {session_pnl_str} USD ({started_usd} -> {ending_usd_str}). "
                 f"Cancelled {cancelled} open order(s); {failed} cancel failure(s)."
             ),
             context={
                 "ticks": tick,
                 "duration_seconds": duration_seconds,
                 "starting_usd": str(started_usd),
-                "ending_usd": str(ended_usd),
-                "session_pnl_usd": str(session_pnl),
+                "ending_usd": ending_usd_str,
+                "session_pnl_usd": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,
                 "exit_code": exit_code,

@@ -154,6 +154,93 @@ class TestLivePersistenceOnCancel:
 
 
 # --------------------------------------------------------------------- #
+# Stage 8.4 hotfix: finally-block resilience                            #
+# --------------------------------------------------------------------- #
+#
+# 2026-05-19 soak outage: thunderstorm-induced DNS failure made
+# _session_usd_balance() raise inside the cli/live finally block. The
+# uncaught ExchangeError propagated, skipping the subsequent
+# _cancel_all_open() call and leaving three open BUYs on Kraken —
+# one of which filled overnight. Per the runbook's "Hard stop"
+# discipline, the finally block must cancel orders regardless of
+# what else fails. Fix wraps each cleanup step in its own try/except.
+
+
+class TestSessionEndResilience:
+    """Stage 8.4: session-end cleanup must run every step independently.
+
+    If ``_session_usd_balance`` raises (e.g. network down at shutdown),
+    the subsequent ``_cancel_all_open`` MUST still run — leaving open
+    orders on Kraken is a hard-stop per the v1.0 soak runbook.
+    """
+
+    async def test_balance_fetch_failure_does_not_skip_cancel(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression for the 2026-05-19 soak outage path.
+
+        Mocks ``_session_usd_balance`` to succeed once (for ``started_usd``)
+        then raise (for ``ended_usd``), and verifies ``_cancel_all_open``
+        still cancels the open order and persists the transition.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.config.cli import LiveConfig
+
+        # Pre-seed storage with one open order to verify gets cancelled.
+        order = _make_order(exchange_id="OID-OUTAGE")
+        await storage.save_order(order)
+        adapter = _FakeAdapter(open_orders=[order])
+
+        # First call succeeds (started_usd); second raises (ended_usd).
+        call_log = {"n": 0}
+
+        async def flaky_balance(_adapter: Any) -> Decimal:
+            call_log["n"] += 1
+            if call_log["n"] == 1:
+                return Decimal("100")
+            raise ExchangeError("simulated DNS failure")
+
+        monkeypatch.setattr(live_module, "_session_usd_balance", flaky_balance)
+
+        # Stop event pre-set so the main loop body never executes; only
+        # the session-start prelude + finally block run.
+        stop_event = __import__("asyncio").Event()
+        stop_event.set()
+
+        live_cfg = LiveConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            db=":memory:",
+            tick_seconds=5.0,
+            max_runtime_minutes=None,
+            max_session_loss_usd=Decimal("5"),
+        )
+
+        # The engine is never stepped (stop_event pre-set), so a Mock
+        # standing in for GridEngine is sufficient. is_stop_requested
+        # is read inside the loop but the loop doesn't iterate.
+        engine = MagicMock()
+        engine.is_stop_requested = False
+
+        exit_code = await live_module._run_loop(
+            adapter,  # type: ignore[arg-type]
+            engine,
+            live_cfg,
+            storage,
+            stop_event,
+        )
+
+        # The fix: cancel still ran despite balance fetch raising.
+        assert adapter.cancelled_ids == ["OID-OUTAGE"]
+        roundtripped = await storage.get_order(order.id)
+        assert roundtripped is not None
+        assert roundtripped.status == "canceled"
+        # And the loop returned a normal exit code (didn't raise out).
+        assert exit_code == 0
+
+
+# --------------------------------------------------------------------- #
 # cli/shadow persistence                                                #
 # --------------------------------------------------------------------- #
 
