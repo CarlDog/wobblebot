@@ -18,7 +18,13 @@ from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
-from wobblebot.web.routes.cost import _empty_snapshot, _rollup
+from wobblebot.web.routes.cost import (
+    _empty_fees_snapshot,
+    _empty_snapshot,
+    _load_trading_fees_snapshot,
+    _rollup,
+    _rollup_fees,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -209,3 +215,126 @@ class TestEmptySnapshot:
     def test_default_no_error(self) -> None:
         snap = _empty_snapshot()
         assert snap.error is None
+
+
+# --------------------------------------------------------------------- #
+# Stage 8.4 follow-up: trading-fees rollup                              #
+# --------------------------------------------------------------------- #
+
+
+def _trade(
+    *,
+    fee: str,
+    hours_ago: float = 1.0,
+    symbol_base: str = "BTC",
+) -> "Trade":
+    """Construct a Trade row for the rollup tests."""
+    from wobblebot.domain.models import Trade
+    from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol
+
+    when = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return Trade(
+        id=f"TRADE-{uuid4().hex[:12]}",
+        order_id=f"ORDER-{uuid4().hex[:12]}",
+        symbol=Symbol(base=symbol_base, quote="USD"),
+        side=OrderSide.SELL,
+        price=Price(amount=Decimal("77000"), currency="USD"),
+        amount=Amount(value=Decimal("0.00013"), asset=symbol_base),
+        fee=Decimal(fee),
+        cost=Decimal("10.00"),
+        executed_at=Timestamp(dt=when),
+    )
+
+
+class TestEmptyFeesSnapshot:
+    def test_unwired_default(self) -> None:
+        snap = _empty_fees_snapshot(wired=False)
+        assert snap.live_wired is False
+        assert snap.total_all_time_usd == Decimal("0")
+        assert snap.error is None
+
+    def test_wired_with_error(self) -> None:
+        snap = _empty_fees_snapshot(wired=True, error="storage down")
+        assert snap.live_wired is True
+        assert snap.error == "storage down"
+
+
+class TestRollupFees:
+    def test_empty_trades_zero_totals(self) -> None:
+        snap = _rollup_fees([], now=datetime.now(UTC))
+        assert snap.live_wired is True
+        assert snap.total_24h_usd == Decimal("0")
+        assert snap.total_7d_usd == Decimal("0")
+        assert snap.total_30d_usd == Decimal("0")
+        assert snap.total_all_time_usd == Decimal("0")
+        assert snap.trade_count_all_time == 0
+
+    def test_bucket_by_window(self) -> None:
+        now = datetime.now(UTC)
+        trades = [
+            _trade(fee="0.025", hours_ago=2),  # 24h window
+            _trade(fee="0.030", hours_ago=24 * 3),  # 7d window (not 24h)
+            _trade(fee="0.040", hours_ago=24 * 15),  # 30d window (not 7d)
+            _trade(fee="0.050", hours_ago=24 * 100),  # all-time only
+        ]
+        snap = _rollup_fees(trades, now=now)
+        assert snap.total_24h_usd == Decimal("0.025")
+        assert snap.total_7d_usd == Decimal("0.055")  # 24h trade still counts
+        assert snap.total_30d_usd == Decimal("0.095")  # 7d trades count too
+        assert snap.total_all_time_usd == Decimal("0.145")
+        assert snap.trade_count_24h == 1
+        assert snap.trade_count_7d == 2
+        assert snap.trade_count_30d == 3
+        assert snap.trade_count_all_time == 4
+
+    def test_nested_window_inclusion(self) -> None:
+        """A trade in the 24h window MUST also be counted in 7d / 30d /
+        all-time. Outer windows are supersets of inner."""
+        now = datetime.now(UTC)
+        snap = _rollup_fees(
+            [_trade(fee="0.025", hours_ago=1)],
+            now=now,
+        )
+        assert snap.trade_count_24h == 1
+        assert snap.trade_count_7d == 1
+        assert snap.trade_count_30d == 1
+        assert snap.trade_count_all_time == 1
+
+
+class TestLoadTradingFeesSnapshot:
+    @pytest.mark.asyncio
+    async def test_none_storage_returns_unwired(self) -> None:
+        snap = await _load_trading_fees_snapshot(None)
+        assert snap.live_wired is False
+        assert snap.error is None
+        assert snap.total_all_time_usd == Decimal("0")
+
+    @pytest.mark.asyncio
+    async def test_empty_db_returns_zero(self) -> None:
+        adapter = SQLiteStorageAdapter(":memory:")
+        await adapter.connect()
+        try:
+            snap = await _load_trading_fees_snapshot(adapter)
+            assert snap.live_wired is True
+            assert snap.error is None
+            assert snap.total_all_time_usd == Decimal("0")
+            assert snap.trade_count_all_time == 0
+        finally:
+            await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_persisted_trades_sum_correctly(self) -> None:
+        adapter = SQLiteStorageAdapter(":memory:")
+        await adapter.connect()
+        try:
+            # Three trades within last 24h.
+            for fee in ("0.025", "0.030", "0.020"):
+                await adapter.save_trade(_trade(fee=fee, hours_ago=2))
+            snap = await _load_trading_fees_snapshot(adapter)
+            assert snap.live_wired is True
+            assert snap.error is None
+            assert snap.total_24h_usd == Decimal("0.075")
+            assert snap.trade_count_24h == 3
+            assert snap.total_all_time_usd == Decimal("0.075")
+        finally:
+            await adapter.close()

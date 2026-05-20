@@ -1,17 +1,28 @@
-"""Cost dashboard — reads operator.db's llm_calls (Stage 7.2.A).
+"""Cost dashboard — reads operator.db's llm_calls + live.db's trades
+(Stage 7.2.A + Stage 8.4 trading-fees follow-up).
 
-Per ADR-014 every cloud-LLM call writes a forensic ``LLMCallRecord``
-row. Phase 6 wired the persistence; Phase 7.2 surfaces it to the
-operator via two rollups: per-day totals (last 7 days) and
-per-provider/per-role breakdown (last 24h).
+Two cost surfaces:
 
-Two routes ship here:
+1. **LLM cost** (Stage 7.2.A; from operator.db's llm_calls). Per
+   ADR-014 every cloud-LLM call writes a forensic
+   ``LLMCallRecord`` row. Surfaced as: 24h total + 7d total +
+   per-day rollup + per-provider/role rollup.
+2. **Kraken trading fees** (Stage 8.4 follow-up; from live.db's
+   trades). Each completed fill stores its maker/taker fee in the
+   `fee` column. Surfaced as: rolling sums for 24h / 7d / 30d /
+   all-time so the operator can see real per-period trading
+   costs without doing the math against the trades table by hand.
+
+Routes:
 
 - ``GET /cost`` — full page rendered against ``cost.html``.
 - ``GET /cost/card`` — fragment for HTMX-polled refresh from the
   dashboard. Same data, no layout chrome.
 
-Both are auth-gated; no mutations.
+Both are auth-gated; no mutations. Both gracefully degrade when
+their respective storage adapter is ``None`` — the LLM cost card
+shows an empty rollup; the trading-fees card shows an "unwired"
+placeholder.
 """
 
 from __future__ import annotations
@@ -26,12 +37,17 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
 from wobblebot.domain.llm_cost import LLMCallRecord
+from wobblebot.domain.models import Trade
 from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.web.auth import require_user
-from wobblebot.web.dependencies import get_operator_storage, get_templates
+from wobblebot.web.dependencies import (
+    get_live_storage,
+    get_operator_storage,
+    get_templates,
+)
 
 router = APIRouter(tags=["cost"])
 
@@ -72,6 +88,35 @@ class CostSnapshot:
     error: str | None = None
 
 
+# pylint: disable=too-many-instance-attributes
+@dataclass(frozen=True)
+class TradingFeesSnapshot:
+    """Kraken trading fees rolled up across the standard windows.
+
+    Fee currency is the trade's quote currency. All current configured
+    pairs (BTC/USD, DOGE/USD, etc.) settle fees in USD, so summing
+    ``trade.fee`` across the window yields USD totals. If a non-USD
+    quote pair ever ships, this rollup will need per-currency handling.
+
+    Trade counts are reported alongside dollars so the operator can
+    see "did I pay $5 across 100 cycles or across 5 cycles" (high
+    cycle count + low fee per = healthy maker-side execution; low
+    cycle count + high fee per = chasing the price with taker
+    fills).
+    """
+
+    live_wired: bool
+    total_24h_usd: Decimal
+    total_7d_usd: Decimal
+    total_30d_usd: Decimal
+    total_all_time_usd: Decimal
+    trade_count_24h: int
+    trade_count_7d: int
+    trade_count_30d: int
+    trade_count_all_time: int
+    error: str | None = None
+
+
 def _empty_snapshot(error: str | None = None) -> CostSnapshot:
     return CostSnapshot(
         total_24h_usd=Decimal("0"),
@@ -82,6 +127,94 @@ def _empty_snapshot(error: str | None = None) -> CostSnapshot:
         per_provider_role=(),
         error=error,
     )
+
+
+def _empty_fees_snapshot(*, wired: bool, error: str | None = None) -> TradingFeesSnapshot:
+    return TradingFeesSnapshot(
+        live_wired=wired,
+        total_24h_usd=Decimal("0"),
+        total_7d_usd=Decimal("0"),
+        total_30d_usd=Decimal("0"),
+        total_all_time_usd=Decimal("0"),
+        trade_count_24h=0,
+        trade_count_7d=0,
+        trade_count_30d=0,
+        trade_count_all_time=0,
+        error=error,
+    )
+
+
+def _rollup_fees(  # pylint: disable=too-many-locals
+    trades: list[Trade], *, now: datetime
+) -> TradingFeesSnapshot:
+    """Bucket fees + trade counts into the four standard windows.
+
+    Single-pass sum over the input list. Trades are bucketed by
+    `executed_at`, not by storage `created_at` — the fee was paid
+    when Kraken matched the order, not when the row was persisted.
+    """
+    cutoff_24h = now - timedelta(hours=24)
+    cutoff_7d = now - timedelta(days=7)
+    cutoff_30d = now - timedelta(days=30)
+
+    total_24h = Decimal("0")
+    total_7d = Decimal("0")
+    total_30d = Decimal("0")
+    total_all = Decimal("0")
+    n_24h = 0
+    n_7d = 0
+    n_30d = 0
+    n_all = 0
+
+    for trade in trades:
+        ts = trade.executed_at.dt
+        fee = trade.fee
+        total_all += fee
+        n_all += 1
+        if ts >= cutoff_30d:
+            total_30d += fee
+            n_30d += 1
+            if ts >= cutoff_7d:
+                total_7d += fee
+                n_7d += 1
+                if ts >= cutoff_24h:
+                    total_24h += fee
+                    n_24h += 1
+
+    return TradingFeesSnapshot(
+        live_wired=True,
+        total_24h_usd=total_24h,
+        total_7d_usd=total_7d,
+        total_30d_usd=total_30d,
+        total_all_time_usd=total_all,
+        trade_count_24h=n_24h,
+        trade_count_7d=n_7d,
+        trade_count_30d=n_30d,
+        trade_count_all_time=n_all,
+    )
+
+
+async def _load_trading_fees_snapshot(
+    live_storage: StoragePort | None,
+) -> TradingFeesSnapshot:
+    """Pull every trade from live.db + roll up by window.
+
+    When live_storage is None, the live_db cross-DB path wasn't
+    configured — return an "unwired" snapshot so the template can
+    render a placeholder. Storage failures degrade to an error
+    snapshot rather than 500-ing the whole cost page.
+    """
+    if live_storage is None:
+        return _empty_fees_snapshot(wired=False)
+    try:
+        # High limit covers years of soak-rate trading. If the
+        # operator ever does enough trades to bump this, the right
+        # fix is paginated streaming sums, not a higher limit —
+        # but for v1.0 grid-strategy traffic 10k is comfortable.
+        trades = await live_storage.get_trades(limit=10_000)
+    except StorageError as exc:
+        return _empty_fees_snapshot(wired=True, error=f"failed to query trades: {exc}")
+    return _rollup_fees(trades, now=datetime.now(UTC))
 
 
 # pylint: disable=too-many-locals
@@ -167,15 +300,18 @@ async def cost_page(
     request: Request,
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    live_storage: StoragePort | None = Depends(get_live_storage),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    """Full cost dashboard page."""
+    """Full cost dashboard page — LLM card + trading-fees card."""
     snapshot = await _load_snapshot(storage)
+    fees_snapshot = await _load_trading_fees_snapshot(live_storage)
     return templates.TemplateResponse(
         request,
         "cost.html",
         {
             "snapshot": snapshot,
+            "fees_snapshot": fees_snapshot,
             "username": user.username,
             "last_refreshed_at": datetime.now(UTC),
         },
@@ -187,15 +323,22 @@ async def cost_card(
     request: Request,
     _user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    live_storage: StoragePort | None = Depends(get_live_storage),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    """HTMX fragment — just the cost card without layout chrome."""
+    """HTMX fragment — LLM cost + trading-fees cards without chrome.
+
+    The dashboard's HTMX polling hits this endpoint; both cards
+    refresh together to keep the visual state consistent.
+    """
     snapshot = await _load_snapshot(storage)
+    fees_snapshot = await _load_trading_fees_snapshot(live_storage)
     return templates.TemplateResponse(
         request,
         "_cost_card.html",
         {
             "snapshot": snapshot,
+            "fees_snapshot": fees_snapshot,
             "last_refreshed_at": datetime.now(UTC),
         },
     )
@@ -206,4 +349,5 @@ __all__ = (
     "CostSnapshot",
     "DayRollup",
     "GroupRollup",
+    "TradingFeesSnapshot",
 )

@@ -1,45 +1,101 @@
 {# Cost card fragment — rendered standalone for HTMX polling AND
-   included from cost.html for the full-page load. #}
-<div class="card" id="cost-card">
-  <div class="card-header">
-    <div class="card-title">LLM cost — last 24h</div>
-    <div class="card-meta">
-      {{ snapshot.call_count_24h }} calls ·
-      refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
-      <button type="button"
-              class="btn-link"
-              hx-get="/cost/card"
-              hx-target="#cost-card"
-              hx-swap="outerHTML"
-              title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
-        ↻
-      </button>
+   included from cost.html for the full-page load.
+
+   Outer #cost-card wraps TWO cards (LLM + Kraken trading fees)
+   so both refresh together via a single HTMX poll. #}
+<div id="cost-card">
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">LLM cost — last 24h</div>
+      <div class="card-meta">
+        {{ snapshot.call_count_24h }} calls ·
+        refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
+        <button type="button"
+                class="btn-link"
+                hx-get="/cost/card"
+                hx-target="#cost-card"
+                hx-swap="outerHTML"
+                title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
+          ↻
+        </button>
+      </div>
     </div>
+    {% if snapshot.error %}
+      <p class="error">{{ snapshot.error }}</p>
+    {% else %}
+      <div class="metric">
+        <div class="metric-value">${{ "%.6f"|format(snapshot.total_24h_usd) }}</div>
+        <div class="metric-label">spent in the last 24 hours</div>
+      </div>
+      {% if snapshot.per_provider_role %}
+        <table class="data compact">
+          <thead>
+            <tr><th>provider / role</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>
+          </thead>
+          <tbody>
+            {% for g in snapshot.per_provider_role %}
+              <tr>
+                <td>{{ g.key }}</td>
+                <td class="num">{{ g.call_count }}</td>
+                <td class="num">${{ "%.6f"|format(g.cost_usd) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="placeholder">No cloud LLM calls in the last 24 hours.</p>
+      {% endif %}
+    {% endif %}
   </div>
-  {% if snapshot.error %}
-    <p class="error">{{ snapshot.error }}</p>
-  {% else %}
-    <div class="metric">
-      <div class="metric-value">${{ "%.6f"|format(snapshot.total_24h_usd) }}</div>
-      <div class="metric-label">spent in the last 24 hours</div>
+
+  {# Stage 8.4 follow-up: Kraken trading fees from live.db trades.fee. #}
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Kraken trading fees</div>
+      <div class="card-meta">
+        {% if fees_snapshot.live_wired %}
+          {{ fees_snapshot.trade_count_all_time }} total trades
+        {% else %}
+          live_db unwired
+        {% endif %}
+      </div>
     </div>
-    {% if snapshot.per_provider_role %}
+    {% if not fees_snapshot.live_wired %}
+      <p class="placeholder">
+        Configure <code>web.live_db</code> in settings.yml to surface
+        trading fees. The dashboard reads the same <code>live.db</code>
+        cli/live writes its trades to.
+      </p>
+    {% elif fees_snapshot.error %}
+      <p class="error">{{ fees_snapshot.error }}</p>
+    {% else %}
       <table class="data compact">
         <thead>
-          <tr><th>provider / role</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>
+          <tr><th>window</th><th class="num">trades</th><th class="num">fees (USD)</th></tr>
         </thead>
         <tbody>
-          {% for g in snapshot.per_provider_role %}
-            <tr>
-              <td>{{ g.key }}</td>
-              <td class="num">{{ g.call_count }}</td>
-              <td class="num">${{ "%.6f"|format(g.cost_usd) }}</td>
-            </tr>
-          {% endfor %}
+          <tr>
+            <td>last 24h</td>
+            <td class="num">{{ fees_snapshot.trade_count_24h }}</td>
+            <td class="num">${{ "%.4f"|format(fees_snapshot.total_24h_usd) }}</td>
+          </tr>
+          <tr>
+            <td>last 7d</td>
+            <td class="num">{{ fees_snapshot.trade_count_7d }}</td>
+            <td class="num">${{ "%.4f"|format(fees_snapshot.total_7d_usd) }}</td>
+          </tr>
+          <tr>
+            <td>last 30d</td>
+            <td class="num">{{ fees_snapshot.trade_count_30d }}</td>
+            <td class="num">${{ "%.4f"|format(fees_snapshot.total_30d_usd) }}</td>
+          </tr>
+          <tr>
+            <td>all time</td>
+            <td class="num">{{ fees_snapshot.trade_count_all_time }}</td>
+            <td class="num">${{ "%.4f"|format(fees_snapshot.total_all_time_usd) }}</td>
+          </tr>
         </tbody>
       </table>
-    {% else %}
-      <p class="placeholder">No cloud LLM calls in the last 24 hours.</p>
     {% endif %}
-  {% endif %}
+  </div>
 </div>
