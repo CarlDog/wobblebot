@@ -233,6 +233,20 @@ async def _serve_async(config: WobbleBotConfig) -> int:
         access_log=False,
     )
     server = uvicorn.Server(uv_config)
+    # Startup banner so operators see the daemon is alive. uvicorn's
+    # own banner is suppressed by log_config=None + access_log=False;
+    # without this line cli/web serves silently and looks dead even
+    # when it's healthy. Surfaced 2026-05-20 post-bounce when operator
+    # noticed Terminal 7 was silent and HAD to curl the login page to
+    # verify the daemon was actually up.
+    _LOGGER.info(
+        "cli/web listening",
+        extra={
+            "bind_host": config.web.bind_host,
+            "bind_port": config.web.bind_port,
+            "url": f"http://{config.web.bind_host}:{config.web.bind_port}",
+        },
+    )
     try:
         await server.serve()
     finally:
