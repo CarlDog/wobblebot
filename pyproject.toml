@@ -58,6 +58,10 @@ dependencies = [
     "python-multipart>=0.0.12,<1",
     "bcrypt>=4.2.0,<5",
     "itsdangerous>=2.2.0,<3",
+    # Stage 8.4 follow-up: fuzzy headline matching for news dedup
+    # (cli/news pre-save filter). Faster + smaller-footprint than the
+    # older thefuzz/fuzzywuzzy lineage; pure C extension.
+    "rapidfuzz>=3.6.0,<4",
 ]
 
 [project.optional-dependencies]

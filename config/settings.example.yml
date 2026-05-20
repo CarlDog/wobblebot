@@ -257,6 +257,20 @@ news:
     lang: EN
     # categories: "BTC|ETH"            # optional pipe-separated filter
 
+  # Stage 8.4 follow-up: cross-source syndication dedup. Storage's
+  # UNIQUE(source, external_id) catches same-source reposts; this
+  # block catches the same wire story republished by multiple
+  # outlets with reworded headlines. Token-set ratio (rapidfuzz) +
+  # mentioned-coins overlap guard.
+  dedup:
+    # Hours of recent items each candidate is compared against.
+    window_hours: 6.0
+    # Token-set ratio threshold (0-100). Default 60 measured against
+    # real syndicated rewording. Raise to 70 for stricter dedup,
+    # lower to 55 for aggressive. Set to 0 to disable (storage-level
+    # exact dedup still applies).
+    fuzzy_threshold: 60.0
+
   log_format: plain
 
 # ============================================================================

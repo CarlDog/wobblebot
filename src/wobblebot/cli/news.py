@@ -36,7 +36,7 @@ import os
 import signal
 import sys
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
@@ -49,12 +49,13 @@ from wobblebot.cli._common import (
     load_operator_env,
     run_poll_loop,
 )
-from wobblebot.config.cli import NewsConfig
+from wobblebot.config.cli import NewsConfig, NewsDedupConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import NewsError, StorageError
 from wobblebot.ports.news import NewsPort
+from wobblebot.services.news_dedup import is_duplicate
 
 _LOGGER = logging.getLogger("wobblebot.cli.news")
 
@@ -82,8 +83,18 @@ def _build_sources(news: NewsConfig) -> list[NewsPort]:
     return sources
 
 
-async def _poll_source(source: NewsPort, storage: SQLiteStorageAdapter) -> tuple[int, int]:
-    """Fetch + persist one source. Returns (fetched, saved). Logs failures."""
+async def _poll_source(
+    source: NewsPort,
+    storage: SQLiteStorageAdapter,
+    dedup: NewsDedupConfig,
+) -> tuple[int, int, int]:
+    """Fetch + persist one source. Returns (fetched, saved, deduped).
+
+    ``deduped`` counts items dropped by the Stage 8.4 fuzzy dedup layer
+    (cross-source syndication catch). Exact dedup (same source +
+    external_id) is still handled at the storage layer; we don't see
+    those misses here. Failures + storage errors are logged.
+    """
     try:
         items = await source.fetch()
     except NewsError as exc:
@@ -95,10 +106,45 @@ async def _poll_source(source: NewsPort, storage: SQLiteStorageAdapter) -> tuple
                 "error_type": type(exc).__name__,
             },
         )
-        return (0, 0)
+        return (0, 0, 0)
+
+    # Pre-fetch recent items once per poll so we compare each candidate
+    # against the same window snapshot. The recent set could grow over
+    # the loop, but a single snapshot is fine for soak-scale traffic
+    # (RSS sources publish single-digit items per poll typically).
+    recent: list = []
+    if dedup.fuzzy_threshold > 0:
+        try:
+            cutoff = datetime.now(UTC) - timedelta(hours=dedup.window_hours)
+            recent = await storage.get_news_items(since=cutoff)
+        except StorageError as exc:
+            # Fail-soft: if we can't read the dedup window, fall back to
+            # save-everything (storage exact dedup still catches
+            # same-source reposts).
+            _LOGGER.warning(
+                "dedup window fetch failed; falling back to save-all",
+                extra={"source_id": source.source_id, "error": str(exc)},
+            )
+            recent = []
 
     saved = 0
+    deduped = 0
     for item in items:
+        if dedup.fuzzy_threshold > 0:
+            match = is_duplicate(item, recent, similarity_threshold=dedup.fuzzy_threshold)
+            if match is not None:
+                deduped += 1
+                _LOGGER.info(
+                    "news item deduped",
+                    extra={
+                        "source_id": source.source_id,
+                        "headline": item.headline[:80],
+                        "matched_source": match.matched_source,
+                        "matched_headline": match.matched_headline[:80],
+                        "similarity": match.similarity,
+                    },
+                )
+                continue
         try:
             await storage.save_news_item(item)
             saved += 1
@@ -117,9 +163,10 @@ async def _poll_source(source: NewsPort, storage: SQLiteStorageAdapter) -> tuple
             "source_id": source.source_id,
             "fetched": len(items),
             "saved": saved,
+            "deduped": deduped,
         },
     )
-    return (len(items), saved)
+    return (len(items), saved, deduped)
 
 
 async def _run_loop(
@@ -132,6 +179,7 @@ async def _run_loop(
     started_at = time.monotonic()
     total_fetched = 0
     total_saved = 0
+    total_deduped = 0
     interval_seconds = interval.total_seconds()
     _LOGGER.info(
         "news session start",
@@ -139,17 +187,20 @@ async def _run_loop(
             "sources": [s.source_id for s in sources],
             "interval_seconds": interval_seconds,
             "db_path": news.db,
+            "dedup_window_hours": news.dedup.window_hours,
+            "dedup_fuzzy_threshold": news.dedup.fuzzy_threshold,
         },
     )
 
     async def _one_cycle() -> None:
-        nonlocal total_fetched, total_saved
+        nonlocal total_fetched, total_saved, total_deduped
         for source in sources:
             if stop_event.is_set():
                 break
-            fetched, saved = await _poll_source(source, storage)
+            fetched, saved, deduped = await _poll_source(source, storage, news.dedup)
             total_fetched += fetched
             total_saved += saved
+            total_deduped += deduped
 
     try:
         await run_poll_loop(
@@ -164,6 +215,7 @@ async def _run_loop(
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "total_fetched": total_fetched,
                 "total_saved": total_saved,
+                "total_deduped": total_deduped,
             },
         )
     return 0

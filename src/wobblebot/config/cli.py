@@ -253,6 +253,38 @@ class CryptoCompareSpec(BaseModel):
         frozen = True
 
 
+class NewsDedupConfig(BaseModel):
+    """Stage 8.4 follow-up: fuzzy headline dedup for cli/news.
+
+    Two-layer dedup: storage's ``UNIQUE(source, external_id)`` catches
+    same-source reposts; this config drives the fuzzy layer that catches
+    cross-source syndication ("CoinDesk and Decrypt both republished
+    Reuters' wire story about Bitcoin breaking $80k").
+
+    See ``services/news_dedup.py`` for the algorithm. Operator knob:
+    set ``fuzzy_threshold=0`` to disable fuzzy dedup entirely (keep
+    storage-level exact dedup only).
+    """
+
+    # Hours of recent items to compare each new candidate against.
+    # Default 6h aligns with typical news-cycle decay — stories
+    # older than ~6h are unlikely to be republished verbatim.
+    window_hours: float = Field(default=6.0, gt=0.0, le=72.0)
+
+    # Minimum token-set ratio (0-100) to classify a candidate as
+    # duplicate of an existing item. Default 60 measured against
+    # real-world syndicated wire stories (Reuters → CoinDesk +
+    # Decrypt rewording typically scores 60-66 on token_set_ratio).
+    # The mentioned-coins overlap guard in services/news_dedup
+    # prevents most false positives below 60 anyway. Raise toward
+    # 70 for stricter dedup (more syndicated copies pass through);
+    # lower toward 55 for aggressive dedup. Set to 0 to disable.
+    fuzzy_threshold: float = Field(default=60.0, ge=0.0, le=100.0)
+
+    class Config:
+        frozen = True
+
+
 class NewsConfig(BaseModel):
     """Settings for ``cli/news``.
 
@@ -269,6 +301,7 @@ class NewsConfig(BaseModel):
     db: str = "data/wobblebot-news.db"
     rss_feeds: list[RssFeedSpec] = Field(default_factory=list)
     cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
+    dedup: NewsDedupConfig = Field(default_factory=NewsDedupConfig)
     log_format: LogFormat = "plain"
 
     class Config:
