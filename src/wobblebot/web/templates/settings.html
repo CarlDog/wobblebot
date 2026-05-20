@@ -1,0 +1,68 @@
+{# Operator preferences page (Stage 8.4 follow-up).
+
+   Display-only settings — these affect web UI rendering, never
+   storage, logs, or engine paths. Timestamps in storage stay UTC. #}
+{% extends "layout.html" %}
+
+{% block title %}Settings — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+
+{% if save_status == "ok" %}
+  <div class="card banner banner-ok">
+    <p>Preferences saved.</p>
+  </div>
+{% elif save_status == "invalid_tz" %}
+  <div class="card banner banner-warn">
+    <p>
+      That timezone string isn't recognized by the system's zoneinfo
+      database. Try one of the common entries from the dropdown, or
+      enter a valid IANA name (e.g. <code>America/Chicago</code>,
+      <code>Europe/Berlin</code>).
+    </p>
+  </div>
+{% elif save_status == "error" %}
+  <div class="card banner banner-fail">
+    <p>Save failed — storage error. Try again, or check cli/web logs.</p>
+  </div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Display preferences</div>
+    <div class="card-meta">
+      last updated {{ preferences.updated_at.dt | tz_format(operator_tz) }}
+    </div>
+  </div>
+
+  <p class="muted">
+    These settings affect only how the web UI displays data. Storage
+    timestamps, logs, and engine paths remain UTC (Stage 1 design
+    decision — UTC-normalized ISO strings give monotonic ordering).
+  </p>
+
+  <form method="post" action="/settings">
+    {{ csrf_input(request) }}
+
+    <div class="form-row">
+      <label for="timezone">Timezone</label>
+      <select id="timezone" name="timezone">
+        {% for tz in available_timezones %}
+          <option value="{{ tz }}"{% if tz == preferences.timezone %} selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+      <p class="form-help">
+        IANA timezone name. The dropdown shows common entries plus
+        your current value. To use a non-listed zone, edit the YAML
+        directly — the validator accepts any name in your system's
+        zoneinfo database.
+      </p>
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-ok">Save</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

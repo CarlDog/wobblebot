@@ -385,3 +385,56 @@ table.data th {
   margin-bottom: 16px;
   font-size: 13px;
 }
+
+/* Settings page form + banners (Stage 8.4 follow-up). */
+
+.banner {
+  padding: 10px 14px;
+}
+
+.banner-ok {
+  border-left: 4px solid #1e7d32;
+}
+
+.banner-warn {
+  border-left: 4px solid #b06000;
+}
+
+.banner-fail {
+  border-left: 4px solid #c80000;
+}
+
+.form-row {
+  margin-bottom: 16px;
+}
+
+.form-row label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #c4c7cc;
+}
+
+.form-row select,
+.form-row input[type="text"] {
+  width: 100%;
+  max-width: 360px;
+  padding: 6px 8px;
+  background: #1d1f23;
+  color: #e4e6eb;
+  border: 1px solid #3a3d42;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.form-help {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8b97a8;
+}
+
+.muted {
+  color: #8b97a8;
+  font-size: 13px;
+}

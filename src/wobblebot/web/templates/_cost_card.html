@@ -9,7 +9,7 @@
       <div class="card-title">LLM cost — last 24h</div>
       <div class="card-meta">
         {{ snapshot.call_count_24h }} calls ·
-        refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
+        refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
         <button type="button"
                 class="btn-link"
                 hx-get="/cost/card"

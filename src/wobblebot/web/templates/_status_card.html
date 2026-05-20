@@ -11,8 +11,9 @@
       {# Auto-refresh indicator + manual refresh button. Auto-refresh
          cadence comes from web.htmx_poll_seconds (Jinja global). Manual
          button uses the same hx-target as the auto-polling parent so a
-         click swaps the same DOM node. #}
-      refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
+         click swaps the same DOM node. Timestamp rendered in the
+         operator's preferred timezone (Stage 8.4 follow-up). #}
+      refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
       <button type="button"
               class="btn-link"
               hx-get="/status/card"
@@ -65,7 +66,7 @@
       <table class="data compact">
         <thead>
           <tr>
-            <th>when (UTC)</th>
+            <th>when</th>
             <th>symbol</th>
             <th>side</th>
             <th class="num">price</th>
@@ -76,7 +77,7 @@
         <tbody>
           {% for t in snapshot.recent_trades %}
             <tr>
-              <td>{{ t.executed_at.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+              <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
               <td>{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
               <td><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
               <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>

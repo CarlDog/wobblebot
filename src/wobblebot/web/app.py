@@ -15,7 +15,9 @@ mint a token.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import RedirectResponse
@@ -41,11 +43,33 @@ from wobblebot.web.routes import cost as cost_routes
 from wobblebot.web.routes import harvester as harvester_routes
 from wobblebot.web.routes import news as news_routes
 from wobblebot.web.routes import pages as page_routes
+from wobblebot.web.routes import settings as settings_routes
 from wobblebot.web.routes import status as status_routes
 
 _WEB_PKG_ROOT = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _WEB_PKG_ROOT / "templates"
 _STATIC_DIR = _WEB_PKG_ROOT / "static"
+
+
+def _tz_format(dt: datetime, tz_name: str, fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
+    """Jinja filter that renders a UTC datetime in the operator's tz.
+
+    Pure presentation conversion — the input datetime is treated as
+    UTC (or whatever tz it was stored with), converted to the operator's
+    preferred IANA timezone, and formatted via strftime. Underlying
+    persisted values are untouched.
+
+    Falls back to UTC silently if ``tz_name`` is not in the system's
+    zoneinfo database — templates should always render something rather
+    than 500. The settings POST route validates IANA names before
+    persistence, so a missing-zone error here would indicate either a
+    system-level zoneinfo gap or a deliberately bypassed validation.
+    """
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    return dt.astimezone(tz).strftime(fmt)
 
 
 def _csrf_input(request: Request) -> Markup:
@@ -126,6 +150,13 @@ def create_app(
     # route's context dict.
     templates.env.globals["kraken_account_url"] = config.kraken_account_url
     templates.env.globals["htmx_poll_seconds"] = config.htmx_poll_seconds
+    # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
+    # pass the operator's tz preference (loaded from
+    # user_preferences) as ``operator_tz`` in context; templates
+    # render timestamps via ``{{ dt | tz_format(operator_tz) }}``.
+    # **Display-only**: this filter converts UTC datetimes for
+    # rendering; storage, logs, engine paths all stay UTC.
+    templates.env.filters["tz_format"] = _tz_format
     app.state.templates = templates
     app.state.config = config
     app.state.operator_storage = operator_storage
@@ -161,6 +192,7 @@ def create_app(
     app.include_router(harvester_routes.router)
     app.include_router(news_routes.router)
     app.include_router(audit_routes.router)
+    app.include_router(settings_routes.router)
     app.include_router(page_routes.router)
 
     return app

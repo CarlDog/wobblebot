@@ -75,3 +75,31 @@ class UserCredentials(BaseModel):
 
     class Config:
         frozen = True
+
+
+class UserPreferences(BaseModel):
+    """Per-user web UI preferences (Stage 8.4 follow-up).
+
+    Currently carries only ``timezone`` (IANA tz database name); the
+    table is structured to grow new columns (refresh cadences,
+    default dashboard layout, etc.) without ALTER on the identity-
+    bearing users table.
+
+    Attributes:
+        user_id: FK to ``users.id``. Required; preferences cannot
+            exist without a backing user.
+        timezone: IANA tz name (e.g. ``"America/Chicago"``,
+            ``"Europe/London"``, ``"UTC"``). Validated at the route
+            layer against ``zoneinfo.available_timezones()`` before
+            persistence; the storage layer accepts any non-empty
+            string.
+        updated_at: When this preferences row was last written.
+            Auto-updated by ``StoragePort.update_user_preferences``.
+    """
+
+    user_id: int = Field(ge=1)
+    timezone: str = Field(default="UTC", min_length=1)
+    updated_at: Timestamp
+
+    class Config:
+        frozen = True

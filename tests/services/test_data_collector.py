@@ -253,6 +253,12 @@ class _FailingStorage(StoragePort):
     async def update_user_last_login(self, user_id, last_login_at):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def get_user_preferences(self, user_id):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def update_user_preferences(self, preferences):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:

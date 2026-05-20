@@ -309,4 +309,23 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT NOT NULL,
     last_login_at   TEXT
 );
+
+-- Stage 8.4 follow-up — per-user web UI preferences. Separated
+-- from the users table so identity vs. UI-presentation concerns
+-- don't share row width as preferences accumulate (timezone now;
+-- per-card refresh cadences, default dashboard layout, etc. on the
+-- v1.1 backlog). ON DELETE CASCADE keeps the table free of orphan
+-- rows when an operator account is removed.
+--
+-- The `timezone` column stores an IANA tz database name (e.g.
+-- "America/Chicago", "Europe/London", "UTC"). Python's stdlib
+-- zoneinfo (PEP 615) reads these directly. Validation happens at
+-- the route layer — the operator picks from a dropdown or types a
+-- valid IANA string; bad strings are rejected before save.
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id     INTEGER PRIMARY KEY
+                REFERENCES users(id) ON DELETE CASCADE,
+    timezone    TEXT NOT NULL DEFAULT 'UTC' CHECK (length(timezone) > 0),
+    updated_at  TEXT NOT NULL
+);
 """

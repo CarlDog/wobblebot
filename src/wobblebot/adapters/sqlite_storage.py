@@ -49,7 +49,7 @@ from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
@@ -1110,6 +1110,71 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             raise StorageError(f"Failed to update last_login_at for user {user_id}: {exc}") from exc
         if rowcount == 0:
             raise StorageError(f"User {user_id} not found")
+
+    async def get_user_preferences(self, user_id: int) -> UserPreferences:
+        """Read or auto-create the operator's preferences row.
+
+        Stage 8.4 follow-up. Default row inserted on first read so
+        the route layer never has to special-case "no preferences
+        yet" — it gets a UserPreferences with timezone="UTC".
+        """
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT user_id, timezone, updated_at FROM user_preferences WHERE user_id = ?",
+                (user_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is not None:
+                return UserPreferences(
+                    user_id=row["user_id"],
+                    timezone=row["timezone"],
+                    updated_at=Timestamp(dt=datetime.fromisoformat(row["updated_at"])),
+                )
+            # Auto-create default row.
+            now = datetime.now(UTC)
+            await conn.execute(
+                "INSERT INTO user_preferences (user_id, timezone, updated_at) VALUES (?, ?, ?)",
+                (user_id, "UTC", now.isoformat()),
+            )
+            await conn.commit()
+            return UserPreferences(
+                user_id=user_id,
+                timezone="UTC",
+                updated_at=Timestamp(dt=now),
+            )
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to load preferences for user {user_id}: {exc}") from exc
+
+    async def update_user_preferences(self, preferences: UserPreferences) -> None:
+        """Upsert the operator's preferences row.
+
+        Stage 8.4 follow-up. ON CONFLICT updates timezone +
+        updated_at; preserves user_id as the primary key.
+        """
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO user_preferences (user_id, timezone, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    timezone = excluded.timezone,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    preferences.user_id,
+                    preferences.timezone,
+                    preferences.updated_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to update preferences for user {preferences.user_id}: {exc}"
+            ) from exc
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

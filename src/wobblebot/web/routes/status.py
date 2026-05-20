@@ -31,7 +31,11 @@ from wobblebot.domain.users import User
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.web.auth import require_user
-from wobblebot.web.dependencies import get_live_storage, get_templates
+from wobblebot.web.dependencies import (
+    get_live_storage,
+    get_operator_storage,
+    get_templates,
+)
 
 router = APIRouter(tags=["status"])
 
@@ -91,10 +95,13 @@ async def dashboard(
     request: Request,
     user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
+    operator_storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills."""
     snapshot = await _load_snapshot(live_storage)
+    assert user.id is not None
+    prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -102,6 +109,7 @@ async def dashboard(
             "snapshot": snapshot,
             "username": user.username,
             "last_refreshed_at": datetime.now(UTC),
+            "operator_tz": prefs.timezone,
         },
     )
 
@@ -109,18 +117,22 @@ async def dashboard(
 @router.get("/status/card", response_class=HTMLResponse)
 async def status_card(
     request: Request,
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
+    operator_storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome."""
     snapshot = await _load_snapshot(live_storage)
+    assert user.id is not None
+    prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "_status_card.html",
         {
             "snapshot": snapshot,
             "last_refreshed_at": datetime.now(UTC),
+            "operator_tz": prefs.timezone,
         },
     )
 

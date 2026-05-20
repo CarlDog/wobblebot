@@ -11,7 +11,7 @@ from uuid import UUID
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
@@ -798,4 +798,39 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: If the row is missing (caller programming
                 error — Stage 7.1.C should never reach this after an
                 already-validated login).
+        """
+
+    @abstractmethod
+    async def get_user_preferences(self, user_id: int) -> UserPreferences:
+        """Return per-user web UI preferences (Stage 8.4 follow-up).
+
+        Auto-creates a default-valued row on first read for a user
+        that doesn't have one. Default ``timezone="UTC"``. Subsequent
+        reads return the stored values.
+
+        Args:
+            user_id: ``users.id`` of the operator.
+
+        Returns:
+            :class:`UserPreferences` with at minimum a timezone value.
+
+        Raises:
+            StorageError: If retrieval fails (and not because the row
+                was missing — that case is auto-created).
+        """
+
+    @abstractmethod
+    async def update_user_preferences(self, preferences: UserPreferences) -> None:
+        """Upsert the preferences row for ``preferences.user_id``.
+
+        ``updated_at`` on the persisted row is set to the value on
+        the input model — the caller passes ``datetime.now(UTC)``
+        wrapped in a Timestamp so the timestamp is honest about
+        when the operator made the change.
+
+        Args:
+            preferences: Fully populated preferences to persist.
+
+        Raises:
+            StorageError: If the upsert fails.
         """

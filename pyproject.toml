@@ -62,6 +62,12 @@ dependencies = [
     # (cli/news pre-save filter). Faster + smaller-footprint than the
     # older thefuzz/fuzzywuzzy lineage; pure C extension.
     "rapidfuzz>=3.6.0,<4",
+    # Stage 8.4 follow-up: zoneinfo database on Windows. Linux + macOS
+    # have system zoneinfo files; Windows has none. PEP 615's stdlib
+    # zoneinfo falls back to this package when the OS has no
+    # timezone DB. Required for cli/web's settings page (operator-
+    # selectable display timezone) on Windows hosts.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

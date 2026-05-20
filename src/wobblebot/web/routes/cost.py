@@ -306,6 +306,8 @@ async def cost_page(
     """Full cost dashboard page — LLM card + trading-fees card."""
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
+    assert user.id is not None
+    prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "cost.html",
@@ -314,6 +316,7 @@ async def cost_page(
             "fees_snapshot": fees_snapshot,
             "username": user.username,
             "last_refreshed_at": datetime.now(UTC),
+            "operator_tz": prefs.timezone,
         },
     )
 
@@ -321,7 +324,7 @@ async def cost_page(
 @router.get("/cost/card", response_class=HTMLResponse)
 async def cost_card(
     request: Request,
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
     live_storage: StoragePort | None = Depends(get_live_storage),
     templates: Jinja2Templates = Depends(get_templates),
@@ -333,6 +336,8 @@ async def cost_card(
     """
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
+    assert user.id is not None
+    prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "_cost_card.html",
@@ -340,6 +345,7 @@ async def cost_card(
             "snapshot": snapshot,
             "fees_snapshot": fees_snapshot,
             "last_refreshed_at": datetime.now(UTC),
+            "operator_tz": prefs.timezone,
         },
     )
 

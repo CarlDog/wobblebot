@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
+from wobblebot.domain.users import UserPreferences
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import StorageError
 
@@ -157,3 +158,98 @@ async def test_password_hash_round_trips_with_bcrypt_prefix(
     fetched = await storage.get_user_by_username("operator")
     assert fetched is not None
     assert fetched.password_hash == realistic_hash
+
+
+# --------------------------------------------------------------------- #
+# Stage 8.4 follow-up: user_preferences                                 #
+# --------------------------------------------------------------------- #
+
+
+class TestUserPreferences:
+    """Storage round-trip for the per-user UI prefs table.
+
+    Auto-create on first read returns a UTC default; subsequent
+    update persists; subsequent read sees the new value.
+    """
+
+    async def test_first_read_auto_creates_default_utc(self, storage: SQLiteStorageAdapter) -> None:
+        user = await storage.create_user("op", _TEST_HASH)
+        assert user.id is not None
+        prefs = await storage.get_user_preferences(user.id)
+        assert prefs.user_id == user.id
+        assert prefs.timezone == "UTC"
+        # updated_at is recent (within a few seconds).
+        delta = abs((datetime.now(UTC) - prefs.updated_at.dt).total_seconds())
+        assert delta < 5.0
+
+    async def test_subsequent_read_returns_same_row(self, storage: SQLiteStorageAdapter) -> None:
+        user = await storage.create_user("op", _TEST_HASH)
+        assert user.id is not None
+        first = await storage.get_user_preferences(user.id)
+        # Sleep not needed — second read against existing row should
+        # see the same updated_at (not bumped on read).
+        second = await storage.get_user_preferences(user.id)
+        assert second.updated_at.dt == first.updated_at.dt
+        assert second.timezone == first.timezone
+
+    async def test_update_changes_timezone(self, storage: SQLiteStorageAdapter) -> None:
+        user = await storage.create_user("op", _TEST_HASH)
+        assert user.id is not None
+        # Auto-create default.
+        await storage.get_user_preferences(user.id)
+        # Update to Chicago tz.
+        new_prefs = UserPreferences(
+            user_id=user.id,
+            timezone="America/Chicago",
+            updated_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await storage.update_user_preferences(new_prefs)
+        # Read back; should see new tz.
+        roundtrip = await storage.get_user_preferences(user.id)
+        assert roundtrip.timezone == "America/Chicago"
+
+    async def test_update_is_upsert(self, storage: SQLiteStorageAdapter) -> None:
+        """update_user_preferences should ON CONFLICT update, not raise,
+        when called multiple times for the same user_id."""
+        user = await storage.create_user("op", _TEST_HASH)
+        assert user.id is not None
+        first = UserPreferences(
+            user_id=user.id,
+            timezone="Europe/London",
+            updated_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await storage.update_user_preferences(first)
+        second = UserPreferences(
+            user_id=user.id,
+            timezone="Asia/Tokyo",
+            updated_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await storage.update_user_preferences(second)
+        roundtrip = await storage.get_user_preferences(user.id)
+        assert roundtrip.timezone == "Asia/Tokyo"
+
+    async def test_per_user_isolation(self, storage: SQLiteStorageAdapter) -> None:
+        """Each user has their own preferences row; one's update
+        doesn't affect another."""
+        user_a = await storage.create_user("alice", _TEST_HASH)
+        user_b = await storage.create_user("bob", _OTHER_HASH)
+        assert user_a.id is not None
+        assert user_b.id is not None
+        await storage.update_user_preferences(
+            UserPreferences(
+                user_id=user_a.id,
+                timezone="America/New_York",
+                updated_at=Timestamp(dt=datetime.now(UTC)),
+            )
+        )
+        await storage.update_user_preferences(
+            UserPreferences(
+                user_id=user_b.id,
+                timezone="Australia/Sydney",
+                updated_at=Timestamp(dt=datetime.now(UTC)),
+            )
+        )
+        prefs_a = await storage.get_user_preferences(user_a.id)
+        prefs_b = await storage.get_user_preferences(user_b.id)
+        assert prefs_a.timezone == "America/New_York"
+        assert prefs_b.timezone == "Australia/Sydney"
