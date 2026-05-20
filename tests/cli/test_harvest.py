@@ -21,7 +21,7 @@ from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Timestamp as _Timestamp
-from wobblebot.ports.exceptions import ExchangeError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferProposal as _TransferProposal
 
@@ -243,6 +243,45 @@ class TestRunCycleFaultIsolation:
         assert ok is False
         # No proposal log should fire on a failed read.
         assert not [r for r in caplog.records if "HYPOTHETICAL" in r.message]
+
+    async def test_today_total_storage_failure_swallowed(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stage 8.4 hotfix #3 regression: a StorageError raised by
+        compute_today_total_withdrawn_usd inside the per-tick body
+        MUST NOT kill the daemon. The tick continues with
+        today_total=0 (the pre-4.4b default — gate behaves as 'no
+        recorded history', not 'no proposal')."""
+        from wobblebot.cli import harvest as harvest_module
+
+        async def always_fails(*_args: Any, **_kwargs: Any) -> Decimal:
+            raise StorageError("simulated WAL contention")
+
+        monkeypatch.setattr(
+            harvest_module,
+            "compute_today_total_withdrawn_usd",
+            always_fails,
+        )
+
+        adapter = _StubExchange(usd_balance=Decimal("600"))
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            config = _full_config()
+            with caplog.at_level(logging.WARNING, logger="wobblebot.cli.harvest"):
+                ok = await _run_cycle(adapter, config=config, storage=storage)
+            # The cycle completed cleanly — no exception escaped.
+            assert ok is True
+            # The warning was logged for the operator to see.
+            assert any("today-total fetch failed" in r.message for r in caplog.records)
+            # And the proposal still landed (with the conservative
+            # today_total=0 assumption).
+            proposals = await storage.get_transfer_proposals()
+            assert len(proposals) == 1
+        finally:
+            await storage.close()
 
 
 # ----- Money-safety end-to-end -----

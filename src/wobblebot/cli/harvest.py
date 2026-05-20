@@ -113,10 +113,25 @@ async def _run_cycle(
     # day-cap because there was no history to subtract from. With
     # storage wired in, the gate now refuses proposals that would
     # push today's total past max_withdrawal_per_day_usd.
+    #
+    # Stage 8.4 hotfix #3 (2026-05-20): wrap the storage read in
+    # try/except. A transient StorageError (disk full, WAL contention,
+    # schema corruption) propagated from here used to kill the
+    # daemon — exact same shape as the live/shadow balance-fetch
+    # crash. Fail-soft: treat as Decimal("0") (the pre-4.4b default;
+    # gate behaves as "no recorded history" not "no proposal"),
+    # log a warning, continue the tick. The propose_transfer logic
+    # below remains safe because today_total=0 only relaxes the
+    # day-cap (never tightens it).
+    today_total = Decimal("0")
     if storage is not None:
-        today_total = await compute_today_total_withdrawn_usd(storage, asset="USD")
-    else:
-        today_total = Decimal("0")
+        try:
+            today_total = await compute_today_total_withdrawn_usd(storage, asset="USD")
+        except StorageError as exc:
+            _LOGGER.warning(
+                "harvest tick: today-total fetch failed; treating as 0",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+            )
 
     proposal = propose_transfer(
         balance_usd=balance_usd,
