@@ -50,10 +50,13 @@ ETH_USD = Symbol(base="ETH", quote="USD")
 
 
 def _grid_config() -> GridConfig:
+    # ETH spacing must exceed 0.52% (= 2 × Kraken maker fee) post-2026-05-20
+    # validator; tests use 1.5% to exercise per-coin override behavior
+    # cleanly without tripping the fee-coverage check.
     return _shared_grid_config(
         coins={
             "ETH": CoinGridConfig(
-                spacing_percentage=Decimal("0.5"),
+                spacing_percentage=Decimal("1.5"),
                 levels_above=2,
                 levels_below=2,
                 order_size_usd=Decimal("20"),
@@ -462,7 +465,7 @@ class TestGridConfigQuery:
     ) -> None:
         svc = await _service(storage, exchange_with_btc_and_eth)
         result = await svc.answer_query(GridConfigQuery(symbol=ETH_USD))
-        assert result.spacing_percentage == 0.5
+        assert result.spacing_percentage == 1.5
         assert result.levels_above == 2
         assert result.order_size_usd == 20.0
 

@@ -215,7 +215,7 @@ class TestGridScaling:
                         order_size_usd=Decimal("15"),
                     ),
                     "ETH": CoinGridConfig(
-                        spacing_percentage=Decimal("0.5"),
+                        spacing_percentage=Decimal("1.5"),
                         levels_above=5,
                         levels_below=5,
                         order_size_usd=Decimal("20"),

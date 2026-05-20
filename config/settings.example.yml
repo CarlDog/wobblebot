@@ -76,7 +76,11 @@ grid:
       order_size_usd: 10.0
       enabled: false
     ETH:
-      spacing_percentage: 0.5
+      # spacing_percentage must exceed 0.52% (= 2 × Kraken's 0.26% maker
+      # fee) for cycles to be profitable. Soak finding 2026-05-20: the
+      # prior default of 0.5% was below that threshold and would lose
+      # money on every completed cycle. 1.0% leaves a comfortable margin.
+      spacing_percentage: 1.0
       levels_above: 6
       levels_below: 6
       order_size_usd: 20.0

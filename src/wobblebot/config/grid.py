@@ -11,13 +11,29 @@ parameters define the layout, not behavior under trend regimes.
 Per-coin override semantics are deliberately strict (every field must be
 specified) rather than partial-merge. The example YAML
 (``config/settings.example.yml``) follows this pattern.
+
+Spacing-vs-fees validation (soak-surfaced finding 2026-05-20). Each grid
+cycle pays the maker fee twice — once on the buy leg and once on the
+sell leg. If the configured spacing is less than ``2 × maker_fee_rate``,
+the cycle cannot profit even if both legs fill as maker. The validator
+on ``GridConfig`` rejects such configurations for enabled coins at
+config-load time, surfacing in a clear error message instead of silently
+losing money on every completed cycle. Disabled coins skip the check —
+operator may be holding a stale spacing they plan to fix before enabling.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Kraken base-tier published rates, ratified in Stage 2.3 design decisions.
+# Same source used by ``shadow.maker_fee_rate`` / ``shadow.taker_fee_rate``
+# in ShadowConfig. If Kraken's fee schedule changes, update here AND in
+# the shadow defaults to keep the project's fee model in sync.
+KRAKEN_MAKER_FEE_RATE = Decimal("0.0026")  # 0.26% maker — limit orders that sit
+KRAKEN_TAKER_FEE_RATE = Decimal("0.0040")  # 0.40% taker — marketable orders
 
 
 class GridLevels(BaseModel):
@@ -48,6 +64,38 @@ class GridConfig(BaseModel):
 
     class Config:
         frozen = True
+
+    @model_validator(mode="after")
+    def _validate_spacing_covers_fees(self) -> "GridConfig":
+        """Refuse configurations where a grid cycle cannot profit.
+
+        For each enabled coin (plus the always-active ``default``), the
+        spacing must strictly exceed ``2 × maker_fee_rate``. At-or-below
+        that threshold, the round-trip cycle loses money or breaks even
+        even in the best case (both legs filling as maker).
+
+        Disabled per-coin entries skip the check — they're parsed but
+        not traded, so their spacing is operator scratchpad space.
+        """
+        min_profitable_pct = KRAKEN_MAKER_FEE_RATE * Decimal("2") * Decimal("100")
+
+        def _check(label: str, spacing_percentage: Decimal) -> None:
+            if spacing_percentage <= min_profitable_pct:
+                raise ValueError(
+                    f"{label} spacing_percentage={spacing_percentage}% is at or "
+                    f"below minimum profitable spacing {min_profitable_pct}% "
+                    f"(= 2 × Kraken maker fee {KRAKEN_MAKER_FEE_RATE * 100}%). "
+                    f"Every completed grid cycle would lose money or break even "
+                    f"even with both legs filling as maker. Increase "
+                    f"spacing_percentage above {min_profitable_pct}% or "
+                    f"set enabled=false on the per-coin entry."
+                )
+
+        _check("grid.default", self.default.spacing_percentage)
+        for coin_name, coin_cfg in self.coins.items():
+            if coin_cfg.enabled:
+                _check(f"grid.coins.{coin_name} (enabled)", coin_cfg.spacing_percentage)
+        return self
 
     def for_coin(self, symbol: str) -> CoinGridConfig:
         """Return effective config for a coin.
