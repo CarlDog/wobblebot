@@ -10,6 +10,127 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.4.B-D + soak Day 1-2 events (2026-05-18 → 2026-05-20)
+
+Documentation-freeze sub-slices closed plus the operator-driven
+soak that began 2026-05-18 and is currently mid-flight.
+
+**8.4.B — v1.0 documentation freeze** (2026-05-18, `f154f39`).
+Two operator-facing docs under new `docs/release/`:
+- `v1.0-known-limitations.md` captures the v1.0 boundary
+  honestly. Architectural / operational / observability /
+  tooling / process boundaries; schema notes; soak-window
+  boundary.
+- `v1.0-future-improvements.md` lists v1.1+ candidates grouped
+  by motivation (earned by soak data / operator feedback / code
+  review / external triggers). Cross-reference index at bottom.
+
+**8.4.C — Pre-1.0 one-shot audit** (2026-05-18, `c139f1b` +
+`5d3d8d0`). LICENSE clean (MIT, 2025-2026, holder CarlDog),
+pre-commit hook clean (gitleaks + PII + author-identity guard),
+full-history author sweep clean, community-standards files all
+present. **One audit finding fixed**: README significant drift
+(test counts 1214/26 → 1785/29; Phase status table missing
+Phases 6 / 7 / Stages 7.6 / 8.0-8.3; "Eleven CLIs" → "Fifteen
+entry points"; ADR count 9 → 18; mypy file count 69 → 104).
+Follow-up commit `5d3d8d0` added missing `live.operator_db` +
+`harvest.operator_db` documentation to `settings.example.yml`
+(gap surfaced during soak Day 1 spot-check). pyproject.toml
+version bump deferred to 8.4.F per design decision 10.
+
+**8.4.D — Soak runbook** (2026-05-18, `8ec10fc`).
+`docs/release/v1.0-soak-runbook.md` operator-facing playbook.
+Pre-soak checklist (8 hard gates incl. Harvester-key separation),
+recommended low-risk config, daily check-in (5 questions),
+hard-stop / soft-watch / info-only categorization, abort + restart
+procedure, pass criteria (~2-4 weeks operator-decided).
+
+**8.4.E — Operator-driven soak in progress (started 2026-05-18).**
+
+Day 1 — start (2026-05-18): operator launched 7 daemons in bare
+PowerShell terminals (cli/operator stayed off due to Discord bot
+config issues; supported degraded mode). Engine placed 3 BUYs at
+$76,185 / $75,415 / $74,646 around anchor $76,954 (BTC = 0 so
+no SELLs).
+
+Day 1 → Day 2 outage (2026-05-19): thunderstorm-induced power
+outage took the host's DNS resolution down. Top buy at $76,185
+filled overnight (0.00013126 BTC) before network died. cli/live
+crashed at ~04:31 UTC May 19 via `httpx.ConnectError` inside
+`_session_usd_balance` during the `finally` block — uncaught
+exception propagated and **skipped the subsequent
+`_cancel_all_open` call entirely**. 2 remaining buys left open
+on Kraken.
+
+Day 2 recovery (2026-05-19): operator-driven manual recovery.
+DBs all passed `PRAGMA integrity_check` cleanly (WAL +
+synchronous=NORMAL did their job through the power loss).
+Operator canceled the 2 stragglers in Kraken Pro; deleted
+`grid_state` row; restarted cli/live → fresh anchor at $76,894
+with 3-buy + 1-sell layout (sell uses the orphaned BTC inventory
+from the missed fill).
+
+**Two soak-surfaced findings** addressed in focused commits per
+stage-8.4-design.md decision 3:
+
+1. [`e2b6cfc`] **Defect fix** — cli/live + cli/shadow `finally`
+   block restructured so each cleanup step gets its own
+   `try/except WobbleBotPortError`. A transient
+   `_session_usd_balance` failure no longer skips
+   `_cancel_all_open`; the cancel attempt at least runs and
+   logs per-symbol failures. Honest ending-USD reporting ("PnL
+   unavailable") when the balance fetch fails instead of zero.
+   Same structural fix in cli/shadow for consistency.
+   Regression test in `TestSessionEndResilience` covers the path.
+   1786 tests pass (was 1785, +1).
+
+2. [`9eea1b8`] **Known limitation documented** — reconciler
+   matches storage-open vs exchange-open by `exchange_id` only;
+   it doesn't query Kraken's closed-orders or trade-history
+   endpoints to distinguish fill from cancel. Storage-only
+   orders get marked `canceled` regardless of cause, so a
+   fill-while-down leaves BTC inventory orphaned from the grid
+   strategy. Added to `v1.0-known-limitations.md` under the
+   engine-reconciliation subsection + to `v1.0-future-improvements.md`
+   Group 3 as a v1.1 candidate (extend reconciler to query
+   `/0/private/ClosedOrders` + replay counter-placement).
+
+**Three v1.1 candidates added during soak** based on operator
+feedback:
+
+- [`c0ff561`] **Operator-initiated re-anchor command** (Group 2).
+  ADR-006 rejected AUTO re-anchor (safety) but operator-initiated
+  re-anchor (with confirm gate) is a different policy. Today the
+  procedure is SIGINT + DELETE grid_state + restart; codifying as
+  a single typed command (Discord / web button) routes through
+  `pending_commands` per ADR-013.
+
+- [`91d8538` + `99d79b9`] **Web UI per-entity action buttons**
+  (Group 2). Apply / Execute / Approve / Acknowledge labels per
+  domain (matches existing project vocabulary: `cli/apply` +
+  `AppliedSuggestion`; `cli/harvest --execute` + `TransferResult`;
+  `pending_commands.status='approved'`; `notifications.forwarded=1`).
+  Reject universal across surfaces. All route through
+  `pending_commands` per ADR-013 — ADR-002 firewall intact.
+
+Soak window currently mid-flight. Minimum useful end approximately
+**2026-06-02** (+1d for outage interruption); comfortable end
+approximately **2026-06-15**. Daily check-in via web UI `/audit`
+view (cli/operator off, no Discord forwarding).
+
+**8.4.F — Post-soak release ceremony** (pending soak pass).
+Future commit: `docs/planning/phase-8-summary.md`,
+`pyproject.toml` 0.1.0 → 1.0.0, CHANGELOG `[Unreleased]` →
+`[1.0.0] - YYYY-MM-DD`, annotated `git tag -a v1.0.0`.
+
+**Numbers stable through soak Day 2**: 1786 unit tests pass
+(+1 from `TestSessionEndResilience`); mypy 104 src files clean;
+pylint **10.00/10**; black + isort clean. **Real-money cost
+delta this period: ~$0.00** (the one overnight fill on Day 1
+was an in-cycle BUY; the orphaned BTC now backs one SELL on the
+fresh post-recovery grid). Running project cost stays at
+**$0.085018**.
+
 ### Stage 8.4 kickoff — Phase 8 / v1.0 Release Check (2026-05-18)
 
 Final pre-v1.0 stage opens. Stage 8.3 closed all behavior /
