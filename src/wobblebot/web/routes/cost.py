@@ -177,6 +177,7 @@ async def cost_page(
         {
             "snapshot": snapshot,
             "username": user.username,
+            "last_refreshed_at": datetime.now(UTC),
         },
     )
 
@@ -193,7 +194,10 @@ async def cost_card(
     return templates.TemplateResponse(
         request,
         "_cost_card.html",
-        {"snapshot": snapshot},
+        {
+            "snapshot": snapshot,
+            "last_refreshed_at": datetime.now(UTC),
+        },
     )
 
 

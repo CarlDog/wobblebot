@@ -101,6 +101,7 @@ async def dashboard(
         {
             "snapshot": snapshot,
             "username": user.username,
+            "last_refreshed_at": datetime.now(UTC),
         },
     )
 
@@ -117,7 +118,10 @@ async def status_card(
     return templates.TemplateResponse(
         request,
         "_status_card.html",
-        {"snapshot": snapshot},
+        {
+            "snapshot": snapshot,
+            "last_refreshed_at": datetime.now(UTC),
+        },
     )
 
 

@@ -121,6 +121,11 @@ def create_app(
     # can pull it via the dependencies module.
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["csrf_input"] = _csrf_input
+    # Operator-facing presentation globals — surface fields that
+    # every template may need without threading them through each
+    # route's context dict.
+    templates.env.globals["kraken_account_url"] = config.kraken_account_url
+    templates.env.globals["htmx_poll_seconds"] = config.htmx_poll_seconds
     app.state.templates = templates
     app.state.config = config
     app.state.operator_storage = operator_storage

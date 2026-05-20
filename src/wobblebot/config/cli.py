@@ -500,6 +500,13 @@ class WebConfig(BaseModel):
     # this — they're full-reload-on-navigation.
     htmx_poll_seconds: float = Field(default=15.0, gt=0.0, le=300.0)
 
+    # Optional external Kraken account URL surfaced as a header link
+    # for one-click access to the operator's Kraken Pro account.
+    # Default https://pro.kraken.com/app/trade lands on Kraken Pro's
+    # trade page; operators in non-US regions may override.
+    # Set to null to suppress the link entirely.
+    kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/trade", min_length=1)
+
     # ---- cross-DB paths -------------------------------------------- #
 
     # The dashboard reads from up to five DBs. operator.db is required

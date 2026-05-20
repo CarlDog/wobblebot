@@ -4,11 +4,24 @@
 <div class="card" id="status-card">
   <div class="card-header">
     <div class="card-title">Live trading status</div>
-    {% if snapshot.last_fill_age_seconds is not none %}
-      <div class="card-meta">
-        last fill {{ "%.0f"|format(snapshot.last_fill_age_seconds) }}s ago
-      </div>
-    {% endif %}
+    <div class="card-meta">
+      {% if snapshot.last_fill_age_seconds is not none %}
+        last fill {{ "%.0f"|format(snapshot.last_fill_age_seconds) }}s ago ·
+      {% endif %}
+      {# Auto-refresh indicator + manual refresh button. Auto-refresh
+         cadence comes from web.htmx_poll_seconds (Jinja global). Manual
+         button uses the same hx-target as the auto-polling parent so a
+         click swaps the same DOM node. #}
+      refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
+      <button type="button"
+              class="btn-link"
+              hx-get="/status/card"
+              hx-target="#status-card"
+              hx-swap="outerHTML"
+              title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
+        ↻
+      </button>
+    </div>
   </div>
   {% if not snapshot.live_wired %}
     <p class="placeholder">

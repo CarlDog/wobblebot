@@ -65,6 +65,25 @@ nav.primary a:hover {
   color: #ffffff;
 }
 
+nav.external {
+  display: flex;
+  gap: 16px;
+  margin-right: 12px;
+}
+
+nav.external a {
+  color: #8b97a8;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+nav.external a:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
 form.logout {
   margin: 0;
 }
@@ -136,6 +155,21 @@ h2 {
 .card-meta {
   color: #65676b;
   font-size: 12px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #8b97a8;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 4px;
+  line-height: 1;
+}
+
+.btn-link:hover {
+  color: #ffffff;
 }
 
 .metric {

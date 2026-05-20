@@ -16,6 +16,15 @@
         <a href="/news">News</a>
         <a href="/audit">Audit</a>
       </nav>
+      {% if kraken_account_url %}
+        <nav class="external">
+          {# rel=noopener noreferrer prevents the new tab from accessing
+             window.opener (security) and stops referrer leak. #}
+          <a href="{{ kraken_account_url }}" target="_blank" rel="noopener noreferrer">
+            Kraken Pro&nbsp;↗
+          </a>
+        </nav>
+      {% endif %}
       <form class="logout" method="post" action="/auth/logout">
         {{ csrf_input(request) }}
         <button type="submit">Sign out</button>

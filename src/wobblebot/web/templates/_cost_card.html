@@ -3,7 +3,18 @@
 <div class="card" id="cost-card">
   <div class="card-header">
     <div class="card-title">LLM cost — last 24h</div>
-    <div class="card-meta">{{ snapshot.call_count_24h }} calls</div>
+    <div class="card-meta">
+      {{ snapshot.call_count_24h }} calls ·
+      refreshed {{ last_refreshed_at.strftime("%H:%M:%S") }} UTC
+      <button type="button"
+              class="btn-link"
+              hx-get="/cost/card"
+              hx-target="#cost-card"
+              hx-swap="outerHTML"
+              title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
+        ↻
+      </button>
+    </div>
   </div>
   {% if snapshot.error %}
     <p class="error">{{ snapshot.error }}</p>
