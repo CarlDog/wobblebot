@@ -172,6 +172,41 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
 
    **Numbers stable through 8.4.E day 2**: 1786 unit tests pass (was 1785 at Stage 8.4 entry; +1 from the `TestSessionEndResilience` regression test in the soak-surfaced defect commit). mypy clean across 104 src files. pylint **10.00/10**. black + isort clean. **Stage 8.4 real-money cost so far: $0.00** (no fills since the post-outage restart; the one overnight fill yesterday was $10 cycle = ~$0.04 in maker fees + the orphaned BTC inventory now backs one SELL on the fresh grid). Running project real-money cost stays at **$0.085018**.
 
+## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
+
+**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
+
+**Motivating context.** Kraken added US-listed stock + ETF trading via a FINRA-regulated Kraken Securities LLC (broker-dealer partnership with Alpaca; announced April 2025; ~11,000 commission-free symbols; 24h M-F on Kraken Pro). Kraken extended their REST API in August 2025 with an additive `asset_class` parameter on existing endpoints (Add Order, Open Orders, Ticker, etc.) — equities support is API-accessible via the same authentication + signing path as crypto. Operator's strategic case: decorrelation from crypto (alt-to-alt grids are highly correlated; stock-to-crypto less so), larger universe (11k vs ~50 useful Kraken crypto pairs), volatile single-stocks (TSLA, NVDA) have wider daily ranges than BTC = real edge multiplier when capital allows.
+
+**Central design constraint: PDT.** SEC limits accounts under $25k equity to 3 day-trades per 5 trading days. Kraken Securities is FINRA-regulated; PDT applies. **Operator's stated capital reality:** $25k threshold is aspirational ("not likely in the next decade"); realistic trajectory is $100 → $1000+ via deposits + grid earnings. Therefore the PDT-aware design is the load-bearing piece of Phase 9, not a flag. The crypto grid cycles intra-day (sometimes in minutes); the equity grid must cycle multi-day, achieved via wider spacing (3-5% vs crypto's 1%) so individual round-trips span multiple trading sessions (= not PDT day trades). The engine code is largely unchanged — same grid math, same fill detection, same counter-placement — but a new "PDT-aware safety layer" gates counter-placement based on a rolling 5-trading-day same-day-round-trip counter.
+
+**Activation threshold:** equity grids only make economic sense above ~$500 account equity. Below that, allocated capital per grid is too small for meaningful per-cycle profit. **The design work happens in advance; activation waits for the operator's capital to reach a viable threshold.**
+
+**Proposed slicing.** Six substantive slices + a closing check. Approximate effort: 2-3 months of focused work.
+
+1. **Stage 9.0 – Kickoff + ADR-019.** Ratify the equity-grid risk model: PDT-aware grid variant; settlement-aware cycle pacing; earnings-pause posture; wash-sale-aware tax accounting; below-$25k operating profile. New `docs/planning/stage-9.0-design.md` ratifying ~10 implementation decisions. No code in kickoff.
+2. **Stage 9.1 – `KrakenAdapter` equities extension.** Add `asset_class` parameter awareness to relevant calls; stock-symbol parsing + asset-pair metadata handling for stocks (precision, lot size, market-hours metadata); new error mapping for equities-specific Kraken responses. Doesn't change the engine — just teaches the adapter to talk stocks. ~2-3 weeks; substantial tests.
+3. **Stage 9.2 – PDT-aware safety layer.** New `services/pdt_safety.py` maintains a rolling 5-trading-day same-day-round-trip count from the existing `trades` table; new safety check refuses counter-placement that *could* complete a same-day round-trip if it would push the count to 4-in-5-days. Account-equity check at engine startup: refuse to operate (or warn loudly) if equity < $25k AND PDT-aware mode is not explicitly opted into. New `safety.pdt:` config block. The Stage 8.1 reconciler patterns transfer cleanly — this is the same "engine knows its own history" shape.
+4. **Stage 9.3 – Earnings calendar integration.** New `services/earnings_calendar.py` ingests earnings dates from a data source (TBD: Alpaca's calendar endpoint? EDGAR? a third-party feed?). New safety check pauses the grid for a configurable window around announced earnings (default e.g. 2 days before, 1 day after). Operator-overridable per-symbol. New `notifications` events for pause-entered/pause-exited.
+5. **Stage 9.4 – `cli/live --symbols TSLA,AAPL` first live test.** End-to-end live test with tiny position (single share or fractional, single cycle, single security to start). Validate the full path: layout → fill → PDT-aware counter → settlement-aware cycle. Operator-driven, same posture as Stage 2.3's "first real trade" diagnostic. **This is the equity-grid Stage 2.3 equivalent — the moment the project officially trades equities.**
+6. **Stage 9.5 – Tax export + wash-sale tracking.** New `cli/tax-export` (or `tools/tax_export.py`) producing 1099-B-compatible CSV from the `trades` table. Wash-sale lot tracking per IRS rules (substantially-identical security + 30-day rule; the grid does this every cycle by design). Integration with web UI's cost dashboard for year-to-date tax-relevant summaries. Tax accounting is non-optional for equities long-term; ship it before tax filing season.
+7. **Stage 9.6 – Phase 9 Integration Check.** Multi-symbol equity-grid live test (TSLA + 2-3 other choppy names); PDT counter exercised end-to-end; earnings-pause exercised against a real upcoming earnings date; tax export verified. Closing summary at `docs/planning/phase-9-summary.md`.
+
+**Open design questions for ADR-019 to settle** (deferred until kickoff):
+
+- PDT counter implementation: rolling 5-trading-day window vs. calendar-week approximation. Trading-day awareness adds NYSE calendar dependency (holidays, half-days, early closes).
+- Day-trade-vs-swing classification: when does a "fill + counter-fill" pair count as a day trade for our purposes? At actual execution timestamp on the exchange? At intent timestamp on our side?
+- Wash-sale tracking granularity: per-symbol or per-substantially-identical-cluster (TSLA + TSLA-options = same cluster)?
+- Earnings-pause data source: Alpaca's calendar (we already partner with them via Kraken), EDGAR (free, official, fiddly), or a third-party feed (paid, polished)?
+- T+1 settlement and cash-account rules: can the counter-order place before settlement? Margin account would solve this but introduces margin's risk model (gated by ADR-019's risk model decisions).
+- Multi-grid portfolio sizing: capital allocator across crypto + stocks. Operator's $100 → $1000 trajectory makes this a real concern, not hypothetical.
+- Symbol format: confirm via live API exploration whether TSLA equity is `TSLA` or `TSLA.US` or some other format; document the asset-class metadata schema.
+
+**Not in scope for Phase 9** (deferred to v1.2+ or never):
+- Margin trading on equities — gated by the standing operator-experience rule in `docs/release/v1.0-future-improvements.md`.
+- Options trading — Kraken mentioned options exploration in their launch announcement, but options strategies don't map cleanly to grid mechanics.
+- Long-hold (non-grid) equity positions — a fundamentally different strategy path; if ever pursued, lives as Phase 10+ with its own design surface.
+- Multi-exchange equity trading (Interactive Brokers, Alpaca direct, etc.) — single-venue first; multi-venue is a separate concern.
 
 ## Phase Dependencies
 
