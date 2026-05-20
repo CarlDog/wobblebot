@@ -202,7 +202,17 @@ async def _run_one_tick(
                 },
             )
 
-    current_usd = await _shadow_usd_balance(adapter)
+    # Stage 8.4 hotfix #2: structural consistency with cli/live. Shadow's
+    # balance is synthetic (in-memory ledger; no network) so failure here
+    # is far less likely than live's, but the defensive pattern matches.
+    try:
+        current_usd = await _shadow_usd_balance(adapter)
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "post-tick shadow balance fetch failed; skipping loss-cap check this tick",
+            extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+        )
+        return False
     session_pnl = current_usd - started_usd
     if session_pnl < -shadow.max_session_loss_usd:
         _LOGGER.error(

@@ -279,3 +279,73 @@ class TestShadowPersistenceOnCancel:
         roundtripped = await storage.get_order(order.id)
         assert roundtripped is not None
         assert roundtripped.status == "open"
+
+
+# --------------------------------------------------------------------- #
+# Stage 8.4 hotfix #2: per-tick balance fetch resilience                #
+# --------------------------------------------------------------------- #
+#
+# 2026-05-20 15:03 UTC: cli/live crashed with httpcore.ReadTimeout on
+# the per-tick loss-cap balance check (line 209 of _run_one_tick). The
+# earlier e2b6cfc fix only protected the finally-block call site;
+# this scenario is the OTHER call site — during normal operation, a
+# transient Kraken timeout to /0/private/BalanceEx killed the daemon.
+# Fix wraps the call in try/except; on error, skip the cap check for
+# this tick, log a warning, and return False (no cap trip).
+
+
+class TestPerTickBalanceResilience:
+    """Regression: transient balance-fetch failures during normal
+    operation must NOT kill cli/live. The loss-cap check is opt-in
+    safety; skipping it for one tick because Kraken timed out is
+    survivable. Killing the whole engine because of one timeout is
+    not — orders sit on the book until manual recovery, exactly
+    the failure mode the 2026-05-19 outage already demonstrated."""
+
+    async def test_balance_fetch_failure_returns_false_no_raise(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression for the 2026-05-20 15:03 UTC crash.
+
+        Mocks ``_session_usd_balance`` to raise ``ExchangeError`` and
+        verifies ``_run_one_tick`` swallows it: returns ``False``
+        (no cap trip) instead of propagating up to the main loop.
+        """
+        from unittest.mock import MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick
+        from wobblebot.config.cli import LiveConfig
+
+        async def always_fails(_adapter: Any) -> Decimal:
+            raise ExchangeError("simulated Kraken /BalanceEx timeout")
+
+        monkeypatch.setattr(live_module, "_session_usd_balance", always_fails)
+
+        # Engine doesn't get stepped (we'd need a real grid + symbol).
+        # _run_one_tick iterates symbols first, then calls
+        # _session_usd_balance. With empty symbol list, the loop
+        # body is skipped and we go straight to the balance check.
+        live_cfg = LiveConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            db=":memory:",
+            tick_seconds=5.0,
+            max_runtime_minutes=None,
+            max_session_loss_usd=Decimal("5"),
+        )
+        engine = MagicMock()
+        # engine.step is awaited; mock it to return a benign result.
+        from unittest.mock import AsyncMock
+
+        engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
+
+        # _run_one_tick should NOT raise; should return False (no cap trip).
+        result = await _run_one_tick(
+            adapter=MagicMock(),
+            engine=engine,
+            live=live_cfg,
+            tick=1,
+            started_usd=Decimal("100"),
+            notifier=None,
+        )
+        assert result is False

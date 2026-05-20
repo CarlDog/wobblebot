@@ -206,7 +206,21 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 },
             )
 
-    current_usd = await _session_usd_balance(adapter)
+    # Stage 8.4 hotfix #2 (2026-05-20): wrap the per-tick balance
+    # fetch in try/except. e2b6cfc's earlier fix protected the
+    # finally-block call site only; this is the OTHER call site —
+    # the post-tick loss-cap evaluator. A transient httpx.ReadTimeout
+    # to /0/private/BalanceEx should NOT kill the daemon. Skip the
+    # cap check for this tick (next tick will retry), log a warning,
+    # and treat as "no cap trip" so the loop continues.
+    try:
+        current_usd = await _session_usd_balance(adapter)
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "post-tick balance fetch failed; skipping loss-cap check this tick",
+            extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+        )
+        return False  # No cap trip; loop continues.
     session_pnl = current_usd - started_usd
     if session_pnl < -live.max_session_loss_usd:
         _LOGGER.error(
