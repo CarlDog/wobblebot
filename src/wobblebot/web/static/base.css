@@ -993,8 +993,9 @@ table.data th {
 .login-brand {
   display: block;
   width: 100%;
+  max-width: 320px;
   height: auto;
-  margin: 0 auto 24px;
+  margin: 8px auto 24px;
 }
 
 .login-card label {
@@ -1010,10 +1011,15 @@ table.data th {
   margin-bottom: 16px;
 }
 
+/* Sign-in button uses the brand cyan + dark text, not the
+   generic ``--color-link`` (which is the link-blue used for
+   non-brand text links). Anchoring the primary login affordance
+   to the brand color makes the page feel like wobblebot's
+   product, not a generic web form. */
 .login-card button {
   width: 100%;
-  background: var(--color-link);
-  color: #ffffff;
+  background: #4dd0e1;
+  color: #1c1e21;
   border: none;
   padding: 10px;
   border-radius: 4px;
@@ -1023,7 +1029,7 @@ table.data th {
 }
 
 .login-card button:hover {
-  background: var(--color-link-hover);
+  background: #2bb8c8;
 }
 
 .error {
