@@ -643,7 +643,11 @@ h2 {
   align-items: center;
   gap: 8px;
   background: var(--surface-card);
-  padding: 0 6px;
+  /* Asymmetric padding: outer side (left, near section's left
+     border) is tight; inner side (right, facing the cut gap)
+     gets generous breathing room so the price doesn't crowd
+     the border. Balanced with .symbol-actions's left padding. */
+  padding: 0 14px 0 6px;
   line-height: 26px;
   pointer-events: auto;
 }
@@ -653,7 +657,10 @@ h2 {
   align-items: center;
   gap: 4px;
   background: var(--surface-card);
-  padding: 0 4px;
+  /* Symmetric counterpart: inner side (left, facing the cut
+     gap) matches .symbol-id's right padding; outer side stays
+     tight to the section's right border. */
+  padding: 0 4px 0 14px;
   line-height: 26px;
   pointer-events: auto;
 }
