@@ -1,0 +1,63 @@
+{# Notifications list (Stage 8.4.E soak Day 4).
+   Reads the notifications table that cli/live + cli/harvest write to.
+   v1.0 ships read-only; mark-as-read + deep-linking are v1.1. #}
+{% extends "layout.html" %}
+
+{% block title %}Notifications — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Notifications</h1>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Recent (last {{ snapshot.notifications|length }})</div>
+  </div>
+  {% if snapshot.error %}
+    <p class="error">{{ snapshot.error }}</p>
+  {% elif not snapshot.notifications %}
+    <p class="placeholder">
+      No notifications yet. cli/live + cli/harvest emit
+      notifications on fills, cap trips, withdrawals, and other
+      operator-relevant events.
+    </p>
+  {% else %}
+    <table class="data compact">
+      <thead>
+        <tr>
+          <th>when</th>
+          <th>level</th>
+          <th>title</th>
+          <th>message</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in snapshot.notifications %}
+          <tr>
+            <td>{{ n.created_at.dt | tz_format(operator_tz) }}</td>
+            <td>
+              <span class="tag
+                {% if n.notification.level == 'info' %}info
+                {% elif n.notification.level == 'warning' %}warn
+                {% else %}fail{% endif %}">{{ n.notification.level }}</span>
+            </td>
+            <td>{{ n.notification.title }}</td>
+            <td class="muted">{{ n.notification.message }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+{# Visiting this page = "operator has seen the latest notifications."
+   Stamp localStorage so the bell-badge clears on next poll. The bell's
+   own JS in layout.html reads this value. #}
+<script>
+  (function () {
+    localStorage.setItem('wobblebot_last_seen_notifications', new Date().toISOString());
+    // Trigger bell update immediately so the dot clears without waiting
+    // for the next 30s poll cycle.
+    if (window.updateBellBadge) window.updateBellBadge();
+  })();
+</script>
+{% endblock %}

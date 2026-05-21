@@ -43,6 +43,7 @@ from wobblebot.web.routes import commands as command_routes
 from wobblebot.web.routes import cost as cost_routes
 from wobblebot.web.routes import harvester as harvester_routes
 from wobblebot.web.routes import news as news_routes
+from wobblebot.web.routes import notifications as notifications_routes
 from wobblebot.web.routes import pages as page_routes
 from wobblebot.web.routes import settings as settings_routes
 from wobblebot.web.routes import status as status_routes
@@ -241,6 +242,7 @@ def create_app(
     app.include_router(news_routes.router)
     app.include_router(audit_routes.router)
     app.include_router(settings_routes.router)
+    app.include_router(notifications_routes.router)
     app.include_router(page_routes.router)
 
     return app

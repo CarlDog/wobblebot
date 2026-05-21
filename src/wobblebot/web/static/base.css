@@ -92,6 +92,50 @@ nav.external a:hover {
   color: #ffffff;
 }
 
+/* Utility nav — gear (Settings) + bell (Notifications). Sits between
+   primary nav and external links. SVG icons inherit nav text color
+   via currentColor. */
+nav.utility {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.nav-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c4c7cc;
+  text-decoration: none;
+  padding: 6px;
+  border-radius: 4px;
+  line-height: 0;
+}
+
+.nav-icon:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+/* Unread indicator dot on the bell. Hidden until .has-unread is added
+   by the layout.html bell-badge polling script. */
+.bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dc2626;
+  border: 1.5px solid #1c1e21;
+  display: none;
+}
+
+.nav-icon.has-unread .bell-dot {
+  display: block;
+}
+
 form.logout {
   margin: 0;
 }
@@ -284,6 +328,7 @@ table.data.compact td {
 .tag.ok { background: #e6f4ea; color: #1e7d32; }
 .tag.warn { background: #fff4e5; color: #b06000; }
 .tag.fail { background: #fde8e8; color: #c80000; }
+.tag.info { background: #e0f2fe; color: #075985; }
 
 .card-subtitle {
   font-size: 14px;
