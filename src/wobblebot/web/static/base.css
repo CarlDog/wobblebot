@@ -973,13 +973,14 @@ table.data th {
   min-height: 100vh;
   gap: 24px;
   padding: 32px;
-  /* Exact match to the logo PNG's background (sampled from the
-     corner) so the hero image dissolves into the page. */
-  background: #1c222e;
+  /* Exact match to the hero PNG's background (sampled from the
+     corner) so the hex network image dissolves into the page. */
+  background: #000c20;
 
   /* Card has subtle elevation against the page bg — slightly
-     lifted hue, no border, soft shadow. */
-  --surface-card: #262d3a;
+     lifted hue, no border, soft shadow. Matches the deeper
+     navy palette of the new hero. */
+  --surface-card: #0e2440;
   --text-primary: var(--nav-text-strong);
   --text-secondary: var(--nav-text);
   --text-muted: var(--nav-text-muted);
