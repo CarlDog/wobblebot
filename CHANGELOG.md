@@ -148,9 +148,13 @@ v1.1 plan additions (`3b83bfa` per-order delta column,
 `aca4b95` multi-coin status card layout, `3c28673`
 graceful-shutdown timeout for daemons — surfaced when cli/web
 hung 3+ minutes after SIGINT during a bounce). Nightly check
-confirmed all 7 daemons healthy. Account: $89.92 → $99.87 USD
-(orphan-BTC sell at $77,663 on Day 3 morning yielded $9.97
-profit). Two outage events handled cleanly (May 19 storm DNS
+confirmed all 7 daemons healthy. USD balance: $89.92 → $99.87 across Day 3 — but
+that is BTC→USD reclassification, not profit. The Day-1 BUY at
+$76,185 converted ~$10 USD into ~0.000131 BTC; the Day-3 SELL at
+$77,663 reversed it. Total portfolio value moved from ~$100 to
+~$100.06 over the week (+$0.0647, +0.06% per Kraken snapshot).
+Actual round-trip cycle yielded ~$0.14-0.20 in spread minus
+fees. Two outage events handled cleanly (May 19 storm DNS
 failure, May 20 15:03 UTC httpcore.ReadTimeout). Real-money
 cost stays at $0.085018.
 
@@ -162,10 +166,10 @@ Future commit: `docs/planning/phase-8-summary.md`,
 **Numbers through soak Day 3**: 1833 unit tests pass (+47 from
 soak-period work across Day 1-3); mypy 106 src files clean;
 pylint **10.00/10**; black + isort clean. **Real-money cost
-delta this period: ~$0.00 net** (Day 1 overnight fill was an
-in-cycle BUY; Day 3 morning sell of the orphan BTC at $77,663
-netted ~$9.97 profit after 0.26% maker fee — strategy works on
-real money). Running project cost stays at **$0.085018**.
+delta this period: essentially flat** (round-trip cycle on the
+orphan BTC inventory netted ~$0.14-0.20 in spread minus fees;
+total portfolio value moved +0.06% over the week per Kraken
+snapshot). Running project cost stays at **$0.085018**.
 
 ### Stage 8.4 kickoff — Phase 8 / v1.0 Release Check (2026-05-18)
 
