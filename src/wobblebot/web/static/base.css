@@ -74,6 +74,9 @@
 
   /* === Indicators === */
   --bell-unread-dot: #dc2626;
+
+  /* === Hover on light-surface elements === */
+  --surface-hover: rgba(0, 0, 0, 0.05);
 }
 
 /* ---- Dark theme overrides --------------------------------------
@@ -124,6 +127,8 @@
 
   --color-link: #38bdf8;
   --color-link-hover: #0ea5e9;
+
+  --surface-hover: rgba(255, 255, 255, 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -166,6 +171,8 @@
 
     --color-link: #38bdf8;
     --color-link-hover: #0ea5e9;
+
+    --surface-hover: rgba(255, 255, 255, 0.06);
   }
 }
 
@@ -528,6 +535,82 @@ h2 {
   font-size: 13px;
   color: var(--text-secondary);
   margin-bottom: 10px;
+}
+
+/* Per-symbol sub-sections inside the live trading status card.
+   Each section has a header with name+price+trend+inline action
+   icons, then a filtered orders table. Sections separated by a
+   subtle top border (first section omits it). */
+.symbol-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.symbol-section:first-of-type {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.symbol-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.symbol-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.symbol-price {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.symbol-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+/* Inline form wrapper — sits inside symbol-actions / engine-controls
+   so the contained button doesn't get block-level layout. */
+.inline-form {
+  display: inline-block;
+  margin: 0;
+}
+
+/* Icon button — used by the pause/resume per-symbol controls inside
+   the status card. Distinct from .btn-link (textual) and .btn
+   (colored solid). Themes via --surface-hover so it works in both
+   modes. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .market-ticker {

@@ -1,7 +1,14 @@
-{# Status card fragment — open orders + recent fills.
+{# Status card fragment + re-anchor banner overlay.
    Rendered standalone for HTMX polling AND included from
-   dashboard.html for the full-page load. #}
-<div class="card" id="status-card">
+   dashboard.html for the full-page load. Outer #status-wrap is
+   the HTMX target so banners + card refresh together; banners
+   live OUTSIDE the .card chrome so they read as alerts above
+   the card rather than as a section inside it. #}
+<div id="status-wrap"
+     hx-get="/status/card"
+     hx-trigger="every 15s"
+     hx-swap="outerHTML">
+
   {# Re-anchor recommendation banners (Stage 8.4.E soak Day 4).
      Severity = max(drift_tier, age_tier); drift gates the trigger
      so calm-market parked grids don't get scary banners. v1.0
@@ -16,114 +23,143 @@
       Re-anchoring would reposition the ladder to catch the current band.
     </div>
   {% endfor %}
-  <div class="card-header">
-    <div class="card-title">Live trading status</div>
-    <div class="card-meta">
-      {% if snapshot.last_fill_age_seconds is not none %}
-        last fill {{ snapshot.last_fill_age_seconds | humanize_duration }} ago ·
-      {% endif %}
-      {# Auto-refresh indicator + manual refresh button. Auto-refresh
-         cadence comes from web.htmx_poll_seconds (Jinja global). Manual
-         button uses the same hx-target as the auto-polling parent so a
-         click swaps the same DOM node. Timestamp rendered in the
-         operator's preferred timezone (Stage 8.4 follow-up). #}
-      refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
-      <button type="button"
-              class="btn-link"
-              hx-get="/status/card"
-              hx-target="#status-card"
-              hx-swap="outerHTML"
-              title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
-        ↻
-      </button>
-    </div>
-  </div>
-  {% if not snapshot.live_wired %}
-    <p class="placeholder">
-      The web UI's <code>live_db</code> path is unset; open orders +
-      recent fills are unavailable. Configure
-      <code>web.live_db</code> in settings.yml to enable.
-    </p>
-  {% elif snapshot.error %}
-    <p class="error">{{ snapshot.error }}</p>
-  {% else %}
-    <h2 class="card-subtitle">Open orders ({{ snapshot.open_orders|length }})</h2>
-    {# Current market price per symbol with open orders, sourced
-       from observe.db (last few minutes of snapshots, latest wins).
-       Helps the operator see what each order is waiting on. #}
-    {% if snapshot.current_prices %}
-      <div class="market-context">
-        {% for symbol, price in snapshot.current_prices.items() %}
-          <span class="market-ticker">
-            {{ symbol.base }}/{{ symbol.quote }}:
-            <strong>${{ "%.2f"|format(price) }}</strong>
-            {% set trend = snapshot.current_trends.get(symbol, "flat") %}
-            {% if trend == "up" %}
-              <span class="trend-up" title="trending up over last 15m">▲</span>
-            {% elif trend == "down" %}
-              <span class="trend-down" title="trending down over last 15m">▼</span>
-            {% endif %}
-          </span>
-        {% endfor %}
-      </div>
-    {% endif %}
-    {% if snapshot.open_orders %}
-      <table class="data compact">
-        <thead>
-          <tr>
-            <th>symbol</th>
-            <th>side</th>
-            <th class="num">price</th>
-            <th class="num">amount</th>
-            <th class="num">filled</th>
-            <th class="num">age</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for o in snapshot.open_orders %}
-            <tr>
-              <td>{{ o.symbol.base }}/{{ o.symbol.quote }}</td>
-              <td><span class="tag {% if o.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ o.side.value }}</span></td>
-              <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
-              <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
-              <td class="num">{{ "%.8f"|format(o.filled_amount) }}</td>
-              <td class="num">{{ snapshot.order_ages.get(o.id|string, 0) | humanize_duration }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="placeholder">No open orders.</p>
-    {% endif %}
 
-    <h2 class="card-subtitle">Recent fills (last {{ snapshot.recent_trades|length }})</h2>
-    {% if snapshot.recent_trades %}
-      <table class="data compact">
-        <thead>
-          <tr>
-            <th>when</th>
-            <th>symbol</th>
-            <th>side</th>
-            <th class="num">price</th>
-            <th class="num">amount</th>
-            <th class="num">cost</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for t in snapshot.recent_trades %}
-            <tr>
-              <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
-              <td>{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
-              <td><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
-              <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>
-              <td class="num">{{ "%.8f"|format(t.amount.value) }}</td>
-              <td class="num">${{ "%.4f"|format(t.cost) }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <div class="card" id="status-card">
+    <div class="card-header">
+      <div class="card-title">Live trading status</div>
+      <div class="card-meta">
+        {% if snapshot.last_fill_age_seconds is not none %}
+          last fill {{ snapshot.last_fill_age_seconds | humanize_duration }} ago ·
+        {% endif %}
+        refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
+        <button type="button"
+                class="btn-link"
+                hx-get="/status/card"
+                hx-target="#status-wrap"
+                hx-swap="outerHTML"
+                title="Refresh now (auto-refreshes every {{ htmx_poll_seconds|int }}s)">
+          ↻
+        </button>
+      </div>
+    </div>
+    {% if not snapshot.live_wired %}
+      <p class="placeholder">
+        The web UI's <code>live_db</code> path is unset; open orders +
+        recent fills are unavailable. Configure
+        <code>web.live_db</code> in settings.yml to enable.
+      </p>
+    {% elif snapshot.error %}
+      <p class="error">{{ snapshot.error }}</p>
+    {% elif not snapshot.symbols %}
+      <p class="placeholder">No active symbols yet.</p>
     {% else %}
-      <p class="placeholder">No recent fills.</p>
+      {# Per-symbol sub-sections. Each carries:
+         - symbol name + current price + trend arrow
+         - inline pause + resume icon buttons (state-unaware in v1.0;
+           engine cross-process state visibility is a v1.1 candidate)
+         - filtered open-orders table #}
+      {% for symbol in snapshot.symbols %}
+        <section class="symbol-section">
+          <div class="symbol-header">
+            <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>
+            {% set price = snapshot.current_prices.get(symbol) %}
+            {% if price %}
+              <strong class="symbol-price">${{ "%.2f"|format(price) }}</strong>
+              {% set trend = snapshot.current_trends.get(symbol, "flat") %}
+              {% if trend == "up" %}
+                <span class="trend-up" title="trending up over last 15m">▲</span>
+              {% elif trend == "down" %}
+                <span class="trend-down" title="trending down over last 15m">▼</span>
+              {% endif %}
+            {% endif %}
+            <div class="symbol-actions">
+              {# Pause symbol — POSTs to /commands/pause; redirects to
+                 confirm page; ADR-002 firewall via pending_commands. #}
+              <form method="post" action="/commands/pause" class="inline-form">
+                {{ csrf_input(request) }}
+                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                <button type="submit" class="icon-btn"
+                        title="Pause {{ symbol.base }}/{{ symbol.quote }} trading"
+                        aria-label="Pause {{ symbol.base }}/{{ symbol.quote }}">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="5" width="4" height="14" rx="1"/>
+                    <rect x="14" y="5" width="4" height="14" rx="1"/>
+                  </svg>
+                </button>
+              </form>
+              <form method="post" action="/commands/resume" class="inline-form">
+                {{ csrf_input(request) }}
+                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                <button type="submit" class="icon-btn"
+                        title="Resume {{ symbol.base }}/{{ symbol.quote }} trading"
+                        aria-label="Resume {{ symbol.base }}/{{ symbol.quote }}">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                </button>
+              </form>
+            </div>
+          </div>
+          {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
+          {% if sym_orders %}
+            <table class="data compact">
+              <thead>
+                <tr>
+                  <th>side</th>
+                  <th class="num">price</th>
+                  <th class="num">amount</th>
+                  <th class="num">filled</th>
+                  <th class="num">age</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for o in sym_orders %}
+                  <tr>
+                    <td><span class="tag {% if o.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ o.side.value }}</span></td>
+                    <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
+                    <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
+                    <td class="num">{{ "%.8f"|format(o.filled_amount) }}</td>
+                    <td class="num">{{ snapshot.order_ages.get(o.id|string, 0) | humanize_duration }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="placeholder">No open orders for this symbol.</p>
+          {% endif %}
+        </section>
+      {% endfor %}
+
+      <h2 class="card-subtitle">Recent fills (last {{ snapshot.recent_trades|length }})</h2>
+      {% if snapshot.recent_trades %}
+        <table class="data compact">
+          <thead>
+            <tr>
+              <th>when</th>
+              <th>symbol</th>
+              <th>side</th>
+              <th class="num">price</th>
+              <th class="num">amount</th>
+              <th class="num">cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in snapshot.recent_trades %}
+              <tr>
+                <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
+                <td>{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
+                <td><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
+                <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>
+                <td class="num">{{ "%.8f"|format(t.amount.value) }}</td>
+                <td class="num">${{ "%.4f"|format(t.cost) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="placeholder">No recent fills.</p>
+      {% endif %}
     {% endif %}
-  {% endif %}
+  </div>
+
 </div>

@@ -7,25 +7,28 @@
 {% block content %}
 <h1>Dashboard</h1>
 
-<div class="card">
+{# _status_card.html now owns its own outer #status-wrap div with
+   the hx-* polling attributes — banners + card refresh together. #}
+{% include "_status_card.html" %}
+
+{# Engine controls — emergency stop is engine-wide and lives apart
+   from the per-symbol pause/resume icons inside the status card.
+   Same confirm-before-execute flow through pending_commands. #}
+<div class="card engine-controls">
   <div class="card-header">
-    <div class="card-title">Operator actions</div>
+    <div class="card-title">Engine controls</div>
   </div>
   <p class="muted">
-    Per-symbol pause/resume + emergency stop. Every action creates a
-    pending command that you confirm before it reaches the engine
-    (ADR-013 firewall preserved).
+    Emergency stop halts trading across every symbol. Per-symbol
+    pause / resume live inside the live trading status card above.
+    Every action creates a pending command that you confirm before
+    it reaches the engine (ADR-013 firewall preserved).
   </p>
-  <div class="actions">
-    <a class="btn btn-warn" href="/commands/pause">Pause symbol…</a>
-    <a class="btn btn-ok" href="/commands/resume">Resume symbol…</a>
-    <a class="btn btn-fail" href="/commands/stop">Emergency stop</a>
-  </div>
-</div>
-
-<div hx-get="/status/card"
-     hx-trigger="every 15s"
-     hx-swap="outerHTML">
-  {% include "_status_card.html" %}
+  <form method="post" action="/commands/stop" class="inline-form">
+    {{ csrf_input(request) }}
+    <button type="submit" class="btn btn-fail">
+      🛑 Emergency stop — all symbols
+    </button>
+  </form>
 </div>
 {% endblock %}

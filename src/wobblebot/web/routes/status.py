@@ -117,6 +117,13 @@ class StatusSnapshot:
     reanchor_recommendations: tuple[ReanchorRecommendation, ...] = field(
         default_factory=tuple
     )
+    # Sorted union of symbols seen in open_orders + recent_trades.
+    # The template iterates this to render per-symbol sub-sections
+    # with their own pause/resume icons (Stage 8.4.E soak Day 4).
+    symbols: tuple[Symbol, ...] = field(default_factory=tuple)
+    # Open orders grouped by symbol — saves the template from
+    # filtering ``snapshot.open_orders`` N times per render.
+    orders_by_symbol: dict[Symbol, tuple[Order, ...]] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -247,6 +254,17 @@ async def _load_snapshot(
     reanchor_recs = await _load_reanchor_recommendations(
         live_storage, list(open_orders), prices, order_ages
     )
+    # Union of symbols seen in open orders + recent trades, sorted
+    # by (base, quote) for stable rendering order.
+    all_symbols = tuple(
+        sorted(
+            symbols_with_orders | {t.symbol for t in recent},
+            key=lambda s: (s.base, s.quote),
+        )
+    )
+    orders_by_symbol: dict[Symbol, tuple[Order, ...]] = {
+        sym: tuple(o for o in open_orders if o.symbol == sym) for sym in all_symbols
+    }
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -256,6 +274,8 @@ async def _load_snapshot(
         current_trends=trends,
         order_ages=order_ages,
         reanchor_recommendations=reanchor_recs,
+        symbols=all_symbols,
+        orders_by_symbol=orders_by_symbol,
     )
 
 

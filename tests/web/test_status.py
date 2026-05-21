@@ -118,7 +118,10 @@ class TestDashboardRoute:
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "unset" in resp.text.lower()
-            assert "Operator actions" in resp.text
+            # Engine controls card lives below the status card on the
+            # dashboard (Stage 8.4.E soak Day 4 restructure; per-symbol
+            # pause/resume moved inside the status card).
+            assert "Engine controls" in resp.text
 
     def test_authenticated_with_empty_live_renders(
         self,
@@ -130,8 +133,12 @@ class TestDashboardRoute:
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "Live trading status" in resp.text
-            assert "No open orders" in resp.text
-            assert "No recent fills" in resp.text
+            # Empty state: no orders AND no trades = no symbols, so
+            # the whole per-symbol body collapses to a single "no
+            # active symbols yet" placeholder. The recent fills
+            # section doesn't render when symbols are empty — it'd
+            # be redundant ("no fills" alongside "no symbols").
+            assert "No active symbols yet" in resp.text
 
     @pytest.mark.asyncio
     async def test_with_orders_and_trades_renders_them(
@@ -146,7 +153,10 @@ class TestDashboardRoute:
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "30100" in resp.text
-            assert "Open orders (1)" in resp.text
+            # Per-symbol section header carries the symbol name; the
+            # aggregate "Open orders (N)" subtitle from the previous
+            # layout is gone with the restructure.
+            assert "BTC/USD" in resp.text
             assert "Recent fills (last 1)" in resp.text
 
 
