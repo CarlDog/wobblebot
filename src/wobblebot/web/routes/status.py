@@ -34,6 +34,8 @@ from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+
+ReanchorSeverity = Literal["mild", "moderate", "strong"]
 from wobblebot.web.auth import require_user
 from wobblebot.web.dependencies import (
     get_live_storage,
@@ -53,7 +55,36 @@ _TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
 
 TrendDirection = Literal["up", "down", "flat"]
 
+# Re-anchor banner thresholds. Drift is the gate (no drift = no
+# banner, even if grid is stale); age can escalate severity but
+# can't trigger alone. Calm-market parked grids don't get scary
+# banners; misaligned grids do.
+_DRIFT_MILD_SPACINGS = 1.5
+_DRIFT_MODERATE_SPACINGS = 2.5
+_DRIFT_STRONG_SPACINGS = 4.0
+_AGE_MILD_HOURS = 24
+_AGE_MODERATE_HOURS = 48
+_AGE_STRONG_HOURS = 72
+
 router = APIRouter(tags=["status"])
+
+
+@dataclass(frozen=True)
+class ReanchorRecommendation:
+    """Per-symbol recommendation that the operator consider re-anchoring.
+
+    Rendered as a colored banner on the dashboard. Severity tier
+    drives the color: mild (yellow) -> moderate (orange) ->
+    strong (red). Action button + snooze are v1.1 candidates;
+    v1.0 ships info-only.
+    """
+
+    symbol: Symbol
+    severity: ReanchorSeverity
+    drift_in_spacings: float
+    oldest_order_age_seconds: int
+    current_price: Decimal
+    anchor_price: Decimal
 
 
 @dataclass(frozen=True)
@@ -79,6 +110,13 @@ class StatusSnapshot:
     # Helps the operator spot stale orders ("BUY has been sitting
     # 4d 7h while market is $1300 above it — should we re-anchor?").
     order_ages: dict[str, int] = field(default_factory=dict)
+    # Per-symbol re-anchor recommendations from the drift + age
+    # heuristic. Empty tuple = no banner. v1.0 ships info-only;
+    # the action button (apply / snooze) is v1.1 and lands with
+    # the operator-initiated re-anchor mechanism.
+    reanchor_recommendations: tuple[ReanchorRecommendation, ...] = field(
+        default_factory=tuple
+    )
     error: str | None = None
 
 
@@ -100,6 +138,41 @@ def _classify_trend(oldest: Decimal, newest: Decimal) -> TrendDirection:
     if abs(delta_pct) <= _TREND_FLAT_THRESHOLD:
         return "flat"
     return "up" if delta_pct > 0 else "down"
+
+
+def _classify_reanchor_severity(
+    drift_spacings: float, age_seconds: int
+) -> ReanchorSeverity | None:
+    """Return severity tier, or ``None`` if no banner should show.
+
+    Drift is the gate: without meaningful drift the engine isn't
+    misaligned, so a banner would be noise even if the grid has
+    been sitting for days. Age escalates severity but doesn't
+    trigger alone — a calm market with a parked grid is normal.
+    """
+    if drift_spacings < _DRIFT_MILD_SPACINGS:
+        return None
+    if drift_spacings < _DRIFT_MODERATE_SPACINGS:
+        drift_tier = 1
+    elif drift_spacings < _DRIFT_STRONG_SPACINGS:
+        drift_tier = 2
+    else:
+        drift_tier = 3
+    age_hours = age_seconds / 3600
+    if age_hours < _AGE_MILD_HOURS:
+        age_tier = 0
+    elif age_hours < _AGE_MODERATE_HOURS:
+        age_tier = 1
+    elif age_hours < _AGE_STRONG_HOURS:
+        age_tier = 2
+    else:
+        age_tier = 3
+    tier = max(drift_tier, age_tier)
+    if tier == 1:
+        return "mild"
+    if tier == 2:
+        return "moderate"
+    return "strong"
 
 
 async def _load_current_prices(
@@ -171,6 +244,9 @@ async def _load_snapshot(
     order_ages = {
         str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders
     }
+    reanchor_recs = await _load_reanchor_recommendations(
+        live_storage, list(open_orders), prices, order_ages
+    )
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -179,7 +255,65 @@ async def _load_snapshot(
         current_prices=prices,
         current_trends=trends,
         order_ages=order_ages,
+        reanchor_recommendations=reanchor_recs,
     )
+
+
+async def _load_reanchor_recommendations(
+    live_storage: StoragePort,
+    open_orders: list[Order],
+    current_prices: dict[Symbol, Decimal],
+    order_ages: dict[str, int],
+) -> tuple[ReanchorRecommendation, ...]:
+    """Per-symbol re-anchor recommendations from drift + age heuristic.
+
+    Drift = distance from current price to the nearest open order,
+    expressed in units of grid spacing. Age = oldest open order
+    for that symbol. ``_classify_reanchor_severity`` gates and
+    tiers; per-symbol storage failures are logged + skipped.
+    """
+    if not open_orders:
+        return ()
+    symbols = {o.symbol for o in open_orders}
+    recommendations: list[ReanchorRecommendation] = []
+    for symbol in symbols:
+        current = current_prices.get(symbol)
+        if current is None:
+            continue
+        try:
+            state = await live_storage.get_grid_state(symbol)
+        except StorageError as exc:
+            _LOGGER.warning(
+                "grid_state lookup failed for %s; skipping reanchor calc",
+                symbol,
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            continue
+        if state is None:
+            continue
+        spacing = state.reference_price * state.spacing_percentage / Decimal("100")
+        if spacing <= 0:
+            continue
+        symbol_orders = [o for o in open_orders if o.symbol == symbol]
+        if not symbol_orders:
+            continue
+        nearest_distance = min(abs(o.price.amount - current) for o in symbol_orders)
+        drift = float(nearest_distance / spacing)
+        oldest_age = max(order_ages.get(str(o.id), 0) for o in symbol_orders)
+        severity = _classify_reanchor_severity(drift, oldest_age)
+        if severity is None:
+            continue
+        recommendations.append(
+            ReanchorRecommendation(
+                symbol=symbol,
+                severity=severity,
+                drift_in_spacings=drift,
+                oldest_order_age_seconds=oldest_age,
+                current_price=current,
+                anchor_price=state.reference_price,
+            )
+        )
+    return tuple(recommendations)
 
 
 # --------------------------------------------------------------------- #

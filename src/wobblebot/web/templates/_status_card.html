@@ -2,6 +2,20 @@
    Rendered standalone for HTMX polling AND included from
    dashboard.html for the full-page load. #}
 <div class="card" id="status-card">
+  {# Re-anchor recommendation banners (Stage 8.4.E soak Day 4).
+     Severity = max(drift_tier, age_tier); drift gates the trigger
+     so calm-market parked grids don't get scary banners. v1.0
+     info-only; action button + snooze are v1.1. #}
+  {% for rec in snapshot.reanchor_recommendations %}
+    <div class="reanchor-banner reanchor-{{ rec.severity }}" role="status">
+      <strong>⚠ Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}.</strong>
+      Current price <strong>${{ "%.2f"|format(rec.current_price) }}</strong>
+      is {{ "%.1f"|format(rec.drift_in_spacings) }} spacings from the nearest open order;
+      grid anchored at ${{ "%.2f"|format(rec.anchor_price) }},
+      oldest order {{ rec.oldest_order_age_seconds | humanize_duration }} old.
+      Re-anchoring would reposition the ladder to catch the current band.
+    </div>
+  {% endfor %}
   <div class="card-header">
     <div class="card-title">Live trading status</div>
     <div class="card-meta">

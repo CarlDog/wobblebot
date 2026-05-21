@@ -204,6 +204,40 @@ h2 {
   font-weight: 600;
 }
 
+/* Re-anchor recommendation banners (drift + age heuristic).
+   Severity tier drives color: mild=yellow, moderate=orange,
+   strong=red. Same hue family as alert/warning conventions. */
+.reanchor-banner {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 4px solid;
+}
+
+.reanchor-banner strong {
+  font-weight: 600;
+}
+
+.reanchor-mild {
+  background: #fef9c3;
+  border-color: #ca8a04;
+  color: #713f12;
+}
+
+.reanchor-moderate {
+  background: #fed7aa;
+  border-color: #ea580c;
+  color: #7c2d12;
+}
+
+.reanchor-strong {
+  background: #fecaca;
+  border-color: #dc2626;
+  color: #7f1d1d;
+}
+
 .metric {
   margin-bottom: 12px;
 }
