@@ -673,7 +673,26 @@ table.data.compact td {
   border-color: var(--border-strong);
 }
 
-/* ---- Forms (mutation pages) ----------------------------------- */
+/* ---- Forms ----------------------------------------------------- */
+
+/* Generic input + select styling — themes via vars so inputs adapt
+   to light/dark mode. Specific containers (.form-row on /settings,
+   form.command on /commands) override below where they need to. */
+input[type="text"],
+input[type="password"],
+select {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+}
+
+input[type="text"]::placeholder {
+  color: var(--text-muted);
+}
 
 form.command label {
   display: block;
@@ -686,9 +705,6 @@ form.command select {
   width: 100%;
   max-width: 320px;
   padding: 8px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  font-size: 14px;
 }
 
 form.command .form-actions {
@@ -770,8 +786,6 @@ table.data th {
 .login-card input {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
   font-size: 14px;
   margin-bottom: 16px;
 }
