@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WobbleBot favicon — egg-shaped weeble bot extracted from the
+  brand mark and rebuilt at favicon scale.
+
+  Differences from the brand mark:
+  - Bot occupies the full 32x32 canvas (no wordmark, no curve).
+  - Body is filled cyan rather than outline-only, for contrast at
+    16x16 sizes where thin strokes would vanish into browser
+    chrome.
+  - Face features (eyes + smile) are drawn in dark navy on top of
+    the cyan body — inversion of the brand mark's stroke logic, so
+    the favicon reads as a "stamp" of the character.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Egg-shaped body, filled cyan -->
+  <ellipse cx="16" cy="18" rx="10" ry="12" fill="#4dd0e1"/>
+
+  <!-- Antenna stem + ball, in cyan to match -->
+  <line x1="16" y1="6" x2="16" y2="3"
+        stroke="#4dd0e1" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="16" cy="2.5" r="2" fill="#4dd0e1"/>
+
+  <!-- Closed crescent eyes — dark navy on cyan body -->
+  <path d="M 10 16 Q 12 13 14 16"
+        fill="none" stroke="#1a2532"
+        stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 18 16 Q 20 13 22 16"
+        fill="none" stroke="#1a2532"
+        stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Subtle smile -->
+  <path d="M 12 21 Q 16 24 20 21"
+        fill="none" stroke="#1a2532"
+        stroke-width="1.8" stroke-linecap="round"/>
+</svg>
