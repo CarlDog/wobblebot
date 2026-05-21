@@ -959,43 +959,49 @@ table.data th {
 }
 
 /* ---- Login form (Stage 7.1.C) ----------------------------------
-   The login page always renders in dark theme regardless of the
-   data-theme attribute. Light/dark is a per-operator preference set
-   AFTER auth; pre-login there's no preference to honor. Scoping
-   dark-equivalent values onto the surface vars within .login-shell
-   re-themes the card + inputs + button automatically via the
-   existing CSS variable system — no per-component overrides
-   needed. */
+   Hero layout: logo at top, compact form card below, page bg
+   matched to the logo's natural background color so the PNG
+   blends seamlessly into the page. Always dark mode regardless
+   of the data-theme attribute — light/dark is a per-operator
+   preference set AFTER auth. Scope override on surface vars
+   re-themes everything via the existing variable system. */
 .login-shell {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: var(--nav-bg);
+  gap: 24px;
+  padding: 32px;
+  /* Exact match to the logo PNG's background (sampled from the
+     corner) so the hero image dissolves into the page. */
+  background: #1c222e;
 
-  --surface-card: var(--nav-dropdown-bg);
+  /* Card has subtle elevation against the page bg — slightly
+     lifted hue, no border, soft shadow. */
+  --surface-card: #262d3a;
   --text-primary: var(--nav-text-strong);
   --text-secondary: var(--nav-text);
   --text-muted: var(--nav-text-muted);
-  --border: var(--nav-border);
+  --border: transparent;
   --border-strong: var(--nav-border-subtle);
-}
-
-.login-card {
-  background: var(--surface-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 32px;
-  width: 460px;
-  max-width: calc(100vw - 32px);
 }
 
 .login-brand {
   display: block;
   width: 100%;
-  max-width: 320px;
+  max-width: 480px;
   height: auto;
-  margin: 8px auto 24px;
+}
+
+.login-card {
+  background: var(--surface-card);
+  border: none;
+  border-radius: 8px;
+  padding: 32px;
+  width: 380px;
+  max-width: 100%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
 
 .login-card label {

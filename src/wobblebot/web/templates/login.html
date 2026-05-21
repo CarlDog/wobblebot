@@ -7,8 +7,11 @@
 
 {% block body %}
 <div class="login-shell">
+  {# Logo escapes the card to act as a hero above the form. The
+     page bg matches the logo's natural background (#1c222e) so
+     the PNG blends seamlessly into the page. #}
+  <img src="/static/wobblebot.png" alt="WobbleBot" class="login-brand">
   <div class="login-card">
-    <img src="/static/wobblebot.png" alt="WobbleBot" class="login-brand">
     {% if error %}
       <div class="error" role="alert">{{ error }}</div>
     {% endif %}
