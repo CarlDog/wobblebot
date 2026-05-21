@@ -194,6 +194,16 @@ h2 {
   color: #1c1e21;
 }
 
+.trend-up {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.trend-down {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
 .metric {
   margin-bottom: 12px;
 }

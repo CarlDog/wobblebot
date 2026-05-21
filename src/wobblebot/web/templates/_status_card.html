@@ -43,6 +43,12 @@
           <span class="market-ticker">
             {{ symbol.base }}/{{ symbol.quote }}:
             <strong>${{ "%.2f"|format(price) }}</strong>
+            {% set trend = snapshot.current_trends.get(symbol, "flat") %}
+            {% if trend == "up" %}
+              <span class="trend-up" title="trending up over last 15m">▲</span>
+            {% elif trend == "down" %}
+              <span class="trend-down" title="trending down over last 15m">▼</span>
+            {% endif %}
           </span>
         {% endfor %}
       </div>

@@ -23,6 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
@@ -42,7 +43,15 @@ from wobblebot.web.dependencies import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-_PRICE_LOOKBACK_MINUTES = 5
+# Window used both for the latest-price fetch AND the trend
+# baseline (oldest snapshot in the window). 15 min is short enough
+# to feel live, long enough to smooth per-tick noise.
+_PRICE_LOOKBACK_MINUTES = 15
+# Percent change below this threshold renders as "flat" (no arrow).
+# Without a threshold the arrow flickers up/down on stable markets.
+_TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
+
+TrendDirection = Literal["up", "down", "flat"]
 
 router = APIRouter(tags=["status"])
 
@@ -60,6 +69,11 @@ class StatusSnapshot:
     # snapshot landed in the last few minutes. Helps the operator
     # see "what those open orders are waiting on" at a glance.
     current_prices: dict[Symbol, Decimal] = field(default_factory=dict)
+    # Trend direction over the same lookback window. "up" / "down"
+    # render as a colored arrow; "flat" renders nothing. Symbols
+    # missing from this dict (no snapshots in window) also render
+    # nothing — graceful degrade, not an error.
+    current_trends: dict[Symbol, TrendDirection] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -73,20 +87,36 @@ def _empty_snapshot(*, wired: bool, error: str | None = None) -> StatusSnapshot:
     )
 
 
+def _classify_trend(oldest: Decimal, newest: Decimal) -> TrendDirection:
+    """Compare two prices; return up/down/flat based on the threshold."""
+    if oldest <= 0:
+        return "flat"
+    delta_pct = (newest - oldest) / oldest
+    if abs(delta_pct) <= _TREND_FLAT_THRESHOLD:
+        return "flat"
+    return "up" if delta_pct > 0 else "down"
+
+
 async def _load_current_prices(
     observe_storage: StoragePort | None,
     symbols: set[Symbol],
-) -> dict[Symbol, Decimal]:
-    """Best-effort fetch of latest price per symbol from observe.db.
+) -> tuple[dict[Symbol, Decimal], dict[Symbol, TrendDirection]]:
+    """Best-effort fetch of latest price + trend per symbol from observe.db.
 
-    Returns ``{}`` if observe.db is unwired. Per-symbol failures are
-    logged + skipped rather than raised — a missing price is fine
-    to display as a dash; raising would 500 the whole status card.
+    Returns ``({}, {})`` if observe.db is unwired. Per-symbol
+    failures are logged + skipped rather than raised — a missing
+    price is fine to display as a dash; raising would 500 the whole
+    status card.
+
+    Trend is computed by comparing the oldest and newest snapshots
+    in the lookback window. Single-snapshot windows render "flat"
+    (no signal yet).
     """
     if observe_storage is None or not symbols:
-        return {}
+        return ({}, {})
     cutoff = datetime.now(UTC) - timedelta(minutes=_PRICE_LOOKBACK_MINUTES)
     prices: dict[Symbol, Decimal] = {}
+    trends: dict[Symbol, TrendDirection] = {}
     for symbol in symbols:
         try:
             snapshots = await observe_storage.get_price_snapshots(
@@ -101,9 +131,16 @@ async def _load_current_prices(
             continue
         if not snapshots:
             continue
-        latest = max(snapshots, key=lambda s: s.observed_at.dt)
-        prices[symbol] = latest.price.amount
-    return prices
+        sorted_snaps = sorted(snapshots, key=lambda s: s.observed_at.dt)
+        oldest_price = sorted_snaps[0].price.amount
+        latest_price = sorted_snaps[-1].price.amount
+        prices[symbol] = latest_price
+        trends[symbol] = (
+            _classify_trend(oldest_price, latest_price)
+            if len(sorted_snaps) >= 2
+            else "flat"
+        )
+    return prices, trends
 
 
 async def _load_snapshot(
@@ -124,13 +161,14 @@ async def _load_snapshot(
         delta = datetime.now(UTC) - most_recent.executed_at.dt
         last_age = delta.total_seconds()
     symbols_with_orders = {o.symbol for o in open_orders}
-    prices = await _load_current_prices(observe_storage, symbols_with_orders)
+    prices, trends = await _load_current_prices(observe_storage, symbols_with_orders)
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
         recent_trades=tuple(recent),
         last_fill_age_seconds=last_age,
         current_prices=prices,
+        current_trends=trends,
     )
 
 
