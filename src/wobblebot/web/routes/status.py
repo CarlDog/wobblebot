@@ -74,6 +74,11 @@ class StatusSnapshot:
     # missing from this dict (no snapshots in window) also render
     # nothing — graceful degrade, not an error.
     current_trends: dict[Symbol, TrendDirection] = field(default_factory=dict)
+    # Per-order age in seconds since ``Order.created_at``. Keyed by
+    # ``str(order.id)`` so templates can do ``snapshot.order_ages[o.id|string]``.
+    # Helps the operator spot stale orders ("BUY has been sitting
+    # 4d 7h while market is $1300 above it — should we re-anchor?").
+    order_ages: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -162,6 +167,10 @@ async def _load_snapshot(
         last_age = delta.total_seconds()
     symbols_with_orders = {o.symbol for o in open_orders}
     prices, trends = await _load_current_prices(observe_storage, symbols_with_orders)
+    now = datetime.now(UTC)
+    order_ages = {
+        str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders
+    }
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -169,6 +178,7 @@ async def _load_snapshot(
         last_fill_age_seconds=last_age,
         current_prices=prices,
         current_trends=trends,
+        order_ages=order_ages,
     )
 
 
