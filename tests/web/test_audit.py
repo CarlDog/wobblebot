@@ -111,7 +111,9 @@ class TestAuditRoute:
             assert "discord" in resp.text
             assert "approved" in resp.text
             assert "awaiting_confirmation" in resp.text
-            assert "Pending commands (2)" in resp.text
+            # Stage 8.4.E soak Day 4 — display caps + total count
+            # appended after the displayed count.
+            assert "Pending commands (2 of 2)" in resp.text
 
     @pytest.mark.asyncio
     async def test_renders_notifications_with_forwarded_state(
@@ -129,7 +131,7 @@ class TestAuditRoute:
             assert resp.status_code == 200
             assert "not yet" in resp.text
             assert "forwarded one" in resp.text
-            assert "Notifications (2)" in resp.text
+            assert "Notifications (2 of 2)" in resp.text
             # Both forwarded states render
             assert "forwarded" in resp.text
             assert "pending" in resp.text

@@ -33,6 +33,14 @@ from wobblebot.web.dependencies import get_advise_storage, get_templates
 
 router = APIRouter(tags=["advisor"])
 
+# Display the most-recent N suggestions on the page; pull a wider
+# slice for the total count. Wide-slice limit set well above
+# realistic soak volume (advisor cadence ~6/day × 4 weeks ~= 170);
+# a future v1.1 "load more" / pagination effort would replace the
+# wide-slice approach with proper COUNT() + OFFSET port methods.
+_ADVISOR_DISPLAY_LIMIT = 20
+_ADVISOR_QUERY_LIMIT = 1000
+
 
 @dataclass(frozen=True)
 class AdvisorSnapshot:
@@ -40,6 +48,7 @@ class AdvisorSnapshot:
 
     wired: bool
     suggestions: tuple[AdvisorSuggestion, ...]
+    total: int = 0
     error: str | None = None
 
 
@@ -50,14 +59,18 @@ async def _load_snapshot(
     if advise_storage is None:
         return AdvisorSnapshot(wired=False, suggestions=())
     try:
-        rows = await advise_storage.get_advisor_suggestions(limit=50)
+        rows = await advise_storage.get_advisor_suggestions(limit=_ADVISOR_QUERY_LIMIT)
     except StorageError as exc:
         return AdvisorSnapshot(
             wired=True,
             suggestions=(),
             error=f"failed to query advisor_suggestions: {exc}",
         )
-    return AdvisorSnapshot(wired=True, suggestions=tuple(rows))
+    return AdvisorSnapshot(
+        wired=True,
+        suggestions=tuple(rows[:_ADVISOR_DISPLAY_LIMIT]),
+        total=len(rows),
+    )
 
 
 @router.get("/advisor", response_class=HTMLResponse)

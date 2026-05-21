@@ -7,6 +7,13 @@
 {% block content %}
 <h1>Advisor</h1>
 
+{% if snapshot.wired and snapshot.total > 0 %}
+  <p class="muted">
+    Showing {{ snapshot.suggestions|length }} of {{ snapshot.total }} suggestions
+    (newest first).
+  </p>
+{% endif %}
+
 {% if not snapshot.wired %}
   <div class="card">
     <p class="placeholder">

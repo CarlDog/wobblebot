@@ -30,29 +30,41 @@ from wobblebot.web.dependencies import get_operator_storage, get_templates
 
 router = APIRouter(tags=["audit"])
 
+# Display the most-recent N entries per table; pull a wider slice
+# for the total count. Audit log grows ~5/day during normal soak;
+# 1000 row cap covers many weeks.
+_AUDIT_DISPLAY_LIMIT = 50
+_AUDIT_QUERY_LIMIT = 1000
+
 
 @dataclass(frozen=True)
 class AuditSnapshot:
     pending_commands: tuple[PendingCommand, ...]
     notifications: tuple[PersistedNotification, ...]
+    pending_total: int = 0
+    notifications_total: int = 0
     error: str | None = None
 
 
 async def _load_snapshot(storage: StoragePort) -> AuditSnapshot:
     try:
         # pending_commands: all rows, oldest-first per the port contract;
-        # we display newest-first by reversing.
-        pending = await storage.get_pending_commands(limit=100)
-        notifications = await storage.get_notifications(limit=100)
+        # we display newest-first by reversing then capping.
+        pending = await storage.get_pending_commands(limit=_AUDIT_QUERY_LIMIT)
+        notifications = await storage.get_notifications(limit=_AUDIT_QUERY_LIMIT)
     except StorageError as exc:
         return AuditSnapshot(
             pending_commands=(),
             notifications=(),
             error=f"failed to query operator.db: {exc}",
         )
+    pending_newest_first = list(reversed(pending))
+    notifications_newest_first = list(reversed(notifications))
     return AuditSnapshot(
-        pending_commands=tuple(reversed(pending)),
-        notifications=tuple(reversed(notifications)),
+        pending_commands=tuple(pending_newest_first[:_AUDIT_DISPLAY_LIMIT]),
+        notifications=tuple(notifications_newest_first[:_AUDIT_DISPLAY_LIMIT]),
+        pending_total=len(pending),
+        notifications_total=len(notifications),
     )
 
 

@@ -25,6 +25,12 @@ from wobblebot.web.dependencies import get_news_storage, get_templates
 
 router = APIRouter(tags=["news"])
 
+# Display the most-recent N items; pull a wider slice for the
+# total count + sources dropdown. Soak-period news volume varies
+# wildly with the fuzzy-dedup threshold; 1000 row cap is roomy.
+_NEWS_DISPLAY_LIMIT = 30
+_NEWS_QUERY_LIMIT = 1000
+
 
 @dataclass(frozen=True)
 class NewsSnapshot:
@@ -33,6 +39,7 @@ class NewsSnapshot:
     sources: tuple[str, ...]
     source_filter: str | None
     coin_filter: str | None
+    total: int = 0
     error: str | None = None
 
 
@@ -53,7 +60,7 @@ async def _load_snapshot(
     try:
         rows = await news_storage.get_news_items(
             source=source_filter,
-            limit=100,
+            limit=_NEWS_QUERY_LIMIT,
         )
     except StorageError as exc:
         return NewsSnapshot(
@@ -69,19 +76,22 @@ async def _load_snapshot(
     if coin_filter:
         needle = coin_filter.upper()
         rows = [r for r in rows if any(needle in c.upper() for c in r.mentioned_coins)]
+    # Total after filtering = the "real" count of matching items.
+    total = len(rows)
     # Distinct sources for the filter dropdown — pull from a wider
     # unfiltered slice so the dropdown is stable across filtered views.
     try:
-        all_rows = await news_storage.get_news_items(limit=200)
+        all_rows = await news_storage.get_news_items(limit=_NEWS_QUERY_LIMIT)
         sources = tuple(sorted({r.source for r in all_rows}))
     except StorageError:
         sources = ()
     return NewsSnapshot(
         wired=True,
-        items=tuple(rows),
+        items=tuple(rows[:_NEWS_DISPLAY_LIMIT]),
         sources=sources,
         source_filter=source_filter,
         coin_filter=coin_filter,
+        total=total,
     )
 
 

@@ -13,7 +13,7 @@
 
 <div class="card">
   <div class="card-header">
-    <div class="card-title">Pending commands ({{ snapshot.pending_commands|length }})</div>
+    <div class="card-title">Pending commands ({{ snapshot.pending_commands|length }} of {{ snapshot.pending_total }})</div>
     <div class="card-meta">newest first</div>
   </div>
   {% if snapshot.pending_commands %}
@@ -58,7 +58,7 @@
 
 <div class="card">
   <div class="card-header">
-    <div class="card-title">Notifications ({{ snapshot.notifications|length }})</div>
+    <div class="card-title">Notifications ({{ snapshot.notifications|length }} of {{ snapshot.notifications_total }})</div>
     <div class="card-meta">newest first</div>
   </div>
   {% if snapshot.notifications %}
