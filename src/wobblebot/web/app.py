@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
+from starlette.types import Scope
 
 from wobblebot.config.cli import WebConfig
 from wobblebot.ports.storage import StoragePort
@@ -49,6 +50,24 @@ from wobblebot.web.routes import status as status_routes
 _WEB_PKG_ROOT = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _WEB_PKG_ROOT / "templates"
 _STATIC_DIR = _WEB_PKG_ROOT / "static"
+
+
+class _CachedStaticFiles(StaticFiles):
+    """``StaticFiles`` with ``Cache-Control: public, max-age=300`` on 200s.
+
+    Without an explicit ``Cache-Control`` header, browsers fall back
+    to conditional revalidation (``If-Modified-Since`` round-trip per
+    request), which adds a visible 'beat' between page navigation
+    and image load for in-navbar assets like the brand mark. A
+    5-minute max-age hot-caches static assets for normal browsing
+    while still letting dev edits show up reasonably quickly.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["cache-control"] = "public, max-age=300"
+        return response
 
 
 def _tz_format(dt: datetime, tz_name: str, fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
@@ -138,8 +157,8 @@ def create_app(
         https_only=False,  # Set via reverse proxy's X-Forwarded-Proto in real deployments
     )
 
-    # Static assets (HTMX + base.css).
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    # Static assets (HTMX + base.css + brand mark).
+    app.mount("/static", _CachedStaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     # Templates dependency wired onto app.state so route handlers
     # can pull it via the dependencies module.
