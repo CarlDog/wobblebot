@@ -77,6 +77,13 @@
 
   /* === Hover on light-surface elements === */
   --surface-hover: rgba(0, 0, 0, 0.05);
+
+  /* === Symbol-section card-on-card border ===
+     Distinct from --border because the symbol section needs more
+     presence to register as a "container." Inverted between modes:
+     in light mode, --border is too washed-out against white cards;
+     in dark mode the corresponding value would be too bright. */
+  --symbol-border: #a8aeb6;
 }
 
 /* ---- Dark theme overrides --------------------------------------
@@ -129,6 +136,8 @@
   --color-link-hover: #0ea5e9;
 
   --surface-hover: rgba(255, 255, 255, 0.06);
+
+  --symbol-border: #525860;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -173,6 +182,8 @@
     --color-link-hover: #0ea5e9;
 
     --surface-hover: rgba(255, 255, 255, 0.06);
+
+    --symbol-border: #525860;
   }
 }
 
@@ -606,7 +617,7 @@ h2 {
 /* Has-orders state — full fieldset treatment. */
 .symbol-section.has-orders {
   position: relative;
-  border: 1px solid var(--border);
+  border: 1px solid var(--symbol-border);
   border-radius: 8px;
   padding: 22px 16px 12px;
 }
