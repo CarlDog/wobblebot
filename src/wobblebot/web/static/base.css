@@ -96,8 +96,11 @@
    is intentional because CSS has no shared-rule include mechanism. */
 
 [data-theme="dark"] {
-  --surface-page: #1a1d22;
-  --surface-card: #25282e;
+  /* Navy palette aligned with the login hero — operator preference
+     2026-05-21. Deeper, more saturated than the original
+     charcoal-grey dark mode. */
+  --surface-page: #000c20;
+  --surface-card: #0e2440;
 
   --text-primary: #e4e6eb;
   --text-secondary: #a8adb3;
@@ -142,8 +145,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --surface-page: #1a1d22;
-    --surface-card: #25282e;
+    /* Same navy palette as the explicit dark theme override. */
+    --surface-page: #000c20;
+    --surface-card: #0e2440;
 
     --text-primary: #e4e6eb;
     --text-secondary: #a8adb3;
