@@ -1,7 +1,80 @@
-/* WobbleBot dashboard base styles (Stage 7.1.B).
-   Minimal scaffold — Stage 7.2+ adds feature-area styles.
-   Goal: legible default rendering; the operator can override via
-   their reverse proxy if they want custom branding. */
+/* WobbleBot dashboard base styles.
+   Step 1 of light/dark/auto theme work: refactor all color literals
+   to CSS custom properties (variables) defined in :root. No visual
+   change — step 2 adds the dark-mode overrides + auto media query
+   + the user-menu toggle. */
+
+:root {
+  /* === Light surfaces (page + cards) === */
+  --surface-page: #f5f6f7;
+  --surface-card: #ffffff;
+  --shadow-dropdown: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+  /* === Text on light surfaces === */
+  --text-primary: #1c1e21;
+  --text-secondary: #65676b;
+  --text-muted: #8b97a8;
+
+  /* === Borders on light surfaces === */
+  --border: #dadde1;
+  --border-strong: #ccd0d5;
+  --border-subtle: #ebedf0;
+
+  /* === Nav (dark surfaces — stays dark in both modes per branding) === */
+  --nav-bg: #1c1e21;
+  --nav-border: #0d0e10;
+  --nav-border-subtle: #4a4d52;
+  --nav-dropdown-bg: #2a2d33;
+  --nav-text: #c4c7cc;
+  --nav-text-strong: #ffffff;
+  --nav-text-muted: #8b97a8;
+  --nav-hover-bg: rgba(255, 255, 255, 0.08);
+
+  /* === Semantic === */
+  --color-ok: #1e7d32;
+  --color-warn: #b06000;
+  --color-fail: #c80000;
+  --color-link: #1877f2;
+  --color-link-hover: #166fe5;
+
+  /* === Tags === */
+  --tag-default-bg: #e7eaef;
+  --tag-ok-bg: #e6f4ea;
+  --tag-ok-text: #1e7d32;
+  --tag-warn-bg: #fff4e5;
+  --tag-warn-text: #b06000;
+  --tag-fail-bg: #fde8e8;
+  --tag-fail-text: #c80000;
+  --tag-info-bg: #e0f2fe;
+  --tag-info-text: #075985;
+
+  /* === Trend arrows === */
+  --trend-up: #15803d;
+  --trend-down: #b91c1c;
+
+  /* === Re-anchor recommendation banners === */
+  --banner-mild-bg: #fef9c3;
+  --banner-mild-border: #ca8a04;
+  --banner-mild-text: #713f12;
+  --banner-moderate-bg: #fed7aa;
+  --banner-moderate-border: #ea580c;
+  --banner-moderate-text: #7c2d12;
+  --banner-strong-bg: #fecaca;
+  --banner-strong-border: #dc2626;
+  --banner-strong-text: #7f1d1d;
+
+  /* === Errors === */
+  --error-bg: #ffe5e5;
+
+  /* === Form inputs (settings page currently uses dark-on-light;
+        kept as-is for step 1 — the inconsistency lands in step 2) === */
+  --form-input-bg: #1d1f23;
+  --form-input-text: #e4e6eb;
+  --form-input-border: #3a3d42;
+
+  /* === Indicators === */
+  --bell-unread-dot: #dc2626;
+}
 
 * {
   box-sizing: border-box;
@@ -12,8 +85,8 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  color: #1c1e21;
-  background: #f5f6f7;
+  color: var(--text-primary);
+  background: var(--surface-page);
 }
 
 .page {
@@ -25,9 +98,9 @@ body {
 /* ---- Top nav --------------------------------------------------- */
 
 .topnav {
-  background: #1c1e21;
-  color: #ffffff;
-  border-bottom: 1px solid #0d0e10;
+  background: var(--nav-bg);
+  color: var(--nav-text-strong);
+  border-bottom: 1px solid var(--nav-border);
 }
 
 .topnav-inner {
@@ -41,7 +114,7 @@ body {
 }
 
 .brand {
-  color: #ffffff;
+  color: var(--nav-text-strong);
   font-weight: 600;
   text-decoration: none;
   font-size: 16px;
@@ -62,15 +135,15 @@ nav.primary {
 }
 
 nav.primary a {
-  color: #c4c7cc;
+  color: var(--nav-text);
   text-decoration: none;
   padding: 4px 8px;
   border-radius: 4px;
 }
 
 nav.primary a:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
 }
 
 nav.external {
@@ -80,7 +153,7 @@ nav.external {
 }
 
 nav.external a {
-  color: #8b97a8;
+  color: var(--nav-text-muted);
   text-decoration: none;
   padding: 4px 8px;
   border-radius: 4px;
@@ -88,8 +161,8 @@ nav.external a {
 }
 
 nav.external a:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
 }
 
 /* User-menu dropdown — anchored to the logged-in username; holds
@@ -106,7 +179,7 @@ nav.external a:hover {
   gap: 6px;
   background: none;
   border: none;
-  color: #c4c7cc;
+  color: var(--nav-text);
   padding: 6px 10px;
   border-radius: 4px;
   cursor: pointer;
@@ -116,8 +189,8 @@ nav.external a:hover {
 
 .user-menu-trigger:hover,
 .user-menu-trigger[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
 }
 
 .user-menu-caret {
@@ -130,10 +203,10 @@ nav.external a:hover {
   top: calc(100% + 4px);
   right: 0;
   min-width: 180px;
-  background: #2a2d33;
-  border: 1px solid #0d0e10;
+  background: var(--nav-dropdown-bg);
+  border: 1px solid var(--nav-border);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-dropdown);
   padding: 4px;
   z-index: 100;
 }
@@ -145,7 +218,7 @@ nav.external a:hover {
   text-align: left;
   background: none;
   border: none;
-  color: #c4c7cc;
+  color: var(--nav-text);
   text-decoration: none;
   padding: 8px 12px;
   border-radius: 4px;
@@ -156,8 +229,8 @@ nav.external a:hover {
 
 .user-menu-dropdown a:hover,
 .user-menu-dropdown button:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
 }
 
 .user-menu-form {
@@ -178,7 +251,7 @@ nav.utility {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #c4c7cc;
+  color: var(--nav-text);
   text-decoration: none;
   padding: 6px;
   border-radius: 4px;
@@ -186,12 +259,13 @@ nav.utility {
 }
 
 .nav-icon:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
 }
 
 /* Unread indicator dot on the bell. Hidden until .has-unread is added
-   by the layout.html bell-badge polling script. */
+   by the layout.html bell-badge polling script. Border tracks nav bg
+   so the dot looks "cut out" of the navbar. */
 .bell-dot {
   position: absolute;
   top: 4px;
@@ -199,8 +273,8 @@ nav.utility {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #dc2626;
-  border: 1.5px solid #1c1e21;
+  background: var(--bell-unread-dot);
+  border: 1.5px solid var(--nav-bg);
   display: none;
 }
 
@@ -214,8 +288,8 @@ form.logout {
 
 form.logout button {
   background: transparent;
-  border: 1px solid #4a4d52;
-  color: #c4c7cc;
+  border: 1px solid var(--nav-border-subtle);
+  color: var(--nav-text);
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
@@ -223,8 +297,8 @@ form.logout button {
 }
 
 form.logout button:hover {
-  border-color: #c4c7cc;
-  color: #ffffff;
+  border-color: var(--nav-text);
+  color: var(--nav-text-strong);
 }
 
 /* ---- Main content ---------------------------------------------- */
@@ -252,8 +326,8 @@ h2 {
 /* ---- Cards ----------------------------------------------------- */
 
 .card {
-  background: #ffffff;
-  border: 1px solid #dadde1;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 20px;
   margin-bottom: 16px;
@@ -272,19 +346,19 @@ h2 {
 }
 
 .placeholder {
-  color: #65676b;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
 .card-meta {
-  color: #65676b;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .btn-link {
   background: none;
   border: none;
-  color: #8b97a8;
+  color: var(--text-muted);
   font-size: 14px;
   cursor: pointer;
   padding: 0 4px;
@@ -293,12 +367,12 @@ h2 {
 }
 
 .btn-link:hover {
-  color: #1c1e21;
+  color: var(--text-primary);
 }
 
 .market-context {
   font-size: 13px;
-  color: #65676b;
+  color: var(--text-secondary);
   margin-bottom: 10px;
 }
 
@@ -307,16 +381,16 @@ h2 {
 }
 
 .market-ticker strong {
-  color: #1c1e21;
+  color: var(--text-primary);
 }
 
 .trend-up {
-  color: #15803d;
+  color: var(--trend-up);
   font-weight: 600;
 }
 
 .trend-down {
-  color: #b91c1c;
+  color: var(--trend-down);
   font-weight: 600;
 }
 
@@ -337,21 +411,21 @@ h2 {
 }
 
 .reanchor-mild {
-  background: #fef9c3;
-  border-color: #ca8a04;
-  color: #713f12;
+  background: var(--banner-mild-bg);
+  border-color: var(--banner-mild-border);
+  color: var(--banner-mild-text);
 }
 
 .reanchor-moderate {
-  background: #fed7aa;
-  border-color: #ea580c;
-  color: #7c2d12;
+  background: var(--banner-moderate-bg);
+  border-color: var(--banner-moderate-border);
+  color: var(--banner-moderate-text);
 }
 
 .reanchor-strong {
-  background: #fecaca;
-  border-color: #dc2626;
-  color: #7f1d1d;
+  background: var(--banner-strong-bg);
+  border-color: var(--banner-strong-border);
+  color: var(--banner-strong-text);
 }
 
 .metric {
@@ -361,13 +435,13 @@ h2 {
 .metric-value {
   font-size: 28px;
   font-weight: 600;
-  color: #1c1e21;
+  color: var(--text-primary);
   letter-spacing: -0.02em;
 }
 
 .metric-label {
   font-size: 12px;
-  color: #65676b;
+  color: var(--text-secondary);
   margin-top: 2px;
 }
 
@@ -383,8 +457,12 @@ table.data.compact td {
   font-size: 13px;
 }
 
+/* NOTE: .muted is declared twice — once here and once in the settings
+   page block below with a different value. The settings block wins
+   via cascade order. Variable refactor preserves this behavior pending
+   a focused cleanup; flagged for the dark-mode commit. */
 .muted {
-  color: #65676b;
+  color: var(--text-secondary);
 }
 
 .tag {
@@ -393,20 +471,20 @@ table.data.compact td {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: #e7eaef;
-  color: #1c1e21;
+  background: var(--tag-default-bg);
+  color: var(--text-primary);
 }
 
-.tag.ok { background: #e6f4ea; color: #1e7d32; }
-.tag.warn { background: #fff4e5; color: #b06000; }
-.tag.fail { background: #fde8e8; color: #c80000; }
-.tag.info { background: #e0f2fe; color: #075985; }
+.tag.ok { background: var(--tag-ok-bg); color: var(--tag-ok-text); }
+.tag.warn { background: var(--tag-warn-bg); color: var(--tag-warn-text); }
+.tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
+.tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
 
 .card-subtitle {
   font-size: 14px;
   font-weight: 600;
   margin: 16px 0 8px;
-  color: #1c1e21;
+  color: var(--text-primary);
 }
 
 /* ---- Buttons + action rows ------------------------------------- */
@@ -427,18 +505,18 @@ table.data.compact td {
   font-size: 13px;
   border: 1px solid transparent;
   cursor: pointer;
-  background: #1877f2;
+  background: var(--color-link);
   color: #ffffff;
 }
 
 .btn:hover { filter: brightness(0.95); }
-.btn-ok { background: #1e7d32; }
-.btn-warn { background: #b06000; }
-.btn-fail { background: #c80000; }
+.btn-ok { background: var(--color-ok); }
+.btn-warn { background: var(--color-warn); }
+.btn-fail { background: var(--color-fail); }
 .btn-secondary {
-  background: #ffffff;
-  color: #1c1e21;
-  border-color: #ccd0d5;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 /* ---- Forms (mutation pages) ----------------------------------- */
@@ -454,7 +532,7 @@ form.command select {
   width: 100%;
   max-width: 320px;
   padding: 8px 12px;
-  border: 1px solid #ccd0d5;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 14px;
 }
@@ -475,7 +553,7 @@ dl.kv {
 }
 
 dl.kv dt {
-  color: #65676b;
+  color: var(--text-secondary);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -497,13 +575,13 @@ table.data th,
 table.data td {
   text-align: left;
   padding: 8px 12px;
-  border-bottom: 1px solid #ebedf0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 table.data th {
   font-size: 12px;
   font-weight: 600;
-  color: #65676b;
+  color: var(--text-secondary);
   text-transform: uppercase;
 }
 
@@ -517,8 +595,8 @@ table.data th {
 }
 
 .login-card {
-  background: #ffffff;
-  border: 1px solid #dadde1;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 32px;
   width: 360px;
@@ -538,7 +616,7 @@ table.data th {
 .login-card input {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #ccd0d5;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 14px;
   margin-bottom: 16px;
@@ -546,7 +624,7 @@ table.data th {
 
 .login-card button {
   width: 100%;
-  background: #1877f2;
+  background: var(--color-link);
   color: #ffffff;
   border: none;
   padding: 10px;
@@ -557,12 +635,12 @@ table.data th {
 }
 
 .login-card button:hover {
-  background: #166fe5;
+  background: var(--color-link-hover);
 }
 
 .error {
-  color: #c80000;
-  background: #ffe5e5;
+  color: var(--color-fail);
+  background: var(--error-bg);
   padding: 10px 12px;
   border-radius: 4px;
   margin-bottom: 16px;
@@ -576,15 +654,15 @@ table.data th {
 }
 
 .banner-ok {
-  border-left: 4px solid #1e7d32;
+  border-left: 4px solid var(--color-ok);
 }
 
 .banner-warn {
-  border-left: 4px solid #b06000;
+  border-left: 4px solid var(--color-warn);
 }
 
 .banner-fail {
-  border-left: 4px solid #c80000;
+  border-left: 4px solid var(--color-fail);
 }
 
 .form-row {
@@ -596,7 +674,7 @@ table.data th {
   font-weight: 600;
   margin-bottom: 6px;
   font-size: 13px;
-  color: #c4c7cc;
+  color: var(--nav-text);
 }
 
 .form-row select,
@@ -604,9 +682,9 @@ table.data th {
   width: 100%;
   max-width: 360px;
   padding: 6px 8px;
-  background: #1d1f23;
-  color: #e4e6eb;
-  border: 1px solid #3a3d42;
+  background: var(--form-input-bg);
+  color: var(--form-input-text);
+  border: 1px solid var(--form-input-border);
   border-radius: 4px;
   font: inherit;
 }
@@ -614,10 +692,13 @@ table.data th {
 .form-help {
   margin-top: 6px;
   font-size: 12px;
-  color: #8b97a8;
+  color: var(--text-muted);
 }
 
+/* Second .muted declaration — wins via cascade order over the
+   earlier .muted rule that uses --text-secondary. Pre-existing
+   duplicate flagged for cleanup in step 2 of the theme work. */
 .muted {
-  color: #8b97a8;
+  color: var(--text-muted);
   font-size: 13px;
 }
