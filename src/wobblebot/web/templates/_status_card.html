@@ -6,7 +6,7 @@
     <div class="card-title">Live trading status</div>
     <div class="card-meta">
       {% if snapshot.last_fill_age_seconds is not none %}
-        last fill {{ "%.0f"|format(snapshot.last_fill_age_seconds) }}s ago ·
+        last fill {{ snapshot.last_fill_age_seconds | humanize_duration }} ago ·
       {% endif %}
       {# Auto-refresh indicator + manual refresh button. Auto-refresh
          cadence comes from web.htmx_poll_seconds (Jinja global). Manual
@@ -34,6 +34,20 @@
     <p class="error">{{ snapshot.error }}</p>
   {% else %}
     <h2 class="card-subtitle">Open orders ({{ snapshot.open_orders|length }})</h2>
+    {# Current market price per symbol with open orders, sourced
+       from observe.db (last few minutes of snapshots, latest wins).
+       Helps the operator see what each order is waiting on. #}
+    {% if snapshot.current_prices %}
+      <div class="market-context">
+        {% for symbol, price in snapshot.current_prices.items() %}
+          <span class="market-ticker">
+            {{ symbol.base }}/{{ symbol.quote }}:
+            <strong>${{ "%.2f"|format(price) }}</strong>
+            <span class="muted">@ {{ snapshot.current_prices_observed_at[symbol] | tz_format(operator_tz, "%H:%M:%S %Z") }}</span>
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
     {% if snapshot.open_orders %}
       <table class="data compact">
         <thead>

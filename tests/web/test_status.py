@@ -181,7 +181,7 @@ class TestLoadSnapshot:
     async def test_none_storage_returns_unwired(self) -> None:
         from wobblebot.web.routes.status import _load_snapshot
 
-        snap = await _load_snapshot(None)
+        snap = await _load_snapshot(None, None)
         assert snap.live_wired is False
         assert snap.open_orders == ()
 
@@ -190,7 +190,7 @@ class TestLoadSnapshot:
         from wobblebot.web.routes.status import _load_snapshot
 
         await live_storage.save_trade(_make_trade())
-        snap = await _load_snapshot(live_storage)
+        snap = await _load_snapshot(live_storage, None)
         assert snap.last_fill_age_seconds is not None
         assert snap.last_fill_age_seconds > 0
 
@@ -198,6 +198,6 @@ class TestLoadSnapshot:
     async def test_empty_db_no_last_fill_age(self, live_storage: SQLiteStorageAdapter) -> None:
         from wobblebot.web.routes.status import _load_snapshot
 
-        snap = await _load_snapshot(live_storage)
+        snap = await _load_snapshot(live_storage, None)
         assert snap.last_fill_age_seconds is None
         assert snap.live_wired is True

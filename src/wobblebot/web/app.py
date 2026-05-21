@@ -91,6 +91,32 @@ def _tz_format(dt: datetime, tz_name: str, fmt: str = "%Y-%m-%d %H:%M:%S %Z") ->
     return dt.astimezone(tz).strftime(fmt)
 
 
+def _humanize_duration(seconds: float | None) -> str:
+    """Jinja filter that renders a duration in seconds as a compact phrase.
+
+    Examples: ``45s``, ``9m 23s``, ``47m``, ``11h 21m``, ``3d 7h``. Two
+    significant units past the minute boundary keeps the operator's
+    glance-time short — '11h 21m' beats both '40,883s' and '11.4h'.
+    Returns an em-dash for ``None`` so templates can use the filter
+    unconditionally without an ``{% if %}`` wrapper.
+    """
+    if seconds is None:
+        return "—"
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 10:
+        return f"{m}m {s}s"
+    if m < 60:
+        return f"{m}m"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h {m}m"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h"
+
+
 def _csrf_input(request: Request) -> Markup:
     """Jinja2 global that emits the hidden CSRF input for any form.
 
@@ -176,6 +202,9 @@ def create_app(
     # **Display-only**: this filter converts UTC datetimes for
     # rendering; storage, logs, engine paths all stay UTC.
     templates.env.filters["tz_format"] = _tz_format
+    # Compact duration formatter for "X ago" displays — turns
+    # 40883s into "11h 21m" instead of the raw second count.
+    templates.env.filters["humanize_duration"] = _humanize_duration
     app.state.templates = templates
     app.state.config = config
     app.state.operator_storage = operator_storage

@@ -180,6 +180,20 @@ h2 {
   color: #1c1e21;
 }
 
+.market-context {
+  font-size: 13px;
+  color: #65676b;
+  margin-bottom: 10px;
+}
+
+.market-ticker {
+  margin-right: 16px;
+}
+
+.market-ticker strong {
+  color: #1c1e21;
+}
+
 .metric {
   margin-bottom: 12px;
 }
