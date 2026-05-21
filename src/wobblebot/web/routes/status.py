@@ -56,11 +56,10 @@ class StatusSnapshot:
     recent_trades: tuple[Trade, ...]
     last_fill_age_seconds: float | None
     # Latest market price per symbol that has open orders, sourced
-    # from observe.db. ``None`` if observe.db isn't wired or no
+    # from observe.db. Empty dict if observe.db isn't wired or no
     # snapshot landed in the last few minutes. Helps the operator
     # see "what those open orders are waiting on" at a glance.
     current_prices: dict[Symbol, Decimal] = field(default_factory=dict)
-    current_prices_observed_at: dict[Symbol, datetime] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -77,19 +76,17 @@ def _empty_snapshot(*, wired: bool, error: str | None = None) -> StatusSnapshot:
 async def _load_current_prices(
     observe_storage: StoragePort | None,
     symbols: set[Symbol],
-) -> tuple[dict[Symbol, Decimal], dict[Symbol, datetime]]:
+) -> dict[Symbol, Decimal]:
     """Best-effort fetch of latest price per symbol from observe.db.
 
-    Returns ``({}, {})`` if observe.db is unwired. Per-symbol
-    failures are logged + skipped rather than raised — a stale
-    price is far less useful than no price, but a missing price is
-    fine to display as a dash.
+    Returns ``{}`` if observe.db is unwired. Per-symbol failures are
+    logged + skipped rather than raised — a missing price is fine
+    to display as a dash; raising would 500 the whole status card.
     """
     if observe_storage is None or not symbols:
-        return ({}, {})
+        return {}
     cutoff = datetime.now(UTC) - timedelta(minutes=_PRICE_LOOKBACK_MINUTES)
     prices: dict[Symbol, Decimal] = {}
-    observed: dict[Symbol, datetime] = {}
     for symbol in symbols:
         try:
             snapshots = await observe_storage.get_price_snapshots(
@@ -106,8 +103,7 @@ async def _load_current_prices(
             continue
         latest = max(snapshots, key=lambda s: s.observed_at.dt)
         prices[symbol] = latest.price.amount
-        observed[symbol] = latest.observed_at.dt
-    return prices, observed
+    return prices
 
 
 async def _load_snapshot(
@@ -128,14 +124,13 @@ async def _load_snapshot(
         delta = datetime.now(UTC) - most_recent.executed_at.dt
         last_age = delta.total_seconds()
     symbols_with_orders = {o.symbol for o in open_orders}
-    prices, observed = await _load_current_prices(observe_storage, symbols_with_orders)
+    prices = await _load_current_prices(observe_storage, symbols_with_orders)
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
         recent_trades=tuple(recent),
         last_fill_age_seconds=last_age,
         current_prices=prices,
-        current_prices_observed_at=observed,
     )
 
 

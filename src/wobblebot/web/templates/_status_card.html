@@ -43,7 +43,6 @@
           <span class="market-ticker">
             {{ symbol.base }}/{{ symbol.quote }}:
             <strong>${{ "%.2f"|format(price) }}</strong>
-            <span class="muted">@ {{ snapshot.current_prices_observed_at[symbol] | tz_format(operator_tz, "%H:%M:%S %Z") }}</span>
           </span>
         {% endfor %}
       </div>
