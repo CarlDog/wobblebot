@@ -40,19 +40,37 @@
           <span class="bell-dot" aria-hidden="true"></span>
         </a>
       </nav>
-      {% if kraken_account_url %}
-        <nav class="external">
-          {# rel=noopener noreferrer prevents the new tab from accessing
-             window.opener (security) and stops referrer leak. #}
-          <a href="{{ kraken_account_url }}" target="_blank" rel="noopener noreferrer">
-            Kraken Pro&nbsp;↗
-          </a>
-        </nav>
-      {% endif %}
-      <form class="logout" method="post" action="/auth/logout">
-        {{ csrf_input(request) }}
-        <button type="submit">Sign out</button>
-      </form>
+      {# User menu — dropdown anchored to the logged-in username.
+         Replaces the previous flat "Sign out" button + external nav;
+         Kraken Pro link folds in here so the navbar's right edge is
+         dedicated to session-context actions. Settings stays as the
+         ⚙ gear icon in nav.utility (faster access + visual symmetry
+         with the bell). #}
+      <div class="user-menu">
+        <button type="button"
+                class="user-menu-trigger"
+                id="user-menu-trigger"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="user-menu-dropdown">
+          <span class="user-menu-name">{{ username }}</span>
+          <span class="user-menu-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
+          {% if kraken_account_url %}
+            {# rel=noopener noreferrer prevents the new tab from accessing
+               window.opener (security) and stops referrer leak. #}
+            <a href="{{ kraken_account_url }}" target="_blank"
+               rel="noopener noreferrer" role="menuitem">
+              Kraken Pro&nbsp;↗
+            </a>
+          {% endif %}
+          <form method="post" action="/auth/logout" class="user-menu-form">
+            {{ csrf_input(request) }}
+            <button type="submit" role="menuitem">Sign out</button>
+          </form>
+        </div>
+      </div>
     </div>
   </header>
   <main class="content">
@@ -83,5 +101,32 @@
   };
   window.updateBellBadge();
   setInterval(window.updateBellBadge, 30000);
+
+  // User menu dropdown — toggle on trigger click; close on outside
+  // click and on Escape. Keeps the trigger's aria-expanded in sync.
+  (function () {
+    const trigger = document.getElementById('user-menu-trigger');
+    const dropdown = document.getElementById('user-menu-dropdown');
+    if (!trigger || !dropdown) return;
+    function setOpen(open) {
+      dropdown.hidden = !open;
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setOpen(dropdown.hidden);
+    });
+    document.addEventListener('click', function (e) {
+      if (!dropdown.hidden && !trigger.contains(e.target) && !dropdown.contains(e.target)) {
+        setOpen(false);
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !dropdown.hidden) {
+        setOpen(false);
+        trigger.focus();
+      }
+    });
+  })();
 </script>
 {% endblock %}
