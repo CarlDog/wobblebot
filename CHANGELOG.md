@@ -10,7 +10,7 @@ canonical completion dates.
 
 ## [Unreleased]
 
-### Stage 8.4.B-D + soak Day 1-2 events (2026-05-18 → 2026-05-20)
+### Stage 8.4.B-D + soak Day 1-3 events (2026-05-18 → 2026-05-20)
 
 Documentation-freeze sub-slices closed plus the operator-driven
 soak that began 2026-05-18 and is currently mid-flight.
@@ -118,18 +118,54 @@ Soak window currently mid-flight. Minimum useful end approximately
 approximately **2026-06-15**. Daily check-in via web UI `/audit`
 view (cli/operator off, no Discord forwarding).
 
+**Day 3 (2026-05-20) — heavy soak-period polish.** Nineteen
+commits across morning + evening sessions, all within
+documentation-freeze (no behavior changes; UX + reliability
+only). Morning: 3 transient-failure-resilience hotfixes
+(`e2b6cfc` / `a9b9e43` / `ae58c52`), 1 config validator
+(`8c1acfa` rejects spacing ≤ 2 × maker fee — caught ETH=0.5%
+misconfig), 4 operator-requested web UI features (`031fb55`
+Kraken Pro nav link + refresh button, `da8b1e4` news fuzzy
+dedup + `rapidfuzz` runtime dep, `20a8bd8` Kraken trading fees
+on cost dashboard, `746c6cc` per-user settings + timezone
+preference + new `user_preferences` table + `tzdata` Windows
+runtime dep). Pre-relaunch process audit revealed three daemons
+had died silently at earlier points; soak runbook updated to
+mandate `Get-CimInstance` audit after any crash, not just
+terminal checks. Evening (post-relaunch): WobbleBot brand mark
+shipped as PNG raster (`ddaefc5` initial SVG superseded →
+`eec7f6b` openart.ai/Qwen-approved PNG pivot → `c7fba08`
+tighter crop + larger navbar render → `39b0ac2` Cache-Control
+headers + 178KB→64KB resize + preload to fix per-nav reload
+beat) — first visual identity for wobblebot. One CSS bug fix
+(`13e660e` `.btn-link:hover` invisible on white cards). Three
+status card UX adds (`b5cedfe` current-price per symbol from
+observe.db + new `humanize_duration` Jinja filter so "last fill
+40883s ago" renders as "11h 21m"; `7014ad1` removed redundant
+`@observed_at` timestamp; `cae4405` green ▲ / red ▼ trend
+arrows over 15-min lookback with ±0.1% flat threshold). Three
+v1.1 plan additions (`3b83bfa` per-order delta column,
+`aca4b95` multi-coin status card layout, `3c28673`
+graceful-shutdown timeout for daemons — surfaced when cli/web
+hung 3+ minutes after SIGINT during a bounce). Nightly check
+confirmed all 7 daemons healthy. Account: $89.92 → $99.87 USD
+(orphan-BTC sell at $77,663 on Day 3 morning yielded $9.97
+profit). Two outage events handled cleanly (May 19 storm DNS
+failure, May 20 15:03 UTC httpcore.ReadTimeout). Real-money
+cost stays at $0.085018.
+
 **8.4.F — Post-soak release ceremony** (pending soak pass).
 Future commit: `docs/planning/phase-8-summary.md`,
 `pyproject.toml` 0.1.0 → 1.0.0, CHANGELOG `[Unreleased]` →
 `[1.0.0] - YYYY-MM-DD`, annotated `git tag -a v1.0.0`.
 
-**Numbers stable through soak Day 2**: 1786 unit tests pass
-(+1 from `TestSessionEndResilience`); mypy 104 src files clean;
+**Numbers through soak Day 3**: 1833 unit tests pass (+47 from
+soak-period work across Day 1-3); mypy 106 src files clean;
 pylint **10.00/10**; black + isort clean. **Real-money cost
-delta this period: ~$0.00** (the one overnight fill on Day 1
-was an in-cycle BUY; the orphaned BTC now backs one SELL on the
-fresh post-recovery grid). Running project cost stays at
-**$0.085018**.
+delta this period: ~$0.00 net** (Day 1 overnight fill was an
+in-cycle BUY; Day 3 morning sell of the orphan BTC at $77,663
+netted ~$9.97 profit after 0.26% maker fee — strategy works on
+real money). Running project cost stays at **$0.085018**.
 
 ### Stage 8.4 kickoff — Phase 8 / v1.0 Release Check (2026-05-18)
 
