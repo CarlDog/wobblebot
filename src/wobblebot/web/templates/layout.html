@@ -111,14 +111,23 @@
   <main class="content">
     {% block content %}{% endblock %}
   </main>
-  {# Footer — minimal two-column: brand+version left, GitHub right. #}
+  {# Footer — three columns: copyright + version (left), GitHub
+     repo link (center), MIT License link (right). Year range
+     matches the project LICENSE file. #}
   <footer class="app-footer">
     <div class="app-footer-inner">
-      <span class="app-footer-brand">WobbleBot v{{ app_version }}</span>
+      <span class="app-footer-brand">
+        © 2025–2026 CarlDog · WobbleBot v{{ app_version }}
+      </span>
       <a class="app-footer-link"
          href="https://github.com/CarlDog/wobblebot"
          target="_blank" rel="noopener noreferrer">
         github.com/CarlDog/wobblebot
+      </a>
+      <a class="app-footer-link"
+         href="https://github.com/CarlDog/wobblebot/blob/main/LICENSE"
+         target="_blank" rel="noopener noreferrer">
+        MIT License
       </a>
     </div>
   </footer>
