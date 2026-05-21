@@ -6,6 +6,19 @@
   <title>{% block title %}WobbleBot Dashboard{% endblock %}</title>
   <link rel="icon" href="/static/favicon.png" type="image/png">
   <link rel="preload" href="/static/wobblebot.png" as="image" type="image/png">
+  {# Theme init — runs BEFORE the stylesheet loads so the page paints
+     with the right theme on first frame. Prevents the flash-of-wrong-
+     theme on dark-mode browsers loading the light defaults. #}
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('wobblebot_theme');
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.setAttribute('data-theme', stored);
+        }
+      } catch (e) { /* localStorage unavailable; fall back to auto */ }
+    })();
+  </script>
   <link rel="stylesheet" href="/static/base.css">
   <script src="/static/htmx.min.js" defer></script>
   {% block head_extra %}{% endblock %}

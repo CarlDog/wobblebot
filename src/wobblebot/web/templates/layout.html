@@ -65,6 +65,41 @@
               Kraken Pro&nbsp;↗
             </a>
           {% endif %}
+          <div class="user-menu-section">
+            <div class="user-menu-label">Theme</div>
+            <div class="theme-toggle" role="radiogroup" aria-label="Theme">
+              <button type="button" class="theme-btn" data-theme-set="light"
+                      role="radio" aria-checked="false">
+                {# Feather "sun" #}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="4"/>
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+                </svg>
+                <span>Light</span>
+              </button>
+              <button type="button" class="theme-btn" data-theme-set="dark"
+                      role="radio" aria-checked="false">
+                {# Feather "moon" #}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+                <span>Dark</span>
+              </button>
+              <button type="button" class="theme-btn" data-theme-set="auto"
+                      role="radio" aria-checked="false">
+                {# Feather "monitor" — auto matches the OS preference #}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                  <line x1="8" y1="21" x2="16" y2="21"/>
+                  <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                <span>Auto</span>
+              </button>
+            </div>
+          </div>
           <form method="post" action="/auth/logout" class="user-menu-form">
             {{ csrf_input(request) }}
             <button type="submit" role="menuitem">Sign out</button>
@@ -127,6 +162,38 @@
         trigger.focus();
       }
     });
+  })();
+
+  // Theme switcher — three buttons (Light/Dark/Auto) inside the user
+  // menu dropdown. Stores choice in localStorage; the early-init
+  // script in base.html applies it BEFORE the stylesheet loads to
+  // prevent flash-of-wrong-theme. "Auto" removes the explicit
+  // override so the CSS media query (prefers-color-scheme) wins.
+  (function () {
+    const root = document.documentElement;
+    function applyTheme(theme) {
+      if (theme === 'auto') {
+        root.removeAttribute('data-theme');
+      } else {
+        root.setAttribute('data-theme', theme);
+      }
+      document.querySelectorAll('.theme-btn').forEach(function (btn) {
+        const active = btn.dataset.themeSet === theme;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+    }
+    document.querySelectorAll('.theme-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const theme = btn.dataset.themeSet;
+        try { localStorage.setItem('wobblebot_theme', theme); } catch (e) {}
+        applyTheme(theme);
+      });
+    });
+    // Initial: reflect stored preference (or "auto" if none).
+    var stored = 'auto';
+    try { stored = localStorage.getItem('wobblebot_theme') || 'auto'; } catch (e) {}
+    applyTheme(stored);
   })();
 </script>
 {% endblock %}

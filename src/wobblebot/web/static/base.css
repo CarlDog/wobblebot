@@ -76,6 +76,99 @@
   --bell-unread-dot: #dc2626;
 }
 
+/* ---- Dark theme overrides --------------------------------------
+   Two activation paths:
+   1. ``[data-theme="dark"]`` — explicit operator choice via the
+      user-menu toggle. Highest priority.
+   2. ``@media (prefers-color-scheme: dark)`` matching the OS, but
+      excluded when ``[data-theme="light"]`` is set explicitly.
+   Both blocks override the same variables identically; duplication
+   is intentional because CSS has no shared-rule include mechanism. */
+
+[data-theme="dark"] {
+  --surface-page: #1a1d22;
+  --surface-card: #25282e;
+
+  --text-primary: #e4e6eb;
+  --text-secondary: #a8adb3;
+  --text-muted: #6e7378;
+
+  --border: #3a3d42;
+  --border-strong: #4a4d52;
+  --border-subtle: #2d3037;
+
+  --tag-default-bg: #3a3d42;
+  --tag-ok-bg: #1a3d22;
+  --tag-ok-text: #4ade80;
+  --tag-warn-bg: #3d2a0d;
+  --tag-warn-text: #fbbf24;
+  --tag-fail-bg: #3d0d0d;
+  --tag-fail-text: #f87171;
+  --tag-info-bg: #0c2a3d;
+  --tag-info-text: #38bdf8;
+
+  --trend-up: #22c55e;
+  --trend-down: #ef4444;
+
+  --banner-mild-bg: #2d2410;
+  --banner-mild-border: #ca8a04;
+  --banner-mild-text: #fde047;
+  --banner-moderate-bg: #2d1d10;
+  --banner-moderate-border: #ea580c;
+  --banner-moderate-text: #fdba74;
+  --banner-strong-bg: #2d1010;
+  --banner-strong-border: #dc2626;
+  --banner-strong-text: #fca5a5;
+
+  --error-bg: #2d1010;
+
+  --color-link: #38bdf8;
+  --color-link-hover: #0ea5e9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-page: #1a1d22;
+    --surface-card: #25282e;
+
+    --text-primary: #e4e6eb;
+    --text-secondary: #a8adb3;
+    --text-muted: #6e7378;
+
+    --border: #3a3d42;
+    --border-strong: #4a4d52;
+    --border-subtle: #2d3037;
+
+    --tag-default-bg: #3a3d42;
+    --tag-ok-bg: #1a3d22;
+    --tag-ok-text: #4ade80;
+    --tag-warn-bg: #3d2a0d;
+    --tag-warn-text: #fbbf24;
+    --tag-fail-bg: #3d0d0d;
+    --tag-fail-text: #f87171;
+    --tag-info-bg: #0c2a3d;
+    --tag-info-text: #38bdf8;
+
+    --trend-up: #22c55e;
+    --trend-down: #ef4444;
+
+    --banner-mild-bg: #2d2410;
+    --banner-mild-border: #ca8a04;
+    --banner-mild-text: #fde047;
+    --banner-moderate-bg: #2d1d10;
+    --banner-moderate-border: #ea580c;
+    --banner-moderate-text: #fdba74;
+    --banner-strong-bg: #2d1010;
+    --banner-strong-border: #dc2626;
+    --banner-strong-text: #fca5a5;
+
+    --error-bg: #2d1010;
+
+    --color-link: #38bdf8;
+    --color-link-hover: #0ea5e9;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -235,6 +328,67 @@ nav.external a:hover {
 
 .user-menu-form {
   margin: 0;
+}
+
+/* Theme selector inside the user-menu dropdown. Three radio-like
+   buttons for Light / Dark / Auto. Active state uses a brighter
+   nav-hover background so it visually pops above the regular
+   hover state. */
+.user-menu-section {
+  padding: 6px 4px 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--nav-border-subtle);
+}
+
+.user-menu-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--nav-text-muted);
+  padding: 4px 8px 6px;
+}
+
+.theme-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.theme-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--nav-text);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.theme-btn:hover {
+  background: var(--nav-hover-bg);
+  color: var(--nav-text-strong);
+}
+
+.theme-btn.active {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--nav-text-strong);
+}
+
+.theme-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.theme-btn.active svg {
+  opacity: 1;
 }
 
 /* Utility nav — gear (Settings) + bell (Notifications). Sits between
