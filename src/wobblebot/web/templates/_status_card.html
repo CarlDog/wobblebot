@@ -72,6 +72,8 @@
                 <span class="trend-down" title="trending down over last 15m">▼</span>
               {% endif %}
             {% endif %}
+            {# Decorative rule visually links price to action icons. #}
+            <span class="symbol-rule" aria-hidden="true"></span>
             <div class="symbol-actions">
               {# Pause symbol — POSTs to /commands/pause; redirects to
                  confirm page; ADR-002 firewall via pending_commands. #}

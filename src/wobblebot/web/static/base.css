@@ -472,6 +472,35 @@ main.content {
   flex: 1;
 }
 
+/* App footer — minimal two-column. Brand+version on the left,
+   GitHub link on the right. Stays at the bottom of .page via the
+   existing flex column layout (main.content has flex: 1 so the
+   footer sticks below). */
+.app-footer {
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.app-footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-footer-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.app-footer-link:hover {
+  color: #4dd0e1;
+}
+
 h1 {
   font-size: 24px;
   font-weight: 600;
@@ -572,8 +601,19 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+/* Decorative horizontal rule between the symbol+price+trend cluster
+   on the left and the pause/resume actions on the right. Stretches
+   to fill the available width via flex:1; subtle border color so it
+   visually links the two clusters without dominating. */
+.symbol-rule {
+  flex: 1;
+  height: 0;
+  border-top: 1px solid var(--border);
+  align-self: center;
+  margin: 0 12px;
+}
+
 .symbol-actions {
-  margin-left: auto;
   display: flex;
   gap: 4px;
 }
@@ -750,6 +790,25 @@ table.data.compact td {
 .btn-ok { background: var(--color-ok); }
 .btn-warn { background: var(--color-warn); }
 .btn-fail { background: var(--color-fail); }
+
+/* Wide centered emergency-stop button. Sits in-flow below the
+   status card without its own card wrapper — the button is the
+   affordance. Width is content-area-relative so it scales with
+   viewport but never goes edge-to-edge (avoids clownish). */
+.emergency-stop-row {
+  display: flex;
+  justify-content: center;
+  margin: 24px auto 16px;
+  width: 60%;
+  max-width: 600px;
+  min-width: 280px;
+}
+
+.btn-emergency {
+  width: 100%;
+  padding: 12px 20px;
+  font-size: 14px;
+}
 .btn-secondary {
   background: var(--surface-card);
   color: var(--text-primary);
@@ -838,13 +897,27 @@ table.data th {
   text-transform: uppercase;
 }
 
-/* ---- Login form (Stage 7.1.C) ---------------------------------- */
-
+/* ---- Login form (Stage 7.1.C) ----------------------------------
+   The login page always renders in dark theme regardless of the
+   data-theme attribute. Light/dark is a per-operator preference set
+   AFTER auth; pre-login there's no preference to honor. Scoping
+   dark-equivalent values onto the surface vars within .login-shell
+   re-themes the card + inputs + button automatically via the
+   existing CSS variable system — no per-component overrides
+   needed. */
 .login-shell {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  background: var(--nav-bg);
+
+  --surface-card: var(--nav-dropdown-bg);
+  --text-primary: var(--nav-text-strong);
+  --text-secondary: var(--nav-text);
+  --text-muted: var(--nav-text-muted);
+  --border: var(--nav-border);
+  --border-strong: var(--nav-border-subtle);
 }
 
 .login-card {
@@ -852,12 +925,15 @@ table.data th {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 32px;
-  width: 360px;
+  width: 460px;
+  max-width: calc(100vw - 32px);
 }
 
-.login-card h1 {
-  margin-top: 0;
-  text-align: center;
+.login-brand {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 auto 24px;
 }
 
 .login-card label {

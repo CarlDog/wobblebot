@@ -111,6 +111,17 @@
   <main class="content">
     {% block content %}{% endblock %}
   </main>
+  {# Footer — minimal two-column: brand+version left, GitHub right. #}
+  <footer class="app-footer">
+    <div class="app-footer-inner">
+      <span class="app-footer-brand">WobbleBot v{{ app_version }}</span>
+      <a class="app-footer-link"
+         href="https://github.com/CarlDog/wobblebot"
+         target="_blank" rel="noopener noreferrer">
+        github.com/CarlDog/wobblebot
+      </a>
+    </div>
+  </footer>
 </div>
 
 {# Bell badge polling — compares server's latest-notification timestamp

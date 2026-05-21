@@ -118,10 +118,10 @@ class TestDashboardRoute:
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "unset" in resp.text.lower()
-            # Engine controls card lives below the status card on the
-            # dashboard (Stage 8.4.E soak Day 4 restructure; per-symbol
-            # pause/resume moved inside the status card).
-            assert "Engine controls" in resp.text
+            # Emergency stop button lives in-flow below the status
+            # card (Stage 8.4.E soak Day 4 — the wrapping card was
+            # stripped; the button IS the affordance).
+            assert "Emergency stop" in resp.text
 
     def test_authenticated_with_empty_live_renders(
         self,

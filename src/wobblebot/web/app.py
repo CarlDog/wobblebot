@@ -196,6 +196,10 @@ def create_app(
     # route's context dict.
     templates.env.globals["kraken_account_url"] = config.kraken_account_url
     templates.env.globals["htmx_poll_seconds"] = config.htmx_poll_seconds
+    # Footer carries the running app version. Pulled off the FastAPI
+    # ``version`` attribute so a future ``pyproject.toml`` bump
+    # flows through automatically.
+    templates.env.globals["app_version"] = app.version
     # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
     # pass the operator's tz preference (loaded from
     # user_preferences) as ``operator_tz`` in context; templates

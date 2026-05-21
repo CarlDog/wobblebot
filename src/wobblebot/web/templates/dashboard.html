@@ -11,24 +11,13 @@
    the hx-* polling attributes — banners + card refresh together. #}
 {% include "_status_card.html" %}
 
-{# Engine controls — emergency stop is engine-wide and lives apart
-   from the per-symbol pause/resume icons inside the status card.
-   Same confirm-before-execute flow through pending_commands. #}
-<div class="card engine-controls">
-  <div class="card-header">
-    <div class="card-title">Engine controls</div>
-  </div>
-  <p class="muted">
-    Emergency stop halts trading across every symbol. Per-symbol
-    pause / resume live inside the live trading status card above.
-    Every action creates a pending command that you confirm before
-    it reaches the engine (ADR-013 firewall preserved).
-  </p>
-  <form method="post" action="/commands/stop" class="inline-form">
-    {{ csrf_input(request) }}
-    <button type="submit" class="btn btn-fail">
-      🛑 Emergency stop — all symbols
-    </button>
-  </form>
-</div>
+{# Engine-wide emergency stop. Lives in-flow below the status card.
+   No surrounding card chrome — the button IS the affordance. Goes
+   through the existing pending_commands confirm flow per ADR-013. #}
+<form method="post" action="/commands/stop" class="emergency-stop-row">
+  {{ csrf_input(request) }}
+  <button type="submit" class="btn btn-fail btn-emergency">
+    🛑 Emergency stop — all symbols
+  </button>
+</form>
 {% endblock %}
