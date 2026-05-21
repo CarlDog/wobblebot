@@ -473,23 +473,23 @@ main.content {
 }
 
 /* App footer — minimal two-column. Brand+version on the left,
-   GitHub link on the right. Stays at the bottom of .page via the
-   existing flex column layout (main.content has flex: 1 so the
-   footer sticks below). */
+   GitHub link on the right. Both the content AND the accent
+   border above it stay centered at a narrower width than main
+   content; full-page-width footer was too heavy. */
 .app-footer {
-  border-top: 1px solid var(--border-subtle);
   font-size: 12px;
   color: var(--text-muted);
 }
 
 .app-footer-inner {
-  max-width: 1200px;
+  max-width: 600px;
   margin: 0 auto;
   padding: 16px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .app-footer-link {
@@ -567,27 +567,84 @@ h2 {
 }
 
 /* Per-symbol sub-sections inside the live trading status card.
-   Each section has a header with name+price+trend+inline action
-   icons, then a filtered orders table. Sections separated by a
-   subtle top border (first section omits it). */
+   When the symbol has open orders, the section is wrapped in a
+   rounded "card within a card" — border surrounds the section,
+   header (id-cluster + action-cluster) sits absolutely positioned
+   over the top border line with card-matching backgrounds so the
+   border is naturally cut into segments. When there are no open
+   orders, the section degrades to a simple top-bordered separator.
+*/
 .symbol-section {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-subtle);
+  margin-top: 28px;
 }
 
 .symbol-section:first-of-type {
-  margin-top: 8px;
-  padding-top: 0;
-  border-top: none;
+  margin-top: 16px;
 }
 
-.symbol-header {
+/* No-orders state — simple flat header row. */
+.symbol-section:not(.has-orders) .symbol-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 10px;
-  font-size: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.symbol-section:not(.has-orders) .symbol-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.symbol-section:not(.has-orders) .symbol-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+/* Has-orders state — full fieldset treatment. */
+.symbol-section.has-orders {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 22px 16px 12px;
+}
+
+.symbol-section.has-orders .symbol-header {
+  position: absolute;
+  top: -13px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 26px;
+  pointer-events: none;
+}
+
+/* The two clusters: id (name+price+trend) on the left, action
+   buttons on the right. Each cluster carries the card-matching
+   background to cut the border line; the gap between them is
+   transparent so the border shows through naturally. */
+.symbol-section.has-orders .symbol-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-card);
+  padding: 0 6px;
+  line-height: 26px;
+  pointer-events: auto;
+}
+
+.symbol-section.has-orders .symbol-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-card);
+  padding: 0 4px;
+  line-height: 26px;
+  pointer-events: auto;
 }
 
 .symbol-name {
@@ -599,23 +656,6 @@ h2 {
 .symbol-price {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
-}
-
-/* Decorative horizontal rule between the symbol+price+trend cluster
-   on the left and the pause/resume actions on the right. Stretches
-   to fill the available width via flex:1; subtle border color so it
-   visually links the two clusters without dominating. */
-.symbol-rule {
-  flex: 1;
-  height: 0;
-  border-top: 1px solid var(--border);
-  align-self: center;
-  margin: 0 12px;
-}
-
-.symbol-actions {
-  display: flex;
-  gap: 4px;
 }
 
 /* Inline form wrapper — sits inside symbol-actions / engine-controls
@@ -808,6 +848,8 @@ table.data.compact td {
   width: 100%;
   padding: 12px 20px;
   font-size: 14px;
+  letter-spacing: 0.06em;
+  font-weight: 700;
 }
 .btn-secondary {
   background: var(--surface-card);

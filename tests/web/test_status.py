@@ -120,8 +120,9 @@ class TestDashboardRoute:
             assert "unset" in resp.text.lower()
             # Emergency stop button lives in-flow below the status
             # card (Stage 8.4.E soak Day 4 — the wrapping card was
-            # stripped; the button IS the affordance).
-            assert "Emergency stop" in resp.text
+            # stripped; the button IS the affordance). All-caps
+            # label is the operator's preferred styling.
+            assert "EMERGENCY STOP" in resp.text
 
     def test_authenticated_with_empty_live_renders(
         self,

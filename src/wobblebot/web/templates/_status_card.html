@@ -59,21 +59,22 @@
            engine cross-process state visibility is a v1.1 candidate)
          - filtered open-orders table #}
       {% for symbol in snapshot.symbols %}
-        <section class="symbol-section">
+        {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
+        <section class="symbol-section {% if sym_orders %}has-orders{% endif %}">
           <div class="symbol-header">
-            <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>
-            {% set price = snapshot.current_prices.get(symbol) %}
-            {% if price %}
-              <strong class="symbol-price">${{ "%.2f"|format(price) }}</strong>
-              {% set trend = snapshot.current_trends.get(symbol, "flat") %}
-              {% if trend == "up" %}
-                <span class="trend-up" title="trending up over last 15m">▲</span>
-              {% elif trend == "down" %}
-                <span class="trend-down" title="trending down over last 15m">▼</span>
+            <div class="symbol-id">
+              <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>
+              {% set price = snapshot.current_prices.get(symbol) %}
+              {% if price %}
+                <strong class="symbol-price">${{ "%.2f"|format(price) }}</strong>
+                {% set trend = snapshot.current_trends.get(symbol, "flat") %}
+                {% if trend == "up" %}
+                  <span class="trend-up" title="trending up over last 15m">▲</span>
+                {% elif trend == "down" %}
+                  <span class="trend-down" title="trending down over last 15m">▼</span>
+                {% endif %}
               {% endif %}
-            {% endif %}
-            {# Decorative rule visually links price to action icons. #}
-            <span class="symbol-rule" aria-hidden="true"></span>
+            </div>
             <div class="symbol-actions">
               {# Pause symbol — POSTs to /commands/pause; redirects to
                  confirm page; ADR-002 firewall via pending_commands. #}
@@ -102,7 +103,6 @@
               </form>
             </div>
           </div>
-          {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
           {% if sym_orders %}
             <table class="data compact">
               <thead>
