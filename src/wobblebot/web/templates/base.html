@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}WobbleBot Dashboard{% endblock %}</title>
-  {# Favicon — PNG only for now (Stage 8.4.E soak Day 4 swap to
-     the ChatGPT-generated W-with-sweep design; SVG version queued
-     as a follow-up). Previous bot-in-hex versions preserved as
-     favicon-bot.{svg,png} for easy revert. #}
+  {# Favicon — vector SVG primary (crisp at any size), PNG
+     fallback for older browsers + iOS. Both render the same
+     W-with-sweep composition on a dark squircle. #}
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/static/favicon.png" type="image/png">
   <link rel="preload" href="/static/wobblebot.png" as="image" type="image/png">
   {# Theme init — runs BEFORE the stylesheet loads so the page paints
