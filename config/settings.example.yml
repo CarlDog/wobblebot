@@ -588,10 +588,10 @@ web:
   # full-reload-on-navigation.
   htmx_poll_seconds: 15.0
   # External Kraken account URL surfaced as a header link for
-  # one-click access. Default lands on Kraken Pro's trade page;
-  # operators in non-US regions may override. Set to null to
-  # suppress the link entirely.
-  kraken_account_url: "https://pro.kraken.com/app/trade"
+  # one-click access. Default lands on Kraken Pro's account home;
+  # operators in non-US regions or who prefer the trade view may
+  # override. Set to null to suppress the link entirely.
+  kraken_account_url: "https://pro.kraken.com/app/home"
   # ---- cross-DB paths ----
   # operator.db is REQUIRED (users table + pending_commands +
   # notifications + llm_calls). The other four are optional per the

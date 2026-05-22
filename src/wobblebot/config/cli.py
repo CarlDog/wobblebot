@@ -535,10 +535,11 @@ class WebConfig(BaseModel):
 
     # Optional external Kraken account URL surfaced as a header link
     # for one-click access to the operator's Kraken Pro account.
-    # Default https://pro.kraken.com/app/trade lands on Kraken Pro's
-    # trade page; operators in non-US regions may override.
+    # Default https://pro.kraken.com/app/home lands on Kraken Pro's
+    # account home (cleaner entry point than the trade tab); operators
+    # in non-US regions or who prefer the trade view may override.
     # Set to null to suppress the link entirely.
-    kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/trade", min_length=1)
+    kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/home", min_length=1)
 
     # ---- cross-DB paths -------------------------------------------- #
 
