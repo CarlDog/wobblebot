@@ -52,7 +52,17 @@
       {% set kclass = "yellow" %}
       {% set klabel = "Probe failed — unable to reach Kraken" %}
     {% endif %}
+    {# Column widths matched to the Daemons table below so the
+       STATUS dot + name column line up vertically across both
+       cards (operator-surfaced 2026-05-22). Detail flexes; last-
+       checked fixed at the right edge. #}
     <table class="data">
+      <colgroup>
+        <col style="width: 80px">
+        <col style="width: 220px">
+        <col>
+        <col style="width: 160px">
+      </colgroup>
       <thead>
         <tr>
           <th class="center">status</th>
@@ -87,7 +97,16 @@
   {% if not snapshot.daemons %}
     <p class="placeholder">No daemons configured.</p>
   {% else %}
+    {# First two columns match the Upstream services table's widths
+       above so the dot + name align vertically across both cards. #}
     <table class="data">
+      <colgroup>
+        <col style="width: 80px">
+        <col style="width: 220px">
+        <col style="width: 140px">
+        <col style="width: 120px">
+        <col>
+      </colgroup>
       <thead>
         <tr>
           <th class="center">status</th>
