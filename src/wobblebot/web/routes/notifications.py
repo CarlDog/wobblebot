@@ -52,9 +52,7 @@ class NotificationsSnapshot:
 async def _load_snapshot(operator_storage: StoragePort) -> NotificationsSnapshot:
     """Pull recent notifications; degrade gracefully on storage failure."""
     try:
-        rows = await operator_storage.get_notifications(
-            forwarded=None, limit=_NOTIFICATIONS_LIMIT
-        )
+        rows = await operator_storage.get_notifications(forwarded=None, limit=_NOTIFICATIONS_LIMIT)
     except StorageError as exc:
         return NotificationsSnapshot(error=f"failed to query notifications: {exc}")
     # Newest first for the page.
@@ -86,7 +84,7 @@ async def notifications(
 
 @router.get("/notifications/latest-timestamp", response_class=JSONResponse)
 async def notifications_latest_timestamp(
-    user: User = Depends(require_user),
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
     operator_storage: StoragePort = Depends(get_operator_storage),
 ) -> JSONResponse:
     """Return the ISO timestamp of the most recent notification.

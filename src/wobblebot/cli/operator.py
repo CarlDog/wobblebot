@@ -771,7 +771,7 @@ async def _safe_save_turn(storage: StoragePort, turn: ConversationTurn) -> None:
 # --------------------------------------------------------------------- #
 
 
-def _build_assistant(
+def _build_assistant(  # pylint: disable=too-many-return-statements
     operator_cfg: OperatorConfig,
     config: WobbleBotConfig,
     operator_storage: SQLiteStorageAdapter,

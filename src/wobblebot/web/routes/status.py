@@ -34,8 +34,6 @@ from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
-
-ReanchorSeverity = Literal["mild", "moderate", "strong"]
 from wobblebot.web.auth import require_user
 from wobblebot.web.dependencies import (
     get_live_storage,
@@ -54,6 +52,7 @@ _PRICE_LOOKBACK_MINUTES = 15
 _TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
 
 TrendDirection = Literal["up", "down", "flat"]
+ReanchorSeverity = Literal["mild", "moderate", "strong"]
 
 # Re-anchor banner thresholds. Drift is the gate (no drift = no
 # banner, even if grid is stale); age can escalate severity but
@@ -88,7 +87,7 @@ class ReanchorRecommendation:
 
 
 @dataclass(frozen=True)
-class StatusSnapshot:
+class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     """Everything the status template needs in one immutable bundle."""
 
     live_wired: bool
@@ -114,9 +113,7 @@ class StatusSnapshot:
     # heuristic. Empty tuple = no banner. v1.0 ships info-only;
     # the action button (apply / snooze) is v1.1 and lands with
     # the operator-initiated re-anchor mechanism.
-    reanchor_recommendations: tuple[ReanchorRecommendation, ...] = field(
-        default_factory=tuple
-    )
+    reanchor_recommendations: tuple[ReanchorRecommendation, ...] = field(default_factory=tuple)
     # Sorted union of symbols seen in open_orders + recent_trades.
     # The template iterates this to render per-symbol sub-sections
     # with their own pause/resume icons (Stage 8.4.E soak Day 4).
@@ -147,9 +144,7 @@ def _classify_trend(oldest: Decimal, newest: Decimal) -> TrendDirection:
     return "up" if delta_pct > 0 else "down"
 
 
-def _classify_reanchor_severity(
-    drift_spacings: float, age_seconds: int
-) -> ReanchorSeverity | None:
+def _classify_reanchor_severity(drift_spacings: float, age_seconds: int) -> ReanchorSeverity | None:
     """Return severity tier, or ``None`` if no banner should show.
 
     Drift is the gate: without meaningful drift the engine isn't
@@ -204,9 +199,7 @@ async def _load_current_prices(
     trends: dict[Symbol, TrendDirection] = {}
     for symbol in symbols:
         try:
-            snapshots = await observe_storage.get_price_snapshots(
-                symbol=symbol, start_time=cutoff
-            )
+            snapshots = await observe_storage.get_price_snapshots(symbol=symbol, start_time=cutoff)
         except StorageError as exc:
             _LOGGER.warning(
                 "current-price lookup failed for %s; skipping",
@@ -221,14 +214,12 @@ async def _load_current_prices(
         latest_price = sorted_snaps[-1].price.amount
         prices[symbol] = latest_price
         trends[symbol] = (
-            _classify_trend(oldest_price, latest_price)
-            if len(sorted_snaps) >= 2
-            else "flat"
+            _classify_trend(oldest_price, latest_price) if len(sorted_snaps) >= 2 else "flat"
         )
     return prices, trends
 
 
-async def _load_snapshot(
+async def _load_snapshot(  # pylint: disable=too-many-locals
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
 ) -> StatusSnapshot:
@@ -248,9 +239,7 @@ async def _load_snapshot(
     symbols_with_orders = {o.symbol for o in open_orders}
     prices, trends = await _load_current_prices(observe_storage, symbols_with_orders)
     now = datetime.now(UTC)
-    order_ages = {
-        str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders
-    }
+    order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
     reanchor_recs = await _load_reanchor_recommendations(
         live_storage, list(open_orders), prices, order_ages
     )
@@ -279,7 +268,7 @@ async def _load_snapshot(
     )
 
 
-async def _load_reanchor_recommendations(
+async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
     live_storage: StoragePort,
     open_orders: list[Order],
     current_prices: dict[Symbol, Decimal],
@@ -342,7 +331,7 @@ async def _load_reanchor_recommendations(
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(
+async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
@@ -367,7 +356,7 @@ async def dashboard(
 
 
 @router.get("/status/card", response_class=HTMLResponse)
-async def status_card(
+async def status_card(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
