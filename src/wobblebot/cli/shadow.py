@@ -165,12 +165,44 @@ async def _shadow_usd_balance(adapter: ShadowExchangeAdapter) -> Decimal:
     return bal.total if bal else Decimal("0")
 
 
+async def _shadow_portfolio_value_usd(
+    adapter: ShadowExchangeAdapter,
+    symbols: tuple[Symbol, ...],
+) -> Decimal:
+    """USD-denominated mark-to-market portfolio value for the shadow
+    ledger. Mirrors ``cli/live._session_portfolio_value_usd`` — same math
+    rationale (USD balance alone misreads a BUY fill as a loss), same
+    Kraken-prices feed (the shadow adapter uses live prices). See that
+    function's docstring for the full why.
+    """
+    balances = await adapter.get_balances()
+    by_asset = {b.asset: b.total for b in balances}
+    total = by_asset.get("USD", Decimal("0"))
+    bases_seen: set[str] = set()
+    for symbol in symbols:
+        if symbol.base in bases_seen:
+            continue
+        bases_seen.add(symbol.base)
+        if symbol.quote != "USD":
+            _LOGGER.warning(
+                "skipping non-USD-quoted symbol in shadow portfolio value",
+                extra={"symbol": str(symbol)},
+            )
+            continue
+        base_balance = by_asset.get(symbol.base, Decimal("0"))
+        if base_balance <= 0:
+            continue
+        price = await adapter.get_current_price(symbol)
+        total += base_balance * price.amount
+    return total
+
+
 async def _run_one_tick(
     adapter: ShadowExchangeAdapter,
     engine: GridEngine,
     shadow: ShadowConfig,
     tick: int,
-    started_usd: Decimal,
+    started_value_usd: Decimal,
 ) -> bool:
     """Mirror cli/live's _run_one_tick — symbols in series, per-symbol
     errors swallowed, post-tick session-loss cap check.
@@ -206,14 +238,14 @@ async def _run_one_tick(
     # balance is synthetic (in-memory ledger; no network) so failure here
     # is far less likely than live's, but the defensive pattern matches.
     try:
-        current_usd = await _shadow_usd_balance(adapter)
+        current_value_usd = await _shadow_portfolio_value_usd(adapter, tuple(shadow.symbols))
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "post-tick shadow balance fetch failed; skipping loss-cap check this tick",
+            "post-tick shadow portfolio-value fetch failed; skipping loss-cap check this tick",
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         return False
-    session_pnl = current_usd - started_usd
+    session_pnl = current_value_usd - started_value_usd
     if session_pnl < -shadow.max_session_loss_usd:
         _LOGGER.error(
             "shadow session loss cap exceeded; stopping",
@@ -235,6 +267,7 @@ async def _run_loop(  # pylint: disable=too-many-locals
     stop_event: asyncio.Event,
 ) -> int:
     started_usd = await _shadow_usd_balance(adapter)
+    started_value_usd = await _shadow_portfolio_value_usd(adapter, tuple(shadow.symbols))
     started_at = time.monotonic()
     # ``None`` means "no runtime cap" — operator opts into indefinite mode.
     # Stage 3.6a matches the LiveConfig optional-runtime shape.
@@ -250,6 +283,7 @@ async def _run_loop(  # pylint: disable=too-many-locals
             "max_runtime_seconds": max_runtime_seconds,  # None == unlimited
             "max_session_loss_usd": str(shadow.max_session_loss_usd),
             "starting_usd_synthetic": str(started_usd),
+            "starting_value_usd_synthetic": str(started_value_usd),
             "maker_fee_rate": str(shadow.maker_fee_rate),
             "taker_fee_rate": str(shadow.taker_fee_rate),
         },
@@ -268,7 +302,7 @@ async def _run_loop(  # pylint: disable=too-many-locals
                 break
 
             tick += 1
-            if await _run_one_tick(adapter, engine, shadow, tick, started_usd):
+            if await _run_one_tick(adapter, engine, shadow, tick, started_value_usd):
                 exit_code = 1
                 break
 
@@ -284,14 +318,16 @@ async def _run_loop(  # pylint: disable=too-many-locals
         # but the pattern matches for consistency.
         try:
             ended_usd = await _shadow_usd_balance(adapter)
-            ended_usd_known = True
+            ended_value_usd = await _shadow_portfolio_value_usd(adapter, tuple(shadow.symbols))
+            ended_known = True
         except WobbleBotPortError as exc:
             _LOGGER.warning(
                 "shadow session_end balance fetch failed; PnL unavailable",
                 extra={"error": str(exc)},
             )
             ended_usd = started_usd
-            ended_usd_known = False
+            ended_value_usd = started_value_usd
+            ended_known = False
         try:
             cancelled, failed = await _cancel_all_open(adapter, storage, tuple(shadow.symbols))
         except WobbleBotPortError as exc:
@@ -300,8 +336,9 @@ async def _run_loop(  # pylint: disable=too-many-locals
                 extra={"error": str(exc)},
             )
             cancelled, failed = 0, 0
-        ending_usd_str = str(ended_usd) if ended_usd_known else "unknown"
-        session_pnl_str = str(ended_usd - started_usd) if ended_usd_known else "unknown"
+        ending_usd_str = str(ended_usd) if ended_known else "unknown"
+        ending_value_str = str(ended_value_usd) if ended_known else "unknown"
+        session_pnl_str = str(ended_value_usd - started_value_usd) if ended_known else "unknown"
         _LOGGER.info(
             "shadow session end",
             extra={
@@ -309,6 +346,8 @@ async def _run_loop(  # pylint: disable=too-many-locals
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "starting_usd_synthetic": str(started_usd),
                 "ending_usd_synthetic": ending_usd_str,
+                "starting_value_usd_synthetic": str(started_value_usd),
+                "ending_value_usd_synthetic": ending_value_str,
                 "session_pnl_usd_synthetic": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,

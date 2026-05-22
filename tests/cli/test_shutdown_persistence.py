@@ -202,7 +202,20 @@ class TestSessionEndResilience:
                 return Decimal("100")
             raise ExchangeError("simulated DNS failure")
 
+        # Both helpers must be patched: _run_loop calls _session_usd_balance
+        # then _session_portfolio_value_usd at startup, and again in the
+        # finally block. Outage simulation = both succeed once, then both
+        # raise at session-end. The test asserts cancel still runs.
+        portfolio_log = {"n": 0}
+
+        async def flaky_portfolio(_adapter: Any, _symbols: Any) -> Decimal:
+            portfolio_log["n"] += 1
+            if portfolio_log["n"] == 1:
+                return Decimal("100")
+            raise ExchangeError("simulated DNS failure")
+
         monkeypatch.setattr(live_module, "_session_usd_balance", flaky_balance)
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", flaky_portfolio)
 
         # Stop event pre-set so the main loop body never executes; only
         # the session-start prelude + finally block run.
@@ -307,9 +320,14 @@ class TestPerTickBalanceResilience:
     ) -> None:
         """Regression for the 2026-05-20 15:03 UTC crash.
 
-        Mocks ``_session_usd_balance`` to raise ``ExchangeError`` and
-        verifies ``_run_one_tick`` swallows it: returns ``False``
+        Mocks ``_session_portfolio_value_usd`` to raise ``ExchangeError``
+        and verifies ``_run_one_tick`` swallows it: returns ``False``
         (no cap trip) instead of propagating up to the main loop.
+
+        Note: 2026-05-22 hotfix replaced the cap-check helper from
+        ``_session_usd_balance`` to ``_session_portfolio_value_usd``
+        (mark-to-market). The resilience contract is unchanged; the
+        patched name updates to match the new helper.
         """
         from unittest.mock import MagicMock
 
@@ -317,15 +335,16 @@ class TestPerTickBalanceResilience:
         from wobblebot.cli.live import _run_one_tick
         from wobblebot.config.cli import LiveConfig
 
-        async def always_fails(_adapter: Any) -> Decimal:
+        async def always_fails(_adapter: Any, _symbols: Any) -> Decimal:
             raise ExchangeError("simulated Kraken /BalanceEx timeout")
 
-        monkeypatch.setattr(live_module, "_session_usd_balance", always_fails)
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", always_fails)
 
         # Engine doesn't get stepped (we'd need a real grid + symbol).
         # _run_one_tick iterates symbols first, then calls
-        # _session_usd_balance. With empty symbol list, the loop
-        # body is skipped and we go straight to the balance check.
+        # _session_portfolio_value_usd. With one symbol step that
+        # returns a benign result, the loop body completes; the
+        # cap-check call site is where the exception lands.
         live_cfg = LiveConfig(
             symbols=[Symbol(base="BTC", quote="USD")],
             db=":memory:",
@@ -345,7 +364,209 @@ class TestPerTickBalanceResilience:
             engine=engine,
             live=live_cfg,
             tick=1,
-            started_usd=Decimal("100"),
+            started_value_usd=Decimal("100"),
             notifier=None,
         )
         assert result is False
+
+
+# --------------------------------------------------------------------- #
+# Stage 8.4 hotfix #3 (2026-05-22): session-loss cap is mark-to-market  #
+# --------------------------------------------------------------------- #
+#
+# Soak Day 5 morning: cli/live crashed at 09:18:31 with "session loss
+# cap exceeded" immediately after a $10 BUY filled. USD balance had
+# dropped by ~$10 (asset conversion: USD → BTC) but portfolio value
+# was preserved (BTC held now worth ~$10). The cap was checking USD
+# balance only, so the first BUY of any session where
+# order_size_usd > max_session_loss_usd would trip it.
+#
+# Fix: cap is checked against mark-to-market portfolio value (USD
+# balance + Σ base × current_price). A BUY no longer reads as a loss.
+
+
+class TestSessionPortfolioValueUsd:
+    """The new helper — USD + Σ base × ticker for configured symbols."""
+
+    async def test_usd_only_when_no_base_balance(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.kraken_exchange import KrakenAdapter
+        from wobblebot.cli.live import _session_portfolio_value_usd
+        from wobblebot.domain.models import Balance
+
+        adapter = MagicMock(spec=KrakenAdapter)
+        adapter.get_balances = AsyncMock(
+            return_value=[
+                Balance(
+                    asset="USD", total=Decimal("100"), available=Decimal("100"), locked=Decimal("0")
+                )
+            ]
+        )
+        # get_current_price not called when base balance is zero.
+        adapter.get_current_price = AsyncMock(side_effect=AssertionError("must not call"))
+
+        value = await _session_portfolio_value_usd(adapter, (Symbol(base="BTC", quote="USD"),))
+        assert value == Decimal("100")
+
+    async def test_adds_base_mark_to_market(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.kraken_exchange import KrakenAdapter
+        from wobblebot.cli.live import _session_portfolio_value_usd
+        from wobblebot.domain.models import Balance
+
+        adapter = MagicMock(spec=KrakenAdapter)
+        adapter.get_balances = AsyncMock(
+            return_value=[
+                Balance(
+                    asset="USD", total=Decimal("90"), available=Decimal("90"), locked=Decimal("0")
+                ),
+                Balance(
+                    asset="BTC",
+                    total=Decimal("0.0001"),
+                    available=Decimal("0.0001"),
+                    locked=Decimal("0"),
+                ),
+            ]
+        )
+        adapter.get_current_price = AsyncMock(
+            return_value=Price(amount=Decimal("100000"), currency="USD")
+        )
+
+        value = await _session_portfolio_value_usd(adapter, (Symbol(base="BTC", quote="USD"),))
+        # 90 USD + (0.0001 BTC * $100,000) = 100
+        assert value == Decimal("100.00000000")
+
+    async def test_dedupes_repeated_base_across_symbols(self) -> None:
+        """If symbols share a base (e.g. BTC/USD and BTC/EUR, hypothetically),
+        the base balance gets counted once, not N times."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.kraken_exchange import KrakenAdapter
+        from wobblebot.cli.live import _session_portfolio_value_usd
+        from wobblebot.domain.models import Balance
+
+        adapter = MagicMock(spec=KrakenAdapter)
+        adapter.get_balances = AsyncMock(
+            return_value=[
+                Balance(
+                    asset="USD", total=Decimal("0"), available=Decimal("0"), locked=Decimal("0")
+                ),
+                Balance(
+                    asset="BTC", total=Decimal("1"), available=Decimal("1"), locked=Decimal("0")
+                ),
+            ]
+        )
+        adapter.get_current_price = AsyncMock(
+            return_value=Price(amount=Decimal("100000"), currency="USD")
+        )
+
+        # Two USD-quoted symbols with same base — still counts BTC once.
+        value = await _session_portfolio_value_usd(
+            adapter,
+            (
+                Symbol(base="BTC", quote="USD"),
+                Symbol(base="BTC", quote="USD"),
+            ),
+        )
+        assert value == Decimal("100000")
+        # get_current_price called only once (deduplication).
+        assert adapter.get_current_price.await_count == 1
+
+
+class TestSessionLossCapAccountsForAssetConversion:
+    """Regression for the 2026-05-22 09:18:31 cli/live crash.
+
+    A BUY fill is USD → BTC, an asset conversion. Mark-to-market
+    portfolio value is preserved. The cap check must use portfolio
+    value, not USD balance, or every BUY whose order_size_usd >
+    max_session_loss_usd would trip it.
+    """
+
+    async def test_buy_fill_does_not_trip_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick
+        from wobblebot.config.cli import LiveConfig
+
+        # Started session at $100 portfolio value (e.g., $100 USD + 0 BTC).
+        # A BUY filled mid-tick: now $90 USD + 0.0001 BTC × $100k = still $100.
+        # USD balance alone reads -$10; portfolio value reads $0 delta.
+        async def portfolio_value(_adapter: Any, _symbols: Any) -> Decimal:
+            return Decimal("100")  # mark-to-market preserved
+
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", portfolio_value)
+
+        live_cfg = LiveConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            db=":memory:",
+            tick_seconds=5.0,
+            max_runtime_minutes=None,
+            max_session_loss_usd=Decimal("5"),  # the Day-4 setting that crashed
+        )
+        engine = MagicMock()
+        engine.step = AsyncMock(
+            return_value=MagicMock(
+                action="filled",
+                fills=1,
+                counters_placed=1,
+                placed=0,
+                refusals=0,
+                offside=False,
+            )
+        )
+
+        result = await _run_one_tick(
+            adapter=MagicMock(),
+            engine=engine,
+            live=live_cfg,
+            tick=1,
+            started_value_usd=Decimal("100"),
+            notifier=None,
+        )
+        assert result is False  # cap did NOT trip
+
+    async def test_actual_realized_loss_still_trips_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cap must still fire on a real mark-to-market drawdown
+        (e.g., bought high, price collapsed). This is the regression's
+        twin: don't over-correct by suppressing the cap entirely."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick
+        from wobblebot.config.cli import LiveConfig
+
+        # Portfolio value dropped from $100 to $90 — a real $10 mark-to-market
+        # loss (e.g., held BTC lost value relative to start).
+        async def portfolio_value(_adapter: Any, _symbols: Any) -> Decimal:
+            return Decimal("90")
+
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", portfolio_value)
+
+        live_cfg = LiveConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            db=":memory:",
+            tick_seconds=5.0,
+            max_runtime_minutes=None,
+            max_session_loss_usd=Decimal("5"),
+        )
+        engine = MagicMock()
+        engine.step = AsyncMock(
+            return_value=MagicMock(
+                action="held", fills=0, counters_placed=0, placed=0, refusals=0, offside=False
+            )
+        )
+
+        result = await _run_one_tick(
+            adapter=MagicMock(),
+            engine=engine,
+            live=live_cfg,
+            tick=1,
+            started_value_usd=Decimal("100"),
+            notifier=None,
+        )
+        assert result is True  # cap DID trip

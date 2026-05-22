@@ -151,12 +151,50 @@ async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
     return bal.total if bal else Decimal("0")
 
 
+async def _session_portfolio_value_usd(
+    adapter: KrakenAdapter,
+    symbols: tuple[Symbol, ...],
+) -> Decimal:
+    """USD-denominated mark-to-market portfolio value: USD balance plus
+    each configured symbol's base asset valued at its current price.
+
+    Why this exists (Stage 8.4 soak hotfix, 2026-05-22): a BUY fill drops
+    USD by the order size, but that's an asset conversion (USD → base),
+    not a loss. The session-loss cap used to be checked against
+    USD balance alone, which tripped on the first BUY of any session
+    whose order_size_usd > max_session_loss_usd. Using mark-to-market
+    portfolio value captures realized + unrealized PnL honestly.
+    """
+    balances = await adapter.get_balances()
+    by_asset = {b.asset: b.total for b in balances}
+    total = by_asset.get("USD", Decimal("0"))
+    bases_seen: set[str] = set()
+    for symbol in symbols:
+        if symbol.base in bases_seen:
+            continue
+        bases_seen.add(symbol.base)
+        if symbol.quote != "USD":
+            # v1: cap is in USD; non-USD quotes would need a cross-rate
+            # conversion we don't ship yet. Skip and leave a breadcrumb.
+            _LOGGER.warning(
+                "skipping non-USD-quoted symbol in portfolio value",
+                extra={"symbol": str(symbol)},
+            )
+            continue
+        base_balance = by_asset.get(symbol.base, Decimal("0"))
+        if base_balance <= 0:
+            continue
+        price = await adapter.get_current_price(symbol)
+        total += base_balance * price.amount
+    return total
+
+
 async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
     tick: int,
-    started_usd: Decimal,
+    started_value_usd: Decimal,
     notifier: NotifierPort | None = None,
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
@@ -214,14 +252,14 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     # cap check for this tick (next tick will retry), log a warning,
     # and treat as "no cap trip" so the loop continues.
     try:
-        current_usd = await _session_usd_balance(adapter)
+        current_value_usd = await _session_portfolio_value_usd(adapter, tuple(live.symbols))
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "post-tick balance fetch failed; skipping loss-cap check this tick",
+            "post-tick portfolio-value fetch failed; skipping loss-cap check this tick",
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         return False  # No cap trip; loop continues.
-    session_pnl = current_usd - started_usd
+    session_pnl = current_value_usd - started_value_usd
     if session_pnl < -live.max_session_loss_usd:
         _LOGGER.error(
             "session loss cap exceeded; stopping",
@@ -311,7 +349,7 @@ async def _process_pending_commands(
     return len(approved)
 
 
-async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -332,6 +370,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     ``Notification`` rows for the cli/operator forwarder (Stage 5.6).
     """
     started_usd = await _session_usd_balance(adapter)
+    started_value_usd = await _session_portfolio_value_usd(adapter, tuple(live.symbols))
     started_at = time.monotonic()
     # ``None`` means "no runtime cap" — operator opts into indefinite
     # mode. SIGINT/SIGTERM and the session-loss cap still apply, so
@@ -347,6 +386,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             "max_runtime_seconds": max_runtime_seconds,  # None == unlimited
             "max_session_loss_usd": str(live.max_session_loss_usd),
             "starting_usd": str(started_usd),
+            "starting_value_usd": str(started_value_usd),
         },
     )
     await notify(
@@ -356,7 +396,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
         message=(
             f"Trading {len(live.symbols)} symbol(s): "
             f"{', '.join(str(s) for s in live.symbols)}. "
-            f"Starting USD={started_usd}."
+            f"Starting portfolio value={started_value_usd} USD "
+            f"(USD balance={started_usd})."
         ),
         context={
             "symbols": [str(s) for s in live.symbols],
@@ -364,6 +405,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             "max_runtime_seconds": max_runtime_seconds,
             "max_session_loss_usd": str(live.max_session_loss_usd),
             "starting_usd": str(started_usd),
+            "starting_value_usd": str(started_value_usd),
         },
     )
 
@@ -398,7 +440,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 break
 
             tick += 1
-            if await _run_one_tick(adapter, engine, live, tick, started_usd, notifier):
+            if await _run_one_tick(adapter, engine, live, tick, started_value_usd, notifier):
                 exit_code = 1
                 break
 
@@ -417,14 +459,16 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
         # mid-finally and three open BUYs were never cancelled.
         try:
             ended_usd = await _session_usd_balance(adapter)
-            ended_usd_known = True
+            ended_value_usd = await _session_portfolio_value_usd(adapter, tuple(live.symbols))
+            ended_known = True
         except WobbleBotPortError as exc:
             _LOGGER.warning(
                 "session_end balance fetch failed; PnL unavailable",
                 extra={"error": str(exc)},
             )
             ended_usd = started_usd
-            ended_usd_known = False
+            ended_value_usd = started_value_usd
+            ended_known = False
         try:
             cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
         except WobbleBotPortError as exc:
@@ -433,10 +477,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 extra={"error": str(exc)},
             )
             cancelled, failed = 0, 0
-        session_pnl = ended_usd - started_usd if ended_usd_known else Decimal("0")
+        session_pnl = ended_value_usd - started_value_usd if ended_known else Decimal("0")
         duration_seconds = round(time.monotonic() - started_at, 1)
-        ending_usd_str = str(ended_usd) if ended_usd_known else "unknown"
-        session_pnl_str = str(session_pnl) if ended_usd_known else "unknown"
+        ending_usd_str = str(ended_usd) if ended_known else "unknown"
+        ending_value_str = str(ended_value_usd) if ended_known else "unknown"
+        session_pnl_str = str(session_pnl) if ended_known else "unknown"
         _LOGGER.info(
             "session end",
             extra={
@@ -444,6 +489,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 "duration_seconds": duration_seconds,
                 "starting_usd": str(started_usd),
                 "ending_usd": ending_usd_str,
+                "starting_value_usd": str(started_value_usd),
+                "ending_value_usd": ending_value_str,
                 "session_pnl_usd": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,
@@ -456,7 +503,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             title=f"Live session ended (exit {exit_code})",
             message=(
                 f"{tick} tick(s), {duration_seconds}s runtime. "
-                f"PnL {session_pnl_str} USD ({started_usd} -> {ending_usd_str}). "
+                f"PnL {session_pnl_str} USD "
+                f"(value {started_value_usd} -> {ending_value_str}; "
+                f"USD {started_usd} -> {ending_usd_str}). "
                 f"Cancelled {cancelled} open order(s); {failed} cancel failure(s)."
             ),
             context={
@@ -464,6 +513,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
                 "duration_seconds": duration_seconds,
                 "starting_usd": str(started_usd),
                 "ending_usd": ending_usd_str,
+                "starting_value_usd": str(started_value_usd),
+                "ending_value_usd": ending_value_str,
                 "session_pnl_usd": session_pnl_str,
                 "open_orders_cancelled": cancelled,
                 "open_orders_cancel_failed": failed,

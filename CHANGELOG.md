@@ -158,6 +158,26 @@ fees. Two outage events handled cleanly (May 19 storm DNS
 failure, May 20 15:03 UTC httpcore.ReadTimeout). Real-money
 cost stays at $0.085018.
 
+**Day 5 morning (2026-05-22) — soak-surfaced math defect, focused
+hotfix.** cli/live crashed at 09:18:31 with "session loss cap
+exceeded" immediately after a $10 BUY filled at the Day-4 fresh
+anchor ($77,635.90). Root cause: the `max_session_loss_usd` cap
+checked USD-balance delta only — a BUY fill *is* a USD→base
+conversion, so the first BUY of any session where
+`order_size_usd > max_session_loss_usd` would trip it. Same class
+of math error caught on Day 3 (USD-balance delta ≠ profit). Fix
+swaps the cap check to mark-to-market portfolio value: USD
+balance + Σ (base × current_price) for each configured symbol.
+The cap fires honestly on actual realized + unrealized
+drawdowns; an asset conversion no longer reads as a loss.
+Logs gained `starting_value_usd` / `ending_value_usd` /
+`session_pnl_usd` (the last is now mark-to-market; was
+USD-delta). Same fix mirrored in cli/shadow. New helpers
+`_session_portfolio_value_usd` (live) / `_shadow_portfolio_value_usd`
+(shadow); dedupes repeated base across symbols. 6 new regression
+tests. settings comments updated to drop the "USD-balance
+delta" framing. Real-money cost: $0.085018 unchanged.
+
 **8.4.F — Post-soak release ceremony** (pending soak pass).
 Future commit: `docs/planning/phase-8-summary.md`,
 `pyproject.toml` 0.1.0 → 1.0.0, CHANGELOG `[Unreleased]` →
