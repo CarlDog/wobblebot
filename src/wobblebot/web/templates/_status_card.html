@@ -7,7 +7,7 @@
 <div id="status-wrap"
      hx-get="/status/card"
      hx-trigger="every 15s"
-     hx-swap="outerHTML">
+     hx-swap="outerHTML transition:true">
 
   {# Re-anchor recommendation banners (Stage 8.4.E soak Day 4).
      Severity = max(drift_tier, age_tier); drift gates the trigger
