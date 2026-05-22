@@ -1195,7 +1195,7 @@ table.data th {
   background: #16a34a;
 }
 .health-dot-yellow {
-  background: #d97706;
+  background: #eab308;
 }
 .health-dot-red {
   background: #dc2626;
@@ -1246,20 +1246,26 @@ table.data th {
   border-color: #dc2626;
 }
 .health-overall-yellow {
-  border-color: #d97706;
+  border-color: #eab308;
 }
 .health-overall-green {
   border-color: #16a34a;
 }
 
-/* Status-card health-icon mount — the wrapper span sits before
-   the "Trading Status" text and is HTMX-populated with the dot
-   anchor. Inline-flex so the dot vertically centers with the
-   title text. */
+/* Status-card health-icon mount — sits AFTER the LIVE badge and is
+   HTMX-populated with the dot anchor. Inline-flex so the dot
+   vertically centers with the title text. ``min-width`` reserves
+   the slot before HTMX populates so the title text doesn't reflow
+   on the initial swap (operator-surfaced 2026-05-22 soak Day 5:
+   when the dot was leading the title, every refresh shifted the
+   "Trading Status" text). 24px = ~10px dot + 4px padding side. */
 .status-card-health-icon {
   display: inline-flex;
   align-items: center;
-  margin-right: 4px;
+  justify-content: center;
+  margin-left: 6px;
+  min-width: 24px;
+  min-height: 18px;
   vertical-align: middle;
 }
 
