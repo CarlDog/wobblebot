@@ -77,22 +77,22 @@
           <tr>
             <td>last 24h</td>
             <td class="num">{{ fees_snapshot.trade_count_24h }}</td>
-            <td class="num">${{ "%.4f"|format(fees_snapshot.total_24h_usd) }}</td>
+            <td class="num">${{ "%.2f"|format(fees_snapshot.total_24h_usd) }}</td>
           </tr>
           <tr>
             <td>last 7d</td>
             <td class="num">{{ fees_snapshot.trade_count_7d }}</td>
-            <td class="num">${{ "%.4f"|format(fees_snapshot.total_7d_usd) }}</td>
+            <td class="num">${{ "%.2f"|format(fees_snapshot.total_7d_usd) }}</td>
           </tr>
           <tr>
             <td>last 30d</td>
             <td class="num">{{ fees_snapshot.trade_count_30d }}</td>
-            <td class="num">${{ "%.4f"|format(fees_snapshot.total_30d_usd) }}</td>
+            <td class="num">${{ "%.2f"|format(fees_snapshot.total_30d_usd) }}</td>
           </tr>
           <tr>
             <td>all time</td>
             <td class="num">{{ fees_snapshot.trade_count_all_time }}</td>
-            <td class="num">${{ "%.4f"|format(fees_snapshot.total_all_time_usd) }}</td>
+            <td class="num">${{ "%.2f"|format(fees_snapshot.total_all_time_usd) }}</td>
           </tr>
         </tbody>
       </table>
