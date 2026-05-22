@@ -20,10 +20,11 @@
   --border-strong: #ccd0d5;
   --border-subtle: #ebedf0;
 
-  /* === Nav (navy surfaces — stays the same hue in both modes,
-        aligned with the dark-theme navy palette and the login
-        hero per operator preference 2026-05-21). === */
-  --nav-bg: #061830;
+  /* === Nav (navy chrome — deepest navy across both modes; same
+        color as the login page bg so the brand chrome bridges
+        login and dashboard surfaces. Operator-decided inversion
+        2026-05-21: navy is BRAND CHROME, not main content bg. === */
+  --nav-bg: #000c20;
   --nav-border: #00060f;
   --nav-border-subtle: #1f2f4a;
   --nav-dropdown-bg: #112844;
@@ -98,11 +99,12 @@
    is intentional because CSS has no shared-rule include mechanism. */
 
 [data-theme="dark"] {
-  /* Navy palette aligned with the login hero — operator preference
-     2026-05-21. Deeper, more saturated than the original
-     charcoal-grey dark mode. */
-  --surface-page: #000c20;
-  --surface-card: #0e2440;
+  /* Dark theme: charcoal page bg + slate cards. Navy lives on the
+     navbar chrome (--nav-bg above); content area is neutral so
+     the colored accents inside cards (trend arrows, tags, banners)
+     keep their intended visual punch. */
+  --surface-page: #1a1d22;
+  --surface-card: #232838;
 
   --text-primary: #e4e6eb;
   --text-secondary: #a8adb3;
@@ -147,9 +149,10 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    /* Same navy palette as the explicit dark theme override. */
-    --surface-page: #000c20;
-    --surface-card: #0e2440;
+    /* Matches the explicit dark theme override: charcoal page +
+       slate cards. Navbar stays navy (mode-invariant ``--nav-bg``). */
+    --surface-page: #1a1d22;
+    --surface-card: #232838;
 
     --text-primary: #e4e6eb;
     --text-secondary: #a8adb3;
