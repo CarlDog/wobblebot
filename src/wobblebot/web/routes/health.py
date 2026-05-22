@@ -1,15 +1,17 @@
 """Application health page — Stage 8.4.E health-icon work.
 
-Two surfaces:
+* ``GET /health`` — full page split into two sections:
+  **Upstream services** (Kraken's SystemStatus via the probe on
+  ``app.state``) and **Daemons** (per-daemon freshness derived
+  from each daemon's primary write).
 
-1. ``GET /health`` — full page split into two sections:
-   **Upstream services** (Kraken's SystemStatus via the probe on
-   ``app.state``) and **Daemons** (per-daemon freshness derived
-   from each daemon's primary write).
-2. ``GET /health/icon`` — HTML fragment containing just the
-   traffic-light dot + tooltip. The dashboard's "Live trading
-   status" card embeds this via HTMX polling so the icon refreshes
-   without re-rendering the whole status card.
+The dashboard's "Trading Status" card dot is rendered inline by the
+status route (stage 8.4.E follow-up 2026-05-22) — it imports
+:func:`load_health_snapshot` from this module so the dot's color
+travels with the same poll that refreshes the status card body. The
+previous ``GET /health/icon`` HTMX fragment was removed: it polled
+twice (icon every 30s, card every 15s) and the icon's
+empty-then-populated swap caused a visible flicker.
 
 Severity roll-up (operator-facing semantics):
 
@@ -79,7 +81,7 @@ class HealthSnapshot:
     last_refreshed_at: datetime
 
 
-def _compute_overall(
+def compute_overall_status(
     kraken: KrakenHealthResult | None,
     daemons: tuple[DaemonHealth, ...],
 ) -> OverallStatus:
@@ -115,12 +117,13 @@ def _path_or_none(raw: str | None) -> Path | None:
     return Path(raw) if raw else None
 
 
-async def _load_snapshot(request: Request, config: WebConfig) -> HealthSnapshot:
+async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSnapshot:
     """Build a :class:`HealthSnapshot` for the current request.
 
     Pulls the Kraken probe singleton off ``app.state`` (``None`` when
     cli/web didn't build one — tests typically) and reads daemon
-    freshness off the configured DB paths.
+    freshness off the configured DB paths. Public so the status-card
+    route can compose the dashboard dot from the same data.
     """
     probe: KrakenHealthProbe | None = getattr(request.app.state, "kraken_health_probe", None)
     kraken_result = await probe.get() if probe is not None else None
@@ -136,7 +139,7 @@ async def _load_snapshot(request: Request, config: WebConfig) -> HealthSnapshot:
     return HealthSnapshot(
         kraken=kraken_result,
         daemons=tuple(daemons),
-        overall=_compute_overall(kraken_result, tuple(daemons)),
+        overall=compute_overall_status(kraken_result, tuple(daemons)),
         last_refreshed_at=datetime.now(UTC),
     )
 
@@ -150,7 +153,7 @@ async def health_page(
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Full application health page — Upstream + Daemons sections."""
-    snapshot = await _load_snapshot(request, config)
+    snapshot = await load_health_snapshot(request, config)
     assert user.id is not None
     prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
@@ -164,30 +167,10 @@ async def health_page(
     )
 
 
-@router.get("/health/icon", response_class=HTMLResponse)
-async def health_icon(
-    request: Request,
-    user: User = Depends(require_user),  # pylint: disable=unused-argument
-    config: WebConfig = Depends(get_config),
-    templates: Jinja2Templates = Depends(get_templates),
-) -> Response:
-    """HTMX fragment — traffic-light dot + tooltip.
-
-    The dashboard's status card embeds this; polling refreshes only
-    the dot, not the whole status panel. Hover tooltip lists every
-    detected component inline so the common-case "is everything
-    green?" check doesn't require a click-through.
-    """
-    snapshot = await _load_snapshot(request, config)
-    return templates.TemplateResponse(
-        request,
-        "_health_icon.html",
-        {"snapshot": snapshot},
-    )
-
-
 __all__ = (
     "router",
     "HealthSnapshot",
     "OverallStatus",
+    "compute_overall_status",
+    "load_health_snapshot",
 )

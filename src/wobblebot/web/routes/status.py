@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
+from wobblebot.config.cli import WebConfig
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Symbol
@@ -36,11 +37,13 @@ from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.web.auth import require_user
 from wobblebot.web.dependencies import (
+    get_config,
     get_live_storage,
     get_observe_storage,
     get_operator_storage,
     get_templates,
 )
+from wobblebot.web.routes.health import load_health_snapshot
 
 _LOGGER = logging.getLogger(__name__)
 # Window used both for the latest-price fetch AND the trend
@@ -337,10 +340,20 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     live_storage: StoragePort | None = Depends(get_live_storage),
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     operator_storage: StoragePort = Depends(get_operator_storage),
+    config: WebConfig = Depends(get_config),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    """Combined dashboard — cost card + open orders + recent fills."""
+    """Combined dashboard — cost card + open orders + recent fills.
+
+    Loads the health snapshot alongside the trading snapshot so the
+    title's traffic-light dot is server-rendered inline rather than
+    populated via a separate HTMX poll (Stage 8.4.E follow-up
+    2026-05-22). Two motivations: no empty-state flash on first paint,
+    and the dot's class refreshes with the card body so the swap is
+    a single atomic DOM update.
+    """
     snapshot = await _load_snapshot(live_storage, observe_storage)
+    health = await load_health_snapshot(request, config)
     assert user.id is not None
     prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
@@ -348,6 +361,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
         "dashboard.html",
         {
             "snapshot": snapshot,
+            "health": health,
             "username": user.username,
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
@@ -362,10 +376,16 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     live_storage: StoragePort | None = Depends(get_live_storage),
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     operator_storage: StoragePort = Depends(get_operator_storage),
+    config: WebConfig = Depends(get_config),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
-    """HTMX fragment — open-orders + recent-fills card without chrome."""
+    """HTMX fragment — open-orders + recent-fills card without chrome.
+
+    Includes the health snapshot so the dot refreshes with the card
+    instead of via a separate poll (see ``dashboard`` docstring).
+    """
     snapshot = await _load_snapshot(live_storage, observe_storage)
+    health = await load_health_snapshot(request, config)
     assert user.id is not None
     prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
@@ -373,6 +393,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
         "_status_card.html",
         {
             "snapshot": snapshot,
+            "health": health,
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
         },

@@ -33,16 +33,19 @@
            dashboard is built (v1.1). The CSS already supports both
            variants so the template flip is the only future work. #}
         <span class="mode-badge mode-badge-live">LIVE</span>
-        {# Health icon — mounted via HTMX so the dot color refreshes
-           independently of the status-card poll. Placed AFTER the
-           LIVE badge so the title text stays anchored on the left;
-           the mount has reserved width via CSS so even THIS slot
-           doesn't reflow when /health/icon populates on load. #}
-        <span id="status-health-icon"
-              hx-get="/health/icon"
-              hx-trigger="load, every 30s"
-              hx-swap="innerHTML"
-              class="status-card-health-icon"></span>
+        {# Health icon — server-rendered inline (Stage 8.4.E follow-up
+           2026-05-22). Previously this was an HTMX-polled mount that
+           caused a visible flicker on each 30s swap (empty span ->
+           populated). Now the dot's class is computed at status-card
+           render time and refreshes atomically with the card body's
+           15s poll. #}
+        <a id="status-health-icon"
+           class="status-card-health-icon health-icon health-icon-{{ health.overall.value }}"
+           href="/health"
+           title="{% if health.kraken %}Kraken: {{ health.kraken.status.value }}{% else %}Kraken: not configured{% endif %}{% for d in health.daemons %} · {{ d.name }}: {{ d.status.value }}{% endfor %}"
+           aria-label="Application health: {{ health.overall.value }}">
+          <span class="health-dot health-dot-{{ health.overall.value }}" aria-hidden="true"></span>
+        </a>
       </div>
       <div class="card-meta">
         {% if snapshot.last_fill_age_seconds is not none %}

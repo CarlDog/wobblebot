@@ -20,7 +20,7 @@ from wobblebot.services.kraken_health import (
 )
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
-from wobblebot.web.routes.health import OverallStatus, _compute_overall
+from wobblebot.web.routes.health import OverallStatus, compute_overall_status
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +30,7 @@ _CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
 
 
 # --------------------------------------------------------------------- #
-# _compute_overall — pure roll-up math                                  #
+# compute_overall_status — pure roll-up math                                  #
 # --------------------------------------------------------------------- #
 
 
@@ -50,7 +50,7 @@ def _daemon(name: str, status: DaemonStatus) -> DaemonHealth:
 
 class TestComputeOverall:
     def test_all_fresh_and_online_is_green(self) -> None:
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(KrakenSystemStatus.ONLINE),
             (
                 _daemon("cli/observe", DaemonStatus.FRESH),
@@ -60,7 +60,7 @@ class TestComputeOverall:
         assert result is OverallStatus.GREEN
 
     def test_kraken_maintenance_is_red(self) -> None:
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(KrakenSystemStatus.MAINTENANCE),
             (_daemon("cli/observe", DaemonStatus.FRESH),),
         )
@@ -68,7 +68,7 @@ class TestComputeOverall:
 
     def test_kraken_maintenance_overrides_fresh_daemons(self) -> None:
         """Even with everything else green, maintenance wins."""
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(KrakenSystemStatus.MAINTENANCE),
             (
                 _daemon("cli/observe", DaemonStatus.FRESH),
@@ -89,14 +89,14 @@ class TestComputeOverall:
     def test_kraken_degraded_is_yellow_even_with_fresh_daemons(
         self, status: KrakenSystemStatus
     ) -> None:
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(status),
             (_daemon("cli/observe", DaemonStatus.FRESH),),
         )
         assert result is OverallStatus.YELLOW
 
     def test_kraken_online_with_one_stale_daemon_is_yellow(self) -> None:
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(KrakenSystemStatus.ONLINE),
             (
                 _daemon("cli/observe", DaemonStatus.FRESH),
@@ -106,7 +106,7 @@ class TestComputeOverall:
         assert result is OverallStatus.YELLOW
 
     def test_kraken_online_with_one_unknown_daemon_is_yellow(self) -> None:
-        result = _compute_overall(
+        result = compute_overall_status(
             _kraken(KrakenSystemStatus.ONLINE),
             (_daemon("cli/observe", DaemonStatus.UNKNOWN),),
         )
@@ -114,7 +114,7 @@ class TestComputeOverall:
 
     def test_no_kraken_probe_configured_is_yellow(self) -> None:
         """Probe is None → can't confirm Kraken → not green."""
-        result = _compute_overall(
+        result = compute_overall_status(
             None,
             (_daemon("cli/observe", DaemonStatus.FRESH),),
         )
@@ -220,25 +220,19 @@ class TestHealthPage:
         assert "Kraken health probe is not configured" in resp.text
 
 
-class TestHealthIconFragment:
-    def test_unauthenticated_redirects_to_login(self, client_with_probe: TestClient) -> None:
-        resp = client_with_probe.get("/health/icon")
-        assert resp.status_code == 302
+class TestHealthIconEndpointRemoved:
+    """Stage 8.4.E follow-up 2026-05-22: /health/icon was removed.
 
-    def test_fragment_carries_dot_class(self, client_with_probe: TestClient) -> None:
+    The dashboard dot is now rendered inline by the status card route
+    so it refreshes atomically with the rest of the card body.
+    Verifies the endpoint is genuinely gone — a 404, not a stale route
+    silently returning the old fragment.
+    """
+
+    def test_health_icon_endpoint_returns_404(self, client_with_probe: TestClient) -> None:
         _login(client_with_probe)
         resp = client_with_probe.get("/health/icon")
-        assert resp.status_code == 200
-        # Fragment should contain the dot span + the href back to /health.
-        assert 'class="health-dot health-dot-' in resp.text
-        assert 'href="/health"' in resp.text
-        assert 'hx-get="/health/icon"' in resp.text
-
-    def test_fragment_color_class_matches_overall(self, client_with_probe: TestClient) -> None:
-        _login(client_with_probe)
-        resp = client_with_probe.get("/health/icon")
-        # Probe says online, daemons unwired → overall yellow.
-        assert "health-icon-yellow" in resp.text
+        assert resp.status_code == 404
 
 
 class TestKrakenMaintenanceRollsUpToRed:
@@ -254,6 +248,3 @@ class TestKrakenMaintenanceRollsUpToRed:
             resp = c.get("/health")
             assert resp.status_code == 200
             assert "health-overall-red" in resp.text
-            # The dot fragment should also show red.
-            icon = c.get("/health/icon")
-            assert "health-icon-red" in icon.text

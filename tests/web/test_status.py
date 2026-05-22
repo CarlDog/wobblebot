@@ -183,17 +183,25 @@ class TestStatusCardFragment:
             # No chrome
             assert "Sign out" not in resp.text
 
-    def test_card_carries_health_icon_mount(self, operator_storage: SQLiteStorageAdapter) -> None:
-        """Stage 8.4.E — the trading-status title carries an HTMX mount
-        that pulls /health/icon. Verifies the mount span is present
-        with the right hx-get target so the dashboard icon
-        refreshes independently of the status card poll."""
+    def test_card_renders_health_icon_inline(self, operator_storage: SQLiteStorageAdapter) -> None:
+        """Stage 8.4.E follow-up 2026-05-22 — dot rendered inline.
+
+        Verifies the dot anchor + dot span are present in the response
+        body, the href targets /health, and there's NO hx-get pointing
+        at /health/icon (the removed endpoint). The dot's color class
+        depends on whether Kraken + daemons are wired; here the test
+        client has neither, so we just check the structural plumbing.
+        """
         with _build_client(operator_storage, None) as client:
             _login(client)
             resp = client.get("/status/card")
             assert resp.status_code == 200
             assert 'id="status-health-icon"' in resp.text
-            assert 'hx-get="/health/icon"' in resp.text
+            assert 'href="/health"' in resp.text
+            # The dot is server-rendered; no HTMX poll for it.
+            assert "/health/icon" not in resp.text
+            # Dot span with a color-class is in the inline render.
+            assert "health-dot health-dot-" in resp.text
 
     def test_card_uses_trading_status_with_live_badge(
         self, operator_storage: SQLiteStorageAdapter
