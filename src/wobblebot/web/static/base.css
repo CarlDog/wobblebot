@@ -982,6 +982,20 @@ table.data {
   border-collapse: collapse;
 }
 
+/* Tables with a <colgroup> need fixed layout so the explicit widths
+   are authoritative and the flex column (no width) consumes
+   remaining space instead of shrinking to its content. Without
+   this, a short last-column value (e.g. Daemons table's
+   DETAIL = "healthy") would let the table shrink below 100% of its
+   container — surfaced on /health Daemons table 2026-05-22.
+   ``:has()`` supported in all major browsers since 2023; if a
+   client doesn't support it, the table still renders correctly,
+   just with auto layout (the regression looks like the original
+   "too much whitespace on the right"). */
+table.data:has(colgroup) {
+  table-layout: fixed;
+}
+
 table.data th,
 table.data td {
   text-align: left;
