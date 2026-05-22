@@ -30,6 +30,7 @@ from starlette.types import Scope
 
 from wobblebot.config.cli import WebConfig
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
 from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
@@ -145,6 +146,7 @@ def create_app(  # pylint: disable=too-many-arguments
     news_storage: StoragePort | None = None,
     live_storage: StoragePort | None = None,
     kraken_health_probe: KrakenHealthProbe | None = None,
+    daemon_health_thresholds: DaemonHealthThresholds | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -225,6 +227,11 @@ def create_app(  # pylint: disable=too-many-arguments
     # cli/web constructs one in production; tests pass None when they
     # don't care (the /health page renders Kraken as "not configured").
     app.state.kraken_health_probe = kraken_health_probe
+    # Per-daemon staleness thresholds — cli/web derives from
+    # WobbleBotConfig.schedules so operator-tuned cadences flow into
+    # the health UI without code changes. None falls back to
+    # SchedulesConfig defaults inside fetch_daemon_freshness.
+    app.state.daemon_health_thresholds = daemon_health_thresholds
 
     # Login rate-limit singleton (ADR-017 decision 8). One per app
     # instance so test fixtures get isolated buckets automatically.

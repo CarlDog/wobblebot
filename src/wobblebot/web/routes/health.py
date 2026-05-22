@@ -42,6 +42,7 @@ from wobblebot.domain.users import User
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import (
     DaemonHealth,
+    DaemonHealthThresholds,
     DaemonStatus,
     fetch_daemon_freshness,
 )
@@ -123,10 +124,14 @@ async def _load_snapshot(request: Request, config: WebConfig) -> HealthSnapshot:
     """
     probe: KrakenHealthProbe | None = getattr(request.app.state, "kraken_health_probe", None)
     kraken_result = await probe.get() if probe is not None else None
+    thresholds: DaemonHealthThresholds | None = getattr(
+        request.app.state, "daemon_health_thresholds", None
+    )
     daemons = await fetch_daemon_freshness(
         observe_db=_path_or_none(config.observe_db),
         news_db=_path_or_none(config.news_db),
         advise_db=_path_or_none(config.advise_db),
+        thresholds=thresholds,
     )
     return HealthSnapshot(
         kraken=kraken_result,

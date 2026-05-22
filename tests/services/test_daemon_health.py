@@ -15,9 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.services.daemon_health import (
     DaemonHealth,
+    DaemonHealthThresholds,
     DaemonStatus,
+    derive_thresholds_from_schedules,
     fetch_daemon_freshness,
 )
 
@@ -158,8 +161,8 @@ class TestStale:
     async def test_observe_just_past_threshold_is_stale(
         self, db_paths: dict[str, Path], now: datetime
     ) -> None:
-        # 121s old, threshold 120s.
-        _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=121))
+        # 361s old, default observe threshold is 360s (2 * 30s + 5min slack).
+        _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=361))
         _build_news_db(db_paths["news"], fetched_at=now - timedelta(seconds=10))
         _build_advise_db(db_paths["advise"], created_at=now - timedelta(seconds=10))
 
@@ -178,7 +181,7 @@ class TestStale:
         self, db_paths: dict[str, Path], now: datetime
     ) -> None:
         """Boundary: age == threshold should classify as fresh."""
-        _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=120))
+        _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=360))
         _build_news_db(db_paths["news"], fetched_at=now)
         _build_advise_db(db_paths["advise"], created_at=now)
 
@@ -288,3 +291,87 @@ class TestMixed:
         # alongside age. Just verify they're present + positive.
         for r in rows:
             assert r.threshold_seconds > 0
+
+
+# --------------------------------------------------------------------- #
+# derive_thresholds_from_schedules — operator-tuned cadences            #
+# --------------------------------------------------------------------- #
+
+
+class TestDeriveThresholds:
+    """Operator-surfaced 2026-05-22 soak Day 5: the v1.0 magic numbers
+    happened to match settings.example.yml defaults but diverged from
+    operator-tuned cadences. The derive helper reads reality."""
+
+    async def test_defaults_when_schedule_missing(self) -> None:
+        """Empty config falls back to example.yml-matching defaults."""
+        empty = SchedulesConfig(root={})
+        thresholds = derive_thresholds_from_schedules(empty)
+        # 2 * 30s + 5min slack = 360s
+        assert thresholds.observe_seconds == 360.0
+        # 2 * 30m + 5min slack = 3900s
+        assert thresholds.news_seconds == 3900.0
+        # 2 * 4h + 5min slack = 29100s
+        assert thresholds.advise_seconds == 29100.0
+
+    async def test_operator_configured_advise_1h_yields_tight_threshold(self) -> None:
+        """Operator who tunes schedules.advise: 1h gets a 2h+slack threshold,
+        not the 8h default — the soak-Day-5 'why is it yellow?' problem."""
+        cfg = SchedulesConfig(root={"advise": timedelta(hours=1)})
+        thresholds = derive_thresholds_from_schedules(cfg)
+        # 2 * 1h + 5min slack = 7500s
+        assert thresholds.advise_seconds == 7500.0
+
+    async def test_operator_configured_news_5m_yields_tight_threshold(self) -> None:
+        cfg = SchedulesConfig(root={"news": timedelta(minutes=5)})
+        thresholds = derive_thresholds_from_schedules(cfg)
+        # 2 * 5m + 5min slack = 900s
+        assert thresholds.news_seconds == 900.0
+
+    async def test_custom_slack(self) -> None:
+        cfg = SchedulesConfig(root={"observe_prices": timedelta(seconds=60)})
+        thresholds = derive_thresholds_from_schedules(cfg, slack_seconds=10.0)
+        # 2 * 60s + 10s = 130s
+        assert thresholds.observe_seconds == 130.0
+
+    async def test_partial_config_falls_back_per_key(self) -> None:
+        """Only advise configured; observe + news use defaults."""
+        cfg = SchedulesConfig(root={"advise": timedelta(hours=2)})
+        thresholds = derive_thresholds_from_schedules(cfg)
+        assert thresholds.observe_seconds == 360.0  # default
+        assert thresholds.news_seconds == 3900.0  # default
+        assert thresholds.advise_seconds == 14700.0  # 2*2h + 5min slack
+
+
+class TestFetchDaemonFreshnessHonorsThresholds:
+    """End-to-end check that derived thresholds flow through to the
+    classifier — the path from settings.yml -> route -> dot color."""
+
+    async def test_tight_threshold_classifies_stale_that_default_calls_fresh(
+        self, db_paths: dict[str, Path], now: datetime
+    ) -> None:
+        # observe wrote 200s ago — fresh under default 360s, stale
+        # under a custom 100s threshold.
+        _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=200))
+
+        # Default → fresh.
+        rows_default = await fetch_daemon_freshness(
+            observe_db=db_paths["observe"],
+            news_db=None,
+            advise_db=None,
+            now=now,
+        )
+        assert _by_name(rows_default)["cli/observe"].status is DaemonStatus.FRESH
+
+        # Tight custom threshold → stale.
+        tight = DaemonHealthThresholds(
+            observe_seconds=100.0, news_seconds=3900.0, advise_seconds=29100.0
+        )
+        rows_tight = await fetch_daemon_freshness(
+            observe_db=db_paths["observe"],
+            news_db=None,
+            advise_db=None,
+            thresholds=tight,
+            now=now,
+        )
+        assert _by_name(rows_tight)["cli/observe"].status is DaemonStatus.STALE

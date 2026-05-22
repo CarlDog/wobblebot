@@ -28,20 +28,26 @@ observability tooling; bypassing the port mirrors how
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
 import aiosqlite
 
-# Thresholds = 2 * configured cadence in settings.example.yml + slack.
-# Operator-surfaced 2026-05-22 soak Day 5: initial values assumed
-# news=5min / advise=30min but the configured defaults are
-# news=30m / advise=4h, so cli/advise read STALE during a healthy
-# 75% of its cycle. Numbers below match the real schedules.* keys.
-_OBSERVE_THRESHOLD_SECONDS: float = 120.0  # 2 * 30s observe_prices + slack
-_NEWS_THRESHOLD_SECONDS: float = 3900.0  # 2 * 30m news + 5min slack
-_ADVISE_THRESHOLD_SECONDS: float = 30000.0  # 2 * 4h advise + 20min slack
+from wobblebot.config.schedules import SchedulesConfig
+
+# Slack added on top of 2 * configured cadence — covers normal jitter
+# (network blip, LLM call took an extra minute) without false-yellow.
+_DEFAULT_SLACK_SECONDS: float = 300.0  # 5 min
+
+# Defaults match the schedules.example.yml values; operator-tunable
+# via SchedulesConfig + derive_thresholds_from_schedules. Live here
+# as a single source of truth so an operator running without a
+# settings.yml schedules block (tests, partial configs) still gets
+# sensible defaults.
+_OBSERVE_DEFAULT_CADENCE = timedelta(seconds=30)
+_NEWS_DEFAULT_CADENCE = timedelta(minutes=30)
+_ADVISE_DEFAULT_CADENCE = timedelta(hours=4)
 
 
 class DaemonStatus(StrEnum):
@@ -60,6 +66,58 @@ class DaemonStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class DaemonHealthThresholds:
+    """Per-daemon staleness thresholds in seconds.
+
+    A daemon's primary write older than ``<daemon>_seconds`` flips
+    its status to STALE. Construct via
+    :func:`derive_thresholds_from_schedules` to derive from operator
+    config; the dataclass default-factory matches the
+    ``settings.example.yml`` defaults so unit tests + partial
+    configs still get sensible behavior.
+    """
+
+    observe_seconds: float = 2 * 30 + _DEFAULT_SLACK_SECONDS
+    news_seconds: float = 2 * 30 * 60 + _DEFAULT_SLACK_SECONDS
+    advise_seconds: float = 2 * 4 * 3600 + _DEFAULT_SLACK_SECONDS
+
+
+def derive_thresholds_from_schedules(
+    schedules: SchedulesConfig,
+    *,
+    slack_seconds: float = _DEFAULT_SLACK_SECONDS,
+) -> DaemonHealthThresholds:
+    """Build thresholds from operator-configured ``schedules`` cadences.
+
+    Each daemon's threshold = 2 * its configured cadence + slack.
+    Operators who tune ``schedules.news: 15m`` (or any other key) get
+    a proportionally tighter health threshold without code changes —
+    the v1.0 magic-numbers problem (cli/advise misclassified as STALE
+    75% of its cycle because hardcoded thresholds assumed a 30-min
+    cadence vs the configured 4h) is fixed by reading reality, not
+    assuming it.
+
+    Defaults match the ``settings.example.yml`` values so a missing
+    schedule key still produces a sensible threshold rather than
+    raising.
+    """
+    return DaemonHealthThresholds(
+        observe_seconds=(
+            schedules.get_or_default("observe_prices", _OBSERVE_DEFAULT_CADENCE).total_seconds() * 2
+            + slack_seconds
+        ),
+        news_seconds=(
+            schedules.get_or_default("news", _NEWS_DEFAULT_CADENCE).total_seconds() * 2
+            + slack_seconds
+        ),
+        advise_seconds=(
+            schedules.get_or_default("advise", _ADVISE_DEFAULT_CADENCE).total_seconds() * 2
+            + slack_seconds
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -187,6 +245,7 @@ async def fetch_daemon_freshness(
     observe_db: Path | None,
     news_db: Path | None,
     advise_db: Path | None,
+    thresholds: DaemonHealthThresholds | None = None,
     now: datetime | None = None,
 ) -> list[DaemonHealth]:
     """Read freshness for every v1.0-detectable daemon.
@@ -196,6 +255,10 @@ async def fetch_daemon_freshness(
             primary DB. ``None`` is acceptable — that daemon's
             entry comes back ``UNKNOWN`` with a ``detail`` of
             ``"db path not configured"``.
+        thresholds: Per-daemon staleness thresholds. ``None`` falls
+            back to the ``settings.example.yml`` defaults; production
+            callers should derive from operator config via
+            :func:`derive_thresholds_from_schedules`.
         now: Optional override for the wallclock — test seam. Production
             callers pass nothing; ``datetime.now(UTC)`` is used.
 
@@ -206,6 +269,7 @@ async def fetch_daemon_freshness(
         consumes the same list.
     """
     current = now or datetime.now(UTC)
+    t = thresholds or DaemonHealthThresholds()
     return [
         await _read_daemon(
             name="cli/observe",
@@ -213,7 +277,7 @@ async def fetch_daemon_freshness(
             db_path=observe_db,
             table="price_snapshots",
             column="observed_at",
-            threshold_seconds=_OBSERVE_THRESHOLD_SECONDS,
+            threshold_seconds=t.observe_seconds,
             now=current,
         ),
         await _read_daemon(
@@ -222,7 +286,7 @@ async def fetch_daemon_freshness(
             db_path=news_db,
             table="news_items",
             column="fetched_at",
-            threshold_seconds=_NEWS_THRESHOLD_SECONDS,
+            threshold_seconds=t.news_seconds,
             now=current,
         ),
         await _read_daemon(
@@ -231,7 +295,7 @@ async def fetch_daemon_freshness(
             db_path=advise_db,
             table="advisor_suggestions",
             column="created_at",
-            threshold_seconds=_ADVISE_THRESHOLD_SECONDS,
+            threshold_seconds=t.advise_seconds,
             now=current,
         ),
     ]
@@ -240,5 +304,7 @@ async def fetch_daemon_freshness(
 __all__ = (
     "DaemonStatus",
     "DaemonHealth",
+    "DaemonHealthThresholds",
+    "derive_thresholds_from_schedules",
     "fetch_daemon_freshness",
 )
