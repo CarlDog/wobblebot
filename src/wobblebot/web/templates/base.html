@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}WobbleBot Dashboard{% endblock %}</title>
+  {# Modern browsers prefer the SVG (vector, crisp at any size);
+     older browsers + iOS fall back to the PNG. #}
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/static/favicon.png" type="image/png">
   <link rel="preload" href="/static/wobblebot.png" as="image" type="image/png">
   {# Theme init — runs BEFORE the stylesheet loads so the page paints

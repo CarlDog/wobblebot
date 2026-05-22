@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-labelledby="title desc">
+  <title id="title">WobbleBot Hexagonal Blockchain Watermark</title>
+  <desc id="desc">A clean geometric hexagonal blockchain-style watermark made of connected nodes and nested hexagons.</desc>
+
+  <!--
+    Usage notes:
+    - Transparent background.
+    - Uses currentColor so you can recolor it with CSS.
+    - Recommended watermark color on dark navy: #12304A to #1A3D5C at 8-18% opacity.
+    - For favicon use, prefer the simplified companion file.
+  -->
+
+  <g color="#183A56" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 28 L453.45 142 L453.45 370 L256 484 L58.55 370 L58.55 142 Z"
+          stroke-width="14" opacity="0.34"/>
+
+    <path d="M256 96 L394.56 176 L394.56 336 L256 416 L117.44 336 L117.44 176 Z"
+          stroke-width="10" opacity="0.42"/>
+
+    <path d="M256 166 L333.94 211 L333.94 301 L256 346 L178.06 301 L178.06 211 Z"
+          stroke-width="8" opacity="0.46"/>
+
+    <path d="M256 28 V96 V166 V346 V416 V484"
+          stroke-width="9" opacity="0.30"/>
+
+    <path d="M58.55 142 L117.44 176 L178.06 211 L256 166 L333.94 211 L394.56 176 L453.45 142"
+          stroke-width="8" opacity="0.28"/>
+    <path d="M58.55 370 L117.44 336 L178.06 301 L256 346 L333.94 301 L394.56 336 L453.45 370"
+          stroke-width="8" opacity="0.28"/>
+
+    <path d="M117.44 176 V336"
+          stroke-width="7" opacity="0.26"/>
+    <path d="M394.56 176 V336"
+          stroke-width="7" opacity="0.26"/>
+    <path d="M178.06 211 V301"
+          stroke-width="6" opacity="0.28"/>
+    <path d="M333.94 211 V301"
+          stroke-width="6" opacity="0.28"/>
+
+    <path d="M117.44 176 L256 96 L394.56 176"
+          stroke-width="7" opacity="0.24"/>
+    <path d="M117.44 336 L256 416 L394.56 336"
+          stroke-width="7" opacity="0.24"/>
+    <path d="M178.06 211 L256 96 L333.94 211"
+          stroke-width="6" opacity="0.20"/>
+    <path d="M178.06 301 L256 416 L333.94 301"
+          stroke-width="6" opacity="0.20"/>
+
+    <g fill="currentColor" stroke="none">
+      <circle cx="256" cy="28" r="18" opacity="0.50"/>
+      <circle cx="453.45" cy="142" r="15" opacity="0.44"/>
+      <circle cx="453.45" cy="370" r="15" opacity="0.44"/>
+      <circle cx="256" cy="484" r="18" opacity="0.50"/>
+      <circle cx="58.55" cy="370" r="15" opacity="0.44"/>
+      <circle cx="58.55" cy="142" r="15" opacity="0.44"/>
+
+      <circle cx="256" cy="96" r="14" opacity="0.48"/>
+      <circle cx="394.56" cy="176" r="13" opacity="0.42"/>
+      <circle cx="394.56" cy="336" r="13" opacity="0.42"/>
+      <circle cx="256" cy="416" r="14" opacity="0.48"/>
+      <circle cx="117.44" cy="336" r="13" opacity="0.42"/>
+      <circle cx="117.44" cy="176" r="13" opacity="0.42"/>
+
+      <circle cx="256" cy="166" r="13" opacity="0.48"/>
+      <circle cx="333.94" cy="211" r="12" opacity="0.44"/>
+      <circle cx="333.94" cy="301" r="12" opacity="0.44"/>
+      <circle cx="256" cy="346" r="13" opacity="0.48"/>
+      <circle cx="178.06" cy="301" r="12" opacity="0.44"/>
+      <circle cx="178.06" cy="211" r="12" opacity="0.44"/>
+
+      <circle cx="256" cy="256" r="9" opacity="0.36"/>
+    </g>
+
+    <path d="M256 166 L256 256 L333.94 301"
+          stroke-width="5" opacity="0.18"/>
+    <path d="M178.06 211 L256 256 L256 346"
+          stroke-width="5" opacity="0.18"/>
+  </g>
+</svg>

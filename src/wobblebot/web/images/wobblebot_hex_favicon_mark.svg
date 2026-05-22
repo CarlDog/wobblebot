@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-labelledby="title desc">
+  <title id="title">WobbleBot Simplified Hex Mark</title>
+  <desc id="desc">A simplified hexagonal blockchain icon optimized for favicon and small-size use.</desc>
+
+  <!--
+    Simplified companion mark for favicon/app icon use.
+    Transparent background; recolor with CSS using currentColor.
+  -->
+
+  <g color="#29D9E3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 44 L439.6 150 L439.6 362 L256 468 L72.4 362 L72.4 150 Z"
+          stroke-width="28"/>
+    <path d="M256 122 L372 189 L372 323 L256 390 L140 323 L140 189 Z"
+          stroke-width="22" opacity="0.86"/>
+    <path d="M256 44 V122 M256 390 V468 M72.4 150 L140 189 M372 323 L439.6 362 M439.6 150 L372 189 M140 323 L72.4 362"
+          stroke-width="18" opacity="0.72"/>
+    <g fill="currentColor" stroke="none">
+      <circle cx="256" cy="44" r="31"/>
+      <circle cx="439.6" cy="150" r="26"/>
+      <circle cx="439.6" cy="362" r="26"/>
+      <circle cx="256" cy="468" r="31"/>
+      <circle cx="72.4" cy="362" r="26"/>
+      <circle cx="72.4" cy="150" r="26"/>
+      <circle cx="256" cy="122" r="24"/>
+      <circle cx="372" cy="189" r="22"/>
+      <circle cx="372" cy="323" r="22"/>
+      <circle cx="256" cy="390" r="24"/>
+      <circle cx="140" cy="323" r="22"/>
+      <circle cx="140" cy="189" r="22"/>
+    </g>
+  </g>
+</svg>
