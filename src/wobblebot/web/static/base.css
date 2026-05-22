@@ -357,6 +357,26 @@ nav.external a:hover {
   margin: 0;
 }
 
+/* External-link dropdown item (e.g. Kraken Pro) — icon on the
+   left, text + arrow on the right, vertically centered. Uses
+   inline-flex so the icon-then-text reads as a single visual
+   line within the dropdown's standard padding. */
+.user-menu-external {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-menu-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  flex-shrink: 0;
+  /* Slight rounding so the favicon's hard edges don't clash with
+     the dropdown's rounded item background. */
+  border-radius: 3px;
+}
+
 /* Theme selector inside the user-menu dropdown. Three radio-like
    buttons for Light / Dark / Auto. Active state uses a brighter
    nav-hover background so it visually pops above the regular

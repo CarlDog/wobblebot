@@ -60,9 +60,15 @@
         <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
           {% if kraken_account_url %}
             {# rel=noopener noreferrer prevents the new tab from accessing
-               window.opener (security) and stops referrer leak. #}
+               window.opener (security) and stops referrer leak.
+               Kraken icon is bundled in /static so the dropdown
+               doesn't make a remote fetch on every render — same
+               privacy posture as not loading external assets. #}
             <a href="{{ kraken_account_url }}" target="_blank"
-               rel="noopener noreferrer" role="menuitem">
+               rel="noopener noreferrer" role="menuitem"
+               class="user-menu-external">
+              <img src="/static/kraken-icon.png" alt=""
+                   class="user-menu-icon" aria-hidden="true">
               Kraken Pro&nbsp;↗
             </a>
           {% endif %}
