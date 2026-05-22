@@ -8,6 +8,18 @@
      design over hand-built SVG attempts). #}
   <link rel="icon" href="/static/favicon.png" type="image/png">
   <link rel="preload" href="/static/wobblebot.png" as="image" type="image/png">
+  {# Open Graph + Twitter Card metadata for link previews. Discord /
+     Slack / Twitter scrape these when someone shares a dashboard
+     URL; sites that don't scrape just ignore them. The squircle
+     icon is the brand-recognizable variant of the WobbleBot mark. #}
+  <meta property="og:title" content="WobbleBot Dashboard">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="WobbleBot">
+  <meta property="og:image" content="/static/wobblebot-icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="WobbleBot">
+  <meta name="twitter:card" content="summary">
   {# Theme init — runs BEFORE the stylesheet loads so the page paints
      with the right theme on first frame. Prevents the flash-of-wrong-
      theme on dark-mode browsers loading the light defaults. #}
