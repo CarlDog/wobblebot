@@ -8,11 +8,13 @@
 [![Tests](https://img.shields.io/badge/tests-1907%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
-> **⚠ Disclaimer.** WobbleBot is a personal hobby project. It places real
-> orders against real money on a real exchange when you run it in `live`
-> mode. You can lose real money. The code is provided "AS IS" with no
-> warranty (see [`LICENSE`](LICENSE)). Nothing here is investment advice;
-> the maintainer is not your financial advisor. Audit the code, test in
+> ## ⚠ You can lose real money.
+>
+> WobbleBot is a personal hobby project. It places real orders against
+> real money on a real exchange when you run it in `live` mode. **You
+> can lose real money.** The code is provided "AS IS" with no warranty
+> (see [`LICENSE`](LICENSE)). Nothing here is investment advice; the
+> maintainer is not your financial advisor. Audit the code, test in
 > `cli/shadow` first, set hard caps you can afford to lose, and only
 > proceed if you understand what you're running.
 >
