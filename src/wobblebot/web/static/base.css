@@ -739,6 +739,19 @@ h2 {
   font-weight: 600;
 }
 
+/* Recent-fills value column color-coding — red for BUYs (USD
+   flowed out of the account into the position), green for SELLs
+   (USD flowed in). Reuses the trend arrow colors which are
+   calibrated for visual punch. Combined with the +/− sign prefix
+   in the template, gives instant money-flow scannability. */
+.value-buy {
+  color: var(--trend-down);
+}
+
+.value-sell {
+  color: var(--trend-up);
+}
+
 /* Re-anchor recommendation banners (drift + age heuristic).
    Severity tier drives color: mild=yellow, moderate=orange,
    strong=red. Same hue family as alert/warning conventions. */
