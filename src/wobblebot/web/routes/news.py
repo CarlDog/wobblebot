@@ -38,7 +38,10 @@ class NewsSnapshot:
     items: tuple[NewsItem, ...]
     sources: tuple[str, ...]
     source_filter: str | None
-    coin_filter: str | None
+    # Free-text query — case-insensitive substring match against
+    # headline OR mentioned_coins. Replaces the previous coin-only
+    # filter which couldn't search article titles.
+    q_filter: str | None
     total: int = 0
     error: str | None = None
 
@@ -47,7 +50,7 @@ async def _load_snapshot(
     news_storage: StoragePort | None,
     *,
     source_filter: str | None,
-    coin_filter: str | None,
+    q_filter: str | None,
 ) -> NewsSnapshot:
     if news_storage is None:
         return NewsSnapshot(
@@ -55,7 +58,7 @@ async def _load_snapshot(
             items=(),
             sources=(),
             source_filter=source_filter,
-            coin_filter=coin_filter,
+            q_filter=q_filter,
         )
     try:
         rows = await news_storage.get_news_items(
@@ -68,14 +71,22 @@ async def _load_snapshot(
             items=(),
             sources=(),
             source_filter=source_filter,
-            coin_filter=coin_filter,
+            q_filter=q_filter,
             error=f"failed to query news_items: {exc}",
         )
-    # Server-side coin filter — case-insensitive substring match
-    # against mentioned_coins entries.
-    if coin_filter:
-        needle = coin_filter.upper()
-        rows = [r for r in rows if any(needle in c.upper() for c in r.mentioned_coins)]
+    # Server-side free-text filter — case-insensitive substring match
+    # against the headline OR any mentioned_coins entry. Covers
+    # "BTC" (matches coin tags + headlines mentioning Bitcoin), but
+    # ALSO "Coinbase" / "Fed" / "ETF" / any other text the operator
+    # might want to find.
+    if q_filter:
+        needle = q_filter.casefold()
+        rows = [
+            r
+            for r in rows
+            if needle in r.headline.casefold()
+            or any(needle in c.casefold() for c in r.mentioned_coins)
+        ]
     # Total after filtering = the "real" count of matching items.
     total = len(rows)
     # Distinct sources for the filter dropdown — pull from a wider
@@ -90,7 +101,7 @@ async def _load_snapshot(
         items=tuple(rows[:_NEWS_DISPLAY_LIMIT]),
         sources=sources,
         source_filter=source_filter,
-        coin_filter=coin_filter,
+        q_filter=q_filter,
         total=total,
     )
 
@@ -100,7 +111,7 @@ async def _load_snapshot(
 async def news_page(
     request: Request,
     source: str | None = Query(default=None, min_length=0, max_length=64),
-    coin: str | None = Query(default=None, min_length=0, max_length=16),
+    q: str | None = Query(default=None, min_length=0, max_length=64),
     user: User = Depends(require_user),
     news_storage: StoragePort | None = Depends(get_news_storage),
     templates: Jinja2Templates = Depends(get_templates),
@@ -108,7 +119,7 @@ async def news_page(
     snapshot = await _load_snapshot(
         news_storage,
         source_filter=source or None,
-        coin_filter=coin or None,
+        q_filter=q or None,
     )
     return templates.TemplateResponse(
         request,

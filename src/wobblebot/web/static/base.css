@@ -919,6 +919,32 @@ form.command select {
   padding: 8px 12px;
 }
 
+/* News filter row — labels + select + search input + filter button,
+   all on one row, vertically centered, with consistent gap. The
+   button height equalizes with the inputs by overriding the
+   generic .btn padding to match the input's 6px vertical. */
+form.filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+form.filters label {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+form.filters input[name="q"] {
+  min-width: 240px;
+}
+
+form.filters .btn {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
 form.command .form-actions {
   margin-top: 16px;
   display: flex;

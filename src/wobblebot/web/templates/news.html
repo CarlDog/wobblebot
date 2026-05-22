@@ -26,11 +26,12 @@
             {% if s == snapshot.source_filter %}selected{% endif %}>{{ s }}</option>
         {% endfor %}
       </select>
-      <label for="coin">Coin</label>
-      <input id="coin" name="coin" type="text" maxlength="16"
-             placeholder="BTC" value="{{ snapshot.coin_filter or '' }}">
+      <label for="q">Search</label>
+      <input id="q" name="q" type="text" maxlength="64"
+             placeholder="BTC, Coinbase, Fed…"
+             value="{{ snapshot.q_filter or '' }}">
       <button type="submit" class="btn btn-secondary">Filter</button>
-      {% if snapshot.source_filter or snapshot.coin_filter %}
+      {% if snapshot.source_filter or snapshot.q_filter %}
         <a class="btn btn-secondary" href="/news">Clear</a>
       {% endif %}
     </form>

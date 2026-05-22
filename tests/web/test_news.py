@@ -149,22 +149,41 @@ class TestNewsRoute:
             assert "from decrypt" not in resp.text
 
     @pytest.mark.asyncio
-    async def test_coin_filter(
+    async def test_q_filter_matches_coin_tag(
         self,
         operator_storage: SQLiteStorageAdapter,
         news_storage: SQLiteStorageAdapter,
     ) -> None:
-        await news_storage.save_news_item(_item(headline="BTC story", coins=["BTC"]))
-        await news_storage.save_news_item(_item(headline="ETH story", coins=["ETH"]))
+        # ``q`` parameter (Stage 8.4.E) replaces the previous
+        # ``coin`` filter; matches against headline OR mentioned_coins.
+        await news_storage.save_news_item(_item(headline="alpha story", coins=["BTC"]))
+        await news_storage.save_news_item(_item(headline="beta story", coins=["ETH"]))
         with _build_client(operator_storage, news_storage) as client:
             _login(client)
-            resp = client.get("/news?coin=ETH")
+            resp = client.get("/news?q=ETH")
             assert resp.status_code == 200
-            assert "ETH story" in resp.text
-            assert "BTC story" not in resp.text
+            assert "beta story" in resp.text
+            assert "alpha story" not in resp.text
 
     @pytest.mark.asyncio
-    async def test_coin_filter_case_insensitive(
+    async def test_q_filter_matches_headline_substring(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        news_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # New behavior: ``q`` also matches headline text, not just
+        # coin tags. Operator can search for "Coinbase" / "Fed" / etc.
+        await news_storage.save_news_item(_item(headline="Coinbase ETF launch", coins=["BTC"]))
+        await news_storage.save_news_item(_item(headline="Kraken update", coins=["BTC"]))
+        with _build_client(operator_storage, news_storage) as client:
+            _login(client)
+            resp = client.get("/news?q=Coinbase")
+            assert resp.status_code == 200
+            assert "Coinbase ETF launch" in resp.text
+            assert "Kraken update" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_q_filter_case_insensitive(
         self,
         operator_storage: SQLiteStorageAdapter,
         news_storage: SQLiteStorageAdapter,
@@ -172,6 +191,6 @@ class TestNewsRoute:
         await news_storage.save_news_item(_item(headline="lower btc", coins=["btc"]))
         with _build_client(operator_storage, news_storage) as client:
             _login(client)
-            resp = client.get("/news?coin=BTC")
+            resp = client.get("/news?q=BTC")
             assert resp.status_code == 200
             assert "lower btc" in resp.text
