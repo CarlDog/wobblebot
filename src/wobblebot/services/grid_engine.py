@@ -317,7 +317,7 @@ class GridEngine:
 
     # ------------------------------------------------------------------ subsequent ticks
 
-    async def _tick(  # pylint: disable=too-many-locals
+    async def _tick(  # pylint: disable=too-many-locals,too-many-branches
         # R0914 disable: every local here represents a distinct
         # tick-stage signal (levels, offside, fills, trade_ids,
         # counters_placed, refusals, spacing, target, counter_amount,
@@ -340,6 +340,7 @@ class GridEngine:
         fills, trade_ids = await self._detect_fills(symbol)
         counters_placed = 0
         refusals = 0
+        placed = 0
         if not offside:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
             for filled in fills:
@@ -357,6 +358,37 @@ class GridEngine:
                     counters_placed += 1
                 else:
                     refusals += 1
+
+            # Stage 8.4.E follow-up 2026-05-22 — auto re-layout when
+            # storage shows no open orders for this symbol. Triggered
+            # after the session-loss-cap-trip + restart scenario stranded
+            # the engine: grid_state existed, no orders did, and _tick
+            # had nothing to do. Now the engine re-places the layout at
+            # the EXISTING anchor (operators set anchors deliberately;
+            # we respect that decision and just re-instantiate the
+            # orders below them).
+            #
+            # Guards: skipped while offside (the grid is parked there),
+            # and only fires after fill detection so a regular tick with
+            # fills doesn't trigger spurious re-layouts on the way to
+            # placing counters.
+            remaining_open = await self._storage.get_open_orders(symbol=symbol)
+            if not remaining_open:
+                _LOGGER.info(
+                    "no open orders detected; re-laying out grid at existing anchor",
+                    extra={
+                        "symbol": str(symbol),
+                        "reference_price": str(state.reference_price),
+                        "current_price": str(current_price),
+                        "level_count": len(levels),
+                    },
+                )
+                for level in levels:
+                    placed_ok = await self._try_place(symbol, level, coin_cfg)
+                    if placed_ok:
+                        placed += 1
+                    else:
+                        refusals += 1
         elif fills:
             _LOGGER.warning(
                 "fills detected while offside; counters suppressed",
@@ -383,6 +415,7 @@ class GridEngine:
             action="stepped",
             fills=len(fills),
             counters_placed=counters_placed,
+            placed=placed,
             refusals=refusals,
             offside=offside,
             trade_ids=trade_ids,

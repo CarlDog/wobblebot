@@ -288,6 +288,89 @@ class TestRestartResume:
 
 
 # ---------------------------------------------------------------------------
+# Auto re-layout (Stage 8.4.E follow-up 2026-05-22)
+# ---------------------------------------------------------------------------
+#
+# After a session_loss_cap trip (or any shutdown that cancels open orders),
+# the next cli/live restart finds grid_state in storage but zero open
+# orders on Kraken. Before this fix the engine sat in _tick doing nothing
+# until the operator manually DELETE FROM grid_state. The engine now
+# detects the no-open-orders state and re-lays out the grid at the
+# EXISTING anchor (operators set anchors deliberately; we respect that).
+
+
+class TestAutoReLayout:
+    async def test_zero_open_orders_triggers_re_layout_at_existing_anchor(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """grid_state exists, no open orders → re-lay-out at state.reference_price."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        # First step: initialize (6 orders placed at anchor $50,000).
+        await engine.step(BTC_USD)
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+        state_before = await storage.get_grid_state(BTC_USD)
+        assert state_before is not None
+        anchor_before = state_before.reference_price
+
+        # Simulate cap-trip-and-cleanup: cancel all open orders via storage.
+        # The cli/live finally-block does this in production via
+        # _cancel_all_open; here we mirror it directly to keep the test
+        # focused on the engine behavior.
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            await exchange.cancel_order(order)
+            await storage.save_order(order.model_copy(update={"status": "canceled"}))
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 0
+
+        # Tick again. Engine should detect the empty-open-orders condition
+        # and re-place the layout at the SAME anchor.
+        result = await engine.step(BTC_USD)
+        assert result.action == "stepped"
+        assert result.placed == 6
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+
+        # The anchor is preserved — the operator's grid_state hasn't moved.
+        state_after = await storage.get_grid_state(BTC_USD)
+        assert state_after is not None
+        assert state_after.reference_price == anchor_before
+
+    async def test_normal_tick_with_open_orders_does_not_re_layout(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Regression guard: a tick with healthy open orders + no fills
+        must not place duplicate layout orders."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        await engine.step(BTC_USD)  # initialize → 6 orders
+        result = await engine.step(BTC_USD)  # quiet tick, no fills
+
+        assert result.action == "stepped"
+        assert result.placed == 0  # no new orders placed
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+
+    async def test_offside_does_not_re_layout(self, storage: SQLiteStorageAdapter) -> None:
+        """When the grid is parked (offside), no re-layout — same as the
+        existing parked-grid posture for fills/counters."""
+        exchange = _exchange(price="50000")
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize at $50,000
+
+        # Cancel everything, then shove the market price way offside.
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            await exchange.cancel_order(order)
+            await storage.save_order(order.model_copy(update={"status": "canceled"}))
+        exchange.set_price(BTC_USD, Decimal("99999"))  # ~2x anchor — offside
+
+        result = await engine.step(BTC_USD)
+        assert result.action == "stepped"
+        assert result.offside is True
+        assert result.placed == 0
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 0
+
+
+# ---------------------------------------------------------------------------
 # Per-symbol concurrency
 # ---------------------------------------------------------------------------
 
