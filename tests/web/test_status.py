@@ -133,7 +133,9 @@ class TestDashboardRoute:
             _login(client)
             resp = client.get("/dashboard")
             assert resp.status_code == 200
-            assert "Live trading status" in resp.text
+            # Stage 8.4.E: title restructured to "Trading Status" + LIVE badge.
+            assert "Trading Status" in resp.text
+            assert ">LIVE<" in resp.text
             # Empty state: no orders AND no trades = no symbols, so
             # the whole per-symbol body collapses to a single "no
             # active symbols yet" placeholder. The recent fills
@@ -180,6 +182,34 @@ class TestStatusCardFragment:
             assert "status-card" in resp.text
             # No chrome
             assert "Sign out" not in resp.text
+
+    def test_card_carries_health_icon_mount(self, operator_storage: SQLiteStorageAdapter) -> None:
+        """Stage 8.4.E — the trading-status title carries an HTMX mount
+        that pulls /health/icon. Verifies the mount span is present
+        with the right hx-get target so the dashboard icon
+        refreshes independently of the status card poll."""
+        with _build_client(operator_storage, None) as client:
+            _login(client)
+            resp = client.get("/status/card")
+            assert resp.status_code == 200
+            assert 'id="status-health-icon"' in resp.text
+            assert 'hx-get="/health/icon"' in resp.text
+
+    def test_card_uses_trading_status_with_live_badge(
+        self, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Stage 8.4.E — title restructured from "Live trading status"
+        to "Trading Status" + LIVE badge so the same template can
+        host SHADOW later. Verifies the badge classes are present."""
+        with _build_client(operator_storage, None) as client:
+            _login(client)
+            resp = client.get("/status/card")
+            assert resp.status_code == 200
+            assert "Trading Status" in resp.text
+            assert "mode-badge mode-badge-live" in resp.text
+            assert ">LIVE<" in resp.text
+            # Old title gone.
+            assert "Live trading status" not in resp.text
 
 
 # --------------------------------------------------------------------- #

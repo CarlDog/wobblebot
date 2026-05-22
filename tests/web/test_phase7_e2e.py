@@ -233,7 +233,7 @@ class TestE2EWalkthrough:
 
         # 4. Visit every page; verify each loads with seeded data.
         for path, must_contain in [
-            ("/dashboard", "Live trading status"),
+            ("/dashboard", "Trading Status"),  # Stage 8.4.E title restructure
             ("/cost", "0.00123"),
             ("/advisor", "BTC/USD"),
             ("/harvester", "exchange_to_bank"),
