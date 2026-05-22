@@ -58,7 +58,7 @@
       {% else %}
         <p class="muted">No parameter changes proposed.</p>
       {% endif %}
-      <p class="muted">{{ rec.rationale }}</p>
+      <p class="rationale">{{ rec.rationale }}</p>
 
       {% if rec.expert_opinions %}
         <h2 class="card-subtitle">Per-expert opinions ({{ rec.expert_opinions|length }})</h2>
@@ -90,7 +90,7 @@
                     <span class="muted">—</span>
                   {% endif %}
                 </td>
-                <td class="muted">{{ o.rationale }}</td>
+                <td class="rationale">{{ o.rationale }}</td>
               </tr>
             {% endfor %}
           </tbody>

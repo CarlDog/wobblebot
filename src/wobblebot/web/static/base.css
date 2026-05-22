@@ -1112,3 +1112,13 @@ table.data th {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* Body-text tier for advisor rationales and similar long-form
+   explanatory content. Brighter than ``.muted`` (which is for
+   timestamps + chrome text) but dimmer than ``--text-primary``
+   (which is for labels + key values). Reads as "the meat of the
+   card" without becoming a wall of white. */
+.rationale {
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
