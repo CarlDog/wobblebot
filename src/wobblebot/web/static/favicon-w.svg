@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WobbleBot favicon — alternate "W in hex" variant.
+
+  Same hex network frame as favicon.svg, but the center bot is
+  swapped for a stylized uppercase W letterform. The letter
+  anchors brand recognition at the smallest scales (16x16),
+  where the bot's facial details muddle into a generic blob.
+
+  Design notes:
+  - Hex frame + 6 vertex nodes carry the "blockchain network"
+    signal (same as favicon.svg).
+  - W is a custom path — friendly geometric, slightly curved
+    corners, slightly tapered strokes to match the wordmark's
+    rounded sans-serif feel.
+  - Cyan fill on transparent bg; browser tab color shows through.
+
+  To make this the primary favicon: rename or copy this file
+  over favicon.svg + regenerate favicon.png from it.
+-->
+<svg
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-label="WobbleBot">
+
+  <!-- Outer hexagon frame -->
+  <path d="M256 44 L439.6 150 L439.6 362 L256 468 L72.4 362 L72.4 150 Z"
+        stroke="#29D9E3"
+        stroke-width="28"
+        stroke-linejoin="round"
+        stroke-linecap="round"/>
+
+  <!-- Hex vertex nodes -->
+  <g fill="#29D9E3">
+    <circle cx="256" cy="44" r="31"/>
+    <circle cx="439.6" cy="150" r="26"/>
+    <circle cx="439.6" cy="362" r="26"/>
+    <circle cx="256" cy="468" r="31"/>
+    <circle cx="72.4" cy="362" r="26"/>
+    <circle cx="72.4" cy="150" r="26"/>
+  </g>
+
+  <!-- Stylized W letterform.
+       Two outer diagonals + two inner diagonals, friendly
+       rounded corners, slightly tapered strokes at the bottoms.
+       Sized to fit comfortably inside the inner hex span. -->
+  <path d="M 132 175
+           L 184 175
+           L 215 360
+           L 246 195
+           L 278 195
+           L 309 360
+           L 340 175
+           L 392 175
+           L 338 405
+           L 286 405
+           L 262 270
+           L 238 405
+           L 186 405
+           Z"
+        fill="#29D9E3"/>
+</svg>
