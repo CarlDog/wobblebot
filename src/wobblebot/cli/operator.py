@@ -1113,7 +1113,14 @@ def main() -> int:
         return 2
     log_format = config.operator.log_format if config.operator is not None else "plain"
     configure_logging(level="INFO", log_format=log_format)
-    return asyncio.run(_main_async(config))
+    # Catch KeyboardInterrupt at the top so Ctrl+C produces a clean
+    # exit-code-0 line instead of a CancelledError traceback —
+    # mirrors the pattern cli/live and cli/web already use.
+    try:
+        return asyncio.run(_main_async(config))
+    except KeyboardInterrupt:
+        _LOGGER.info("KeyboardInterrupt at top level; exiting clean")
+        return 0
 
 
 if __name__ == "__main__":
