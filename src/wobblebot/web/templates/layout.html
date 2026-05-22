@@ -54,6 +54,11 @@
                 aria-haspopup="true"
                 aria-expanded="false"
                 aria-controls="user-menu-dropdown">
+          {# Operator avatar — bundled locally (no remote fetch).
+             Source: CarlDog mascot at 240x240; resized to 64px
+             PNG with transparency preserved. #}
+          <img src="/static/carldog-avatar.png" alt=""
+               class="user-menu-avatar" aria-hidden="true">
           <span class="user-menu-name">{{ username }}</span>
           <span class="user-menu-caret" aria-hidden="true">▾</span>
         </button>
