@@ -178,18 +178,67 @@ USD-delta). Same fix mirrored in cli/shadow. New helpers
 tests. settings comments updated to drop the "USD-balance
 delta" framing. Real-money cost: $0.085018 unchanged.
 
+**Day 5 afternoon (2026-05-22) — heavy observability + Discord
+restoration day.** 20 more commits stacked on the morning's cap
+hotfix:
+
+- **Engine resilience (2 more fixes).** `e936f2b` engine auto
+  re-layout when no open orders remain — after the morning's
+  cap-trip + restart, cli/live had grid_state but every order in
+  canceled status; _tick only handles fills, so the engine
+  ticked silently for ~1.5h. _tick now detects empty open-orders
+  + not offside and re-places the layout at the existing anchor.
+  `3ac3757` max_daily_spend_usd ignores canceled BUYs — the cap
+  was counting every BUY row created today regardless of status;
+  Day-5 churn (11 canceled rows totalling $110 notional) blocked
+  legitimate placement against a $100 cap.
+- **Health observability (10 commits).** New `/health` page +
+  Kraken SystemStatus probe with TTL cache (`d2da41a`) + dashboard
+  traffic-light icon (`d938044`). Operator iteration tightened
+  the page across 9 follow-ups: dot moved right of LIVE
+  (`4d33cbe`), pure yellow (`4d33cbe`), inline-render dot to
+  eliminate refresh flicker + drop /health/icon endpoint
+  (`cc7d87b`), View Transitions API smoothing (`cc322b7`),
+  symbol-section framing + caption trim (`a7bd01b`), title-case
+  daemon labels (`a722fd4`), colgroup column-width alignment
+  (`b70e855` + `fb6e45f`), status card AGE column lock
+  (`0cb9b58`). `a544d8d` made thresholds read schedules.* so
+  operator-tuned cadences flow into the health UI without code
+  changes (fixes the operator-surfaced "this should NOT be
+  yellow" hardcoded-thresholds problem). `9bc4b7f` extended
+  coverage from 3 daemons to all 7 via a new
+  `daemon_heartbeats` SQLite table — cli/live + cli/harvest +
+  cli/operator + cli/maintenance each upsert at the top of their
+  tick loops.
+- **Discord restoration (task #84 closed end-to-end).** 4 days
+  dark since Day 1. Token was valid; private channel needed
+  explicit per-bot permission grant. cli/operator now forwards
+  notifications + parses operator queries; integration restored.
+  `61b50ca` cli/operator catches KeyboardInterrupt at top level
+  (no more shutdown traceback). Two v1.1 candidates logged
+  during the restoration: `e48430f` configurable counter-order
+  target (advisor-driven strategy regime — operator-floated
+  "what if SELLs landed at top of grid?") and `f100369`
+  Discord response quality (StatusQuery data + embed rendering +
+  model attribution footer — surfaced when the first end-to-end
+  query came back with empty fields and as a JSON blob).
+- **Visual identity.** `3291330` shipped a WobbleBot squircle
+  icon (1024 / 512 / 256 PNG variants) + og:image meta tags so
+  shared dashboard URLs render with the icon as the link
+  preview. Browser-tab favicon kept as the simpler W-with-sweep.
+
 **8.4.F — Post-soak release ceremony** (pending soak pass).
 Future commit: `docs/planning/phase-8-summary.md`,
 `pyproject.toml` 0.1.0 → 1.0.0, CHANGELOG `[Unreleased]` →
 `[1.0.0] - YYYY-MM-DD`, annotated `git tag -a v1.0.0`.
 
-**Numbers through soak Day 3**: 1833 unit tests pass (+47 from
-soak-period work across Day 1-3); mypy 106 src files clean;
-pylint **10.00/10**; black + isort clean. **Real-money cost
-delta this period: essentially flat** (round-trip cycle on the
-orphan BTC inventory netted ~$0.14-0.20 in spread minus fees;
-total portfolio value moved +0.06% over the week per Kraken
-snapshot). Running project cost stays at **$0.085018**.
+**Numbers through soak Day 5**: 1907 unit tests pass (+121 from
+soak-period work across Day 1-5; +74 today); mypy 110 src files
+clean; pylint **10.00/10**; black + isort clean. **Real-money
+cost delta this period: essentially flat** (round-trip cycles
+on the orphan BTC inventory netted ~$0.14-0.20 in spread minus
+fees; total portfolio value moved +0.06% over the week per
+Kraken snapshot). Running project cost stays at **$0.085018**.
 
 ### Stage 8.4 kickoff — Phase 8 / v1.0 Release Check (2026-05-18)
 
