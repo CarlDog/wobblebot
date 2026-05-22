@@ -273,7 +273,7 @@ async def fetch_daemon_freshness(
     return [
         await _read_daemon(
             name="cli/observe",
-            label="Price observer",
+            label="Price Observer",
             db_path=observe_db,
             table="price_snapshots",
             column="observed_at",
@@ -282,7 +282,7 @@ async def fetch_daemon_freshness(
         ),
         await _read_daemon(
             name="cli/news",
-            label="News collector",
+            label="News Collector",
             db_path=news_db,
             table="news_items",
             column="fetched_at",
@@ -291,7 +291,7 @@ async def fetch_daemon_freshness(
         ),
         await _read_daemon(
             name="cli/advise",
-            label="Trading advisor",
+            label="Trading Advisor",
             db_path=advise_db,
             table="advisor_suggestions",
             column="created_at",
