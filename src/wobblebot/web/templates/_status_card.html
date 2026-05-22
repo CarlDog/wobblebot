@@ -80,7 +80,12 @@
          - filtered open-orders table #}
       {% for symbol in snapshot.symbols %}
         {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
-        <section class="symbol-section {% if sym_orders %}has-orders{% endif %}">
+        {# Stage 8.4.E follow-up 2026-05-22 — every symbol section now
+           gets the framed card-on-card look regardless of order count.
+           Previously only sections with open orders got the border; the
+           no-orders state degraded to a flat header which read as a
+           different visual hierarchy. Consistent framing is clearer. #}
+        <section class="symbol-section">
           <div class="symbol-header">
             <div class="symbol-id">
               <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>

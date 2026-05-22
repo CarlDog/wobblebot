@@ -26,7 +26,6 @@
 <div class="card">
   <div class="card-header">
     <div class="card-title">Upstream services</div>
-    <div class="card-meta">External dependencies the bot relies on.</div>
   </div>
   {% if snapshot.kraken is none %}
     <p class="placeholder">Kraken health probe is not configured.</p>
@@ -84,12 +83,6 @@
 <div class="card">
   <div class="card-header">
     <div class="card-title">Daemons</div>
-    <div class="card-meta">
-      Liveness derived from each daemon's primary table. v1.0 only
-      detects daemons whose writes are frequent — cli/live,
-      cli/harvest, cli/operator, and cli/maintenance need a heartbeat
-      table to detect reliably.
-    </div>
   </div>
   {% if not snapshot.daemons %}
     <p class="placeholder">No daemons configured.</p>

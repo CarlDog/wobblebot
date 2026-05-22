@@ -595,44 +595,25 @@ h2 {
    border is naturally cut into segments. When there are no open
    orders, the section degrades to a simple top-bordered separator.
 */
+/* Fieldset-style frame around every symbol section, with the header
+   cut into the border (see .symbol-header below). Stage 8.4.E
+   follow-up 2026-05-22 collapsed a previous two-state design
+   (no-orders → flat row, has-orders → framed) into one consistent
+   look — the operator wanted every per-symbol section bordered for
+   clearer visual hierarchy regardless of order count. */
 .symbol-section {
+  position: relative;
   margin-top: 28px;
+  border: 1px solid var(--symbol-border);
+  border-radius: 8px;
+  padding: 22px 16px 12px;
 }
 
 .symbol-section:first-of-type {
   margin-top: 24px;
 }
 
-/* No-orders state — simple flat header row. */
-.symbol-section:not(.has-orders) .symbol-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.symbol-section:not(.has-orders) .symbol-id {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.symbol-section:not(.has-orders) .symbol-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 4px;
-}
-
-/* Has-orders state — full fieldset treatment. */
-.symbol-section.has-orders {
-  position: relative;
-  border: 1px solid var(--symbol-border);
-  border-radius: 8px;
-  padding: 22px 16px 12px;
-}
-
-.symbol-section.has-orders .symbol-header {
+.symbol-section .symbol-header {
   position: absolute;
   top: -13px;
   left: 14px;
@@ -648,7 +629,7 @@ h2 {
    buttons on the right. Each cluster carries the card-matching
    background to cut the border line; the gap between them is
    transparent so the border shows through naturally. */
-.symbol-section.has-orders .symbol-id {
+.symbol-section .symbol-id {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -662,7 +643,7 @@ h2 {
   pointer-events: auto;
 }
 
-.symbol-section.has-orders .symbol-actions {
+.symbol-section .symbol-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
