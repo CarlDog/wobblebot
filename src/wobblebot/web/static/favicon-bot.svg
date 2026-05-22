@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WobbleBot favicon (Stage 8.4.E soak Day 4).
+
+  Hex network frame + stylized bot in the center. The hex implies
+  the broader crypto/blockchain network wobblebot operates in; the
+  bot sits as the central "node" — visually positioning the
+  product as the active intelligence inside that network.
+
+  Design priorities:
+  - Bold, readable at 16x16: outer hex stroke 28px on a 512
+    canvas, bot body large enough to register as a shape.
+  - Closed-eye crescents + slight tilt match the brand
+    personality established by the hero PNG.
+  - Transparent background so the browser tab color shows
+    through (works on light + dark tabs alike).
+
+  Companion watermark file (more nested hexagons, lower opacity)
+  lives in src/wobblebot/web/images/ for non-favicon use.
+-->
+<svg
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-label="WobbleBot">
+
+  <!-- Outer hexagon frame -->
+  <path d="M256 44 L439.6 150 L439.6 362 L256 468 L72.4 362 L72.4 150 Z"
+        stroke="#29D9E3"
+        stroke-width="28"
+        stroke-linejoin="round"
+        stroke-linecap="round"/>
+
+  <!-- Hex vertex nodes -->
+  <g fill="#29D9E3">
+    <circle cx="256" cy="44" r="31"/>
+    <circle cx="439.6" cy="150" r="26"/>
+    <circle cx="439.6" cy="362" r="26"/>
+    <circle cx="256" cy="468" r="31"/>
+    <circle cx="72.4" cy="362" r="26"/>
+    <circle cx="72.4" cy="150" r="26"/>
+  </g>
+
+  <!-- Bot body (tilted ~6° to suggest mid-wobble) -->
+  <g transform="rotate(-6 256 256)">
+    <ellipse cx="256" cy="256" rx="90" ry="105" fill="#29D9E3"/>
+    <!-- Antenna stem + tip -->
+    <line x1="256" y1="151" x2="256" y2="118"
+          stroke="#29D9E3"
+          stroke-width="16"
+          stroke-linecap="round"/>
+    <circle cx="256" cy="110" r="22" fill="#29D9E3"/>
+  </g>
+
+  <!-- Face — closed-eye crescents + smile, dark navy on the
+       cyan body. Detail won't survive 16x16 but emerges at 32x32+. -->
+  <g stroke="#000c20"
+     stroke-width="10"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     fill="none">
+    <!-- Closed-eye crescents -->
+    <path d="M222 240 Q234 226 246 240"/>
+    <path d="M266 240 Q278 226 290 240"/>
+    <!-- Smile -->
+    <path d="M222 282 Q256 316 290 282"/>
+  </g>
+</svg>
