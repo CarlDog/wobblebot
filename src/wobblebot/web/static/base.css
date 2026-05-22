@@ -20,11 +20,13 @@
   --border-strong: #ccd0d5;
   --border-subtle: #ebedf0;
 
-  /* === Nav (dark surfaces — stays dark in both modes per branding) === */
-  --nav-bg: #1c1e21;
-  --nav-border: #0d0e10;
-  --nav-border-subtle: #4a4d52;
-  --nav-dropdown-bg: #2a2d33;
+  /* === Nav (navy surfaces — stays the same hue in both modes,
+        aligned with the dark-theme navy palette and the login
+        hero per operator preference 2026-05-21). === */
+  --nav-bg: #061830;
+  --nav-border: #00060f;
+  --nav-border-subtle: #1f2f4a;
+  --nav-dropdown-bg: #112844;
   --nav-text: #c4c7cc;
   --nav-text-strong: #ffffff;
   --nav-text-muted: #8b97a8;
