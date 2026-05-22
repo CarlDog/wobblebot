@@ -58,6 +58,13 @@ from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
+# Order statuses that represent committed funds for the
+# max_daily_spend_usd cap (Stage 8.4.E follow-up 2026-05-22): the
+# field's name says SPEND, so canceled / expired BUYs — which never
+# moved money — must not count. "open" = funds locked at the
+# exchange; "pending" = in-flight to the exchange; "closed" = filled.
+_SPEND_COMMITTED_STATUSES: frozenset[str] = frozenset({"open", "pending", "closed"})
+
 
 StepAction = Literal["initialized", "stepped", "skipped_disabled", "skipped_paused"]
 
@@ -596,7 +603,15 @@ class GridEngine:
             todays_buys = await self._storage.get_orders(
                 side=OrderSide.BUY.value, created_after=today_start
             )
-            daily_spend = sum((o.price.amount * o.amount.value for o in todays_buys), Decimal("0"))
+            # Only BUYs that actually committed funds count toward the
+            # SPEND cap. canceled + expired never moved money, so
+            # including them would mean every cancellation permanently
+            # eats into today's headroom. Operator-surfaced 2026-05-22
+            # soak Day 5 when re-anchors + the engine auto-re-layout
+            # stuffed 11 canceled BUYs into the day's counter and
+            # blocked legitimate placements at $110/$100.
+            committed = [o for o in todays_buys if o.status in _SPEND_COMMITTED_STATUSES]
+            daily_spend = sum((o.price.amount * o.amount.value for o in committed), Decimal("0"))
             if daily_spend + proposed > cap.max_daily_spend_usd:
                 return _SafetyDecision(ok=False, reason="max_daily_spend_usd")
 

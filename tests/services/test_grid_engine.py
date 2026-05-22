@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from datetime import UTC
 from decimal import Decimal
 
 import pytest
@@ -475,6 +476,50 @@ class TestSafetyCaps:
         sells = [o for o in opens if o.side is OrderSide.SELL]
         assert len(buys) == 2
         assert len(sells) == 3
+
+    async def test_max_daily_spend_ignores_canceled_buys(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Operator-surfaced 2026-05-22 soak Day 5: canceled BUYs were
+        counting toward max_daily_SPEND_usd, so the engine couldn't
+        replace them after a session reset even though no money had
+        actually moved. The cap now counts only BUYs that committed
+        funds (open / pending / closed)."""
+        # Pre-seed storage with 9 already-canceled BUYs at $10 notional
+        # each. Under the old semantics this would consume $90 of a
+        # $100 cap; under the fix it consumes $0.
+        from datetime import datetime as _dt
+        from uuid import uuid4
+
+        from wobblebot.domain.models import Order
+        from wobblebot.domain.value_objects import Amount, Price, Timestamp
+
+        for _ in range(9):
+            await storage.save_order(
+                Order(
+                    id=uuid4(),
+                    exchange_id=None,
+                    symbol=BTC_USD,
+                    side="buy",  # type: ignore[arg-type]
+                    price=Price(amount=Decimal("50000"), currency="USD"),
+                    amount=Amount(value=Decimal("0.0002"), asset="BTC"),
+                    status="canceled",
+                    created_at=Timestamp(dt=_dt.now(UTC)),
+                )
+            )
+
+        # Now run a fresh engine with $100 daily cap. The full 3-BUY
+        # layout ($30 of new spend) must fit.
+        engine = GridEngine(
+            _exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_daily="100"),
+        )
+        result = await engine.step(BTC_USD)
+
+        assert result.refusals == 0
+        assert result.placed == 6  # 3 BUYs + 3 SELLs, all through
 
     async def test_caps_block_counters_too(self, storage: SQLiteStorageAdapter) -> None:
         # Initialize at the just-fits cap; a fill afterwards should NOT
