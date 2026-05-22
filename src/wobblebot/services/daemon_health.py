@@ -34,9 +34,14 @@ from pathlib import Path
 
 import aiosqlite
 
-_OBSERVE_THRESHOLD_SECONDS: float = 120.0  # 2x the 30s default cadence + slack
-_NEWS_THRESHOLD_SECONDS: float = 900.0  # 2x the 300s default + slack for slow feeds
-_ADVISE_THRESHOLD_SECONDS: float = 3600.0  # 2x typical 30-min cadence + slack
+# Thresholds = 2 * configured cadence in settings.example.yml + slack.
+# Operator-surfaced 2026-05-22 soak Day 5: initial values assumed
+# news=5min / advise=30min but the configured defaults are
+# news=30m / advise=4h, so cli/advise read STALE during a healthy
+# 75% of its cycle. Numbers below match the real schedules.* keys.
+_OBSERVE_THRESHOLD_SECONDS: float = 120.0  # 2 * 30s observe_prices + slack
+_NEWS_THRESHOLD_SECONDS: float = 3900.0  # 2 * 30m news + 5min slack
+_ADVISE_THRESHOLD_SECONDS: float = 30000.0  # 2 * 4h advise + 20min slack
 
 
 class DaemonStatus(StrEnum):
