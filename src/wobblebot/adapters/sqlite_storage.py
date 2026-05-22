@@ -1176,6 +1176,53 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 f"Failed to update preferences for user {preferences.user_id}: {exc}"
             ) from exc
 
+    async def upsert_daemon_heartbeat(self, name: str, beat_at: datetime) -> None:
+        """Persist (or refresh) the heartbeat row for ``name``.
+
+        Stage 8.4.E follow-up. ON CONFLICT overwrites the timestamp
+        so the table stays one row per daemon. Storage failures
+        raise; the daemon's heartbeat emitter wraps the call in its
+        own try/except so a transient DB hiccup never kills the
+        emitting daemon.
+        """
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO daemon_heartbeats (name, last_beat_at)
+                VALUES (?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    last_beat_at = excluded.last_beat_at
+                """,
+                (name, beat_at.astimezone(UTC).isoformat()),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to upsert heartbeat for {name!r}: {exc}") from exc
+
+    async def get_daemon_heartbeats(self) -> dict[str, datetime]:
+        """Return every persisted heartbeat as a name → wallclock map."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute("SELECT name, last_beat_at FROM daemon_heartbeats") as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read daemon heartbeats: {exc}") from exc
+        out: dict[str, datetime] = {}
+        for name, iso_ts in rows:
+            try:
+                parsed = datetime.fromisoformat(iso_ts)
+            except ValueError:
+                # Corrupt row — skip rather than poison the entire read.
+                # The freshness reader will surface the missing daemon
+                # as UNKNOWN with no last_seen.
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            out[name] = parsed
+        return out
+
 
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,

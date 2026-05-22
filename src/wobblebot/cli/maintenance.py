@@ -48,7 +48,12 @@ from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, load_operator_env, run_poll_loop
+from wobblebot.cli._common import (
+    add_config_args,
+    emit_heartbeat,
+    load_operator_env,
+    run_poll_loop,
+)
 from wobblebot.config.cli import MaintenanceConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -222,6 +227,23 @@ async def _main_async(config: WobbleBotConfig) -> int:
     prune_interval = _resolve_interval(config, "maintenance_prune", timedelta(days=1))
     backup_interval = _resolve_interval(config, "maintenance_backup", timedelta(days=1))
 
+    # Stage 8.4.E follow-up — when operator_db is configured, open it
+    # so the three task cycles can write heartbeat rows. Failure to
+    # open is a warning, not fatal: the daemon still maintains DBs;
+    # the /health page just won't see liveness for cli/maintenance.
+    operator_storage: SQLiteStorageAdapter | None = None
+    if maintenance.operator_db is not None:
+        operator_storage = SQLiteStorageAdapter(maintenance.operator_db)
+        try:
+            await operator_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open operator.db for heartbeat; "
+                "/health will show cli/maintenance as UNKNOWN",
+                extra={"path": maintenance.operator_db, "error": str(exc)},
+            )
+            operator_storage = None
+
     started_at = time.monotonic()
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
@@ -247,15 +269,20 @@ async def _main_async(config: WobbleBotConfig) -> int:
 
     async def _vacuum_cycle() -> None:
         nonlocal vacuum_runs
+        # Stage 8.4.E — any of the three tasks heartbeating keeps the
+        # cli/maintenance row fresh on /health.
+        await emit_heartbeat(operator_storage, "cli/maintenance")
         ok = _vacuum_all(target_dbs)
         vacuum_runs += ok
 
     async def _prune_cycle() -> None:
         nonlocal prune_total_deleted
+        await emit_heartbeat(operator_storage, "cli/maintenance")
         prune_total_deleted += await _prune_one_cycle(maintenance)
 
     async def _backup_cycle() -> None:
         nonlocal backup_runs
+        await emit_heartbeat(operator_storage, "cli/maintenance")
         ok = _backup_all(maintenance)
         backup_runs += ok
 
@@ -278,6 +305,12 @@ async def _main_async(config: WobbleBotConfig) -> int:
             ),
         )
     finally:
+        if operator_storage is not None:
+            try:
+                await operator_storage.close()
+            except StorageError:
+                # Best-effort cleanup; shutdown is happening regardless.
+                pass
         _LOGGER.info(
             "maintenance session end",
             extra={

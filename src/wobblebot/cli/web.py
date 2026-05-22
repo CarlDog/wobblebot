@@ -54,7 +54,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
-from wobblebot.services.daemon_health import derive_thresholds_from_schedules
+from wobblebot.services.daemon_health import derive_thresholds_from_config
 from wobblebot.services.kraken_health import KrakenHealthProbe
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
@@ -214,12 +214,12 @@ async def _bootstrap_app(
     kraken_http = httpx.AsyncClient(timeout=10.0)
     kraken_probe = KrakenHealthProbe(kraken_http)
 
-    # Derive per-daemon staleness thresholds from the operator's
-    # configured schedules so an operator who tunes (say)
-    # ``schedules.advise: 1h`` automatically gets a tighter health
-    # threshold. Solves the v1.0 magic-numbers problem operator
-    # caught 2026-05-22 (cli/advise STALE 75% of healthy cycle).
-    daemon_thresholds = derive_thresholds_from_schedules(config.schedules)
+    # Derive per-daemon staleness thresholds from the full operator
+    # config so an operator who tunes ANY interval — schedules.*,
+    # live.tick_seconds, operator.forwarder_poll_seconds — gets a
+    # proportionally adjusted health threshold for free. Solves the
+    # v1.0 magic-numbers problem operator caught 2026-05-22.
+    daemon_thresholds = derive_thresholds_from_config(config)
 
     app = create_app(
         config=web_config,

@@ -15,14 +15,36 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures import grid_config as _grid_config
+from tests.fixtures import safety_config as _safety_config
+from wobblebot.config.cli import AssistantLLMConfig, LiveConfig, OperatorAuthConfig, OperatorConfig
+from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.schedules import SchedulesConfig
+from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.daemon_health import (
     DaemonHealth,
     DaemonHealthThresholds,
     DaemonStatus,
-    derive_thresholds_from_schedules,
+    derive_thresholds_from_config,
     fetch_daemon_freshness,
 )
+
+
+def _config(
+    *,
+    schedules: SchedulesConfig | None = None,
+    live: LiveConfig | None = None,
+    operator: OperatorConfig | None = None,
+) -> WobbleBotConfig:
+    """Build a minimal WobbleBotConfig for threshold-derivation tests."""
+    return WobbleBotConfig(
+        grid=_grid_config(),
+        safety=_safety_config(),
+        schedules=schedules or SchedulesConfig(root={}),
+        live=live,
+        operator=operator,
+    )
+
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -135,9 +157,8 @@ class TestAllFresh:
         assert by_name["cli/news"].status is DaemonStatus.FRESH
         assert by_name["cli/advise"].status is DaemonStatus.FRESH
 
-    async def test_order_is_observe_news_advise(
-        self, db_paths: dict[str, Path], now: datetime
-    ) -> None:
+    async def test_display_order(self, db_paths: dict[str, Path], now: datetime) -> None:
+        """Approach-B daemons first, then heartbeat-based daemons."""
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=30))
         _build_news_db(db_paths["news"], fetched_at=now - timedelta(seconds=300))
         _build_advise_db(db_paths["advise"], created_at=now - timedelta(seconds=1200))
@@ -149,7 +170,15 @@ class TestAllFresh:
             now=now,
         )
 
-        assert [r.name for r in rows] == ["cli/observe", "cli/news", "cli/advise"]
+        assert [r.name for r in rows] == [
+            "cli/observe",
+            "cli/news",
+            "cli/advise",
+            "cli/live",
+            "cli/harvest",
+            "cli/operator",
+            "cli/maintenance",
+        ]
 
 
 # --------------------------------------------------------------------- #
@@ -199,13 +228,23 @@ class TestStale:
 # --------------------------------------------------------------------- #
 
 
+_APPROACH_B_NAMES = ("cli/observe", "cli/news", "cli/advise")
+_HEARTBEAT_NAMES = ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance")
+
+
 class TestUnknown:
     async def test_none_path_yields_unknown(self, now: datetime) -> None:
         rows = await fetch_daemon_freshness(observe_db=None, news_db=None, advise_db=None, now=now)
-        for r in rows:
-            assert r.status is DaemonStatus.UNKNOWN
-            assert r.detail == "db path not configured"
-            assert r.last_seen is None
+        by_name = _by_name(rows)
+        for name in _APPROACH_B_NAMES:
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "db path not configured"
+            assert by_name[name].last_seen is None
+        # operator_db default is None → heartbeat-based daemons get the
+        # operator.db unwired detail.
+        for name in _HEARTBEAT_NAMES:
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "operator.db unwired or unreachable"
 
     async def test_missing_file_yields_unknown_with_filename_detail(
         self, db_paths: dict[str, Path], now: datetime
@@ -217,10 +256,11 @@ class TestUnknown:
             advise_db=db_paths["advise"],
             now=now,
         )
-        for r in rows:
-            assert r.status is DaemonStatus.UNKNOWN
-            assert r.detail is not None
-            assert "db file missing" in r.detail
+        by_name = _by_name(rows)
+        for name in _APPROACH_B_NAMES:
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail is not None
+            assert "db file missing" in by_name[name].detail
 
     async def test_empty_table_yields_unknown(
         self, db_paths: dict[str, Path], now: datetime
@@ -236,9 +276,10 @@ class TestUnknown:
             advise_db=db_paths["advise"],
             now=now,
         )
-        for r in rows:
-            assert r.status is DaemonStatus.UNKNOWN
-            assert r.detail == "no rows yet"
+        by_name = _by_name(rows)
+        for name in _APPROACH_B_NAMES:
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "no rows yet"
 
     async def test_query_failure_yields_unknown(
         self, db_paths: dict[str, Path], now: datetime
@@ -294,7 +335,109 @@ class TestMixed:
 
 
 # --------------------------------------------------------------------- #
-# derive_thresholds_from_schedules — operator-tuned cadences            #
+# Heartbeat-derived daemons — operator.db + daemon_heartbeats table     #
+# --------------------------------------------------------------------- #
+
+
+def _build_operator_db_with_heartbeats(path: Path, heartbeats: dict[str, datetime]) -> None:
+    """Create an operator.db-shaped file with the daemon_heartbeats table
+    populated from ``heartbeats``."""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "CREATE TABLE daemon_heartbeats ("
+            " name TEXT PRIMARY KEY, last_beat_at TEXT NOT NULL"
+            ")"
+        )
+        for name, ts in heartbeats.items():
+            conn.execute(
+                "INSERT INTO daemon_heartbeats(name, last_beat_at) VALUES (?, ?)",
+                (name, ts.isoformat()),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestHeartbeatBasedDaemons:
+    async def test_no_operator_db_yields_unknown_with_reason(
+        self, db_paths: dict[str, Path], now: datetime
+    ) -> None:
+        """operator_db not passed → heartbeat-based rows are UNKNOWN
+        with the unwired-or-unreachable detail."""
+        rows = await fetch_daemon_freshness(
+            observe_db=db_paths["observe"],
+            news_db=None,
+            advise_db=None,
+            operator_db=None,
+            now=now,
+        )
+        by_name = _by_name(rows)
+        for name in ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance"):
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "operator.db unwired or unreachable"
+
+    async def test_empty_heartbeat_table_yields_unknown(
+        self, tmp_path: Path, now: datetime
+    ) -> None:
+        """operator.db exists but no rows for the daemon → UNKNOWN with
+        the no-heartbeat-yet detail."""
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {})
+        rows = await fetch_daemon_freshness(
+            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+        )
+        by_name = _by_name(rows)
+        for name in ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance"):
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "no heartbeat yet"
+
+    async def test_fresh_heartbeat_classifies_fresh(self, tmp_path: Path, now: datetime) -> None:
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(
+            op_db,
+            {
+                "cli/live": now - timedelta(seconds=5),
+                "cli/harvest": now - timedelta(minutes=10),
+            },
+        )
+        rows = await fetch_daemon_freshness(
+            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+        )
+        by_name = _by_name(rows)
+        assert by_name["cli/live"].status is DaemonStatus.FRESH
+        assert by_name["cli/harvest"].status is DaemonStatus.FRESH
+        # The other two have no heartbeat row.
+        assert by_name["cli/operator"].status is DaemonStatus.UNKNOWN
+        assert by_name["cli/maintenance"].status is DaemonStatus.UNKNOWN
+
+    async def test_stale_heartbeat_classifies_stale(self, tmp_path: Path, now: datetime) -> None:
+        """Default live_seconds threshold is 310s; a 400s-old beat is stale."""
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {"cli/live": now - timedelta(seconds=400)})
+        rows = await fetch_daemon_freshness(
+            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+        )
+        by_name = _by_name(rows)
+        assert by_name["cli/live"].status is DaemonStatus.STALE
+
+    async def test_missing_operator_db_file_is_unwired(self, tmp_path: Path, now: datetime) -> None:
+        """operator_db points at a path that doesn't exist."""
+        rows = await fetch_daemon_freshness(
+            observe_db=None,
+            news_db=None,
+            advise_db=None,
+            operator_db=tmp_path / "missing.db",
+            now=now,
+        )
+        by_name = _by_name(rows)
+        assert by_name["cli/live"].detail == "operator.db unwired or unreachable"
+
+
+# --------------------------------------------------------------------- #
+# derive_thresholds_from_config — operator-tuned cadences               #
 # --------------------------------------------------------------------- #
 
 
@@ -303,44 +446,104 @@ class TestDeriveThresholds:
     happened to match settings.example.yml defaults but diverged from
     operator-tuned cadences. The derive helper reads reality."""
 
-    async def test_defaults_when_schedule_missing(self) -> None:
-        """Empty config falls back to example.yml-matching defaults."""
-        empty = SchedulesConfig(root={})
-        thresholds = derive_thresholds_from_schedules(empty)
+    async def test_defaults_when_config_minimal(self) -> None:
+        """No schedules / no live / no operator block: every threshold
+        falls back to its example.yml-matching default."""
+        thresholds = derive_thresholds_from_config(_config())
         # 2 * 30s + 5min slack = 360s
         assert thresholds.observe_seconds == 360.0
         # 2 * 30m + 5min slack = 3900s
         assert thresholds.news_seconds == 3900.0
         # 2 * 4h + 5min slack = 29100s
         assert thresholds.advise_seconds == 29100.0
+        # 2 * 5s + 5min slack = 310s
+        assert thresholds.live_seconds == 310.0
+        # 2 * 1h + 5min slack = 7500s
+        assert thresholds.harvest_seconds == 7500.0
+        # 2 * 2s + 5min slack = 304s
+        assert thresholds.operator_seconds == 304.0
+        # 2 * 1d + 5min slack = 173100s
+        assert thresholds.maintenance_seconds == 173100.0
 
     async def test_operator_configured_advise_1h_yields_tight_threshold(self) -> None:
         """Operator who tunes schedules.advise: 1h gets a 2h+slack threshold,
         not the 8h default — the soak-Day-5 'why is it yellow?' problem."""
-        cfg = SchedulesConfig(root={"advise": timedelta(hours=1)})
-        thresholds = derive_thresholds_from_schedules(cfg)
+        cfg = _config(schedules=SchedulesConfig(root={"advise": timedelta(hours=1)}))
+        thresholds = derive_thresholds_from_config(cfg)
         # 2 * 1h + 5min slack = 7500s
         assert thresholds.advise_seconds == 7500.0
 
     async def test_operator_configured_news_5m_yields_tight_threshold(self) -> None:
-        cfg = SchedulesConfig(root={"news": timedelta(minutes=5)})
-        thresholds = derive_thresholds_from_schedules(cfg)
+        cfg = _config(schedules=SchedulesConfig(root={"news": timedelta(minutes=5)}))
+        thresholds = derive_thresholds_from_config(cfg)
         # 2 * 5m + 5min slack = 900s
         assert thresholds.news_seconds == 900.0
 
     async def test_custom_slack(self) -> None:
-        cfg = SchedulesConfig(root={"observe_prices": timedelta(seconds=60)})
-        thresholds = derive_thresholds_from_schedules(cfg, slack_seconds=10.0)
+        cfg = _config(schedules=SchedulesConfig(root={"observe_prices": timedelta(seconds=60)}))
+        thresholds = derive_thresholds_from_config(cfg, slack_seconds=10.0)
         # 2 * 60s + 10s = 130s
         assert thresholds.observe_seconds == 130.0
 
-    async def test_partial_config_falls_back_per_key(self) -> None:
+    async def test_partial_schedules_fall_back_per_key(self) -> None:
         """Only advise configured; observe + news use defaults."""
-        cfg = SchedulesConfig(root={"advise": timedelta(hours=2)})
-        thresholds = derive_thresholds_from_schedules(cfg)
+        cfg = _config(schedules=SchedulesConfig(root={"advise": timedelta(hours=2)}))
+        thresholds = derive_thresholds_from_config(cfg)
         assert thresholds.observe_seconds == 360.0  # default
         assert thresholds.news_seconds == 3900.0  # default
         assert thresholds.advise_seconds == 14700.0  # 2*2h + 5min slack
+
+    async def test_live_tick_seconds_drives_live_threshold(self) -> None:
+        """Operator tunes live.tick_seconds: 10 → live threshold tightens to 20s + slack."""
+        live = LiveConfig(
+            symbols=[Symbol(base="BTC", quote="USD")],
+            db=":memory:",
+            tick_seconds=10.0,
+        )
+        thresholds = derive_thresholds_from_config(_config(live=live))
+        # 2 * 10s + 5min slack = 320s
+        assert thresholds.live_seconds == 320.0
+
+    async def test_harvest_schedule_drives_harvest_threshold(self) -> None:
+        cfg = _config(schedules=SchedulesConfig(root={"harvest": timedelta(minutes=30)}))
+        thresholds = derive_thresholds_from_config(cfg)
+        # 2 * 30m + 5min slack = 3900s
+        assert thresholds.harvest_seconds == 3900.0
+
+    async def test_operator_forwarder_poll_drives_operator_threshold(self) -> None:
+        operator = OperatorConfig(
+            operator_db="operator.db",
+            auth=OperatorAuthConfig(
+                bot_token_env_var="X",
+                user_allowlist=["123"],
+                channel_allowlist=["456"],
+                outbound_channel_id="456",
+            ),
+            assistant=AssistantLLMConfig(
+                provider="ollama",
+                model="phi4:14b",
+                prompt_file="config/prompts/operator.md",
+            ),
+            forwarder_poll_seconds=5.0,
+        )
+        thresholds = derive_thresholds_from_config(_config(operator=operator))
+        # 2 * 5s + 5min slack = 310s
+        assert thresholds.operator_seconds == 310.0
+
+    async def test_maintenance_min_cadence_wins(self) -> None:
+        """schedules.maintenance_prune is the shortest → threshold derives from it."""
+        cfg = _config(
+            schedules=SchedulesConfig(
+                root={
+                    "maintenance_vacuum": timedelta(days=7),
+                    "maintenance_prune": timedelta(hours=6),
+                    "maintenance_backup": timedelta(days=1),
+                }
+            )
+        )
+        thresholds = derive_thresholds_from_config(cfg)
+        # 2 * 6h + 5min slack = 43500s
+        assert thresholds.maintenance_seconds == 43500.0
 
 
 class TestFetchDaemonFreshnessHonorsThresholds:

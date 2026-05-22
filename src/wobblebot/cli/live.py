@@ -51,6 +51,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     collect_overrides,
+    emit_heartbeat,
     identity,
     load_operator_env,
     notify,
@@ -413,6 +414,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     tick = 0
     try:
         while not stop_event.is_set():
+            # Stage 8.4.E follow-up — emit a heartbeat at the top of
+            # each loop iteration so the /health page can prove the
+            # daemon's event loop is processing. No-op when
+            # operator_storage isn't wired.
+            await emit_heartbeat(operator_storage, "cli/live")
+
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(

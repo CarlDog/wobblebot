@@ -59,7 +59,12 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.adapters.openai import OpenAIAssistantAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, load_operator_env, run_poll_loop
+from wobblebot.cli._common import (
+    add_config_args,
+    emit_heartbeat,
+    load_operator_env,
+    run_poll_loop,
+)
 from wobblebot.config.cli import OperatorConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -184,6 +189,11 @@ async def _forwarder_loop(
     )
 
     async def _one_cycle() -> None:
+        # Stage 8.4.E follow-up — cli/operator's forwarder loop is the
+        # most-frequent recurring task in the daemon (default 2s);
+        # using it as the heartbeat anchor means the /health view sees
+        # liveness regardless of whether any notifications were drained.
+        await emit_heartbeat(storage, "cli/operator")
         await _forward_pending_notifications(
             storage=storage, transport=transport, channel_id=channel_id
         )

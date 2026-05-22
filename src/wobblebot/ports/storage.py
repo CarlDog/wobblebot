@@ -834,3 +834,41 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the upsert fails.
         """
+
+    @abstractmethod
+    async def upsert_daemon_heartbeat(self, name: str, beat_at: datetime) -> None:
+        """Record that the ``name`` daemon's tick loop ran.
+
+        Stage 8.4.E follow-up — backs the ``/health`` page's liveness
+        view for daemons whose primary writes are conditional
+        (cli/live without fills, cli/harvest without proposals, etc.).
+        Each daemon upserts its row at the top of its tick loop;
+        the freshness reader classifies STALE / FRESH against a
+        threshold derived from the daemon's configured cadence.
+
+        Args:
+            name: Canonical daemon name (e.g. ``"cli/live"``).
+            beat_at: Wallclock when the daemon's loop iteration ran
+                (tz-aware, UTC).
+
+        Raises:
+            StorageError: On persistence failure. Callers should
+                swallow + log — heartbeat persistence failure must
+                never kill the emitting daemon.
+        """
+
+    @abstractmethod
+    async def get_daemon_heartbeats(self) -> dict[str, datetime]:
+        """Return the most-recent heartbeat per daemon as a name → time map.
+
+        Used by the web layer's daemon-freshness reader to classify
+        each detectable daemon as FRESH / STALE.
+
+        Returns:
+            Dict from canonical daemon name to last-beat timestamp
+            (UTC, tz-aware). Empty dict when no heartbeats have been
+            written.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """

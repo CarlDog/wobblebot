@@ -662,6 +662,12 @@ maintenance:
   # Leave commented to keep stdout-only behavior.
   # log_file_path: "data/logs/maintenance.log"
 
+  # Stage 8.4.E follow-up — when set, cli/maintenance opens operator.db
+  # and writes a daemon_heartbeat row at the top of each scheduled
+  # task so the web UI's /health page can see the daemon is alive.
+  # Without this, /health shows cli/maintenance as UNKNOWN.
+  operator_db: "data/wobblebot-operator.db"
+
 # ============================================================================
 # Profiles (named overrides)
 # ============================================================================

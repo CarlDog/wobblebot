@@ -44,10 +44,12 @@ from dotenv import find_dotenv, load_dotenv
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.ports.notifier import Notification, NotifierPort
+from wobblebot.ports.storage import StoragePort
 
 T = TypeVar("T")
 
 _NOTIFY_LOGGER = logging.getLogger("wobblebot.cli.notify")
+_HEARTBEAT_LOGGER = logging.getLogger("wobblebot.cli.heartbeat")
 
 
 def load_operator_env() -> None:
@@ -124,6 +126,32 @@ def parse_symbol_csv(raw: str) -> list[str]:
 def identity(value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
+
+
+async def emit_heartbeat(operator_storage: StoragePort | None, daemon_name: str) -> None:
+    """Best-effort heartbeat emit. Failures logged, never raised.
+
+    Stage 8.4.E follow-up — backs the ``/health`` page's per-daemon
+    liveness view. Each long-running daemon calls this at the top of
+    its tick/poll loop body so the operator.db ``daemon_heartbeats``
+    table has a "loop ran" timestamp for the freshness reader.
+
+    Args:
+        operator_storage: Where to write the row. ``None`` is a no-op
+            (operator ran without ``operator_db`` configured).
+        daemon_name: Canonical name (e.g. ``"cli/live"``) — must match
+            what ``services/daemon_health.fetch_daemon_freshness``
+            looks for.
+    """
+    if operator_storage is None:
+        return
+    try:
+        await operator_storage.upsert_daemon_heartbeat(daemon_name, datetime.now(UTC))
+    except WobbleBotPortError as exc:
+        _HEARTBEAT_LOGGER.warning(
+            "heartbeat emit failed; continuing",
+            extra={"daemon": daemon_name, "error": str(exc)},
+        )
 
 
 async def notify(

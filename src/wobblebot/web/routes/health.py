@@ -134,6 +134,7 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
         observe_db=_path_or_none(config.observe_db),
         news_db=_path_or_none(config.news_db),
         advise_db=_path_or_none(config.advise_db),
+        operator_db=_path_or_none(config.operator_db),
         thresholds=thresholds,
     )
     return HealthSnapshot(

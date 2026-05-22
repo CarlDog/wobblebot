@@ -328,4 +328,22 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     timezone    TEXT NOT NULL DEFAULT 'UTC' CHECK (length(timezone) > 0),
     updated_at  TEXT NOT NULL
 );
+
+-- Stage 8.4.E follow-up — daemon heartbeat ledger.
+-- Each long-running daemon upserts its row at the top of its tick
+-- loop; cli/web's /health page reads the table and classifies
+-- freshness against a per-daemon threshold derived from the
+-- corresponding configured cadence (live.tick_seconds,
+-- schedules.harvest, operator.forwarder_poll_seconds,
+-- min(schedules.maintenance_*)). One row per daemon; UPSERT keeps
+-- the ledger tiny.
+--
+-- Lives in operator.db (the home for cross-daemon coordination
+-- state, alongside pending_commands and notifications). Daemons
+-- that don't already open operator.db (cli/maintenance) opt in via
+-- a new operator_db config field.
+CREATE TABLE IF NOT EXISTS daemon_heartbeats (
+    name            TEXT PRIMARY KEY CHECK (length(name) > 0),
+    last_beat_at    TEXT NOT NULL
+);
 """

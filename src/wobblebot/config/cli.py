@@ -626,6 +626,15 @@ class MaintenanceConfig(BaseModel):
     # keeps stdout-only behavior.
     log_file_path: str | None = None
 
+    # ---- Operator interaction ---- #
+
+    # Stage 8.4.E follow-up — when set, cli/maintenance opens
+    # operator.db and writes a daemon_heartbeat row at the top of
+    # each task iteration so the web UI's /health page can detect
+    # liveness. Default None → no heartbeat emission; the health
+    # page shows cli/maintenance as UNKNOWN.
+    operator_db: str | None = None
+
     class Config:
         frozen = True
 

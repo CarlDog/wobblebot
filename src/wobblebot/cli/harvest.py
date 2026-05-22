@@ -45,6 +45,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     collect_overrides,
+    emit_heartbeat,
     identity,
     load_operator_env,
     notify,
@@ -227,6 +228,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments
     interval_seconds: float,
     stop_event: asyncio.Event,
     notifier: NotifierPort | None = None,
+    operator_storage: SQLiteStorageAdapter | None = None,
 ) -> int:
     started_at = time.monotonic()
     ticks_run = 0
@@ -242,6 +244,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments
 
     async def _one_cycle() -> None:
         nonlocal ticks_run, ticks_succeeded
+        # Stage 8.4.E follow-up — heartbeat at the top of each poll
+        # so the /health page can prove cli/harvest is alive even
+        # when no proposal is generated (the common case at hold-band
+        # balances).
+        await emit_heartbeat(operator_storage, "cli/harvest")
         ticks_run += 1
         ok = await _run_cycle(adapter, config=config, storage=storage, notifier=notifier)
         if ok:
@@ -641,6 +648,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             interval_seconds=interval.total_seconds(),
             stop_event=stop_event,
             notifier=notifier,
+            operator_storage=operator_storage,
         )
     finally:
         aclose = getattr(adapter, "aclose", None)
