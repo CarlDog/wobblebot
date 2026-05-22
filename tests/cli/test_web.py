@@ -292,12 +292,18 @@ class TestServeDeprivedEnv:
         cfg = _full_config(web_block=WebConfig(operator_db=db))
         result = await cli_web._bootstrap_app(cfg)
         assert not isinstance(result, int)
-        app, adapters = result
+        app, adapters, kraken_http = result
         try:
             assert app is not None
             assert len(adapters) >= 1  # operator.db at minimum
+            # Stage 8.4.E health-icon work — every bootstrap now creates
+            # a Kraken probe + httpx client; ensure the client is real
+            # and the probe was wired onto app.state.
+            assert kraken_http is not None
+            assert app.state.kraken_health_probe is not None
         finally:
             await cli_web._close_storages(adapters)
+            await kraken_http.aclose()
 
 
 # --------------------------------------------------------------------- #

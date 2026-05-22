@@ -1,0 +1,15 @@
+{# HTMX fragment — traffic-light dot for the dashboard's "Live trading
+   status" card title. Embeds a tooltip listing every detected
+   component's state so the operator can see the picture without
+   click-through. #}
+<a id="health-icon"
+   href="/health"
+   class="health-icon health-icon-{{ snapshot.overall.value }}"
+   hx-get="/health/icon"
+   hx-trigger="every 30s"
+   hx-swap="outerHTML"
+   title="{% if snapshot.kraken %}Kraken: {{ snapshot.kraken.status.value }}{% else %}Kraken: not configured{% endif %}{% for d in snapshot.daemons %} · {{ d.name }}: {{ d.status.value }}{% endfor %}"
+   aria-label="Application health: {{ snapshot.overall.value }}">
+  <span class="health-dot health-dot-{{ snapshot.overall.value }}"
+        aria-hidden="true"></span>
+</a>

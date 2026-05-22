@@ -1,0 +1,149 @@
+{# Full health page (Stage 8.4.E). Upstream services + Daemons. #}
+{% extends "layout.html" %}
+
+{% block title %}Health — WobbleBot{% endblock %}
+
+{% block content %}
+<h1>Application health</h1>
+
+<div class="health-overall health-overall-{{ snapshot.overall.value }}">
+  <span class="health-dot health-dot-{{ snapshot.overall.value }}"
+        aria-hidden="true"></span>
+  <span class="health-overall-label">
+    {% if snapshot.overall.value == "green" %}
+      Healthy — all detected services responding.
+    {% elif snapshot.overall.value == "yellow" %}
+      Degraded — at least one service is not responding or is operating in a limited mode.
+    {% else %}
+      Offline — Kraken is in maintenance. Trading is not possible.
+    {% endif %}
+  </span>
+  <span class="health-overall-meta">
+    refreshed {{ snapshot.last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
+  </span>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Upstream services</div>
+    <div class="card-meta">External dependencies the bot relies on.</div>
+  </div>
+  {% if snapshot.kraken is none %}
+    <p class="placeholder">Kraken health probe is not configured.</p>
+  {% else %}
+    {% set k = snapshot.kraken %}
+    {# Severity colors:
+       - online → green
+       - cancel_only / post_only → yellow (degraded but live)
+       - maintenance → red
+       - probe_failed → yellow (unknown; could be us, could be them) #}
+    {% if k.status.value == "online" %}
+      {% set kclass = "green" %}
+      {% set klabel = "Online — full trading" %}
+    {% elif k.status.value == "maintenance" %}
+      {% set kclass = "red" %}
+      {% set klabel = "Maintenance — no trading" %}
+    {% elif k.status.value == "cancel_only" %}
+      {% set kclass = "yellow" %}
+      {% set klabel = "Cancel-only — order placement disabled" %}
+    {% elif k.status.value == "post_only" %}
+      {% set kclass = "yellow" %}
+      {% set klabel = "Post-only — only post-only orders accepted" %}
+    {% else %}
+      {% set kclass = "yellow" %}
+      {% set klabel = "Probe failed — unable to reach Kraken" %}
+    {% endif %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th class="center">status</th>
+          <th>service</th>
+          <th>detail</th>
+          <th>last checked</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="center">
+            <span class="health-dot health-dot-{{ kclass }}" aria-hidden="true"></span>
+          </td>
+          <td><strong>Kraken</strong> ({{ k.status.value }})</td>
+          <td>
+            {{ klabel }}
+            {% if k.error_message %}
+              <br><span class="placeholder">{{ k.error_message }}</span>
+            {% endif %}
+          </td>
+          <td>{{ k.fetched_at | tz_format(operator_tz, "%H:%M:%S %Z") }}</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Daemons</div>
+    <div class="card-meta">
+      Liveness derived from each daemon's primary table. v1.0 only
+      detects daemons whose writes are frequent — cli/live,
+      cli/harvest, cli/operator, and cli/maintenance need a heartbeat
+      table to detect reliably.
+    </div>
+  </div>
+  {% if not snapshot.daemons %}
+    <p class="placeholder">No daemons configured.</p>
+  {% else %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th class="center">status</th>
+          <th>daemon</th>
+          <th>last write</th>
+          <th>threshold</th>
+          <th>detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in snapshot.daemons %}
+          {% if d.status.value == "fresh" %}
+            {% set dclass = "green" %}
+          {% elif d.status.value == "stale" %}
+            {% set dclass = "yellow" %}
+          {% else %}
+            {% set dclass = "yellow" %}
+          {% endif %}
+          <tr>
+            <td class="center">
+              <span class="health-dot health-dot-{{ dclass }}" aria-hidden="true"></span>
+            </td>
+            <td>
+              <strong>{{ d.label }}</strong>
+              <br><span class="placeholder">{{ d.name }}</span>
+            </td>
+            <td>
+              {% if d.last_seen %}
+                {{ d.last_seen | tz_format(operator_tz, "%H:%M:%S %Z") }}
+              {% else %}
+                <span class="placeholder">—</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="placeholder">{{ d.threshold_seconds | humanize_duration }}</span>
+            </td>
+            <td>
+              {% if d.status.value == "fresh" %}
+                <span class="placeholder">healthy</span>
+              {% elif d.status.value == "stale" %}
+                stale — last write exceeded the threshold
+              {% else %}
+                {{ d.detail or "unknown" }}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+{% endblock %}

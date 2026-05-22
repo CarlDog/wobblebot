@@ -39,6 +39,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import uvicorn
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -53,6 +54,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.services.kraken_health import KrakenHealthProbe
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 
@@ -174,10 +176,19 @@ async def _open_optional_dbs(
     return out
 
 
-async def _bootstrap_app(config: WobbleBotConfig) -> tuple[Any, list[SQLiteStorageAdapter]] | int:
+async def _bootstrap_app(
+    config: WobbleBotConfig,
+) -> tuple[Any, list[SQLiteStorageAdapter], httpx.AsyncClient] | int:
     """Open every storage adapter the web app needs and build the FastAPI
-    instance. Returns ``(app, [adapters])`` on success or an int exit
-    code on failure (so the caller can return it from ``serve``)."""
+    instance. Returns ``(app, [adapters], kraken_http_client)`` on success
+    or an int exit code on failure (so the caller can return it from
+    ``serve``).
+
+    The ``kraken_http_client`` is the lifetime owner of the connection
+    pool the :class:`KrakenHealthProbe` uses for ``/0/public/SystemStatus``
+    polls; it must be closed in the ``finally`` of the serve loop so the
+    underlying transport sockets release on shutdown.
+    """
     web_config = _require_web_config(config)
     if web_config is None:
         return 2
@@ -196,6 +207,12 @@ async def _bootstrap_app(config: WobbleBotConfig) -> tuple[Any, list[SQLiteStora
         if adapter is not None:
             opened.append(adapter)
 
+    # Stage 8.4.E: shared httpx client + cached probe singleton. Sized
+    # for the cli/web process — one probe behind the in-process TTL
+    # cache so dashboard refreshes don't multiply Kraken's read load.
+    kraken_http = httpx.AsyncClient(timeout=10.0)
+    kraken_probe = KrakenHealthProbe(kraken_http)
+
     app = create_app(
         config=web_config,
         operator_storage=operator_storage,
@@ -205,8 +222,9 @@ async def _bootstrap_app(config: WobbleBotConfig) -> tuple[Any, list[SQLiteStora
         harvest_storage=optionals["harvest"],
         observe_storage=optionals["observe"],
         news_storage=optionals["news"],
+        kraken_health_probe=kraken_probe,
     )
-    return app, opened
+    return app, opened, kraken_http
 
 
 async def _close_storages(adapters: list[SQLiteStorageAdapter]) -> None:
@@ -222,7 +240,7 @@ async def _serve_async(config: WobbleBotConfig) -> int:
     bootstrap = await _bootstrap_app(config)
     if isinstance(bootstrap, int):
         return bootstrap
-    app, adapters = bootstrap
+    app, adapters, kraken_http = bootstrap
     assert config.web is not None  # _bootstrap_app guarantees this
 
     uv_config = uvicorn.Config(
@@ -251,6 +269,11 @@ async def _serve_async(config: WobbleBotConfig) -> int:
         await server.serve()
     finally:
         await _close_storages(adapters)
+        try:
+            await kraken_http.aclose()
+        except (httpx.HTTPError, OSError):
+            # Best-effort cleanup; shutdown is happening regardless.
+            pass
     return 0
 
 
@@ -319,7 +342,9 @@ def _read_password_twice() -> str | None:
     return first
 
 
-async def _create_user_async(config: WobbleBotConfig, *, stdin: Any | None = None) -> int:
+async def _create_user_async(  # pylint: disable=too-many-return-statements
+    config: WobbleBotConfig, *, stdin: Any | None = None
+) -> int:
     web_config = _require_web_config(config)
     if web_config is None:
         return 2

@@ -30,6 +30,7 @@ from starlette.types import Scope
 
 from wobblebot.config.cli import WebConfig
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.kraken_health import KrakenHealthProbe
 from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
     CSRF_FORM_FIELD,
@@ -42,6 +43,7 @@ from wobblebot.web.routes import auth as auth_routes
 from wobblebot.web.routes import commands as command_routes
 from wobblebot.web.routes import cost as cost_routes
 from wobblebot.web.routes import harvester as harvester_routes
+from wobblebot.web.routes import health as health_routes
 from wobblebot.web.routes import news as news_routes
 from wobblebot.web.routes import notifications as notifications_routes
 from wobblebot.web.routes import pages as page_routes
@@ -132,7 +134,7 @@ def _csrf_input(request: Request) -> Markup:
     return Markup(f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{token}">')
 
 
-def create_app(
+def create_app(  # pylint: disable=too-many-arguments
     *,
     config: WebConfig,
     operator_storage: StoragePort,
@@ -142,6 +144,7 @@ def create_app(
     observe_storage: StoragePort | None = None,
     news_storage: StoragePort | None = None,
     live_storage: StoragePort | None = None,
+    kraken_health_probe: KrakenHealthProbe | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -218,6 +221,10 @@ def create_app(
     app.state.observe_storage = observe_storage
     app.state.news_storage = news_storage
     app.state.live_storage = live_storage
+    # Stage 8.4.E health-icon work — KrakenHealthProbe singleton.
+    # cli/web constructs one in production; tests pass None when they
+    # don't care (the /health page renders Kraken as "not configured").
+    app.state.kraken_health_probe = kraken_health_probe
 
     # Login rate-limit singleton (ADR-017 decision 8). One per app
     # instance so test fixtures get isolated buckets automatically.
@@ -245,6 +252,7 @@ def create_app(
     app.include_router(harvester_routes.router)
     app.include_router(news_routes.router)
     app.include_router(audit_routes.router)
+    app.include_router(health_routes.router)
     app.include_router(settings_routes.router)
     app.include_router(notifications_routes.router)
     app.include_router(page_routes.router)
