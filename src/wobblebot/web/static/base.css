@@ -809,6 +809,15 @@ table.data th.num {
   font-variant-numeric: tabular-nums;
 }
 
+/* Centered table columns — used for categorical / tag values
+   (side, symbol) which look unbalanced when left-aligned in a
+   wider cell. Numeric columns keep .num right-alignment so
+   digits stack on decimal places. */
+table.data td.center,
+table.data th.center {
+  text-align: center;
+}
+
 table.data.compact th,
 table.data.compact td {
   padding: 4px 8px;
