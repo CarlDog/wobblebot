@@ -400,19 +400,6 @@ nav.external a:hover {
   margin-right: auto;
 }
 
-.user-menu-external-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--text-muted);
-  transition: color 120ms ease;
-}
-
-.user-menu-external:hover .user-menu-external-icon,
-.user-menu-external:focus-visible .user-menu-external-icon {
-  color: #4dd0e1;
-}
-
 /* Theme selector inside the user-menu dropdown. Three radio-like
    buttons for Light / Dark / Auto. Active state uses a brighter
    nav-hover background so it visually pops above the regular
@@ -919,13 +906,37 @@ table.data.compact td {
   transform: translate(1px, -1px);
 }
 
-/* Lucide external-link icon used inside .news-link-badge. Sized to
-   match the .tag pill's ~12px text height; stroke inherits via
-   currentColor so the hover transition just works. */
-.news-link-icon-svg {
+/* Reusable external-link icon (Lucide ``external-link`` via the
+   _icons.html Jinja macro). Self-contained behavior so any anchor
+   containing the icon gets a consistent visual contract without
+   per-site CSS:
+
+   - Default state: muted color (subordinate visual weight; the
+     icon is a secondary affordance to the link text itself).
+   - Hover/focus-visible on the parent anchor: brightens to the
+     WobbleBot brand teal (same #4dd0e1 used everywhere else for
+     this transition).
+   - Stroke uses currentColor on the SVG so the color rule below
+     drives both states without per-element overrides.
+
+   Layout properties (size + flex-shrink + display:block) sized to
+   match the .tag pill's ~12px text height, which is also a
+   reasonable default for inline use beside body-text anchors. */
+.external-link-icon-svg {
   width: 13px;
   height: 13px;
+  flex-shrink: 0;
   display: block;
+  transition: color 120ms ease;
+}
+
+a:not(:hover):not(:focus-visible) .external-link-icon-svg {
+  color: var(--text-muted);
+}
+
+a:hover .external-link-icon-svg,
+a:focus-visible .external-link-icon-svg {
+  color: #4dd0e1;
 }
 
 .card-subtitle {
