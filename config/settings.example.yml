@@ -247,6 +247,20 @@ news:
     - source_id: rss:cointelegraph
       url: "https://cointelegraph.com/rss"
       enabled: false                  # noisier; flip on if you want broader coverage
+    # Matches the sources Kraken Pro's home-page News widget surfaces;
+    # adds first-party Kraken announcements (blog) to the pipeline.
+    - source_id: rss:beincrypto
+      url: "https://beincrypto.com/feed/"
+      enabled: true
+    - source_id: rss:coingape
+      url: "https://coingape.com/feed/"
+      enabled: true
+    - source_id: rss:cryptonews
+      url: "https://cryptonews.com/news/feed/"
+      enabled: true
+    - source_id: rss:kraken_blog
+      url: "https://blog.kraken.com/feed/"
+      enabled: true
 
   # CryptoCompare News (aggregator; free tier requires API key).
   # Substantially overlaps with RSS coverage. Keep enabled for 90 days
