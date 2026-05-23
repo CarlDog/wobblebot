@@ -45,14 +45,17 @@ def _rss_item(
     description: str = "Body text about Bitcoin.",
     guid: str | None = "guid-abc",
     pub_date: str = "Wed, 15 May 2026 10:00:00 +0000",
+    link: str | None = "https://example.com/article-abc",
 ) -> str:
     guid_tag = f"<guid>{guid}</guid>" if guid else ""
+    link_tag = f"<link>{link}</link>" if link else ""
     return f"""
     <item>
       <title>{title}</title>
       <description>{description}</description>
       <pubDate>{pub_date}</pubDate>
       {guid_tag}
+      {link_tag}
     </item>"""
 
 
@@ -119,6 +122,12 @@ class TestFetchHappyPath:
         assert got.published_at.dt == datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
         assert got.sentiment_score is None
         assert got.mentioned_coins == ["BTC"]
+        # RSS feeds are the publisher (rss:test names them directly);
+        # publisher stays None so consumers can distinguish direct-feed
+        # items from aggregator-attributed ones.
+        assert got.publisher is None
+        # link → url for click-through in the web UI.
+        assert got.url == "https://example.com/article-abc"
 
     async def test_multiple_items_sorted_ascending(self) -> None:
         # Feed orders newest-first; our port contract says return ASC.

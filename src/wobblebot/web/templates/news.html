@@ -55,8 +55,19 @@
           {% for item in snapshot.items %}
             <tr>
               <td>{{ item.published_at.dt.strftime("%Y-%m-%d %H:%M") }}</td>
-              <td><span class="tag">{{ item.source }}</span></td>
-              <td>{{ item.headline }}</td>
+              <td>
+                <span class="tag">{{ item.source }}</span>
+                {% if item.publisher %}
+                  <span class="news-publisher">{{ item.publisher }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if item.url %}
+                  <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.headline }}</a>
+                {% else %}
+                  {{ item.headline }}
+                {% endif %}
+              </td>
               <td>
                 {% for c in item.mentioned_coins %}
                   <code>{{ c }}</code>{% if not loop.last %}, {% endif %}

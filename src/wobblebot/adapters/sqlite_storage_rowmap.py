@@ -83,6 +83,11 @@ def row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
 
 
 def row_to_news_item(row: aiosqlite.Row) -> NewsItem:
+    # publisher + url columns added 2026-05-23. Guard with .keys() so
+    # older test fixtures or out-of-sync test seams without the columns
+    # don't blow up on KeyError. Migration in connect() ensures the
+    # columns exist on real DBs.
+    keys = set(row.keys())
     return NewsItem(
         source=row["source"],
         external_id=row["external_id"],
@@ -92,6 +97,8 @@ def row_to_news_item(row: aiosqlite.Row) -> NewsItem:
         sentiment_score=row["sentiment_score"],
         mentioned_coins=json.loads(row["mentioned_coins"]),
         fetched_at=Timestamp(dt=datetime.fromisoformat(row["fetched_at"])),
+        publisher=row["publisher"] if "publisher" in keys else None,
+        url=row["url"] if "url" in keys else None,
     )
 
 

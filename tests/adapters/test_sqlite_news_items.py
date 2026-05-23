@@ -194,3 +194,82 @@ async def test_sentiment_negative_persists(storage: SQLiteStorageAdapter) -> Non
 
 async def test_empty_returns_empty_list(storage: SQLiteStorageAdapter) -> None:
     assert await storage.get_news_items() == []
+
+
+async def test_publisher_and_url_round_trip(storage: SQLiteStorageAdapter) -> None:
+    """publisher + url fields persist + return on read (2026-05-23 schema add)."""
+    item = NewsItem(
+        source="cryptocompare",
+        external_id="cc-123",
+        published_at=Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+        headline="BTC hits $100k via CoinDesk",
+        publisher="CoinDesk",
+        url="https://www.coindesk.com/markets/2026/05/23/btc-100k",
+    )
+    await storage.save_news_item(item)
+    got = (await storage.get_news_items())[0]
+    assert got.publisher == "CoinDesk"
+    assert got.url == "https://www.coindesk.com/markets/2026/05/23/btc-100k"
+
+
+async def test_publisher_and_url_null_when_not_set(storage: SQLiteStorageAdapter) -> None:
+    """Direct-RSS items have publisher=None; missing url stays None."""
+    item = _make_item(source="rss:beincrypto", external_id="rss-x")
+    await storage.save_news_item(item)
+    got = (await storage.get_news_items())[0]
+    assert got.publisher is None
+    assert got.url is None
+
+
+async def test_migration_adds_publisher_url_to_legacy_table(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An operator DB created before 2026-05-23 lacks publisher/url; the
+    migration in connect() adds them without dropping data."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy.db"
+    # Build a pre-migration news_items table with the original column set.
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE news_items (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            source          TEXT NOT NULL,
+            external_id     TEXT,
+            published_at    TEXT NOT NULL,
+            headline        TEXT NOT NULL,
+            body            TEXT NOT NULL DEFAULT '',
+            sentiment_score REAL,
+            mentioned_coins TEXT NOT NULL DEFAULT '[]',
+            fetched_at      TEXT NOT NULL,
+            UNIQUE (source, external_id)
+        )
+        """)
+    conn.execute(
+        "INSERT INTO news_items "
+        "(source, external_id, published_at, headline, body, mentioned_coins, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "rss:legacy",
+            "old-1",
+            "2026-05-01T00:00:00+00:00",
+            "Legacy item",
+            "",
+            "[]",
+            "2026-05-01T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Now open the same file via SQLiteStorageAdapter — the migration
+    # in connect() must add the new columns.
+    adapter = SQLiteStorageAdapter(str(db_path))
+    await adapter.connect()
+    try:
+        items = await adapter.get_news_items()
+        assert len(items) == 1
+        # Legacy row still readable; new columns surface as None.
+        assert items[0].headline == "Legacy item"
+        assert items[0].publisher is None
+        assert items[0].url is None
+    finally:
+        await adapter.close()

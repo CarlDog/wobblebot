@@ -263,6 +263,23 @@ class NewsItem(BaseModel):
     sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
     mentioned_coins: list[str] = Field(default_factory=list)
     fetched_at: Timestamp = Field(default_factory=lambda: Timestamp(dt=datetime.now(UTC)))
+    publisher: str | None = None
+    """Original publisher name for items from aggregator sources.
+
+    For CryptoCompare items this is ``raw["source_info"]["name"]``
+    (e.g. ``"CoinDesk"``, ``"Bloomberg"``) — distinguishes items
+    aggregated from the same upstream publisher across direct RSS +
+    aggregator paths. ``None`` for direct RSS feeds: the ``source``
+    field already names the publisher (e.g. ``"rss:coindesk"``).
+    """
+
+    url: str | None = None
+    """Canonical URL for the original article. Surfaced as a link in
+    the web UI's headline column. ``None`` only when the source
+    genuinely doesn't provide one. CryptoCompare returns it as the
+    top-level ``url`` field; RSS feeds expose it via the entry's
+    ``link`` attribute.
+    """
 
     class Config:
         """Pydantic config."""

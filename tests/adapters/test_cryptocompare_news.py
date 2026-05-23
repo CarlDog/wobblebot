@@ -301,6 +301,77 @@ class TestRowMapping:
             await adapter.aclose()
         assert items == []
 
+    async def test_publisher_extracted_from_source_info_name(self) -> None:
+        """source_info.name surfaces as NewsItem.publisher."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_envelope(_raw_item()))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            items = await adapter.fetch()
+        finally:
+            await adapter.aclose()
+        assert len(items) == 1
+        assert items[0].publisher == "CoinDesk"
+
+    async def test_publisher_none_when_source_info_missing(self) -> None:
+        item = _raw_item()
+        del item["source_info"]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_envelope(item))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            items = await adapter.fetch()
+        finally:
+            await adapter.aclose()
+        assert items[0].publisher is None
+
+    async def test_publisher_none_when_source_info_not_dict(self) -> None:
+        """Defensive: API might return a non-dict for source_info."""
+        item = _raw_item()
+        item["source_info"] = "not-a-dict"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_envelope(item))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            items = await adapter.fetch()
+        finally:
+            await adapter.aclose()
+        assert items[0].publisher is None
+
+    async def test_url_extracted_from_top_level_url(self) -> None:
+        item = _raw_item()
+        item["url"] = "https://www.coindesk.com/markets/2025/05/15/btc-highs"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_envelope(item))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            items = await adapter.fetch()
+        finally:
+            await adapter.aclose()
+        assert items[0].url == "https://www.coindesk.com/markets/2025/05/15/btc-highs"
+
+    async def test_url_none_when_missing(self) -> None:
+        item = _raw_item()
+        item.pop("url", None)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_envelope(item))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            items = await adapter.fetch()
+        finally:
+            await adapter.aclose()
+        assert items[0].url is None
+
     async def test_missing_id_yields_null_external_id(self) -> None:
         no_id = _raw_item()
         del no_id["id"]

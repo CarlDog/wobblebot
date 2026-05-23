@@ -862,6 +862,17 @@ table.data.compact td {
 .tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
 .tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
 
+/* Publisher label on news rows — secondary attribution next to the
+   source tag (e.g. "cryptocompare" tag + "CoinDesk" publisher). Small,
+   muted, no background — lower visual weight than the .tag pill. */
+.news-publisher {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .card-subtitle {
   font-size: 14px;
   font-weight: 600;

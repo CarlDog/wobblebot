@@ -190,6 +190,8 @@ class RssNewsAdapter(NewsPort):
                 # than fail the whole batch.
                 continue
             body = _entry_body(entry).strip()
+            link_raw = entry.get("link")
+            link_url = str(link_raw) if isinstance(link_raw, str) and link_raw else None
             items.append(
                 NewsItem(
                     source=self._source_id,
@@ -200,6 +202,11 @@ class RssNewsAdapter(NewsPort):
                     sentiment_score=None,
                     mentioned_coins=_extract_mentioned_coins(headline, body),
                     fetched_at=now_ts,
+                    # RSS feeds ARE the publisher — source_id (e.g.
+                    # "rss:coindesk") already names them. Leave
+                    # publisher=None so consumers can distinguish
+                    # direct-feed items from aggregator-attributed ones.
+                    url=link_url,
                 )
             )
         # Storage stores DESC; our port contract says return ASC (oldest first).

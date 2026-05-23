@@ -114,6 +114,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 await self._conn.execute("PRAGMA synchronous = NORMAL")
             await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
+            await _migrate_news_items_publisher_url(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -409,8 +410,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 """
                 INSERT OR IGNORE INTO news_items (
                     source, external_id, published_at, headline,
-                    body, sentiment_score, mentioned_coins, fetched_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    body, sentiment_score, mentioned_coins, fetched_at,
+                    publisher, url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.source,
@@ -421,6 +423,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     item.sentiment_score,
                     json.dumps(item.mentioned_coins),
                     item.fetched_at.dt.isoformat(),
+                    item.publisher,
+                    item.url,
                 ),
             )
             await conn.commit()
@@ -1241,3 +1245,19 @@ async def _migrate_advisor_suggestions_expert_opinions(
             "ALTER TABLE advisor_suggestions "
             "ADD COLUMN expert_opinions TEXT NOT NULL DEFAULT '[]'"
         )
+
+
+async def _migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
+    """Add ``publisher`` + ``url`` columns to pre-2026-05-23 news_items tables.
+
+    The CREATE TABLE in SCHEMA declares both for new DBs; pre-existing
+    operator news_items rows lack them. Additive only (TEXT NULL); the
+    3882+ existing rows stay valid with both columns set to NULL on
+    read.
+    """
+    async with conn.execute("PRAGMA table_info(news_items)") as cursor:
+        cols = {row[1] async for row in cursor}
+    if "publisher" not in cols:
+        await conn.execute("ALTER TABLE news_items ADD COLUMN publisher TEXT")
+    if "url" not in cols:
+        await conn.execute("ALTER TABLE news_items ADD COLUMN url TEXT")

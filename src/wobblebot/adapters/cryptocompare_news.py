@@ -155,6 +155,13 @@ def _row_to_news_item(raw: dict[str, Any], fetched_at: Timestamp) -> NewsItem | 
     external_id = raw.get("id")
     body = (raw.get("body") or "").strip()
     coins = _extract_coins_from_categories(raw.get("categories") or "")
+    # CryptoCompare aggregates from many upstream publishers (CoinDesk,
+    # Bloomberg crypto, etc.). The source_info.name field carries the
+    # original publisher; surface it so the web UI can show "CoinDesk
+    # (via cryptocompare)" rather than just "cryptocompare".
+    source_info = raw.get("source_info") or {}
+    publisher = source_info.get("name") if isinstance(source_info, dict) else None
+    url = raw.get("url")
 
     return NewsItem(
         source=_SOURCE_ID,
@@ -165,4 +172,6 @@ def _row_to_news_item(raw: dict[str, Any], fetched_at: Timestamp) -> NewsItem | 
         sentiment_score=None,
         mentioned_coins=coins,
         fetched_at=fetched_at,
+        publisher=publisher if isinstance(publisher, str) and publisher else None,
+        url=str(url) if isinstance(url, str) and url else None,
     )

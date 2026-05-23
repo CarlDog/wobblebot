@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS news_items (
     sentiment_score REAL,
     mentioned_coins TEXT NOT NULL DEFAULT '[]',
     fetched_at      TEXT NOT NULL,
+    publisher       TEXT,
+    url             TEXT,
     UNIQUE (source, external_id)
 );
 
