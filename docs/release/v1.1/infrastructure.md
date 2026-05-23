@@ -55,3 +55,77 @@ deferred until v1.1.
 
 **Trigger:** anyone on 3.14 reports test failure or a deprecation
 warning we're not handling.
+
+### SQLCipher — database encryption at rest
+
+**What:** swap `aiosqlite` for an SQLCipher-aware binding so each
+`.db` file under `data/` becomes a self-contained encrypted blob
+(AES-256, transparent at the SQL layer). Adds Tier 1 protection
+on top of OS-level disk encryption (Tier 0): cold backup files
+that cross trust boundaries (USB drive, cloud storage, shared NAS
+without volume encryption) stay encrypted.
+
+**Why deferred from v1.0:** v1.0 covers the realistic single-
+operator-local threat model via OS-level disk encryption (Tier
+0 — see [`docs/deploy/encryption-at-rest.md`](../../deploy/encryption-at-rest.md)).
+SQLCipher addresses the cloud/shared-storage deployment scenario
+which isn't a v1.0 target.
+
+**Why high-value at v1.1:** as deployments diversify (Synology
+NAS, Raspberry Pi on UPS, cloud VPS — all weighed in the
+"Always-on hosting topology" entry in operator-ux.md), backup
+destinations increasingly cross trust boundaries. The moment a
+WobbleBot backup file lands on object storage or an unencrypted
+secondary volume, OS-level disk encryption stops applying. The
+data carried in those backups (orders, trades, withdrawal
+destinations, conversation turns) deserves the SQLCipher belt to
+the OS-level suspenders.
+
+**Implementation outline:**
+
+1. **Binding selection.** `aiosqlite` doesn't natively support
+   SQLCipher; need to evaluate `pysqlcipher3` + custom async
+   wrapper, or `aiosqlitex` (community fork), or a different
+   async path. None are as mature as `aiosqlite`; vet the chosen
+   binding's release cadence + security advisory history.
+2. **Key management.** Options: (a) derive key from
+   `WOBBLEBOT_WEB_SESSION_SECRET` via PBKDF2 (reuses existing
+   env-var infrastructure but couples web auth to DB encryption,
+   which feels wrong); (b) new `WOBBLEBOT_DB_ENCRYPTION_KEY` env
+   var (cleaner separation, more env-var surface); (c)
+   file-based key with strict file perms (more friction, harder
+   to rotate). Lean toward (b).
+3. **Performance check.** SQLCipher adds ~5-15% overhead vs
+   vanilla SQLite for most workloads. Run `tools/profile_storage`
+   under encrypted + non-encrypted DBs; verify the p99s stay
+   within tick-budget headroom.
+4. **Migration.** Existing operator DBs are plaintext; need a
+   one-shot tool that reads from plaintext + writes to encrypted
+   format. Schema migration adjacent — same connect-then-migrate
+   shape used by `_migrate_news_items_publisher_url` et al.,
+   plus a one-shot encrypt-and-replace path.
+5. **Backup encryption.** `cli/maintenance`'s backup task uses
+   SQLite's online `.backup` API — verify SQLCipher backups
+   stay encrypted (they should; the API operates at the same
+   layer SQLCipher hooks into).
+6. **Key rotation.** Operator may need to rotate the encryption
+   key periodically. `PRAGMA rekey` handles this in SQLCipher;
+   wrap as `tools/db_rekey.py`.
+
+**Selective encryption decision worth flagging:** `observe.db`
+and `news.db` hold public market data + RSS feed content —
+nothing sensitive. Could remain unencrypted to save the
+performance overhead. But mixed-encryption introduces operator
+mental load ("which DBs need the key on connect?"). Cleanest
+posture: encrypt all of them with the same key; the perf hit on
+the read-heavy DBs is the cost of operational simplicity.
+
+**Trigger:** v1.1 deployment plans materialize that involve
+backups crossing trust boundaries (cloud destinations, shared
+storage). Until then, OS-level disk encryption + the existing
+plaintext-but-bcrypted-passwords posture is the right answer.
+
+**Companion:** the "Always-on hosting topology" entry in
+operator-ux.md weighs Synology/Pi/cloud deployment shapes;
+SQLCipher becomes load-bearing the moment that entry picks
+a cloud or shared-storage path.
