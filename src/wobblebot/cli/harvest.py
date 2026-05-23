@@ -50,6 +50,7 @@ from wobblebot.cli._common import (
     load_operator_env,
     notify,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -651,13 +652,18 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             operator_storage=operator_storage,
         )
     finally:
-        aclose = getattr(adapter, "aclose", None)
-        if aclose is not None:
-            await aclose()
+
+        async def _close_adapter() -> None:
+            aclose = getattr(adapter, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+        phases: list[tuple[str, Any]] = [("close_kraken_adapter", _close_adapter)]
         if storage is not None:
-            await storage.close()
+            phases.append(("close_harvest_storage", storage.close))
         if operator_storage is not None:
-            await operator_storage.close()
+            phases.append(("close_operator_storage", operator_storage.close))
+        await safe_shutdown(phases, logger=_LOGGER)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

@@ -48,6 +48,7 @@ from wobblebot.cli._common import (
     load_operator_env,
     parse_symbol_csv,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.cli import ObserveConfig
 from wobblebot.config.kraken import KrakenConfig
@@ -205,8 +206,13 @@ async def _main_async(config: WobbleBotConfig) -> int:
             adapter, storage, config.observe, price_interval, balance_interval, stop_event
         )
     finally:
-        await adapter.aclose()
-        await storage.close()
+        await safe_shutdown(
+            [
+                ("close_kraken_adapter", adapter.aclose),
+                ("close_observe_storage", storage.close),
+            ],
+            logger=_LOGGER,
+        )
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

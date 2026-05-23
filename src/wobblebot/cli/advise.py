@@ -54,6 +54,7 @@ from wobblebot.cli._common import (
     load_operator_env,
     parse_symbol_csv,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.advisor import (
     AdvisorConfig,
@@ -589,14 +590,21 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
             stop_event=stop_event,
         )
     finally:
-        aclose = getattr(advisor, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        await observe_storage.close()
-        await news_storage.close()
-        await advise_storage.close()
+
+        async def _close_advisor() -> None:
+            aclose = getattr(advisor, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+        phases: list[tuple[str, Any]] = [
+            ("close_advisor", _close_advisor),
+            ("close_observe_storage", observe_storage.close),
+            ("close_news_storage", news_storage.close),
+            ("close_advise_storage", advise_storage.close),
+        ]
         if operator_storage is not None:
-            await operator_storage.close()
+            phases.append(("close_operator_storage", operator_storage.close))
+        await safe_shutdown(phases, logger=_LOGGER)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

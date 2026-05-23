@@ -64,6 +64,7 @@ from wobblebot.cli._common import (
     emit_heartbeat,
     load_operator_env,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.cli import OperatorConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -1059,18 +1060,28 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         exit_code = 1
     finally:
         stop_event.set()
-        for task in (forwarder_task, ttl_expirer_task):
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        aclose = getattr(assistant, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        await operator_storage.close()
+
+        async def _cancel_background_tasks() -> None:
+            for task in (forwarder_task, ttl_expirer_task):
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        async def _close_assistant() -> None:
+            aclose = getattr(assistant, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+        phases: list[tuple[str, Any]] = [
+            ("cancel_background_tasks", _cancel_background_tasks),
+            ("close_assistant", _close_assistant),
+            ("close_operator_storage", operator_storage.close),
+        ]
         if live_storage is not None:
-            await live_storage.close()
+            phases.append(("close_live_storage", live_storage.close))
+        await safe_shutdown(phases, logger=_LOGGER)
     return exit_code
 
 

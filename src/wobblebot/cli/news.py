@@ -48,6 +48,7 @@ from wobblebot.cli._common import (
     identity,
     load_operator_env,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.cli import NewsConfig, NewsDedupConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -260,20 +261,29 @@ async def _main_async(config: WobbleBotConfig) -> int:
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
+    async def _close_all_sources() -> None:
+        for source in sources:
+            aclose = getattr(source, "aclose", None)
+            if aclose is None:
+                continue
+            try:
+                await aclose()
+            except (NewsError, OSError) as exc:
+                _LOGGER.warning(
+                    "source close failed",
+                    extra={"source_id": source.source_id, "error": str(exc)},
+                )
+
     try:
         return await _run_loop(sources, storage, config.news, interval, stop_event)
     finally:
-        for source in sources:
-            aclose = getattr(source, "aclose", None)
-            if aclose is not None:
-                try:
-                    await aclose()
-                except (NewsError, OSError) as exc:
-                    _LOGGER.warning(
-                        "source close failed",
-                        extra={"source_id": source.source_id, "error": str(exc)},
-                    )
-        await storage.close()
+        await safe_shutdown(
+            [
+                ("close_news_sources", _close_all_sources),
+                ("close_news_storage", storage.close),
+            ],
+            logger=_LOGGER,
+        )
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
