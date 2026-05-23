@@ -326,10 +326,28 @@ def _serve_command(args: argparse.Namespace) -> int:
     configure_logging(log_format=log_format)
 
     try:
-        return asyncio.run(_serve_async(config))
+        rc = asyncio.run(_serve_async(config))
     except KeyboardInterrupt:
         _LOGGER.info("KeyboardInterrupt at top level; exiting clean")
-        return 0
+        rc = 0
+    # Force-exit because asyncio.run can return cleanly while non-daemon
+    # threads from httpx's connection pool and uvicorn's internal
+    # task-cleanup still hold the Python interpreter alive — Python
+    # waits for non-daemon threads to finish before the process exits,
+    # so even though our safe_shutdown finally already closed the
+    # storages + httpx client, the process can sit idle indefinitely.
+    # Surfaced 2026-05-23 during soak day 6: after `KeyboardInterrupt
+    # at top level; exiting clean` logged, the PowerShell prompt did
+    # not return for 60+ minutes until Stop-Process -Force.
+    #
+    # Safe to bypass Python's normal shutdown here because
+    # _serve_async's finally block (via safe_shutdown) has already
+    # run the data-integrity cleanups: SQLite adapters closed, WAL
+    # checkpointed, kraken_http aclosed. No atexit handlers in this
+    # process depend on running.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
 
 
 # --------------------------------------------------------------------- #
