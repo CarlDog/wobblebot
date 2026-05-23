@@ -873,6 +873,28 @@ table.data.compact td {
   font-style: italic;
 }
 
+/* Headline → article link. Browser-default blue is aggressive against
+   the dark theme; this rule keeps the headline reading at the same
+   weight as a plain headline (body text color + subtle muted underline)
+   and uses the WobbleBot brand accent (the same teal used by
+   .app-footer-link:hover) only on hover/focus. ``:visited`` matches
+   default so purple-history doesn't appear. */
+.news-link,
+.news-link:visited {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--text-muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+
+.news-link:hover,
+.news-link:focus-visible {
+  color: #4dd0e1;
+  text-decoration-color: currentColor;
+}
+
 .card-subtitle {
   font-size: 14px;
   font-weight: 600;
