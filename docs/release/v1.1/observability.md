@@ -299,3 +299,75 @@ benefited from an existing playbook entry. The Day-2 thunderstorm
 outage's recovery sequence ("manual cancel-on-Kraken + DELETE
 grid_state + restart with fresh anchor") is the canonical
 "this-belongs-in-a-runbook" example.
+
+### Cost-honesty dashboard — bot's ROI against its own infrastructure
+
+**What:** a new dashboard card (or `/cost` page extension) that
+puts the bot's earnings side-by-side with its operating costs so
+the operator can answer "is this thing actually profitable, or
+am I subsidizing it?" at a glance. Two columns:
+
+- **Earning side:** realized cycle PnL (sum from cycle_matcher),
+  broken down by day / week / 30-day rolling window. Already
+  computable from live.db.
+- **Cost side:** trading fees (from `trades.fee`, already shown
+  on the cost page) + LLM API spend (from `llm_calls.cost_usd`,
+  already shown) + a new manual "infrastructure" line item the
+  operator fills in once (NAS marginal power $/month, optional
+  internet allocation). Stored as `cost_assumptions` rows in
+  operator.db so the dashboard can render the math without
+  guessing electricity rates.
+
+The card surfaces three numbers:
+
+1. **Gross earnings** — sum of cycle.net_pnl over the window.
+2. **All-in cost** — trading fees + LLM API + operator-declared infra.
+3. **Net vs cost** — the bottom line, with a red/green
+   indicator at the $0 line.
+
+Plus a one-line annualized projection: "at current pace, $X/year
+net of all costs."
+
+**Why this matters:** the v1.0 cost dashboard tracks LLM spend
+and trading fees in isolation, but never asks the question that
+matters most to the operator — *is the bot earning more than it
+costs to run?* For a small-capital grid the answer can flip with
+small config changes (cloud-LLM advisor on/off, spacing tweaks,
+order size). Without a single number showing the verdict, the
+operator has to do mental arithmetic across four pages every
+time they want to know.
+
+**Why the operator asked for this:** historical scar from a
+prior crypto-mining attempt where electricity was costing more
+than the mined coins were worth at the time. The bot is a
+different shape of project (low marginal power on a NAS that's
+already running, so the "am I underwater" question is mostly
+academic *at current capital*), but the answer being "no, fine"
+shouldn't be assumed — it should be measured and visible. And
+when capital scales up, the question shifts from "am I underwater
+on electricity" to "is the LLM cost or cloud-advisor cadence
+eating my margin" — same dashboard answers both.
+
+**Why deferred to v1.1:** at current $100 capital, infrastructure
+cost (~$1-2/month marginal power, $0 LLM with Ollama default) is
+~25-30% of earnings (~$3/month) — the margin is positive but
+thin, and any operator who wants the verdict can compute it
+manually from existing pages. The honesty-card is a quality-of-
+life improvement, not a v1.0 gating concern. Becomes more useful
+when (a) capital scales, (b) the operator toggles cloud LLM
+advisors and wants to see margin impact in real time, or (c) a
+config change appears to drop earnings and the operator wants
+to A/B against cost without paging through history.
+
+**Sketch:** small. One new `cost_assumptions` table (3-4 columns:
+`name`, `monthly_usd`, `notes`, `updated_at`). One new Pydantic
+schema. One new `/cost-honesty` route or extension to `/cost`.
+Single template section. Settings page UI to edit the
+assumptions inline (operator wouldn't want to hand-edit YAML
+for this). Half-day of work end-to-end.
+
+**Trigger:** any moment where the operator catches themselves
+manually summing fees-plus-LLM-plus-power and dividing by
+realized PnL to verify the strategy is still net-positive. Or
+when scaling capital, since the answer shifts non-linearly
+(earnings scale with capital, infra cost stays roughly flat).
