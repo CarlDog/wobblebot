@@ -102,6 +102,44 @@ for completeness.
 `observe.db` and `news.db` could be unencrypted with no privacy
 loss; the other four hold the load-bearing financial + auth data.
 
+## File permissions (Tier 0 companion)
+
+Encryption defends content; permissions defend access. Even on an
+encrypted disk, an unprivileged user account on the same machine
+can read `data/*.db` if the files are world-readable. The
+discipline is identical across OS:
+
+- **`.env`** → mode `0600` (owner read/write only). Holds the
+  Kraken API keys + the Discord bot token + `WOBBLEBOT_WEB_SESSION_SECRET`.
+  Any non-operator user on the host who reads this owns the bot.
+- **`data/*.db`** → mode `0600`. Holds the financial data tier
+  (orders, trades, withdrawal destinations, password hashes).
+- **`data/backups/*.db`** + **`data/archive/*.csv`** → mode `0600`.
+  Inherits sensitivity from the source DBs.
+- **`config/settings.yml`** → mode `0644` acceptable (no secrets
+  inside; secrets live in `.env`). The schema-drift discipline
+  keeps secrets out of the YAML by construction.
+
+### Setting permissions
+
+```bash
+# Linux / macOS — single command, idempotent
+chmod 600 .env data/*.db data/backups/*.db data/archive/*.csv 2>/dev/null
+```
+
+```powershell
+# Windows — use icacls to remove inheritance + restrict to owner
+icacls .env /inheritance:r /grant:r "$env:USERNAME`:F"
+Get-ChildItem data\*.db -Recurse | ForEach-Object {
+    icacls $_.FullName /inheritance:r /grant:r "$env:USERNAME`:F"
+}
+```
+
+These settings stay sticky as long as the files aren't recreated
+by a process running under a different account. `cli/maintenance`
+respects the owner's existing permissions when it writes backup
+files (Python's `open()` inherits the umask).
+
 ## What v1.0 ships
 
 - **Tier 0 (operator-managed):** documentation telling you to

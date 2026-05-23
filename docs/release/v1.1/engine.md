@@ -330,3 +330,62 @@ every cli/web bounce during soak risks a hung process holding
 the terminal until ``Stop-Process -Force`` is run. Workaround
 is documented; experience cost is real, repeated, and
 predictable.
+
+### `cli/preflight` ADR-003 key-scope verification
+
+**What:** extend `cli/preflight` to verify ADR-003's load-bearing
+invariant programmatically — the trade key must NOT have Withdraw
+scope, and the harvest key (when configured) MUST have Withdraw
+scope but NOT Trade scope. Today the separation is documented in
+`.env.example` and the operator-handoff section of `CLAUDE.md`,
+enforced operator-side at Kraken key-creation time. The 2026-05-23
+security audit flagged this as a v1.1 L3 gap.
+
+**Why deferred from v1.0:** Kraken's REST API doesn't expose an
+endpoint that returns "this API key has these scopes" directly.
+The audit agent's first-pass suggestion was a test-withdrawal
+attempt with `validate=true` — **rejected as dangerous**: that's
+a real signed `/0/private/Withdraw` request, even with
+`validate=true` it surfaces audit-log noise on the operator's
+Kraken account and risks key disabling under Kraken's API-abuse
+heuristics.
+
+**Safer paths to investigate:**
+
+1. **`/0/private/GetWebSocketsToken`** — returns a token + metadata
+   that includes the key's permission set on some Kraken API
+   versions. Verify whether the current API surface still includes
+   permission info here.
+2. **Negative-probe at an idempotent read endpoint** — call
+   `/0/private/ClosedOrders` with the trade key (should succeed
+   because the trade key has `Query Open + Closed`) and a
+   theoretically-Withdraw-only read with the harvest key. Inferred
+   scope detection from which calls return `EAPI:Invalid permissions`.
+3. **Operator-side documented check at `cli/preflight` startup** —
+   surface the expected scope set + tell the operator to verify
+   against pro.kraken.com/app/settings/api before proceeding.
+   Cheapest path; no API call but no programmatic enforcement
+   either.
+
+**Why high-value:** ADR-003's "trade key can't move money, harvest
+key can't trade" is the load-bearing safety property the whole
+financial-power-fragmentation design rests on. Today an operator
+who accidentally enables Withdraw on the trade key wouldn't notice
+until something bad happened. A preflight check makes the
+mis-configuration loud at startup time, not at incident time.
+
+**Implementation outline:**
+- Investigate which Kraken endpoint surfaces scope info (Path 1
+  research first, fall back to Path 2 or Path 3 based on what's
+  actually available)
+- Add `services/kraken_key_audit.py` with one async function per
+  key role (verify_read_only_key, verify_trade_key,
+  verify_harvest_key)
+- `cli/preflight` calls the appropriate audit functions; refuses
+  to exit 0 if any key's actual scope set diverges from its
+  expected set
+- Friendly error output identifying which key has the wrong
+  scopes + a pointer to the operator-side fix on pro.kraken.com
+
+**Trigger:** v1.1 hardening. Operator-flagged 2026-05-23 during
+the financial-grade security audit as a queue-not-skip item.

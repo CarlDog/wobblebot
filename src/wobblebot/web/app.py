@@ -180,13 +180,27 @@ def create_app(  # pylint: disable=too-many-arguments
     # Per ADR-017 decision 1: signed session cookie via
     # Starlette's SessionMiddleware. itsdangerous-signed under the
     # hood; max_age is sliding (resets on each request).
+    #
+    # Cookie security flags:
+    # - ``HttpOnly`` is hardcoded by Starlette's SessionMiddleware
+    #   (see ``self.security_flags = "httponly; samesite=" + same_site``
+    #   in starlette/middleware/sessions.py) — no parameter to set,
+    #   always-on. Confirmed during the 2026-05-23 security audit.
+    # - ``SameSite=lax`` set below.
+    # - ``Secure`` (https_only=False here) is intentionally OFF in
+    #   the app layer because cli/web binds 127.0.0.1 by default and
+    #   the reverse proxy (per docs/deploy/reverse-proxy.md) is where
+    #   TLS termination + the Secure flag get added. Setting
+    #   https_only=True here would break local development. Operators
+    #   exposing cli/web beyond loopback MUST front it with a reverse
+    #   proxy that rewrites Set-Cookie to include Secure.
     app.add_middleware(
         SessionMiddleware,
         secret_key=session_secret,
         session_cookie="wobblebot_session",
         max_age=config.session_max_age_days * 86400,
         same_site="lax",
-        https_only=False,  # Set via reverse proxy's X-Forwarded-Proto in real deployments
+        https_only=False,
     )
 
     # Static assets (HTMX + base.css + brand mark).

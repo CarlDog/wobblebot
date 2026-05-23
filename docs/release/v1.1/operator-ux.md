@@ -686,6 +686,100 @@ surprise. Easy work, just deserves a coordinated landing.
 the moment multi-user support starts being a serious concern (the
 broken-sessions-on-rename UX is more visible with more users).
 
+### Multi-factor authentication (TOTP) for the web UI
+
+**What:** add TOTP-based MFA on top of the existing
+username/password login. Operator scans a QR code at first
+enrollment; subsequent logins require the password + a 6-digit
+code from an authenticator app (Authy, Google Authenticator,
+1Password).
+
+**Why deferred from v1.0:** the single biggest gap vs OWASP ASVS
+L3 (v4.2.4) for a financial app. Solo-operator behind LAN-only
+HTTPS makes the practical risk LOW, but it's the canonical
+financial-application control and surfaces in every audit.
+Documented as a deliberate L3 gap in the security audit (2026-05-23).
+
+**Becomes load-bearing when:**
+- The operator account gets shared (a partner, a family member,
+  a contractor)
+- Multi-user web auth lands (separate v1.1 entry above; the two
+  pair naturally)
+- cli/web is ever exposed beyond LAN (port-forward, public
+  domain — even with HTTPS, password-only auth on an internet-
+  facing finance app is genuinely insufficient)
+
+**Implementation outline:**
+- New `pyotp` runtime dep (well-maintained, ~5 years old, MIT)
+- New `users.totp_secret TEXT` column (additive schema migration;
+  NULL = MFA not enrolled for that user)
+- First-login enrollment flow: generate secret + QR code, store
+  hashed-or-encrypted (HMAC the secret with session secret? or
+  use a per-user encrypted column?), require operator to enter
+  a code to confirm
+- Login POST gains a `totp_code` field; gated when
+  `users.totp_secret IS NOT NULL`
+- Recovery codes (10x one-time-use codes shown at enrollment,
+  hashed in DB) for the "I lost my phone" case
+- `cli/web disable-mfa --username <name>` subcommand for the
+  operator's break-glass path (requires console access — the
+  same access that lets you read `.env`)
+
+**Trigger:** any of the three "becomes load-bearing when"
+conditions above. Until then: per-IP rate-limit + bcrypt cost 12
++ single-user-on-LAN is reasonable.
+
+### Content-Security-Policy header
+
+**What:** add a `Content-Security-Policy` response header to the
+web UI's HTML responses, restricting where scripts/styles/images
+can be loaded from. Defense-in-depth on top of Jinja2's autoescape
+(which prevents most XSS at the template layer).
+
+**Why deferred from v1.0:** L3-only ASVS requirement (v5.1.4); L2
+considers autoescape + no `|safe` filters sufficient. Solo-operator
++ LAN-bound + no untrusted-user-input surface (the operator is the
+only one filing input) makes the practical XSS risk low.
+
+**Why high-value at v1.1:**
+- Cheap to ship (~10 lines of middleware code + the actual policy
+  string)
+- Provides a hard wall against any future XSS that slips past
+  autoescape (e.g., a vulnerable Jinja2 release, a forgotten
+  `|safe` in a future template)
+- Required by every serious financial-app deployment standard
+
+**Suggested initial policy:**
+```
+default-src 'self';
+script-src 'self' 'sha256-<htmx-hash>';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data:;
+connect-src 'self';
+frame-ancestors 'none';
+form-action 'self';
+base-uri 'self';
+```
+
+`'unsafe-inline'` on styles is the painful concession (HTMX-driven
+inline styles + our existing inline-SVG icons). The other
+directives are tight. Migrating to nonce-based CSP for styles
+later is a follow-up.
+
+**Implementation:**
+- New `CSPMiddleware` in `src/wobblebot/web/middleware.py`
+  alongside the existing CSRF middleware
+- Policy is built from a config dict so operators can tune per
+  deployment (some browsers + extensions need exceptions)
+- Add to `app.add_middleware` chain in `web/app.py`
+- Tests verify the header appears on `/dashboard` + does NOT
+  appear on `/static/*` responses (those should keep
+  Cache-Control + Content-Type only)
+
+**Trigger:** v1.1 hardening pass. Same trigger as MFA — any of
+"shared, multi-user, internet-exposed" pushes this from
+nice-to-have to required.
+
 ### Multi-operator web auth
 
 **What:** ADR-017's single-operator boundary lifted. Multiple user
