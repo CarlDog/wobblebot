@@ -37,7 +37,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.users import User
@@ -143,6 +143,32 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
         overall=compute_overall_status(kraken_result, tuple(daemons)),
         last_refreshed_at=datetime.now(UTC),
     )
+
+
+@router.get("/health/overall.json", response_class=JSONResponse)
+async def health_overall_json(
+    request: Request,
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
+    config: WebConfig = Depends(get_config),
+) -> JSONResponse:
+    """Return just the overall traffic-light status as JSON.
+
+    Polled by ``layout.html``'s health-badge JS every 30s. Returns
+    ``{"overall": "green" | "yellow" | "red"}``. Reuses the same
+    ``load_health_snapshot`` builder as the full /health page so the
+    nav-icon dot and the page traffic-light can never disagree.
+
+    Cheap (Kraken probe is TTL-cached on app.state; daemon freshness
+    is a single SELECT per configured DB). Failures collapse to
+    ``{"overall": "green"}`` so the dot doesn't lie under transient
+    storage hiccups — the /health page itself remains the source of
+    truth.
+    """
+    try:
+        snapshot = await load_health_snapshot(request, config)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return JSONResponse({"overall": "green"})
+    return JSONResponse({"overall": snapshot.overall.value})
 
 
 @router.get("/health", response_class=HTMLResponse)

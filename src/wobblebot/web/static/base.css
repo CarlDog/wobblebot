@@ -371,16 +371,19 @@ nav.external a:hover {
   margin: 0;
 }
 
-/* External-link dropdown item (e.g. Kraken Pro) — icon on the
-   left, text + arrow on the right, vertically centered. Uses
-   inline-flex so the icon-then-text reads as a single visual
-   line within the dropdown's standard padding. */
-.user-menu-external {
+/* Dropdown link with icon + label — used by both Settings (internal,
+   gear icon) and Kraken Pro (external, brand-icon + trailing
+   external-link icon). Single class covers both because the layout
+   is identical: leading icon, label takes the slack, optional
+   trailing icon. The trailing external-link icon decides
+   internal-vs-external visually. */
+.user-menu-link {
   display: flex !important;
   align-items: center;
   gap: 8px;
 }
 
+/* Bundled-image leading icon (e.g. the Kraken favicon). */
 .user-menu-icon {
   width: 18px;
   height: 18px;
@@ -391,12 +394,21 @@ nav.external a:hover {
   border-radius: 3px;
 }
 
-/* Kraken Pro dropdown link — the text label gets the spare horizontal
-   room (margin-right:auto pushes the trailing external-link icon
-   against the dropdown's right edge), so the layout reads
-   ``[brand-icon] [Kraken Pro] ............ [↗]`` for unambiguous
-   "this link opens elsewhere" affordance. */
-.user-menu-external-label {
+/* Inline-SVG leading icon from _icons.html (e.g. settings_gear).
+   Sized to match the bundled-image icon's 18px box so dropdown
+   rows align regardless of which icon type leads them. */
+.user-menu-icon-svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: block;
+}
+
+/* Label takes the spare horizontal room (margin-right:auto pushes
+   any trailing element — like the external_link icon on the Kraken
+   Pro row — against the dropdown's right edge). For rows without a
+   trailing element (Settings) the auto-margin is harmless. */
+.user-menu-link-label {
   margin-right: auto;
 }
 
@@ -487,10 +499,23 @@ nav.utility {
   color: var(--nav-text-strong);
 }
 
-/* Unread indicator dot on the bell. Hidden until .has-unread is added
-   by the layout.html bell-badge polling script. Border tracks nav bg
-   so the dot looks "cut out" of the navbar. */
-.bell-dot {
+/* Normalize SVG sizing for every utility-nav icon — single rule
+   replaces per-svg width/height attrs and lets icon macros that
+   ship without dimensions (like _icons.html's heart_pulse) drop
+   in without their own sizing CSS. 20px matches the historical
+   inline-attr value on the existing Settings + Notifications
+   icons. */
+.nav-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Generic "needs attention" indicator dot for utility-nav icons.
+   Used by the bell (unread notifications) AND the health icon
+   (overall status non-green). Hidden until the parent .nav-icon
+   has the .has-alert class added by layout.html's polling scripts.
+   Border tracks nav bg so the dot looks "cut out" of the navbar. */
+.nav-icon-dot {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -502,7 +527,7 @@ nav.utility {
   display: none;
 }
 
-.nav-icon.has-unread .bell-dot {
+.nav-icon.has-alert .nav-icon-dot {
   display: block;
 }
 

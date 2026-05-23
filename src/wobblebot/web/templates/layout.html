@@ -18,17 +18,17 @@
         <a href="/harvester">Harvester</a>
         <a href="/news">News</a>
         <a href="/audit">Audit</a>
-        <a href="/health">Health</a>
       </nav>
       <nav class="utility">
-        <a href="/settings" class="nav-icon" title="Settings" aria-label="Settings">
-          {# Feather icons "settings" — gear glyph #}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
+        {# Health moved here from the primary text-nav 2026-05-23.
+           Health is system-status observation — same semantic
+           neighborhood as Settings (config) and Notifications
+           (alerts), so it joins the right-edge icon cluster as
+           the leftmost member. The page itself unchanged. #}
+        <a href="/health" class="nav-icon" id="nav-health"
+           title="Health" aria-label="Health">
+          {{ icons.heart_pulse() }}
+          <span class="nav-icon-dot" aria-hidden="true"></span>
         </a>
         <a href="/notifications" class="nav-icon" id="nav-bell"
            title="Notifications" aria-label="Notifications">
@@ -39,7 +39,7 @@
             <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
             <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
           </svg>
-          <span class="bell-dot" aria-hidden="true"></span>
+          <span class="nav-icon-dot" aria-hidden="true"></span>
         </a>
       </nav>
       {# User menu — dropdown anchored to the logged-in username.
@@ -64,6 +64,14 @@
           <span class="user-menu-caret" aria-hidden="true">▾</span>
         </button>
         <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
+          {# Settings — moved here from the utility nav 2026-05-23
+             alongside the Health icon's move (V2 plan: dropdown
+             carries config + external destinations; utility nav
+             keeps just the at-a-glance Health + Bell icons). #}
+          <a href="/settings" role="menuitem" class="user-menu-link">
+            {{ icons.settings_gear(css_class="user-menu-icon-svg") }}
+            <span class="user-menu-link-label">Settings</span>
+          </a>
           {% if kraken_account_url %}
             {# rel=noopener noreferrer prevents the new tab from accessing
                window.opener (security) and stops referrer leak.
@@ -72,10 +80,10 @@
                privacy posture as not loading external assets. #}
             <a href="{{ kraken_account_url }}" target="_blank"
                rel="noopener noreferrer" role="menuitem"
-               class="user-menu-external">
+               class="user-menu-link">
               <img src="/static/kraken-icon.png" alt=""
                    class="user-menu-icon" aria-hidden="true">
-              <span class="user-menu-external-label">Kraken Pro</span>
+              <span class="user-menu-link-label">Kraken Pro</span>
               {{ icons.external_link(css_class="external-link-icon-svg") }}
             </a>
           {% endif %}
@@ -147,9 +155,16 @@
   </footer>
 </div>
 
-{# Bell badge polling — compares server's latest-notification timestamp
-   to localStorage's "last seen" timestamp; shows a dot when newer. The
-   /notifications page sets last-seen on visit to clear the dot. #}
+{# Nav-icon alert dots. Two independent pollers driving the same
+   visual treatment (.has-alert on the nav-icon → red dot via CSS).
+
+   Bell: compares server's latest-notification timestamp to
+   localStorage's "last seen" timestamp; shows the dot when newer.
+   The /notifications page sets last-seen on visit to clear the dot.
+
+   Health: hits /health/overall.json on the same cadence; shows the
+   dot when overall status is not green (yellow or red). The page
+   itself shows the granular traffic-light. #}
 <script>
   window.updateBellBadge = async function () {
     try {
@@ -160,9 +175,9 @@
       if (!bell) return;
       const lastSeen = localStorage.getItem('wobblebot_last_seen_notifications') || '1970-01-01';
       if (latest_at && latest_at > lastSeen) {
-        bell.classList.add('has-unread');
+        bell.classList.add('has-alert');
       } else {
-        bell.classList.remove('has-unread');
+        bell.classList.remove('has-alert');
       }
     } catch (e) {
       // Silent — bell badge isn't critical UX.
@@ -170,6 +185,26 @@
   };
   window.updateBellBadge();
   setInterval(window.updateBellBadge, 30000);
+
+  window.updateHealthBadge = async function () {
+    try {
+      const r = await fetch('/health/overall.json');
+      if (!r.ok) return;
+      const { overall } = await r.json();
+      const health = document.getElementById('nav-health');
+      if (!health) return;
+      if (overall && overall !== 'green') {
+        health.classList.add('has-alert');
+      } else {
+        health.classList.remove('has-alert');
+      }
+    } catch (e) {
+      // Silent — health dot isn't critical UX; the /health page is
+      // the source of truth.
+    }
+  };
+  window.updateHealthBadge();
+  setInterval(window.updateHealthBadge, 30000);
 
   // User menu dropdown — toggle on trigger click; close on outside
   // click and on Escape. Keeps the trigger's aria-expanded in sync.
