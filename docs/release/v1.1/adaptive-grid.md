@@ -650,3 +650,106 @@ removing the operator-trigger is a separate decision.
 soak window AND has a documented use case where running checks add
 no value (e.g. shadow-mode auto-tuning where there's no real-money
 risk).
+
+### Bot learning — discussion stub (full design TBD)
+
+**What (operator-raised 2026-05-23):** "How does our bot LEARN?
+Is there a way for it to do that in the future?" Real, substantive
+question worth a v1.1 design pass. This entry captures the topic
+so future-me can pick it up; it is **not** a fleshed-out design.
+
+**Framing for the future discussion:**
+
+The current advisor stack produces recommendations. The
+already-queued **advisor outcome tracking** entry above measures
+whether those recommendations worked. Neither closes the loop
+into *changing the bot's future behavior based on what worked* —
+that's the LEARNING gap.
+
+Several distinct learning shapes worth comparing when the time
+comes:
+
+1. **Operator-mediated learning.** Outcomes inform the operator;
+   operator manually tunes prompts + config. ADR-002 preserved.
+   This is what we have implicitly today.
+2. **Arbitrator weighting.** The MoE arbitrator reads outcome
+   history and weights individual experts by their historical
+   success rate. Closed loop, but ADR-002-compatible because
+   each expert's output is still advisory + the arbitrator's
+   recommendation still flows through `cli/apply`'s gate.
+3. **Prompt evolution.** Outcomes auto-modify the prompts
+   (genetic-algorithm-style). Interesting territory but ADR-002
+   becomes hard to define when the prompts themselves are
+   model-generated.
+4. **Custom model fine-tuning.** Train a per-operator model on
+   their own trade history. Significant cost + infrastructure.
+5. **Reinforcement learning.** Bot directly optimizes a reward
+   function. Loud ADR-002 violation; deeply dangerous in a
+   trading context where the "reward" is dollars. Not recommended.
+
+**Why deferred:** real design work, multiple ADR-touching paths,
+needs the outcome-tracking infrastructure landed first to even
+have learning signal. Full v1.1+ design pass.
+
+**Trigger:** after advisor outcome tracking ships AND the operator
+has 60-90 days of "did this recommendation work?" data. At that
+point, deciding which of the five shapes to invest in becomes
+data-informed instead of speculative.
+
+### `cli/screener` — symbol-opportunity scanner (operator: "trufflehunt")
+
+**What (operator-raised 2026-05-23, working name "cli/trufflehunt"):**
+a daemon (or one-shot tool) that scans Kraken's tradable pairs and
+ranks them by "grid-suitability" — surfaces candidates the operator
+might want to add to the live grid lineup. Currently the operator
+manually picks symbols (`BTC/USD`, occasionally adding others via
+`grid.coins` config); there's no autonomous discovery.
+
+**Why high value:** the bot's behavior is bounded by the symbols
+configured. Some pairs are structurally better grid candidates
+(stable mean-reversion, healthy volume, fees beaten by spread)
+and some are structurally worse (trending alts, illiquid
+pairs). Identifying the good ones manually takes hours of OHLC
+plotting per symbol; a screener automates it.
+
+**Discussion stub — full design TBD.** Key questions for a
+future design pass:
+
+- **Naming.** Operator floated "trufflehunt" as a working name;
+  `cli/screener` matches the established finance-industry term
+  ("stock screener"). Either fine; `cli/screener` is more
+  immediately recognizable. Could also be `cli/scout` or
+  `cli/prospector`.
+- **Daemon vs one-shot.** Pairs eligible for grid-trading don't
+  change minute-to-minute. Weekly cadence (one-shot via cron)
+  is probably enough; a daemon adds heartbeat surface for low
+  benefit.
+- **Suitability metrics.** Candidate set:
+  - Realized volatility (high enough for cycles to fire, low
+    enough not to trip caps).
+  - Bid-ask spread vs maker fee (per ADR-006: spread must
+    cover 2× the fee + a margin for the cycle to net positive).
+  - Volume / liquidity (so order-size order doesn't move the
+    market).
+  - Range-bound vs trending classification (overlaps with the
+    regime detector entry).
+  - Diversification: correlation to currently-held positions.
+- **Output shape.** New table `screener_candidates(symbol,
+  scored_at, suitability_score, rationale_json)` or a
+  Markdown report dropped in `data/screener/`. Web UI page
+  rendering the latest ranking + a button to add a candidate
+  to `grid.coins` (via the established ADR-013 confirm
+  flow).
+- **ADR-002 boundary.** The screener recommends; it does NOT
+  start trading the recommended symbols. The operator gates
+  every addition.
+
+**Why deferred:** real design work, depends on the OHLC + TA
+indicators entry above (needs canonical bar data for the
+suitability metrics to be meaningful), benefits from the regime
+detector landing first.
+
+**Trigger:** post-v1.0, after the OHLC + TA work lands. Earliest
+candidate from "the bot already does what I told it to do" to
+"the bot proactively expands what I should consider telling it
+to do."

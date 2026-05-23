@@ -631,6 +631,61 @@ current users.
 when the operator deploys WobbleBot on a fresh machine (Pi /
 Synology / VPS) for the first time and notices the bar to entry.
 
+### Session cookie keyed by user.id, not username
+
+**What:** today's web session cookie stores
+``session["username"] = user.username`` (the literal string).
+``current_user`` looks the user up by that string each request via
+``get_user_by_username``. Switch to storing
+``session["user_id"] = user.id`` (the integer PK) and look up via
+``get_user_by_id``.
+
+**Why high value:** username changes (operator renames their own
+account, future multi-user admin renames another user) silently
+invalidate every active session for that user. The 2026-05-23
+``cyeagerlmt → CarlDog`` rename hit this exact pattern: the
+session cookie's stale ``username`` value caused a redirect loop
+between ``/dashboard`` and ``/auth/login`` until ``current_user``
+was patched to clear stale sessions (commit ``f4d707a``).
+
+The clear-on-stale-lookup patch covers the broken case correctly
+(stale sessions get cleared instead of looping). But the
+ARCHITECTURALLY cleaner answer is to key sessions on the immutable
+user.id from the start. user.id never changes; renames don't
+invalidate cookies; deleted-user case is unchanged (look up by id
+returns None, clear session).
+
+**Why deferred from v1.0:** the migration question. Switching the
+cookie schema would silently invalidate every existing session
+cookie (rows that say ``{"username": "CarlDog"}`` no longer
+match the new lookup). Operators on the running system would all
+need to sign in again. Not a regression — a one-time visible
+inconvenience — but worth a deliberate "we're going to invalidate
+your session on the next bounce" pre-announcement rather than a
+surprise. Easy work, just deserves a coordinated landing.
+
+**Implementation:**
+- Add ``StoragePort.get_user_by_id(user_id: int) -> User | None``
+  if not already present (matches the existing
+  ``get_user_by_username`` shape).
+- ``current_user`` reads ``session.get("user_id")``, looks up by
+  id. Falls through to clearing the session on None (same
+  defensive pattern as the current rename-hotfix).
+- ``/auth/login`` POST sets ``session["user_id"] = user.id`` on
+  successful auth. Stop setting ``session["username"]``.
+- Migration: on the FIRST request after deploy, ``current_user``
+  sees ``session["username"]`` set but no ``session["user_id"]``.
+  Either (a) look up the user by the stale username one last time
+  and upgrade the cookie to user_id, or (b) just clear the
+  session and force a re-login. Path (a) is operator-friendlier;
+  path (b) is simpler and more defensible (any stale username
+  would already be invalidated by the operator's intent to do the
+  rename in the first place).
+
+**Trigger:** any v1.1 release that's announced ahead of time, OR
+the moment multi-user support starts being a serious concern (the
+broken-sessions-on-rename UX is more visible with more users).
+
 ### Multi-operator web auth
 
 **What:** ADR-017's single-operator boundary lifted. Multiple user
