@@ -1,0 +1,302 @@
+# Engine — reliability and performance
+
+*Engine-side improvements: safety nets, reconciliation extensions, real-time data paths, performance optimizations. Touches `services/grid_engine.py`, `services/reconciler.py`, and `KrakenAdapter`.*
+
+*Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
+
+### Storage caching layer
+
+**What:** an in-memory LRU cache for hot read paths (`get_open_orders`,
+`get_grid_state`) keyed by `(method, params_tuple)` with a small
+TTL (1-5s) and invalidation on write.
+
+**Why deferred:** Stage 8.3's index audit confirmed every hot read
+uses `SEARCH` (index access), not `SCAN`. On the harness against
+1020 seeded rows, `get_open_orders` p50 0.26ms / p99 0.60ms — fast
+enough that caching is speculative.
+
+**Trigger:** soak shows engine ticks consistently >100ms with
+storage dominating the profile, OR `tools/profile_storage.py` on
+the Synology shows p99 >10ms for a hot read.
+
+### Async query parallelism (asyncio.gather over symbols)
+
+**What:** in `_run_one_tick`, replace the serial per-symbol loop
+with `asyncio.gather(*[engine.step_one_symbol(s) for s in symbols])`.
+
+**Why deferred:** Stage 2.4 ADR-006 decision 5 measured ~150ms
+per-symbol latency vs the 5s tick budget. Even a 30-coin sweep
+finishes in well under one tick. Parallelization here is premature
+without measured bottleneck.
+
+**Trigger:** soak shows a tick budget violation (tick + 1 > next
+tick's start) under multi-coin configuration.
+
+### Batch APIs (`save_orders_bulk`, `save_trades_bulk`)
+
+**What:** new StoragePort methods that take a list and do a single
+multi-row INSERT instead of N transactions.
+
+**Why deferred:** the engine places one order per fill per tick;
+batching is irrelevant at that rate.
+
+**Trigger:** a future workflow (e.g. backfill from Kraken's full
+trade history) needs N >100 writes in a single operation.
+
+### Engine tick latency budget alarming
+
+**What:** the engine emits a notification (level=warning) when a
+tick takes >X% of the configured tick interval; X defaults to 50.
+
+**Why deferred:** Stage 8.3 ratified "no CI perf regression check"
+(decision 8). The same logic applies to runtime alarming:
+threshold tuning needs measurement data.
+
+**Trigger:** the operator notices ticks dropping during the soak
+and wants automated detection.
+
+### Server-side dead man's switch (`CancelAllOrdersAfter`)
+
+**What:** Kraken's `/0/private/CancelAllOrdersAfter` endpoint sets a
+server-side timer; if the engine doesn't ping again within N
+seconds, **Kraken auto-cancels every open order on the account**.
+The engine would call it on every tick with a timeout (e.g. 30s),
+keeping the timer rolling. When cli/live dies, the timer expires
+and Kraken does the cleanup — no engine cooperation needed.
+
+**Why high value:** the 2026-05-19 thunderstorm outage is the
+exact scenario this prevents. cli/live crashed via uncaught
+exception; couldn't cancel its 3 open buys; one filled overnight
+when BTC drifted into it. With this endpoint set on every tick,
+Kraken would have auto-cancelled all three within 30s of the
+last tick — zero orphaned orders, zero unintended fills, no
+manual recovery needed.
+
+It's also a **strictly stronger safety net than the `e2b6cfc`
+finally-block fix** because it doesn't depend on the engine being
+alive enough to execute cleanup. Pure server-side, fires even
+when the host has lost power entirely.
+
+**Why deferred:** v1.0 ships with the finally-block fix as the
+cleanup mechanism. The dead-man's switch is feature work and
+v1.0 is in documentation freeze. Implementation is small (~1
+new adapter method + 1 call per tick) but warrants its own slice
+with proper tests.
+
+**Trigger:** the 2026-05-19 outage already triggered it
+conceptually; v1.1 should ship this early. Low engineering cost,
+high safety upside.
+
+### WebSocket real-time updates (private + public channels)
+
+**What:** replace REST polling with Kraken's WebSocket API for
+two channels: own-order updates (private channel) and ticker /
+order-book updates (public channel). Engine reacts to fills the
+moment Kraken signals them, not on the next 5s tick.
+
+**Two payoffs:**
+1. **Lower fill-detection latency** — counter-order placement
+   could happen <1s after fill instead of up-to-5s. Tighter
+   loop = more cycles in choppy markets.
+2. **Lower REST rate-limit pressure** — useful at multi-symbol
+   scale, useful for any future per-second polling scenarios
+   (live dashboards, real-time alerts).
+
+**Why deferred:** real architectural surface area. WebSocket is
+a different transport (event-driven instead of request/response),
+needs reconnection logic, heartbeat handling, message ordering.
+Likely warrants its own ADR (event-driven adapter pattern) and
+its own design doc. The current REST + 5s polling is sufficient
+for soak-grade reliability.
+
+**Trigger:** profile data from Stage 8.3's `tools/profile_storage.py`
+showing storage latency is no longer the bottleneck AND multi-
+symbol soak showing REST rate limits being approached.
+
+### System status awareness (`/0/public/SystemStatus`)
+
+**What:** Kraken publishes its operating mode at this endpoint:
+`online` / `cancel_only` / `post_only` / `limit_only` /
+`maintenance`. Engine checks at startup + periodically; pauses
+cleanly during exchange-side issues instead of repeatedly
+hitting orders-rejected errors.
+
+**Why deferred:** today the engine logs and continues when
+Kraken rejects orders for operational reasons. Inelegant but
+not unsafe (rejections don't lose money). System-status
+awareness is a graceful-degradation improvement, not a safety
+gap.
+
+**Trigger:** the next Kraken maintenance window during a soak,
+where the operator notices noisy error logs that would have been
+suppressed if the engine knew to park.
+
+### Session-loss-cap cool-down period
+
+**What:** mandatory operator-configurable cool-down after cli/live
+exits with ``exit_code=1`` (loss cap tripped). For N minutes
+after the last loss-cap shutdown, cli/live refuses to place new
+orders on startup — either refuses to start entirely or starts
+in a "monitoring only" mode where the engine ticks but
+``_try_place`` short-circuits.
+
+**Why high value:** Day 5 surfaced this implicitly. When the cap
+tripped on the morning's BUY fill (math bug), the natural reflex
+was "restart and resume." Same reflex would apply if the cap
+trips *legitimately* on a real drawdown — and then the operator
+would have bypassed the safety the cap was designed to provide.
+A forced gap between cap trip and resumption is the difference
+between "the safety worked" and "the safety became a speed bump."
+
+**Implementation:** new ``live.cool_down_seconds`` config field
+(default e.g. 3600 = 1h). cli/live on startup queries the most
+recent ``session_end`` log row (or a new ``session_exits`` audit
+table) and computes ``time_since_last_cap_trip``. If < cool_down,
+either refuses to start (exit 2 with operator-readable message)
+or starts in monitoring mode with placement disabled. Operator
+override flag (``--ignore-cool-down``) for genuine "I fixed the
+bug, restart immediately" scenarios.
+
+**Why deferred:** behavior change for live mode; deserves an ADR
+ratifying the cool-down semantics (refuse vs monitor, default
+duration, operator-override discipline).
+
+**Trigger:** post-v1.0. Real-world soak data may inform default
+cool-down duration (longer for trend-following losses, shorter
+for known-bug recoveries).
+
+### Slippage / spread guard before placement
+
+**What:** pre-tick check on the current bid-ask spread; refuse
+placement for the tick if spread exceeds the operator-tuned
+threshold (absolute width or N × rolling-mean multiplier).
+
+**Why high value:** the engine places at fixed grid prices
+computed from the anchor. It doesn't check live market spread.
+During news events / volatility spikes / thin-book moments,
+Kraken's bid-ask can widen 10×+ — a BUY at a grid level computed
+days ago could fill at a price unreflective of "fair" market.
+Grid bots specifically lose money when filling against
+abnormally-wide spreads because the counter-SELL spread + fees
+exceeds the cycle's notional. Real safety hole the current
+``max_*`` caps don't address.
+
+**Implementation:** new exchange method ``get_order_book(symbol)
+-> OrderBookSnapshot`` (top-of-book bid + ask + bid_size +
+ask_size); new safety check in ``GridEngine._try_place`` that
+fetches snapshot + computes spread + compares to a config-driven
+threshold; refuses + logs ``order refused: spread_too_wide``.
+Threshold is config-driven (e.g.,
+``safety.max_spread_bps: 50`` = 0.5%); rolling-baseline mode
+where threshold is N × rolling-mean over last X ticks.
+
+**Why deferred:** new exchange method required (don't have
+get_order_book yet); also deserves ADR ratification because
+"refuse placement when conditions look weird" is a behavior
+change.
+
+**Trigger:** post-v1.0. Higher priority once multi-asset / new
+exchanges ship (order book quality varies wildly across venues +
+symbols).
+
+### SQLite concurrency stress test
+
+**What:** synthetic workload test under
+``tests/stress/test_operator_db_concurrent.py`` simulating 8
+daemons hitting ``operator.db`` simultaneously at higher than
+normal rates (pending_commands inserts + heartbeats + LLM call
+logs + notifications). Measure latency percentiles + assert no
+``database is locked`` errors at projected v1.1+ throughput.
+
+**Why deferred:** today's volume is fine. Stress test exists to
+**guard against** Phase 9 expansion + multi-asset throughput
+where the concurrency picture changes.
+
+**Trigger:** before Phase 9 starts adding multi-asset write
+volume. Earlier triggers if anomaly detector surfaces lock
+contention metrics post-launch.
+
+### Reconciler fill-vs-cancel disambiguation
+
+**What:** extend `services/reconciler.py`'s storage-only handling
+to query Kraken's `/0/private/ClosedOrders` (and optionally
+`/0/private/TradesHistory`) for each storage-only `exchange_id`.
+If Kraken says the order filled rather than was canceled, replay
+the engine's `_detect_fills` counter-placement logic at startup
+— place the counter sell/buy that would have been placed live.
+
+**Why deferred:** ADR-018 ratified the v1.0 reconciler as a
+minimal "exchange authoritative" diff with two outcomes
+(storage-only → canceled, exchange-only → log). Adding closed-
+orders / trade-history queries introduces another Kraken API
+dependency at startup and another decision tree (what if the
+order partial-filled? what if the trade-history page is
+paginated? what's the lookback window?). v1.0 chose simplicity;
+v1.1 can re-investigate.
+
+**Trigger:** surfaced during the v1.0 soak's first overnight
+outage (2026-05-19) when cli/live was down while a buy filled.
+Reconciler correctly marked the order canceled in storage but no
+counter sell was placed, leaving $10 of BTC orphaned from the
+strategy. Pattern would recur on every host-crash mid-fill, so
+the v1.1 case for fixing this is real.
+
+### Mid-session reconciliation
+
+**What:** the reconciler runs on a schedule (e.g. every 5 minutes)
+during a session, not just at startup.
+
+**Why deferred:** ADR-018 ratified startup-only. Mid-session
+reconciliation races the engine's own order-placement path; the
+existing model is safer.
+
+**Trigger:** the operator runs `cli/live` for weeks without
+restart AND drift accumulates between Kraken and storage in ways
+startup-only doesn't catch. Soak window is the first place this
+would surface.
+
+### Graceful-shutdown timeout for daemons (`cli/web` et al.)
+
+**What:** every `cli/*` daemon's SIGINT/SIGTERM handler logs an
+"exiting clean" line BEFORE the actual cleanup runs. If any
+cleanup step hangs — `aiosqlite` close on a busy WAL, uvicorn
+worker shutdown blocked on an in-flight request, a non-daemon
+thread that never gets joined — the process stays alive
+indefinitely. Add a wall-clock timeout (proposal: 10 seconds)
+around the cleanup phase; on `TimeoutError`, log
+`shutdown hung beyond 10s in phase=<x>; forcing exit` at WARNING
+and call `os._exit(1)` to release the terminal.
+
+**Why deferred:** soak Day 3 (2026-05-20) surfaced the failure
+mode after the operator bounced `cli/web` to pick up consecutive
+commits. The exit-clean log had already fired but the process
+held PID 13420 alive for 3+ minutes, locking the operator's
+PowerShell window. Force-killing recovered. The pattern is
+shared across every `cli/*` daemon — `cli/live`, `cli/harvest`,
+`cli/maintenance`, etc. all have the same exit shape, just
+haven't tripped the failure mode visibly yet. v1.0 documentation
+freeze + the workaround being a single `Stop-Process -Id <pid>
+-Force` makes this a defer-with-paper-trail rather than a
+must-fix.
+
+**How:** factor each daemon's shutdown into named phases (close
+storage, stop uvicorn, drain background tasks, etc.) and wrap
+the orchestration in `asyncio.wait_for(_shutdown_all(),
+timeout=10)`. The shared `cli/_common.run_poll_loop()` helper
+(Stage 8.0.C) already brackets shutdown discipline for five
+daemons — this would extend it. `cli/web` and `cli/live` don't
+use the shared poll loop and need separate per-daemon wiring.
+Add a soak-runbook note that "exiting clean log without process
+death within 10s" is a known failure to expect occasionally
+during v1.0 and that `Stop-Process -Force` is the documented
+recovery.
+
+**Trigger:** ORIGINAL: "any further soak-period bounce that
+exhibits the pattern." UPDATE 2026-05-21 16:55: fourth observed
+instance (Day 3 evening + Day 4 midday + Day 4 afternoon). The
+case is now made — promote from "watch" to **v1.1.A** (first
+candidate to land post-v1.0 tag). Operator-facing impact:
+every cli/web bounce during soak risks a hung process holding
+the terminal until ``Stop-Process -Force`` is run. Workaround
+is documented; experience cost is real, repeated, and
+predictable.

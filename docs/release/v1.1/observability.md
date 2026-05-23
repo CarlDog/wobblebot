@@ -1,0 +1,233 @@
+# Observability — monitoring, alerting, backups
+
+*Anomaly detection, retention policies, alternate notification fallbacks, metrics export, and backup verification. The /health page covers liveness today; entries here cover behavioral and operational visibility.*
+
+*Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
+
+### Anomaly detector daemon — cross-DB outlier watcher
+
+**What:** a new long-running daemon (``cli/anomaly`` or similar)
+that polls every project DB on a fast cadence and emits a
+notification when it spots a statistical outlier against the
+operator's own historical baseline. Not an LLM role — pure
+deterministic Z-score / IQR detection over recent table state.
+
+**Why high value:** the soak has surfaced 3-4 silent failure modes
+(cli/live crashing without alert, cli/harvest + cli/advise +
+cli/maintenance dying silently in the background, the
+session-loss cap tripping without operator awareness for ~1.5h
+on Day 5). The /health page catches *liveness* failures
+(heartbeat-not-fresh); the anomaly detector catches *behavioral*
+ones — the daemon is alive AND writing rows, but the rows it's
+writing look wrong relative to the operator's normal pattern.
+
+**Examples of what it'd catch:**
+- ``trades.fee`` 5σ above the rolling mean → operator paid an
+  unusual taker fee (maker→taker regime shift, or a fat-finger
+  order_size that hit the book hard)
+- ``orders`` cancel rate suddenly spiking → engine churn from
+  a misconfigured cap or rapid market drift
+- ``balance_entries.total`` dropping more than X% in one tick →
+  could be a withdrawal we didn't expect, a wash from a bad
+  fill, or a Kraken-side adjustment
+- ``advisor_suggestions`` not appearing for >2 × normal cadence
+  → cli/advise's heartbeat says it's alive but its work output
+  has stalled (could be Ollama hanging without erroring)
+- ``llm_calls.cost_usd`` for a single call >3σ above the daily
+  mean → runaway prompt size, cost-gate not catching it
+- ``transfer_proposals`` flipped from "hold band" to "surplus"
+  unexpectedly → balance changed without a corresponding trade
+  (deposit, manual transfer, refund — worth flagging)
+
+**Implementation:** new ``services/anomaly_detector.py`` with a
+registry of detectors (one per metric); each detector returns a
+``(severity, description, supporting_metrics)`` tuple or None.
+``cli/anomaly`` runs a poll loop, drives every detector against
+the latest data, emits ``Notification`` rows (level=warning) for
+each anomaly. Tuning: each detector takes a ``threshold_sigma``
+config field; operator can adjust per detector. Heartbeats into
+``daemon_heartbeats`` like every other daemon.
+
+**Why deferred:** v1.0 freeze. Also needs a few weeks of baseline
+data to calibrate Z-score thresholds; running on 5 days of soak
+data produces too many false positives.
+
+**Trigger:** post-v1.0 + ~30 days of accumulated baseline. Would
+have caught every silent failure of the soak; lowest-hanging-fruit
+observability upgrade after /health.
+
+### Backup verification — restoration smoke test
+
+**What:** monthly cli/maintenance task that opens the latest
+backup file from each ``backup_dir`` source, runs
+``PRAGMA integrity_check``, runs a representative SELECT against
+each known table, and emits a notification on any failure.
+
+**Why high value:** classic ops gotcha — untested backups are
+not backups. cli/maintenance writes them via SQLite's online
+``.backup`` API and prunes the old ones, but nothing ever opens
+the backup files to confirm they're restorable. First time the
+operator discovers a corrupted backup is the day they need it.
+
+**Implementation:** new ``schedules.maintenance_backup_verify``
+config key (default 7d cadence). New
+``services/backuper.verify_backup(path)`` opens the file
+read-only, runs ``PRAGMA integrity_check`` (must return "ok"),
+queries ``sqlite_master`` for expected tables, runs a
+``SELECT COUNT(*)`` against each. Returns a typed result
+indicating "verified" / "failed_with_reason." New
+cli/maintenance task picks the most recent backup per db_stem
+and runs verify_backup; pushes a Notification on failure.
+
+**Why deferred:** feature work; doesn't block v1.0. But should
+land soon-after — cli/maintenance has been running since Day 1
+and we've never verified its output.
+
+**Trigger:** post-v1.0; one of the first cli/maintenance follow-ups.
+
+### Data retention policy
+
+**What:** explicit per-table retention windows; cli/maintenance
+prunes old rows after the configured age, with the
+already-established archive-then-delete discipline for audit
+tables.
+
+**Why high value:** today only ``price_snapshots`` gets pruned.
+Every other table grows forever — ``orders``, ``trades``,
+``advisor_suggestions``, ``applied_suggestions``,
+``notifications``, ``conversation_turns``, ``llm_calls``,
+``transfer_proposals``, ``transfer_results``, ``pending_commands``.
+After a year of soak: at minimum 100s of MB in
+``conversation_turns`` alone (cli/operator chatter), more in
+notifications, more again in llm_calls. Eventually: slow
+queries, big backups, disk-fill risk.
+
+**Implementation:** per-table retention in the maintenance config
+block (``maintenance.retention: { notifications: 90d,
+conversation_turns: 30d, llm_calls: 365d, ... }``). For each:
+archive-then-delete for audit tables (notifications →
+``data/archive/notifications-{year}.csv``, llm_calls similar);
+straight delete for ephemeral data. Audit tables (orders,
+trades, applied_suggestions) probably KEEP-FOREVER — those are
+the forensic ledger.
+
+**Why deferred:** needs operator decision on which tables are
+keep-forever vs prunable. Also: retention windows shouldn't
+be guessed; should be tuned to observed growth rates after
+~6 months of accumulated data.
+
+**Trigger:** post-v1.0 + ~6 months of accumulated runtime data
+so retention windows can be set against real growth curves.
+
+### Daily summary email or Discord-DM
+
+**What:** a `cli/daily-summary` daemon that produces "yesterday in
+WobbleBot": fills, fees, harvester activity, LLM costs, any
+warnings. Emailed (via SMTP env var) or DM'd via the existing
+Discord adapter.
+
+**Why deferred:** the operator's daily check during the soak will
+reveal whether they want this pushed vs pulled. Pulling is the
+existing model (web UI's status card); pushing is new behavior.
+
+**Trigger:** operator says "I forgot to check the bot for two days
+and now I'm catching up" — that's the signal pulling isn't enough.
+
+### Per-cycle LLM call tracing
+
+**What:** ``trace_id`` column on the ``llm_calls`` table grouping
+all LLM calls within one cli/advise cycle (quant → risk → news
+→ arbitrator) under a single UUID. Web UI ``/cost`` page gains
+a "by cycle" toggle to drill into "which cycle was slow? which
+role/provider was the bottleneck?"
+
+**Why deferred:** observability nice-to-have, not blocking.
+Adds a column + a UUID generator + a UI affordance.
+
+**Trigger:** post-v1.0; pair with the per-LLM tracking work in
+the advisor outcome evaluator entry — same migration touches
+the ``llm_calls`` schema, so doing them together avoids two
+separate migrations.
+
+### Connectivity retry policy audit
+
+**What:** documented sweep of retry-on-failure policy across
+every external call site (Kraken REST, Ollama HTTP, all cloud
+LLM HTTPs, RSS feeds, CryptoCompare). Output is
+``docs/architecture/retry-policy.md`` documenting expected
+behavior + identifying any inconsistencies + filing follow-up
+work for missing retry coverage.
+
+**Why deferred:** not a feature; documentation/refactor. The
+soak hasn't surfaced retry-related defects (one finally-block
+defect fixed Day 2, but that was missing try/except, not
+missing retry).
+
+**Trigger:** post-v1.0 cleanup phase OR next time a Kraken /
+Ollama / cloud-LLM timeout incident surfaces uneven coverage.
+
+### Disk space awareness in the anomaly detector
+
+**What:** when the anomaly detector daemon ships (see Group 2),
+extend it to monitor ``shutil.disk_usage(data_dir).percent``
+and emit a warning notification when used > 80% / critical at
+> 95%.
+
+**Why deferred:** pairs with the anomaly detector entry; not
+its own ship. SQLite + WAL + retention not in place yet means
+this would fire prematurely under current free disk during
+soak.
+
+**Trigger:** bundles with the anomaly detector entry in Group 2.
+
+### Ollama hang detection audit
+
+**What:** audit Ollama HTTP timeout + cancellation handling
+across cli/advise + cli/operator + (post-v1.0) cli/historian
+to confirm that an Ollama process hanging without responding
+doesn't block the daemon's event loop indefinitely.
+
+**Why deferred:** probably-fine today but unverified.
+``services/llm_retry.py`` wraps LLM calls with timeouts; we
+believe the wrappers also cancel; an audit would prove it.
+
+**Trigger:** post-v1.0; before Phase 9 (equities) raises LLM
+call volume + Phase 9's new advisors compound the risk.
+
+### Remote backup destinations (S3 / rclone / SFTP)
+
+**What:** implementations of `services/backuper.BackupDestination`
+Protocol. v1.0 only ships the local-FS variant.
+
+**Why deferred:** Stage 8.2 explicitly scoped to local backups.
+Off-host backup is operator infrastructure (their NAS already
+replicates volumes presumably); codifying it in v1.0 would force
+an opinion they may not share.
+
+**Trigger:** operator's NAS has no volume replication and they
+want belt-and-suspenders durability.
+
+### Prometheus / metrics export
+
+**What:** a `/metrics` endpoint on `cli/web` that exports counters
+(orders placed, fills, fees paid, harvester proposals, LLM cost) in
+Prometheus format.
+
+**Why deferred:** the SQLite tables ARE the time-series store for
+v1.0. Web UI's cost dashboard reads `llm_calls` directly; status
+dashboard reads `orders` / `trades` directly.
+
+**Trigger:** operator wires Grafana for cross-system visualization.
+
+### PagerDuty / email / SMS alerting fallback
+
+**What:** alternate notification destinations in case Discord is
+down. The existing `notifications` SQLite table + forwarder pattern
+extends cleanly — a new `PagerDutyNotifierAdapter` would consume
+the same rows.
+
+**Why deferred:** Discord has been adequate; multi-channel adds
+complexity for a single-operator deployment.
+
+**Trigger:** Discord outage causes the operator to miss a soak
+window notification.
