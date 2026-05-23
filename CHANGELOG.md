@@ -10,6 +10,110 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Soak Day 6 events (2026-05-23) — graceful-shutdown bump + logging audit + news pipeline
+
+Heaviest doc-and-polish day of the soak. Three workstreams shipped
+in 18 commits without disrupting the v1.0 boundary work:
+
+**1. v1.1.A bumped to v1.0 — graceful-shutdown timeout for daemons**
+(`49e53a7` / `34c9619` / `a998b71` / `8a85cbd` / `516f4f8`). After
+4 observed `cli/web` hang-after-SIGINT instances during the soak
+(each requiring `Stop-Process -Force`), the operator made the call
+to bump the entry from v1.1.A into v1.0.
+
+New `wobblebot.cli._common.safe_shutdown(cleanups, *,
+timeout_seconds=10.0, logger)` helper takes a list of
+`(phase_name, async_callable)` cleanup tuples, runs them
+sequentially under `asyncio.wait_for`, and on timeout logs a
+WARNING naming the in-progress phase + calls `os._exit(1)` to
+release the terminal. Wired into 8 daemons:
+
+- `cli/observe`, `cli/news`, `cli/advise`, `cli/harvest`,
+  `cli/operator` (slice 2): poll-loop daemons' finally blocks
+- `cli/maintenance` (slice 3): single `close_operator_storage`
+  phase
+- `cli/web` (slice 4): finally + uvicorn
+  `timeout_graceful_shutdown=5` (caps in-flight-request waiting);
+  combined budget ~15s worst case vs the 3+ minute soak hang
+- `cli/live` (slice 5): OUTER finally only — INNER finally with
+  `cancel_all_open` intentionally NOT routed through safe_shutdown
+  because Kraken cancellation is the most safety-critical cleanup
+
+7 unit tests + 80 existing daemon tests pass unchanged. Soak
+runbook updated: "shutdown hung beyond timeout; forcing exit"
+WARNING is now the expected protection-firing signal (capture the
+phase name for the bug report; the WARNING is the recovery, the
+stuck phase is the actual defect).
+
+**2. Logging audit + level rebalancing** (`c9e7781` / `664fbfb` /
+`28c903e` / `6b0f770` / `042f51b`). Codebase audit of all 257
+`_LOGGER.*` calls across 23 files. Pre-audit ratio was 99 INFO /
+124 ERROR / 32 WARNING / 2 DEBUG — upside down. Adjustments:
+
+- Per-tick "tick complete" in cli/live + cli/shadow → DEBUG
+  (was flooding operator terminal at 5s cadence)
+- 4 INFO → DEBUG (per-tick non-events: harvest "no proposal",
+  maintenance "no prune_source_db configured", observe "account
+  empty" + "snapshot saved")
+- 22 ERROR → WARNING (recoverable transient failures across
+  cli/live, cli/shadow, cli/harvest, cli/observe, cli/news,
+  cli/advise, cli/maintenance, cli/operator, grid_engine — the
+  loop continues, next tick retries, or reconciler is the
+  recovery path)
+- 1 missing DEBUG (cli/live `_process_pending_commands`
+  empty-list case)
+- news.py "news item deduped" → DEBUG (per-dedup chatter; can be
+  100+ per cycle in steady-state)
+
+CRITICAL-tier calls verified correctly tagged (cap trips,
+withdrawal-submitted-but-audit-lost, Kraken /Withdraw rejection,
+Discord transport failure, startup reconciliation failure).
+
+**3. News pipeline: publisher attribution + click-through URLs**
+(`9dd8640`). Two related v1.1 candidates promoted in one commit:
+
+- `NewsItem` gains `publisher: str | None` and `url: str | None`
+  (additive; frozen-compatible)
+- New `_migrate_news_items_publisher_url` adds both columns to
+  `news_items` via idempotent PRAGMA-checked ALTER TABLE; existing
+  ~3882 cryptocompare + 460 RSS rows stay valid with both columns
+  NULL
+- CryptoCompareNewsAdapter extracts `source_info.name` →
+  publisher (CoinDesk / Bloomberg crypto / etc.) and top-level
+  `url` → url
+- RssNewsAdapter extracts entry `link` → url; publisher stays
+  None (source_id IS the publisher for direct RSS)
+- `/news` web view: headlines wrap in
+  `<a target="_blank" rel="noopener noreferrer">` when url
+  present; publisher renders as small italic muted label next
+  to the source tag
+- 9 new tests (5 cryptocompare extraction + 1 rss happy-path
+  extension + 3 storage tests including a legacy-table migration
+  test verifying the operator's existing rows survive intact)
+
+**4. v1.0-future-improvements.md doc reorg** (`a52feb2` earlier this
+day, plus catalog updates today). The monolithic 2716-line doc
+split into feature-area files under `docs/release/v1.1/` (10
+files: standing-rules / adaptive-grid / news-pipeline /
+harvester / engine / observability / operator-ux / trading-scope
+/ infrastructure / external-triggers). The original path at
+`docs/release/v1.0-future-improvements.md` rewritten as the slim
+catalog INDEX so external links stay valid. Pinned OC project
+memory captures the new structure + the "OC + repo layered
+model" pattern.
+
+**Numbers at end of day 6**: 1922 unit tests pass (1907 → 1922,
++15 from publisher/url + safe_shutdown tests); mypy 110 src files
+clean; pylint 10.00/10; black + isort clean. Real-money cost
+stays at $0.085018 (no live trades this day).
+
+**Schedule context.** The operator's move next weekend with
+uncertain internet availability reframes the current soak as a
+pre-cursor; the v1.0-gating soak will restart ~2026-06-01 with the
+new code in place. The bumps and audit shipped today therefore
+land BEFORE the real soak begins, giving them their own soak
+window rather than burning the current one.
+
 ### Stage 8.4.B-D + soak Day 1-3 events (2026-05-18 → 2026-05-20)
 
 Documentation-freeze sub-slices closed plus the operator-driven

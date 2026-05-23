@@ -255,7 +255,37 @@ restart AND drift accumulates between Kraken and storage in ways
 startup-only doesn't catch. Soak window is the first place this
 would surface.
 
-### Graceful-shutdown timeout for daemons (`cli/web` et al.)
+### Graceful-shutdown timeout for daemons (`cli/web` et al.) — ✅ shipped in v1.0 (2026-05-23)
+
+**Status:** ✅ Promoted to v1.0 and shipped 2026-05-23. The entry
+was originally classified v1.1.A (first post-tag candidate) but the
+operator made the call during soak day 6 to bump it into v1.0 since
+the workaround discipline (`Stop-Process -Force`) was the only
+observed friction during the entire soak window. Commits:
+
+- `49e53a7` — `wobblebot.cli._common.safe_shutdown` helper + 7
+  unit tests
+- `34c9619` — wired 5 poll-loop daemons (observe / news / advise /
+  harvest / operator) through safe_shutdown with named phases
+- `a998b71` — wired cli/maintenance
+- `8a85cbd` — wired cli/web + added uvicorn
+  `timeout_graceful_shutdown=5` (caps in-flight-request waiting)
+- `516f4f8` — wired cli/live's OUTER finally (resource close);
+  the INNER finally with `cancel_all_open` is intentionally NOT
+  routed through safe_shutdown because Kraken cancellation is
+  the most safety-critical cleanup and a hard wall-clock cap
+  could exit before all cancels complete
+
+Combined budget: uvicorn's 5s graceful shutdown + safe_shutdown's
+10s on the resource-close finally = ~15s worst case vs the soak's
+observed 3+ minutes. If the resource-close phase hangs beyond 10s,
+`os._exit(1)` releases the terminal with a WARNING naming the
+stuck phase.
+
+The original entry body is retained below for historical context
+in case future contributors want to understand the decision trail.
+
+---
 
 **What:** every `cli/*` daemon's SIGINT/SIGTERM handler logs an
 "exiting clean" line BEFORE the actual cleanup runs. If any

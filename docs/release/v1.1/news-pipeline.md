@@ -163,6 +163,20 @@ add a ``publisher`` TEXT column to ``news_items`` (default NULL so
 older rows stay valid). Splits cleanly from the source-tier audit
 above — separate v1.1 entry, separate commit.
 
+**✅ Publisher-attribution gap shipped in v1.0 (2026-05-23,
+`9dd8640`).** The operator promoted this gap into the v1.0 scope
+during soak day 6 alongside the related click-through-URL request.
+``NewsItem`` gained both ``publisher: str | None`` (from
+``source_info.name``) and ``url: str | None`` (from the top-level
+``url`` field for CryptoCompare and entry ``link`` for RSS). Schema
+migration in ``_migrate_news_items_publisher_url`` is idempotent
+PRAGMA-checked. ``news.html`` renders the headline as
+``<a target="_blank" rel="noopener noreferrer">`` when ``url`` is
+present and surfaces ``publisher`` as a small italic label next to
+the source tag. The wider Tier 1-4 source-coverage work above
+(Messari / Reuters / stocks-finance / general-tech) is still
+deferred per the original deferral reasoning.
+
 **Why deferred:** none of the Tier 1-4 work is gating v1.0 launch;
 the soak's news pipeline ran 3882 cryptocompare + 460 direct-RSS
 items in 24h across 8 sources, which is volume sufficient for the
