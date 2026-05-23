@@ -46,6 +46,30 @@
            aria-label="Application health: {{ health.overall.value }}">
           <span class="health-dot health-dot-{{ health.overall.value }}" aria-hidden="true"></span>
         </a>
+        {# Today's PnL — sum of realized cycle.net_pnl whose SELL
+           fired today (UTC). Anchored to the right edge of the
+           card-title row. Color + arrow follow the same green ▲ /
+           red ▼ vocabulary as the price-trend arrows on the
+           per-symbol headers. #}
+        {% if snapshot.today_realized_pnl is not none %}
+          {% set pnl = snapshot.today_realized_pnl %}
+          {% if pnl > 0.005 %}
+            <span class="today-pnl today-pnl-positive"
+                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
+              Today: +${{ "%.2f"|format(pnl) }} <span aria-hidden="true">▲</span>
+            </span>
+          {% elif pnl < -0.005 %}
+            <span class="today-pnl today-pnl-negative"
+                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
+              Today: -${{ "%.2f"|format(-pnl) }} <span aria-hidden="true">▼</span>
+            </span>
+          {% else %}
+            <span class="today-pnl today-pnl-flat"
+                  title="Realized PnL today (within rounding noise)">
+              Today: $0.00
+            </span>
+          {% endif %}
+        {% endif %}
       </div>
       <div class="card-meta">
         {% if snapshot.last_fill_age_seconds is not none %}
@@ -203,6 +227,60 @@
         </table>
       {% else %}
         <p class="placeholder">No recent fills.</p>
+      {% endif %}
+
+      {# Recent Cycles — completed BUY→SELL pairs with realized per-
+         cycle PnL. Each row = one cycle whose SELL has fired. In-
+         flight cycles (BUY without matching SELL yet) appear in
+         Recent Fills above but not here. Cycles ordered newest-
+         first by SELL execution time. #}
+      <h2 class="card-subtitle">Recent Cycles (Last {{ snapshot.recent_cycles|length }})</h2>
+      {% if snapshot.recent_cycles %}
+        <table class="data compact">
+          <colgroup>
+            <col>
+            <col style="width: 120px">
+            <col style="width: 110px">
+            <col style="width: 110px">
+            <col style="width: 130px">
+            <col style="width: 110px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>when</th>
+              <th class="center">symbol</th>
+              <th class="num">buy</th>
+              <th class="num">sell</th>
+              <th class="num">amount</th>
+              <th class="num">net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in snapshot.recent_cycles %}
+              <tr>
+                <td>{{ c.sell_executed_at.dt | tz_format(operator_tz) }}</td>
+                <td class="center">{{ c.symbol.base }}/{{ c.symbol.quote }}</td>
+                <td class="num">${{ "%.2f"|format(c.buy_price.amount) }}</td>
+                <td class="num">${{ "%.2f"|format(c.sell_price.amount) }}</td>
+                <td class="num">{{ "%.8f"|format(c.amount.value) }}</td>
+                <td class="num"
+                    title="(${{ '%.2f'|format(c.sell_price.amount - c.buy_price.amount) }} spread × {{ '%.8f'|format(c.amount.value) }}) − ${{ '%.2f'|format(c.buy_fee + c.sell_fee) }} fees">
+                  {% if c.net_pnl > 0.005 %}
+                    <span class="cycle-pnl-positive">+${{ "%.2f"|format(c.net_pnl) }} <span aria-hidden="true">▲</span></span>
+                  {% elif c.net_pnl < -0.005 %}
+                    <span class="cycle-pnl-negative">-${{ "%.2f"|format(-c.net_pnl) }} <span aria-hidden="true">▼</span></span>
+                  {% else %}
+                    <span class="cycle-pnl-flat">$0.00</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="placeholder">
+          No completed cycles yet. Cycles appear here when a BUY+SELL pair completes.
+        </p>
       {% endif %}
     {% endif %}
   </div>

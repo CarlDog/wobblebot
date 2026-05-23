@@ -35,6 +35,7 @@ from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
 from wobblebot.web.auth import require_user
 from wobblebot.web.dependencies import (
     get_config,
@@ -124,6 +125,15 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # Open orders grouped by symbol — saves the template from
     # filtering ``snapshot.open_orders`` N times per render.
     orders_by_symbol: dict[Symbol, tuple[Order, ...]] = field(default_factory=dict)
+    # Completed BUY→SELL cycles reconstructed via FIFO matching
+    # against ``recent_trades``. Newest-first; may be empty when no
+    # cycles have completed yet. Template renders these in the
+    # "Recent Cycles" panel below Recent Fills.
+    recent_cycles: tuple[RecentCycle, ...] = field(default_factory=tuple)
+    # Sum of cycle.net_pnl across cycles whose SELL fired today (UTC).
+    # The header "Today's PnL" number — None when no realized PnL
+    # has accrued today yet.
+    today_realized_pnl: Decimal | None = None
     error: str | None = None
 
 
@@ -231,9 +241,14 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         return _empty_snapshot(wired=False)
     try:
         open_orders = await live_storage.get_open_orders()
-        recent = await live_storage.get_trades(limit=20)
+        # Fetch a wider window for cycle matching; slice the first
+        # 20 for the Recent Fills feed. One query, two views.
+        all_recent = await live_storage.get_trades(limit=100)
     except StorageError as exc:
         return _empty_snapshot(wired=True, error=f"failed to query live.db: {exc}")
+    recent = all_recent[:20]
+    cycles = tuple(match_cycles(all_recent))
+    today_pnl = today_realized_pnl(cycles) if cycles else None
     last_age: float | None = None
     if recent:
         most_recent = max(recent, key=lambda t: t.executed_at.dt)
@@ -268,6 +283,8 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         reanchor_recommendations=reanchor_recs,
         symbols=all_symbols,
         orders_by_symbol=orders_by_symbol,
+        recent_cycles=cycles,
+        today_realized_pnl=today_pnl,
     )
 
 

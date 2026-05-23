@@ -336,7 +336,13 @@ nav.external a:hover {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  min-width: 180px;
+  /* Dynamic sizing — panel grows to fit its widest child via
+     max-content; the min-width floor prevents single-word labels
+     (e.g. just "Settings") from rendering as a comically narrow
+     box. New rows added later automatically expand the dropdown
+     without code changes. */
+  width: max-content;
+  min-width: 140px;
   background: var(--nav-dropdown-bg);
   border: 1px solid var(--nav-border);
   border-radius: 6px;
@@ -430,47 +436,18 @@ nav.external a:hover {
   padding: 4px 8px 6px;
 }
 
-.theme-toggle {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* Theme cycler — single click-through button that advances
+   light → dark → auto → light. Only one icon shows at a time,
+   driven by data-current-theme on the button. Replaces the
+   previous 3-button radiogroup (2026-05-23). */
+.theme-cycler-icon {
+  display: none;
 }
 
-.theme-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 12px;
-  background: none;
-  border: none;
-  color: var(--nav-text);
-  text-align: left;
-  cursor: pointer;
-  border-radius: 4px;
-  font: inherit;
-  font-size: 13px;
-}
-
-.theme-btn:hover {
-  background: var(--nav-hover-bg);
-  color: var(--nav-text-strong);
-}
-
-.theme-btn.active {
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--nav-text-strong);
-}
-
-.theme-btn svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  opacity: 0.85;
-}
-
-.theme-btn.active svg {
-  opacity: 1;
+.theme-cycler[data-current-theme="light"] .theme-cycler-icon-light,
+.theme-cycler[data-current-theme="dark"] .theme-cycler-icon-dark,
+.theme-cycler[data-current-theme="auto"] .theme-cycler-icon-auto {
+  display: block;
 }
 
 /* Utility nav — gear (Settings) + bell (Notifications). Sits between
@@ -622,6 +599,50 @@ h2 {
 .card-title {
   font-size: 15px;
   font-weight: 600;
+}
+
+/* Today's PnL — header-row scoreboard on the status card. Anchored
+   to the right edge of the card-title flex row via margin-left:auto.
+   Color + arrow mirror the price-trend arrows (cae4405) so "up =
+   good, down = bad" reads identically whether it's market price
+   or money. */
+.today-pnl {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  font-feature-settings: "tnum"; /* tabular numerals — digits don't shift width */
+}
+
+.today-pnl-positive {
+  color: var(--trend-up);
+}
+
+.today-pnl-negative {
+  color: var(--trend-down);
+}
+
+.today-pnl-flat {
+  color: var(--text-secondary);
+}
+
+/* Per-cycle PnL in the Recent Cycles table. Same color vocabulary
+   as the Today's header so the operator's eye flows naturally
+   between aggregate (top) and per-cycle (bottom). */
+.cycle-pnl-positive {
+  color: var(--trend-up);
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}
+
+.cycle-pnl-negative {
+  color: var(--trend-down);
+  font-weight: 600;
+  font-feature-settings: "tnum";
+}
+
+.cycle-pnl-flat {
+  color: var(--text-secondary);
+  font-feature-settings: "tnum";
 }
 
 .placeholder {
