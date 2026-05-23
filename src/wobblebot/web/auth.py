@@ -94,7 +94,17 @@ async def current_user(
     username = request.session.get("username")
     if not isinstance(username, str) or not username:
         return None
-    return await storage.get_user_by_username(username)
+    user = await storage.get_user_by_username(username)
+    if user is None:
+        # Stale session: the session cookie still names a user that
+        # no longer exists in storage (operator deleted the row, OR
+        # the row was renamed since this session was minted — the
+        # 2026-05-23 username rename triggered exactly this redirect
+        # loop). Clear the session so the next request hits
+        # /auth/login with a fresh form instead of bouncing back via
+        # "already signed in" → /dashboard → "stale user" → /login.
+        request.session.clear()
+    return user
 
 
 async def require_user(

@@ -127,6 +127,36 @@ class TestCurrentUser:
         result = await current_user(req, storage)  # type: ignore[arg-type]
         assert result is None
 
+    async def test_clears_stale_session_on_unknown_user(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """When the session-cookie names a user that no longer exists
+        (deleted row OR renamed mid-session per the 2026-05-23
+        username rename), current_user must clear the session so the
+        next request doesn't bounce in a redirect loop between
+        /dashboard → /auth/login → /dashboard."""
+        session: dict[str, object] = {"username": "ghost", "csrf_token": "keep"}
+        req = cast("object", _FakeRequest(session=session))
+        result = await current_user(req, storage)  # type: ignore[arg-type]
+        assert result is None
+        # Entire session dropped — csrf_token too. The login flow
+        # mints a fresh token; we don't want any partial stale state
+        # to carry across the implicit "you're logged out now"
+        # transition.
+        assert session == {}
+
+    async def test_does_not_clear_session_when_user_resolves(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Happy path: session intact when the user is found. Belt-
+        and-suspenders against an over-eager clear() in current_user."""
+        await storage.create_user("operator", hash_password("hunter2", cost=4))
+        session: dict[str, object] = {"username": "operator", "csrf_token": "keep"}
+        req = cast("object", _FakeRequest(session=session))
+        result = await current_user(req, storage)  # type: ignore[arg-type]
+        assert result is not None
+        assert session == {"username": "operator", "csrf_token": "keep"}
+
     async def test_returns_user_when_session_resolves(self, storage: SQLiteStorageAdapter) -> None:
         await storage.create_user("operator", hash_password("hunter2", cost=4))
         req = cast("object", _FakeRequest(session={"username": "operator"}))
