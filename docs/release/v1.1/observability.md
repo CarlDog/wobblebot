@@ -231,3 +231,71 @@ complexity for a single-operator deployment.
 
 **Trigger:** Discord outage causes the operator to miss a soak
 window notification.
+
+### Solo-operator incident runbook
+
+**What:** a single `docs/release/v1.0-incident-runbook.md` (or
+`docs/deploy/incident-runbook.md`) acting as the operator's
+checklist + decision-tree when something bad happens. Sibling to
+the existing `v1.0-soak-runbook.md` but scoped to "things broke,
+now what" rather than "running a clean soak."
+
+**Why this is NOT an "incident response process":** the 2026-05-23
+security audit surfaced "no documented IR process" as an L3 gap.
+The operator correctly flagged that "process" implies team
+structure — on-call rotations, paging, war rooms, blameless
+post-mortems. None of that applies to a solo project. The
+SOLO-shaped version of the same concept is a runbook (one doc, no
+organization implied) covering the realistic incident scenarios
+for a single-operator personal trading tool.
+
+**Scenarios worth covering:**
+
+- **Suspected API key compromise** (Kraken read / trade / harvest
+  key leaked, Discord token leaked, `WOBBLEBOT_WEB_SESSION_SECRET`
+  leaked). Steps: stop the affected daemon, rotate the credential
+  on Kraken/Discord/env, restart, audit recent activity in the
+  affected DB for evidence of misuse.
+- **Unexpected withdrawal observed in Kraken** (Harvester key
+  abuse OR upstream Kraken issue). Steps: pause cli/harvest
+  immediately, audit `transfer_results` for the txid, contact
+  Kraken support if not operator-initiated, rotate the harvest
+  key.
+- **cli/web visible from internet unexpectedly** (port-forward
+  rule, reverse-proxy misconfiguration). Steps: kill cli/web,
+  audit `users.last_login_at` for unexpected logins, check
+  reverse-proxy access logs, rotate session secret + invalidate
+  all sessions, fix the exposure path.
+- **gitleaks finding in git history** (a secret slipped in
+  pre-the-pre-commit-hook era). Steps: rotate the leaked
+  credential immediately, decide whether to filter-repo history
+  vs document-and-move-on, force-push if rewriting.
+- **Operator-personal info exposed** (a personal email or path
+  somewhere in the codebase that's about to be / already is
+  public). Steps: identify the file + line via the PII patterns,
+  decide whether to filter-repo or accept, rotate any
+  identity-bound credentials.
+- **Bot behavior diverges from expected** (cap not enforced,
+  order at wrong price, advisor recommending nonsense). Steps:
+  freeze the engine (cli/live SIGINT), capture relevant DB
+  state, compare against expected behavior, file as a
+  soak-surfaced defect, fix, restart.
+
+**Format:** each scenario gets the same 5-section template:
+*Detection* (how would you notice), *Stop-the-bleeding* (immediate
+action), *Assess* (what was the exposure), *Recover* (rotate +
+restart), *Document* (so future-you knows). The whole doc fits in
+one operator's-eye glance — checklist, not narrative.
+
+**Why deferred from v1.0:** the bones already exist scattered
+across the soak runbook ("Abort + restart procedure"), SECURITY.md
+("Reporting concerns"), and v1.0-known-limitations.md.
+Consolidating + expanding into one operator-facing doc is
+real-but-bounded work (half a day) that's better done after v1.0
+ships with the soak's actual lessons-learned baked in.
+
+**Trigger:** post-v1.0 tag, OR any soak incident that would have
+benefited from an existing playbook entry. The Day-2 thunderstorm
+outage's recovery sequence ("manual cancel-on-Kraken + DELETE
+grid_state + restart with fresh anchor") is the canonical
+"this-belongs-in-a-runbook" example.
