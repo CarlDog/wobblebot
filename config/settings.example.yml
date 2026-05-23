@@ -178,9 +178,26 @@ shadow:
 # ============================================================================
 # Pure data collection; no engine, no LLM, no orders. Polling cadences
 # live in the `schedules:` block at the bottom of this file.
+#
+# Observe broadly, trade narrowly — observe.symbols is independent of
+# live.symbols / shadow.symbols. Major-cap USD-quoted spot pairs only;
+# stablecoin pairs (USDT/USD) don't move so they're skipped, and tiny-cap
+# altcoins generate price noise the engine isn't tested against. Storage
+# cost is trivial: 30s cadence × 12 symbols ≈ 5MB/year per symbol.
 observe:
   symbols:
     - BTC/USD
+    - ETH/USD
+    - SOL/USD
+    - XRP/USD
+    - DOGE/USD
+    - ADA/USD
+    - AVAX/USD
+    - LINK/USD
+    - DOT/USD
+    - POL/USD                          # ex-MATIC; Polygon migrated 2024
+    - LTC/USD
+    - BCH/USD
   db: "data/wobblebot-observe.db"
   log_format: plain
 
