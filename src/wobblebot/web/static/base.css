@@ -863,31 +863,32 @@ table.data.compact td {
 .tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
 
 /* Dedicated "link" column on /news. Narrow column whose only job is
-   to carry the article-link glyph for rows that have a URL. Empty cell
+   to carry the article-link pill for rows that have a URL. Empty cell
    reads cleanly when the item has no URL (legacy rows pre-2026-05-23
-   migration, or feeds that omit it). Right-aligned so the glyph
-   anchors against the column edge, keeping headlines visually aligned. */
+   migration, or feeds that omit it). Centered so the pill anchors
+   against the column center, keeping headlines visually aligned. */
 .news-link-col {
-  width: 36px;
+  width: 48px;
   text-align: center;
 }
 
-/* Article-link glyph (↗). Muted by default to read as secondary
-   metadata; brightens to the WobbleBot brand teal (same color as
-   .app-footer-link:hover) on hover/focus. ``:visited`` matches default
-   so a purple-history glyph doesn't appear. */
-.news-link-icon,
-.news-link-icon:visited {
-  display: inline-block;
-  color: var(--text-muted);
+/* Article-link pill — pairs with .tag (inherits the rounded-pill
+   visual treatment so /news source pills and link pills share a
+   badge vocabulary). This rule layers anchor-specific behavior on
+   top of .tag: removes the underline, adds the WobbleBot brand teal
+   on hover (same #4dd0e1 used by .app-footer-link:hover), and a tiny
+   1px,-1px translate to give the "opens elsewhere" semantic an
+   extra kinetic signal. ``:visited`` matches default so purple-
+   history doesn't appear. */
+.news-link-badge,
+.news-link-badge:visited {
   text-decoration: none;
-  font-size: 16px;
-  line-height: 1;
+  cursor: pointer;
   transition: color 120ms ease, transform 120ms ease;
 }
 
-.news-link-icon:hover,
-.news-link-icon:focus-visible {
+.news-link-badge:hover,
+.news-link-badge:focus-visible {
   color: #4dd0e1;
   transform: translate(1px, -1px);
 }
