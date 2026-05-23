@@ -79,11 +79,28 @@ class TestGetUserByUsername:
         assert fetched.username == "operator"
         assert fetched.password_hash == _TEST_HASH
 
-    async def test_case_sensitive_lookup(self, storage: SQLiteStorageAdapter) -> None:
-        """SQLite default collation is case-sensitive — Operator != operator."""
-        await storage.create_user("operator", _TEST_HASH)
-        assert await storage.get_user_by_username("Operator") is None
-        assert await storage.get_user_by_username("OPERATOR") is None
+    async def test_case_insensitive_lookup(self, storage: SQLiteStorageAdapter) -> None:
+        """Lookups are case-insensitive — preserved-casing storage,
+        type-anything login. Pairs with the COLLATE NOCASE on
+        get_user_by_username + the idx_users_username_nocase
+        UNIQUE index that prevents case-variant collisions."""
+        created = await storage.create_user("CarlDog", _TEST_HASH)
+        assert created.username == "CarlDog"  # stored as typed
+        # Any casing at the lookup layer finds the same row.
+        for variant in ("CarlDog", "carldog", "CARLDOG", "carlDOG"):
+            got = await storage.get_user_by_username(variant)
+            assert got is not None, f"lookup failed for variant {variant!r}"
+            assert got.username == "CarlDog"  # display value unchanged
+            assert got.id == created.id
+
+    async def test_case_insensitive_collision_raises(self, storage: SQLiteStorageAdapter) -> None:
+        """Creating "carldog" when "CarlDog" exists must fail —
+        case-variant collisions are blocked at the DB layer."""
+        await storage.create_user("CarlDog", _TEST_HASH)
+        with pytest.raises(StorageError):
+            await storage.create_user("carldog", _OTHER_HASH)
+        with pytest.raises(StorageError):
+            await storage.create_user("CARLDOG", _OTHER_HASH)
 
 
 # --------------------------------------------------------------------- #

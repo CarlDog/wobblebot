@@ -1089,8 +1089,16 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
     async def get_user_by_username(self, username: str) -> User | None:
         conn = self._require_conn()
         try:
+            # COLLATE NOCASE: login succeeds regardless of the casing
+            # the operator types in the form ("carldog" / "CarlDog" /
+            # "CARLDOG" all match the stored "CarlDog"). Pairs with
+            # the idx_users_username_nocase UNIQUE index in
+            # sqlite_storage_schema.py — collision detection on
+            # create-user is also case-insensitive, so only one
+            # casing of any name can exist.
             async with conn.execute(
-                "SELECT * FROM users WHERE username = ?", (username,)
+                "SELECT * FROM users WHERE username = ? COLLATE NOCASE",
+                (username,),
             ) as cursor:
                 row = await cursor.fetchone()
         except (aiosqlite.Error, OSError) as exc:

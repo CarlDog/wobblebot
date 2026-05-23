@@ -312,6 +312,18 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at   TEXT
 );
 
+-- 2026-05-23: case-insensitive uniqueness layered on top of the
+-- existing case-sensitive UNIQUE(username). Both indexes are
+-- enforced; new INSERTs that would collide case-insensitively
+-- (e.g. trying to add "carldog" when "CarlDog" exists) fail at
+-- this index before reaching the original constraint. The stored
+-- string preserves original casing for UI display; only collision
+-- detection is case-insensitive. Combined with COLLATE NOCASE on
+-- the get_user_by_username lookup, login succeeds regardless of
+-- the capitalization the operator types in the form.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase
+    ON users(username COLLATE NOCASE);
+
 -- Stage 8.4 follow-up — per-user web UI preferences. Separated
 -- from the users table so identity vs. UI-presentation concerns
 -- don't share row width as preferences accumulate (timezone now;
