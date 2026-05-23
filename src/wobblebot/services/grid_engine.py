@@ -243,7 +243,7 @@ class GridEngine:
         try:
             opens = await self._exchange.get_open_orders(symbol=symbol)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            _LOGGER.error(
+            _LOGGER.warning(
                 "cancel_open_orders: get_open_orders failed",
                 extra={"symbol": str(symbol) if symbol else None, "error": str(exc)},
             )

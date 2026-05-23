@@ -142,7 +142,8 @@ class TestReadUsdBalance:
         """Transport / parse failures are recoverable misses — the
         daemon's outer loop tries again next tick."""
         adapter = _StubExchange(error=ExchangeError("HTTP 502"))
-        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+        # WARNING since 2026-05-23 logging audit (recoverable transient).
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.harvest"):
             result = await _read_usd_balance(adapter)
         assert result is None
         assert any("balance read failed" in r.message for r in caplog.records)
@@ -438,7 +439,8 @@ class TestPersistence:
 
         adapter = _StubExchange(usd_balance=Decimal("600"))
         config = _full_config()
-        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+        # WARNING since 2026-05-23 logging audit (audit row lost but cycle continues).
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.harvest"):
             ok = await _run_cycle(adapter, config=config, storage=_FlakeyStorage())  # type: ignore[arg-type]
         assert ok is True  # cycle succeeded even though persist failed
         assert any("persistence failed" in r.message for r in caplog.records)

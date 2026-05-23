@@ -84,7 +84,7 @@ async def _poll_prices(
             )
             persisted += 1
         except WobbleBotPortError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "price poll failed",
                 extra={"symbol": str(symbol), "error": str(exc), "error_type": type(exc).__name__},
             )
@@ -102,7 +102,7 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
         _LOGGER.debug("balance snapshot saved", extra={"entries": len(balances)})
         return len(balances)
     except WobbleBotPortError as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "balance poll failed",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )

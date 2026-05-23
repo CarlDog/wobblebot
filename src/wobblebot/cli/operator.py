@@ -128,7 +128,7 @@ async def _forward_pending_notifications(
     try:
         rows = await storage.get_notifications(forwarded=False)
     except StorageError as exc:
-        _LOGGER.error("forwarder: get_notifications failed", extra={"error": str(exc)})
+        _LOGGER.warning("forwarder: get_notifications failed", extra={"error": str(exc)})
         return 0
     forwarded = 0
     for row in rows:
@@ -146,7 +146,7 @@ async def _forward_pending_notifications(
             await storage.mark_notification_forwarded(row.id, Timestamp(dt=datetime.now(UTC)))
             forwarded += 1
         except (DiscordTransportError, StorageError) as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "forwarder: per-row forward failed; will retry next poll",
                 extra={
                     "notification_id": row.id,
@@ -227,7 +227,7 @@ async def _expire_stale_pending_commands(storage: StoragePort) -> int:
     try:
         rows = await storage.get_pending_commands(status="awaiting_confirmation")
     except StorageError as exc:
-        _LOGGER.error("ttl_expirer: get_pending_commands failed", extra={"error": str(exc)})
+        _LOGGER.warning("ttl_expirer: get_pending_commands failed", extra={"error": str(exc)})
         return 0
     now = datetime.now(UTC)
     expired_count = 0
@@ -247,7 +247,7 @@ async def _expire_stale_pending_commands(storage: StoragePort) -> int:
                 },
             )
         except StorageError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "ttl_expirer: per-row update failed",
                 extra={"pending_id": str(row.id), "error": str(exc)},
             )

@@ -137,7 +137,7 @@ async def _cancel_all_open(
                     )
                 )
             except StorageError as exc:
-                _LOGGER.error(
+                _LOGGER.warning(
                     "shutdown cancel persistence failed; reconciler will catch on next start",
                     extra={
                         "symbol": str(symbol),
@@ -242,7 +242,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                     },
                 )
         except WobbleBotPortError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "symbol step failed; continuing other symbols",
                 extra={
                     "tick": tick,
@@ -350,7 +350,7 @@ async def _process_pending_commands(
             # in 'approved' status and will be re-dispatched next tick.
             # That's an idempotency hazard for non-idempotent commands;
             # acceptable v1 trade-off given how rare DB failures are.
-            _LOGGER.error(
+            _LOGGER.warning(
                 "failed to persist dispatched pending_command",
                 extra={"pending_id": str(pending.id), "error": str(exc)},
             )
@@ -442,7 +442,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 try:
                     await _process_pending_commands(operator_service, operator_storage)
                 except WobbleBotPortError as exc:
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "pending_commands poll failed; continuing",
                         extra={"error": str(exc)},
                     )
@@ -486,7 +486,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
         try:
             cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
         except WobbleBotPortError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "session_end cancel_all_open raised; reconciler will catch stragglers",
                 extra={"error": str(exc)},
             )

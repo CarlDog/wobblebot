@@ -99,7 +99,7 @@ async def _poll_source(
     try:
         items = await source.fetch()
     except NewsError as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "news fetch failed",
             extra={
                 "source_id": source.source_id,
@@ -150,7 +150,7 @@ async def _poll_source(
             await storage.save_news_item(item)
             saved += 1
         except StorageError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "news item save failed",
                 extra={
                     "source_id": source.source_id,

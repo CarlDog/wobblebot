@@ -78,7 +78,7 @@ async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
     try:
         balance = await adapter.get_balance("USD")
     except ExchangeError as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "kraken balance read failed",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
@@ -199,7 +199,7 @@ async def _run_cycle(
             # Log + continue: missing a row in the audit table is
             # worse than killing the loop. Operator will see the
             # error and can investigate.
-            _LOGGER.error(
+            _LOGGER.warning(
                 "transfer proposal persistence failed",
                 extra={
                     "proposal_id": proposal.proposal_id,

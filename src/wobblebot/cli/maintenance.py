@@ -87,7 +87,7 @@ def _vacuum_all(target_dbs: list[Path]) -> int:
             vacuum_database(db_path)
             success += 1
         except (StorageError, FileNotFoundError, OSError) as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "vacuum failed on %s; continuing",
                 str(db_path),
                 extra={"error": str(exc)},
@@ -116,7 +116,7 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     try:
         await storage.connect()
     except StorageError as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "prune: failed to open source db",
             extra={"db_path": str(source_path), "error": str(exc)},
         )
@@ -129,7 +129,7 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
             archive_name=archive_name,
         )
     except (StorageError, FileExistsError, OSError) as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "prune cycle failed; will retry next interval",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
@@ -156,7 +156,7 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
             backup_database_locally(src, backup_dir)
             success += 1
         except (StorageError, FileNotFoundError, OSError) as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "backup failed on %s; continuing",
                 str(src),
                 extra={"error": str(exc)},

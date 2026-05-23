@@ -381,7 +381,7 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
     try:
         await advise_storage.save_advisor_suggestion(suggestion)
     except StorageError as exc:
-        _LOGGER.error(
+        _LOGGER.warning(
             "suggestion persist failed",
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )

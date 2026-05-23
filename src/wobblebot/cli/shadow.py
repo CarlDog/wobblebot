@@ -227,7 +227,7 @@ async def _run_one_tick(
                 },
             )
         except WobbleBotPortError as exc:
-            _LOGGER.error(
+            _LOGGER.warning(
                 "shadow symbol step failed; continuing other symbols",
                 extra={
                     "tick": tick,
