@@ -176,7 +176,9 @@ class TestRunCycleHappyPath:
     async def test_hold_band_logs_no_proposal(self, caplog: pytest.LogCaptureFixture) -> None:
         adapter = _StubExchange(usd_balance=Decimal("375"))
         config = _full_config()
-        with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
+        # DEBUG: per-tick "no proposal" is high-frequency chatter — demoted
+        # from INFO during the 2026-05-23 logging audit.
+        with caplog.at_level(logging.DEBUG, logger="wobblebot.cli.harvest"):
             ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         no_proposal = [r for r in caplog.records if "no proposal" in r.message]
@@ -221,7 +223,8 @@ class TestRunCycleHappyPath:
         produces a tick log but no proposal."""
         adapter = _StubExchange(usd_balance=Decimal("100"))
         config = _full_config()
-        with caplog.at_level(logging.INFO, logger="wobblebot.cli.harvest"):
+        # DEBUG: see test_hold_band_logs_no_proposal — same demotion.
+        with caplog.at_level(logging.DEBUG, logger="wobblebot.cli.harvest"):
             ok = await _run_cycle(adapter, config=config, storage=None)
         assert ok is True
         no_proposal = [r for r in caplog.records if "no proposal" in r.message]

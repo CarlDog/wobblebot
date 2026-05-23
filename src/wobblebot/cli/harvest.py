@@ -142,7 +142,7 @@ async def _run_cycle(
     )
 
     if proposal is None:
-        _LOGGER.info(
+        _LOGGER.debug(
             "harvest tick: no proposal",
             extra={
                 "balance_usd": str(balance_usd),

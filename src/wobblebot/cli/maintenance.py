@@ -99,7 +99,7 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     """Archive + delete eligible price_snapshots from the configured
     prune source DB. Returns rows deleted, 0 if no source configured."""
     if maintenance.prune_source_db is None:
-        _LOGGER.info("no prune_source_db configured; skipping prune cycle")
+        _LOGGER.debug("no prune_source_db configured; skipping prune cycle")
         return 0
     source_path = Path(maintenance.prune_source_db)
     if not source_path.exists():

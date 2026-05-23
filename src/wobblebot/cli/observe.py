@@ -96,10 +96,10 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
     try:
         balances = await adapter.get_balances()
         if not balances:
-            _LOGGER.info("balance poll: account empty; skipping snapshot")
+            _LOGGER.debug("balance poll: account empty; skipping snapshot")
             return 0
         await storage.save_balance_snapshot(balances)
-        _LOGGER.info("balance snapshot saved", extra={"entries": len(balances)})
+        _LOGGER.debug("balance snapshot saved", extra={"entries": len(balances)})
         return len(balances)
     except WobbleBotPortError as exc:
         _LOGGER.error(
