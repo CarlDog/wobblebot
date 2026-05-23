@@ -210,7 +210,10 @@ async def _run_one_tick(
     for symbol in shadow.symbols:
         try:
             result = await engine.step(symbol)
-            _LOGGER.info(
+            # Per-symbol per-tick output is DEBUG; matches cli/live's
+            # discipline so the operator's shadow terminal doesn't
+            # flood at the 5s cadence.
+            _LOGGER.debug(
                 "shadow tick complete",
                 extra={
                     "tick": tick,

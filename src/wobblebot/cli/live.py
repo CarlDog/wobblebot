@@ -203,7 +203,13 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     for symbol in live.symbols:
         try:
             result = await engine.step(symbol)
-            _LOGGER.info(
+            # Per-symbol per-tick output is DEBUG so the operator's
+            # terminal doesn't flood at the 5s default cadence. The
+            # actually-interesting events (fills, cap trips, session
+            # end) emit at INFO via their own log lines below + the
+            # notification pipeline. To re-enable per-tick visibility
+            # temporarily, run with WOBBLEBOT_LOG_LEVEL=DEBUG.
+            _LOGGER.debug(
                 "tick complete",
                 extra={
                     "tick": tick,
