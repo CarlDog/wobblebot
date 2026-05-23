@@ -64,67 +64,49 @@
           <span class="user-menu-caret" aria-hidden="true">▾</span>
         </button>
         <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
-          {# Settings — moved here from the utility nav 2026-05-23
-             alongside the Health icon's move (V2 plan: dropdown
-             carries config + external destinations; utility nav
-             keeps just the at-a-glance Health + Bell icons). #}
+          {# Dropdown items follow the same shape: label on the
+             LEFT (margin-right:auto pushes any trailing icon to
+             the right edge), one trailing icon on the right. The
+             dropdown width is max-content + a 140px min-width
+             floor, so the panel resizes to its widest item if a
+             future row is longer than today's. #}
           <a href="/settings" role="menuitem" class="user-menu-link">
-            {{ icons.settings_gear(css_class="user-menu-icon-svg") }}
             <span class="user-menu-link-label">Settings</span>
+            {{ icons.settings_gear(css_class="user-menu-icon-svg") }}
           </a>
           {% if kraken_account_url %}
             {# rel=noopener noreferrer prevents the new tab from accessing
-               window.opener (security) and stops referrer leak.
-               Kraken icon is bundled in /static so the dropdown
-               doesn't make a remote fetch on every render — same
-               privacy posture as not loading external assets. #}
+               window.opener (security) and stops referrer leak. The
+               leading kraken-favicon was pulled 2026-05-23 alongside
+               the right-align cleanup — the label + external-link
+               glyph already disambiguate the destination. #}
             <a href="{{ kraken_account_url }}" target="_blank"
                rel="noopener noreferrer" role="menuitem"
                class="user-menu-link">
-              <img src="/static/kraken-icon.png" alt=""
-                   class="user-menu-icon" aria-hidden="true">
               <span class="user-menu-link-label">Kraken Pro</span>
               {{ icons.external_link(css_class="external-link-icon-svg") }}
             </a>
           {% endif %}
-          <div class="user-menu-section">
-            <div class="user-menu-label">Theme</div>
-            <div class="theme-toggle" role="radiogroup" aria-label="Theme">
-              <button type="button" class="theme-btn" data-theme-set="light"
-                      role="radio" aria-checked="false">
-                {# Feather "sun" #}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="4"/>
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
-                </svg>
-                <span>Light</span>
-              </button>
-              <button type="button" class="theme-btn" data-theme-set="dark"
-                      role="radio" aria-checked="false">
-                {# Feather "moon" #}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-                </svg>
-                <span>Dark</span>
-              </button>
-              <button type="button" class="theme-btn" data-theme-set="auto"
-                      role="radio" aria-checked="false">
-                {# Feather "monitor" — auto matches the OS preference #}
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                  <line x1="8" y1="21" x2="16" y2="21"/>
-                  <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-                <span>Auto</span>
-              </button>
-            </div>
-          </div>
+          {# Theme cycler — single click-through button replacing the
+             previous 3-button radiogroup. Clicking advances
+             light → dark → auto → light; the icon on the right
+             shows the current mode. data-current-theme attr drives
+             SVG visibility via CSS so the JS just toggles the attr. #}
+          <button type="button" id="theme-cycler" role="menuitem"
+                  class="user-menu-link theme-cycler"
+                  data-current-theme="auto"
+                  aria-label="Theme (click to cycle)">
+            <span class="user-menu-link-label">Theme</span>
+            {{ icons.theme_sun(css_class="user-menu-icon-svg theme-cycler-icon theme-cycler-icon-light") }}
+            {{ icons.theme_moon(css_class="user-menu-icon-svg theme-cycler-icon theme-cycler-icon-dark") }}
+            {{ icons.theme_monitor(css_class="user-menu-icon-svg theme-cycler-icon theme-cycler-icon-auto") }}
+          </button>
           <form method="post" action="/auth/logout" class="user-menu-form">
             {{ csrf_input(request) }}
-            <button type="submit" role="menuitem">Sign out</button>
+            <button type="submit" role="menuitem" class="user-menu-link">
+              <span class="user-menu-link-label">Sign out</span>
+              {{ icons.log_out(css_class="user-menu-icon-svg") }}
+            </button>
           </form>
         </div>
       </div>
@@ -238,27 +220,32 @@
   // script in base.html applies it BEFORE the stylesheet loads to
   // prevent flash-of-wrong-theme. "Auto" removes the explicit
   // override so the CSS media query (prefers-color-scheme) wins.
+  // Click-through cycler: each click advances light → dark → auto → light.
   (function () {
     const root = document.documentElement;
+    const cycler = document.getElementById('theme-cycler');
+    const order = ['light', 'dark', 'auto'];
     function applyTheme(theme) {
       if (theme === 'auto') {
         root.removeAttribute('data-theme');
       } else {
         root.setAttribute('data-theme', theme);
       }
-      document.querySelectorAll('.theme-btn').forEach(function (btn) {
-        const active = btn.dataset.themeSet === theme;
-        btn.classList.toggle('active', active);
-        btn.setAttribute('aria-checked', active ? 'true' : 'false');
+      if (cycler) {
+        // Drives the .theme-cycler-icon-{light,dark,auto} CSS
+        // visibility selectors so only the current mode's icon
+        // shows next to the "Theme" label.
+        cycler.dataset.currentTheme = theme;
+      }
+    }
+    if (cycler) {
+      cycler.addEventListener('click', function () {
+        const current = cycler.dataset.currentTheme || 'auto';
+        const next = order[(order.indexOf(current) + 1) % order.length];
+        try { localStorage.setItem('wobblebot_theme', next); } catch (e) {}
+        applyTheme(next);
       });
     }
-    document.querySelectorAll('.theme-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const theme = btn.dataset.themeSet;
-        try { localStorage.setItem('wobblebot_theme', theme); } catch (e) {}
-        applyTheme(theme);
-      });
-    });
     // Initial: reflect stored preference (or "auto" if none).
     var stored = 'auto';
     try { stored = localStorage.getItem('wobblebot_theme') || 'auto'; } catch (e) {}
