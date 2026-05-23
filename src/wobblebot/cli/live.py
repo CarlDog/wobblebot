@@ -310,6 +310,9 @@ async def _process_pending_commands(
     doesn't starve the others. Returns the number of rows processed.
     """
     approved = await operator_storage.get_pending_commands(status="approved")
+    if not approved:
+        _LOGGER.debug("no approved pending_commands to process")
+        return 0
     for pending in approved:
         try:
             cmd_result = await operator_service.dispatch_command(pending.command)
