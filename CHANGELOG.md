@@ -102,10 +102,10 @@ catalog INDEX so external links stay valid. Pinned OC project
 memory captures the new structure + the "OC + repo layered
 model" pattern.
 
-**Numbers at end of day 6**: 1922 unit tests pass (1907 → 1922,
-+15 from publisher/url + safe_shutdown tests); mypy 110 src files
-clean; pylint 10.00/10; black + isort clean. Real-money cost
-stays at $0.085018 (no live trades this day).
+**Numbers at end of day 6 morning**: 1922 unit tests pass (1907
+→ 1922, +15 from publisher/url + safe_shutdown tests); mypy 110
+src files clean; pylint 10.00/10; black + isort clean. Real-money
+cost stays at $0.085018 (no live trades this day).
 
 **Schedule context.** The operator's move next weekend with
 uncertain internet availability reframes the current soak as a
@@ -113,6 +113,74 @@ pre-cursor; the v1.0-gating soak will restart ~2026-06-01 with the
 new code in place. The bumps and audit shipped today therefore
 land BEFORE the real soak begins, giving them their own soak
 window rather than burning the current one.
+
+**Day 6 afternoon — cycle_matcher fix + Kraken reconciliation
+closed** (`a9f3af1` / `35bc9c4` / `e094a3b` / `a01966c`).
+
+Initial commit `a9f3af1` added a "Today's PnL" header + Recent
+Cycles panel on the status card backed by a new
+`services/cycle_matcher.py` (FIFO BUY→SELL pairing with realized
+per-cycle PnL + `today_realized_pnl` UTC-day filter). Operator-
+driven audit against live.db caught two display bugs and one
+real algorithmic bug:
+
+- **Threshold drift.** The 0.5¢ flat threshold + `%.2f` format
+  was masking real sub-cent PnL: a +$0.0035 day rendered as
+  `Today: $0.00`. Tightened to `$0.0001` threshold + `%.4f` on
+  both the header and the cycle rows so they reconcile by eye.
+- **"cost" column was gross-of-fee.** Recent Fills was showing
+  `Trade.cost` (price × amount) under a column labeled "cost",
+  but the operator's USD ledger actually moves by `cost ± fee`.
+  Column relabeled "net USD" and rendered as `cost + fee` for
+  BUYs / `cost − fee` for SELLs; tooltip exposes the math. Rows
+  now reconcile directly against a Kraken account statement.
+- **cycle_matcher amount-equality pairing** (`35bc9c4`). The
+  matcher was FIFO-cheapest; the engine pairs counter-orders
+  by amount (ADR-006 decision 2: counter sized to filled
+  amount). On live.db that meant the matcher mispaired BUY #2
+  ($76,859.50, amount 0.00013010) with SELL #7 ($76,874.60,
+  amount 0.00013139) producing a fake −$0.0483 loss cycle, when
+  the engine's actual pair was BUY #3 ($76,105.80, amount
+  0.00013139) producing a real +$0.0508 win. Today's PnL was
+  reading +$0.0035 (one win + one fake loss) when engine truth
+  was +$0.1025 (two wins). Fix: amount-equality primary
+  heuristic, FIFO-cheapest fallback for pre-engine / manual
+  fills. 1 new regression test (`test_amount_match_beats_price_fifo`)
+  reproduces the live.db mispairing exactly.
+
+`a01966c` logged a cost-honesty dashboard v1.1 entry in
+`docs/release/v1.1/observability.md` — sketch of a card that
+puts realized PnL side-by-side with all-in operating cost
+(trading fees + LLM API + operator-declared infrastructure)
+so the operator can see "is this thing actually net positive?"
+at a glance. Motivated by the operator's 2011-2012 GPU-mining
+scar where electricity outran mined-coin value; the v1.0
+infrastructure cost is mostly moot at current capital but
+becomes important when scaling or toggling cloud-LLM advisors.
+
+`e094a3b` logged a `cli/reconcile` v1.1 entry in
+`docs/release/v1.1/engine.md` (augmenting the existing
+"Mid-session reconciliation" entry per the standing rule).
+Sibling daemon to cli/maintenance, polls Kraken
+`/0/private/Ledgers` periodically and refid-diffs against
+live.db trades. Provides external ground truth for trade
+reconciliation that the existing `services/reconciler.py` —
+open-orders-only, startup-only per ADR-018 — does not.
+
+**Kraken ledger reconciliation:** operator pulled Kraken Pro
+ledger + portfolio + funding-history; bot's live.db matches
+Kraken within fee precision ($79.92 USD + 0.00026 BTC = $100.36
+total). Funding history: single $100 deposit on 11/22/25, zero
+withdrawals. The $10.54 phantom-BUY gap I claimed earlier in
+the session was 100% my misreading of Kraken's "Available
+balance" (it's USD-equivalent of unreserved assets across both
+USD and BTC, NOT USD-only). Memory pattern captured.
+
+**Numbers at end of day 6 afternoon**: 1941 unit tests pass
+(1922 → 1941, +19 across cycle_matcher regression + the day-6
+morning commits' tests counted at the boundary); mypy 110 src
+files clean; pylint 10.00/10; black + isort clean. Real-money
+cost stays at $0.085018.
 
 ### Stage 8.4.B-D + soak Day 1-3 events (2026-05-18 → 2026-05-20)
 
