@@ -319,10 +319,19 @@ def main() -> int:
     configure_logging(log_format=log_format)
 
     try:
-        return asyncio.run(_main_async(config))
+        rc = asyncio.run(_main_async(config))
     except KeyboardInterrupt:
         _LOGGER.info("KeyboardInterrupt at top level; exiting clean")
-        return 0
+        rc = 0
+    # Force-exit so non-daemon library threads (httpx pool, discord.py
+    # heartbeat, etc.) can't keep the interpreter alive after the
+    # asyncio loop has finished. safe_shutdown in the finally block
+    # already ran the data-integrity cleanups; this just bypasses
+    # Python's wait-for-non-daemon-threads phase. Matches the
+    # 2026-05-23 cli/web hotfix pattern (commit e3a11ce).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
 
 
 if __name__ == "__main__":
