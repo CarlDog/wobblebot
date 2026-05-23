@@ -56,6 +56,7 @@ from wobblebot.cli._common import (
     load_operator_env,
     notify,
     parse_symbol_csv,
+    safe_shutdown,
 )
 from wobblebot.config.cli import LiveConfig
 from wobblebot.config.kraken import KrakenConfig
@@ -642,10 +643,24 @@ async def _main_async(config: WobbleBotConfig) -> int:
             notifier=notifier,
         )
     finally:
-        await adapter.aclose()
-        await storage.close()
+        # NOTE: this is the OUTER finally — resource close after
+        # _run_loop's INNER finally has already done session-end work
+        # (balance fetch, cancel_all_open, session-end log, session-end
+        # notification). The inner finally is intentionally NOT routed
+        # through safe_shutdown because cancel_all_open is the most
+        # safety-critical cleanup in the codebase and is already
+        # hardened with per-step try/except (e2b6cfc, Stage 8.4 hotfix).
+        # Forcing a hard wall-clock cap on it could exit before all
+        # Kraken cancels complete — worse than the original problem.
+        # Resource closes here are safe to timeout-bound because by the
+        # time we reach this point, orders have already been cancelled.
+        phases: list[tuple[str, Any]] = [
+            ("close_kraken_adapter", adapter.aclose),
+            ("close_live_storage", storage.close),
+        ]
         if operator_storage is not None:
-            await operator_storage.close()
+            phases.append(("close_operator_storage", operator_storage.close))
+        await safe_shutdown(phases, logger=_LOGGER)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:
