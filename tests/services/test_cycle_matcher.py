@@ -110,6 +110,52 @@ class TestMatchCyclesHappyPath:
         cycles = match_cycles(trades)
         assert len(cycles) == 1
 
+    def test_amount_match_beats_price_fifo(self) -> None:
+        """Engine pairs counter-orders by amount, not price-FIFO.
+
+        Regression for 2026-05-23 reconciliation: a SELL straddled by
+        two cheaper BUYs must pair with the BUY whose amount matches
+        (the engine's actual counter), not the older cheaper BUY by
+        FIFO. Without amount-match the dashboard fabricates a fake
+        loss cycle out of a real winning one.
+        """
+        base = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+        trades = [
+            # BUY #2 — cheaper than the SELL but only by $15; the
+            # engine's counter for this would be ~$77,628, not $76,874.
+            _trade(
+                side="buy",
+                price="76859.50",
+                amount="0.00013010",
+                when=base + timedelta(minutes=0),
+            ),
+            # BUY #3 — much cheaper AND its amount matches the SELL.
+            # This is the engine's actual pair.
+            _trade(
+                side="buy",
+                price="76105.80",
+                amount="0.00013139",
+                when=base + timedelta(minutes=30),
+            ),
+            # SELL with BUY #3's amount.
+            _trade(
+                side="sell",
+                price="76874.60",
+                amount="0.00013139",
+                when=base + timedelta(hours=2),
+            ),
+        ]
+        cycles = match_cycles(trades)
+        assert len(cycles) == 1
+        c = cycles[0]
+        # Must pair with BUY #3 (price 76105.80), NOT BUY #2 (76859.50).
+        assert c.buy_price.amount == Decimal("76105.80"), (
+            f"Expected pair with BUY #3 @ 76105.80, got BUY @ {c.buy_price.amount} "
+            "(FIFO-cheapest regression — matcher must amount-match first)"
+        )
+        # And the cycle must be a win, not a fake loss.
+        assert c.net_pnl > 0, f"Engine cycle should be profitable; got {c.net_pnl}"
+
 
 class TestMatchCyclesEdgeCases:
     def test_orphan_sell_dropped(self) -> None:

@@ -51,22 +51,26 @@
            card-title row. Color + arrow follow the same green ▲ /
            red ▼ vocabulary as the price-trend arrows on the
            per-symbol headers. #}
+        {# %.4f + 1/100¢ threshold: cycles trade ~$0.0001–$0.20 NET,
+           so 2dp rounding hides real signal (a $0.0035 day reads
+           "$0.00"). Threshold stays nonzero so exact zero still
+           renders flat. #}
         {% if snapshot.today_realized_pnl is not none %}
           {% set pnl = snapshot.today_realized_pnl %}
-          {% if pnl > 0.005 %}
+          {% if pnl > 0.0001 %}
             <span class="today-pnl today-pnl-positive"
                   title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: +${{ "%.2f"|format(pnl) }} <span aria-hidden="true">▲</span>
+              Today: +${{ "%.4f"|format(pnl) }} <span aria-hidden="true">▲</span>
             </span>
-          {% elif pnl < -0.005 %}
+          {% elif pnl < -0.0001 %}
             <span class="today-pnl today-pnl-negative"
                   title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: -${{ "%.2f"|format(-pnl) }} <span aria-hidden="true">▼</span>
+              Today: -${{ "%.4f"|format(-pnl) }} <span aria-hidden="true">▼</span>
             </span>
           {% else %}
             <span class="today-pnl today-pnl-flat"
                   title="Realized PnL today (within rounding noise)">
-              Today: $0.00
+              Today: $0.0000
             </span>
           {% endif %}
         {% endif %}
@@ -209,18 +213,29 @@
               <th class="center">side</th>
               <th class="num">price</th>
               <th class="num">amount</th>
-              <th class="num">cost</th>
+              <th class="num" title="Net USD movement = price × amount ± fee (BUY: cost + fee outflow; SELL: cost − fee inflow)">net USD</th>
             </tr>
           </thead>
           <tbody>
             {% for t in snapshot.recent_trades %}
+              {# Trade.cost is gross (price × amount). The operator's
+                 USD ledger moves by cost ± fee; render that so a row
+                 reconciles against a Kraken statement directly. #}
+              {% if t.side.value == 'buy' %}
+                {% set net_usd = t.cost + t.fee %}
+              {% else %}
+                {% set net_usd = t.cost - t.fee %}
+              {% endif %}
               <tr>
                 <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
                 <td class="center">{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
                 <td class="center"><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
                 <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>
                 <td class="num">{{ "%.8f"|format(t.amount.value) }}</td>
-                <td class="num">{% if t.side.value == 'buy' %}<span class="value-buy">▼</span>{% else %}<span class="value-sell">▲</span>{% endif %} ${{ "%.2f"|format(t.cost) }}</td>
+                <td class="num"
+                    title="gross ${{ '%.4f'|format(t.cost) }} {% if t.side.value == 'buy' %}+{% else %}−{% endif %} fee ${{ '%.4f'|format(t.fee) }}">
+                  {% if t.side.value == 'buy' %}<span class="value-buy">▼</span>{% else %}<span class="value-sell">▲</span>{% endif %} ${{ "%.4f"|format(net_usd) }}
+                </td>
               </tr>
             {% endfor %}
           </tbody>
@@ -264,13 +279,13 @@
                 <td class="num">${{ "%.2f"|format(c.sell_price.amount) }}</td>
                 <td class="num">{{ "%.8f"|format(c.amount.value) }}</td>
                 <td class="num"
-                    title="(${{ '%.2f'|format(c.sell_price.amount - c.buy_price.amount) }} spread × {{ '%.8f'|format(c.amount.value) }}) − ${{ '%.2f'|format(c.buy_fee + c.sell_fee) }} fees">
-                  {% if c.net_pnl > 0.005 %}
-                    <span class="cycle-pnl-positive">+${{ "%.2f"|format(c.net_pnl) }} <span aria-hidden="true">▲</span></span>
-                  {% elif c.net_pnl < -0.005 %}
-                    <span class="cycle-pnl-negative">-${{ "%.2f"|format(-c.net_pnl) }} <span aria-hidden="true">▼</span></span>
+                    title="(${{ '%.2f'|format(c.sell_price.amount - c.buy_price.amount) }} spread × {{ '%.8f'|format(c.amount.value) }}) − ${{ '%.4f'|format(c.buy_fee + c.sell_fee) }} fees">
+                  {% if c.net_pnl > 0.0001 %}
+                    <span class="cycle-pnl-positive">+${{ "%.4f"|format(c.net_pnl) }} <span aria-hidden="true">▲</span></span>
+                  {% elif c.net_pnl < -0.0001 %}
+                    <span class="cycle-pnl-negative">-${{ "%.4f"|format(-c.net_pnl) }} <span aria-hidden="true">▼</span></span>
                   {% else %}
-                    <span class="cycle-pnl-flat">$0.00</span>
+                    <span class="cycle-pnl-flat">$0.0000</span>
                   {% endif %}
                 </td>
               </tr>

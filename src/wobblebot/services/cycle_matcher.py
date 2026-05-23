@@ -81,7 +81,22 @@ class RecentCycle:  # pylint: disable=too-many-instance-attributes
 
 
 def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
-    """FIFO-pair BUY→SELL trades into completed cycles.
+    """Pair BUY→SELL trades into completed cycles by counter-amount.
+
+    The engine sizes every counter-order to the filled amount of its
+    triggering trade (ADR-006 decision 2), so a counter-SELL's amount
+    exactly equals the BUY it was placed against. We exploit that
+    invariant: pair each SELL with the oldest unmatched BUY of the
+    SAME amount that's also cheaper. Falling back to "oldest cheaper"
+    when no amount match exists handles pre-engine trades and edge
+    cases (manual operator fills, partial-fill drift).
+
+    The earlier FIFO-by-price algorithm produced wrong cycles whenever
+    two BUYs straddled a SELL — it would pair the cheapest available
+    BUY by time, but the engine had actually paired the SELL with the
+    BUY whose price + spacing matched. Amount-matching closes that gap
+    because the engine's sizing invariant uniquely identifies the
+    counter pair.
 
     Trades may arrive in any order; the matcher sorts internally.
     Returned cycles are ordered newest-first (by sell_executed_at,
@@ -106,14 +121,24 @@ def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
         if trade.side == "buy":
             pending_buys.setdefault(trade.symbol, []).append(trade)
             continue
-        # It's a SELL. Find the oldest cheaper unmatched BUY for
-        # this symbol.
+        # It's a SELL. Primary heuristic: oldest unmatched BUY with
+        # the SAME executed amount AND a cheaper price (the engine's
+        # actual counter pair). Fallback: oldest cheaper BUY of any
+        # amount (catches pre-engine SELLs and manual fills).
         buys = pending_buys.get(trade.symbol, [])
         matched_buy: Trade | None = None
         for candidate in buys:
-            if candidate.price.amount < trade.price.amount:
+            if (
+                candidate.amount.value == trade.amount.value
+                and candidate.price.amount < trade.price.amount
+            ):
                 matched_buy = candidate
                 break
+        if matched_buy is None:
+            for candidate in buys:
+                if candidate.price.amount < trade.price.amount:
+                    matched_buy = candidate
+                    break
         if matched_buy is None:
             # Orphan SELL: no cheaper BUY in the observed window.
             # Most common cause is selling pre-existing inventory
