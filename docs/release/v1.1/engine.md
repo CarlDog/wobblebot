@@ -255,6 +255,60 @@ restart AND drift accumulates between Kraken and storage in ways
 startup-only doesn't catch. Soak window is the first place this
 would surface.
 
+### `cli/reconcile` background worker — ledger-level diff
+
+**What:** a new always-on daemon (sibling to cli/maintenance)
+that periodically pulls Kraken's `/0/private/Ledgers` endpoint
+and diffs every wallet movement against live.db's `trades` rows
+by `refid` / `exchange_id`. Writes findings (missing-on-either-
+side, amount drift > fee precision, unknown refids) to a new
+`reconciliation_findings` table in operator.db, surfaced on the
+web /audit page.
+
+**Why this is distinct from the existing reconciler:**
+`services/reconciler.py` reconciles **open orders only**, at
+startup. It does not see closed-trade history. If Kraken executes
+a fill that the bot's websocket / poll misses (e.g., transient
+network loss during a fill notification), live.db diverges from
+ground truth and there's currently no detector. Soak day 6
+surfaced this concern when a USD-vs-BTC split looked off; the
+gap turned out to be a display interpretation bug not a real
+divergence, but the audit revealed we have no external-truth
+ground for trades.
+
+**Why deferred to v1.1:** v1.0 has no reported case of an
+undetected fill divergence. The 2026-05-23 soak audit was a
+false-alarm — the bot's ledger matched Kraken's `/Ledgers`
+within fee precision once Kraken's "Available balance" was
+correctly decomposed (USD-equivalent of unreserved assets, not
+USD-only). Adding a daemon for a hypothetical drift the soak
+hasn't actually shown is over-investment pre-v1.0.
+
+**Sketch:** new `cli/reconcile` follows the cli/maintenance
+pattern — `run_poll_loop` over a 1-hour cadence by default,
+`KrakenAdapter.get_ledger(since=last_known_refid)` (new ~30
+lines wrapping `/0/private/Ledgers`), diff against
+`storage.get_trades(since=...)`, write findings.
+`ReconciliationConfig` with `target_dbs`, `cadence_seconds`,
+`finding_db`. Honors the same `safe_shutdown` pattern as the
+other daemons.
+
+**Why a separate daemon rather than extending the existing
+reconciler:** ADR-018's startup-only invariant is load-bearing
+for the open-order path (it races the engine's own placements).
+A ledger-level checker is read-only against history and can't
+race anything, so it's safe to run continuously and benefits
+from its own cadence + own audit log.
+
+**Companion fix that lands in v1.0:** the cycle_matcher was
+mispairing BUYs and SELLs by FIFO-cheapest rather than by
+counter-amount equality; this caused Today's PnL to read
++$0.0035 when the engine's actual realized cycles netted
++$0.10. Fixed 2026-05-23 by switching the matcher's primary
+heuristic to amount-equality (engine's ADR-006 decision 2
+invariant) with FIFO-cheapest as a fallback for pre-engine /
+manual fills.
+
 ### Graceful-shutdown timeout for daemons (`cli/web` et al.) — ✅ shipped in v1.0 (2026-05-23)
 
 **Status:** ✅ Promoted to v1.0 and shipped 2026-05-23. The entry
