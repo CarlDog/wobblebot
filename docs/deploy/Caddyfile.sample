@@ -1,0 +1,82 @@
+# WobbleBot — sample Caddyfile (HTTPS reverse proxy for cli/web)
+#
+# Caddy auto-provisions LetsEncrypt certificates and renews them.
+# Pick ONE of the three blocks below depending on how you reach
+# cli/web; delete the other two. The blocks are commented out so
+# the file is safe to copy as-is.
+#
+# In all three cases, cli/web stays bound to 127.0.0.1:8000
+# (its default). Caddy listens publicly + reverse-proxies to
+# the loopback address. Operators do NOT need to expose
+# cli/web's port to anything except Caddy.
+
+# --------------------------------------------------------------- #
+# Option A: Public domain (LetsEncrypt auto-cert)                #
+# --------------------------------------------------------------- #
+# Use when: you have a domain pointed at this host's public IP
+# (e.g. wobblebot.your-domain.com via Cloudflare DNS A-record).
+# Caddy will auto-provision a real cert via LetsEncrypt's HTTP-01
+# challenge. Requires inbound port 80 + 443 reachable from the
+# public internet for the cert renewal.
+#
+# Trade-off: anyone on the internet can REACH the login page
+# (rate-limited + bcrypt-hashed, but still an attack surface).
+# Pair with operator IP allowlist via the firewall, OR use the
+# Tailscale option below instead.
+#
+# wobblebot.your-domain.com {
+#     reverse_proxy 127.0.0.1:8000
+#
+#     # Recommended security headers for any web app handling
+#     # operator-only credentials. HSTS pins HTTPS for a year;
+#     # the others are belt-and-suspenders defaults.
+#     header {
+#         Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#         X-Content-Type-Options nosniff
+#         X-Frame-Options DENY
+#         Referrer-Policy strict-origin-when-cross-origin
+#     }
+# }
+
+
+# --------------------------------------------------------------- #
+# Option B: LAN-only (Caddy local CA, no public exposure)        #
+# --------------------------------------------------------------- #
+# Use when: you want HTTPS for LAN clients (your phone, a tablet,
+# a second laptop) without exposing cli/web to the public
+# internet. Caddy's internal CA mints a cert for the LAN IP or
+# `.local` hostname. Browsers will warn on first visit until you
+# trust Caddy's root CA on each client device (Caddy outputs
+# instructions on first launch).
+#
+# Replace `192.168.1.42` with your host's actual LAN IP, or use
+# a `.local` mDNS hostname if your network supports it.
+#
+# https://192.168.1.42 {
+#     tls internal
+#     reverse_proxy 127.0.0.1:8000
+# }
+
+
+# --------------------------------------------------------------- #
+# Option C: Tailscale Serve / Funnel (recommended for solo ops)  #
+# --------------------------------------------------------------- #
+# Use when: you want remote access without managing certs or
+# opening firewall ports. Tailscale provides a free MagicDNS
+# hostname (e.g. wobblebot.your-tailnet.ts.net) + auto-cert via
+# its built-in ACME integration.
+#
+# **No Caddy needed for this option** — Tailscale serves the
+# reverse proxy itself. Use Tailscale's CLI directly:
+#
+#     # One-shot: expose cli/web on https://wobblebot.<tailnet>.ts.net
+#     tailscale serve --https=443 --set-path=/ http://localhost:8000
+#
+# That's it. Tailscale handles cert + DNS. Only devices on your
+# tailnet can reach cli/web. For broader access (still
+# authenticated end-to-end by tailnet membership), use
+# `tailscale funnel` instead of `tailscale serve`.
+#
+# Trade-off: locks you into Tailscale's account model. No
+# self-hosted DNS; can't pre-share cert with non-Tailscale
+# clients.

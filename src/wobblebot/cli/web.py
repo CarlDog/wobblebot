@@ -282,6 +282,18 @@ async def _serve_async(config: WobbleBotConfig) -> int:
             "url": f"http://{config.web.bind_host}:{config.web.bind_port}",
         },
     )
+    # ADR-016 binds to 127.0.0.1 by default. Operators who change
+    # this to 0.0.0.0 (LAN exposure) or any non-loopback address
+    # need an HTTPS-terminating reverse proxy in front — the
+    # login form + session cookie + trade-control buttons should
+    # never traverse a network in cleartext. Warn loudly so the
+    # exposure isn't accidental.
+    if config.web.bind_host not in ("127.0.0.1", "localhost", "::1"):
+        _LOGGER.warning(
+            "cli/web bound to non-loopback address; HTTPS reverse proxy "
+            "strongly recommended (see docs/deploy/reverse-proxy.md)",
+            extra={"bind_host": config.web.bind_host},
+        )
     try:
         await server.serve()
     finally:
