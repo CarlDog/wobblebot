@@ -879,9 +879,13 @@ table.data.compact td {
    on hover (same #4dd0e1 used by .app-footer-link:hover), and a tiny
    1px,-1px translate to give the "opens elsewhere" semantic an
    extra kinetic signal. ``:visited`` matches default so purple-
-   history doesn't appear. */
+   history doesn't appear. Uses inline-flex so the inline SVG icon
+   vertically centers cleanly inside the pill padding. */
 .news-link-badge,
 .news-link-badge:visited {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-decoration: none;
   cursor: pointer;
   transition: color 120ms ease, transform 120ms ease;
@@ -891,6 +895,15 @@ table.data.compact td {
 .news-link-badge:focus-visible {
   color: #4dd0e1;
   transform: translate(1px, -1px);
+}
+
+/* Lucide external-link icon used inside .news-link-badge. Sized to
+   match the .tag pill's ~12px text height; stroke inherits via
+   currentColor so the hover transition just works. */
+.news-link-icon-svg {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 
 .card-subtitle {

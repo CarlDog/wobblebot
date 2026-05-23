@@ -70,7 +70,24 @@
                   <a class="tag news-link-badge" href="{{ item.url }}"
                      target="_blank" rel="noopener noreferrer"
                      title="Open article in new tab"
-                     aria-label="Open article">↗</a>
+                     aria-label="Open article">
+                    {# Lucide "external-link" icon (MIT). Inline so it
+                       inherits currentColor for the hover transition;
+                       no extra HTTP request. Attribution in NOTICE.md. #}
+                    <svg class="news-link-icon-svg"
+                         viewBox="0 0 24 24"
+                         fill="none"
+                         stroke="currentColor"
+                         stroke-width="2"
+                         stroke-linecap="round"
+                         stroke-linejoin="round"
+                         aria-hidden="true"
+                         focusable="false">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                      <polyline points="15 3 21 3 21 9"/>
+                      <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                  </a>
                 {% endif %}
               </td>
               <td>

@@ -60,6 +60,15 @@ makes zero per-page external requests.
   the maintainer's own image. Forks should replace it with their
   own.
 
+- **Lucide icon path data (inline SVG in `news.html`).** The
+  ``external-link`` icon (rendered next to news headlines when a
+  source URL is present) uses the path data from
+  [Lucide](https://lucide.dev), an MIT-licensed icon set. The SVG
+  is inlined in the template rather than bundled as a file —
+  attribution preserved here per MIT license terms. If more icons
+  are added in the future, consider shipping a single
+  ``static/icons.svg`` sprite with one shared attribution block.
+
 ## WobbleBot brand mark
 
 The WobbleBot squircle icon (`wobblebot-icon-{256,512,1024}.png`),
