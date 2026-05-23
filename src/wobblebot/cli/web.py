@@ -48,6 +48,7 @@ from wobblebot.cli._common import (
     collect_overrides,
     identity,
     load_operator_env,
+    safe_shutdown,
 )
 from wobblebot.config.cli import WebConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -258,6 +259,13 @@ async def _serve_async(config: WobbleBotConfig) -> int:
         port=config.web.bind_port,
         log_config=None,  # let our configure_logging stand
         access_log=False,
+        # Cap uvicorn's own "wait for in-flight requests" at 5s. Without
+        # this, a long-polling client or a stuck background task can
+        # hold ``server.serve()`` past SIGINT for minutes; the soak's
+        # Day-3 cli/web 3-minute hang pattern was exactly this. Combined
+        # with safe_shutdown(timeout_seconds=10) on the post-serve
+        # cleanup, total worst-case shutdown is ~15s.
+        timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(uv_config)
     # Startup banner so operators see the daemon is alive. uvicorn's
@@ -277,12 +285,13 @@ async def _serve_async(config: WobbleBotConfig) -> int:
     try:
         await server.serve()
     finally:
-        await _close_storages(adapters)
-        try:
-            await kraken_http.aclose()
-        except (httpx.HTTPError, OSError):
-            # Best-effort cleanup; shutdown is happening regardless.
-            pass
+        await safe_shutdown(
+            [
+                ("close_web_storages", lambda: _close_storages(adapters)),
+                ("close_kraken_http", kraken_http.aclose),
+            ],
+            logger=_LOGGER,
+        )
     return 0
 
 
