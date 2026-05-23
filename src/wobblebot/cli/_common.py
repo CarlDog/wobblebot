@@ -34,7 +34,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Callable
+import os
+import sys
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
@@ -50,6 +52,15 @@ T = TypeVar("T")
 
 _NOTIFY_LOGGER = logging.getLogger("wobblebot.cli.notify")
 _HEARTBEAT_LOGGER = logging.getLogger("wobblebot.cli.heartbeat")
+_SHUTDOWN_LOGGER = logging.getLogger("wobblebot.cli.shutdown")
+
+ShutdownPhase = tuple[str, Callable[[], Awaitable[None]]]
+"""(phase_name, async_callable) pair consumed by ``safe_shutdown``.
+
+``phase_name`` appears verbatim in the shutdown-hang WARNING log so the
+operator can immediately see WHICH cleanup hung. Names should be short,
+underscore-cased, and stable across releases.
+"""
 
 
 def load_operator_env() -> None:
@@ -246,3 +257,70 @@ async def run_poll_loop(
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
         except asyncio.TimeoutError:
             pass
+
+
+async def safe_shutdown(
+    cleanups: list[ShutdownPhase],
+    *,
+    timeout_seconds: float = 10.0,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Run a list of cleanup phases with a wall-clock timeout escape valve.
+
+    Each cleanup is a ``(phase_name, async_callable)`` tuple. Phases run
+    sequentially in list order. If the whole sequence doesn't complete
+    within ``timeout_seconds``, the helper logs a WARNING naming the
+    in-progress phase, flushes stdio, and calls ``os._exit(1)`` to
+    release the terminal. This is the escape valve for cleanup steps
+    that hang on stuck file descriptors / sockets — ``asyncio.wait_for``
+    tries to cancel the inner task but cancellation alone doesn't
+    unblock a stuck ``close()``. ``os._exit`` does.
+
+    Per-phase exceptions are logged at WARNING and swallowed; subsequent
+    phases still run. This matches the existing "best-effort cleanup"
+    contract in each daemon's finally block (e.g. ``cli/web``'s
+    ``_close_storages`` swallows ``StorageError``).
+
+    The current phase is tracked via a single-element list (atomic read
+    from the outer scope) so the timeout's WARNING accurately names
+    whichever phase was in flight when the deadline fired.
+
+    Args:
+        cleanups: Phases to run in order. Each callable is invoked with
+            no arguments and awaited. Empty list is a no-op.
+        timeout_seconds: Wall-clock cap on the whole sequence. Default
+            10s; matches the v1.1.A proposal.
+        logger: Logger for both per-phase exception logs and the
+            timeout WARNING. Falls back to the shared shutdown logger
+            if not provided so callers can stay one-line.
+
+    Returns normally on success. **Does not return** on timeout —
+    calls ``os._exit(1)`` directly.
+    """
+    log = logger or _SHUTDOWN_LOGGER
+    current_phase: list[str] = ["init"]
+
+    async def _run_all() -> None:
+        for name, cleanup in cleanups:
+            current_phase[0] = name
+            try:
+                await cleanup()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                log.warning(
+                    "shutdown phase raised; continuing",
+                    extra={"phase": name, "error": str(exc)},
+                )
+        current_phase[0] = "done"
+
+    try:
+        await asyncio.wait_for(_run_all(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        log.warning(
+            "shutdown hung beyond timeout; forcing exit",
+            extra={"phase": current_phase[0], "timeout_seconds": timeout_seconds},
+        )
+        # Flush stdio so the WARNING actually reaches the operator's
+        # terminal before _exit bypasses normal shutdown.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
