@@ -53,6 +53,7 @@ from wobblebot.cli._common import (
     emit_heartbeat,
     load_operator_env,
     run_poll_loop,
+    safe_shutdown,
 )
 from wobblebot.config.cli import MaintenanceConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -306,11 +307,10 @@ async def _main_async(config: WobbleBotConfig) -> int:
         )
     finally:
         if operator_storage is not None:
-            try:
-                await operator_storage.close()
-            except StorageError:
-                # Best-effort cleanup; shutdown is happening regardless.
-                pass
+            await safe_shutdown(
+                [("close_operator_storage", operator_storage.close)],
+                logger=_LOGGER,
+            )
         _LOGGER.info(
             "maintenance session end",
             extra={
