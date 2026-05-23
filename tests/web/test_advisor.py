@@ -155,7 +155,7 @@ class TestAdvisorRoute:
             assert "spacing_percentage" in resp.text
             assert "phi4:14b" in resp.text
             # No experts → opinions section not rendered
-            assert "Per-expert opinions" not in resp.text
+            assert "Per-Expert Opinions" not in resp.text
 
     @pytest.mark.asyncio
     async def test_renders_moe_suggestion_with_experts(
@@ -171,7 +171,7 @@ class TestAdvisorRoute:
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "ETH/USD" in resp.text
-            assert "Per-expert opinions" in resp.text
+            assert "Per-Expert Opinions" in resp.text
             assert "quant" in resp.text
             assert "risk" in resp.text
 

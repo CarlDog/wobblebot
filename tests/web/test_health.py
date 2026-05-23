@@ -203,7 +203,7 @@ class TestHealthPage:
         _login(client_with_probe)
         resp = client_with_probe.get("/health")
         assert resp.status_code == 200
-        assert "Application health" in resp.text
+        assert "Application Health" in resp.text
 
     def test_kraken_online_renders_green(self, client_with_probe: TestClient) -> None:
         _login(client_with_probe)

@@ -113,7 +113,7 @@ class TestAuditRoute:
             assert "awaiting_confirmation" in resp.text
             # Stage 8.4.E soak Day 4 — display caps + total count
             # appended after the displayed count.
-            assert "Pending commands (2 of 2)" in resp.text
+            assert "Pending Commands (2 of 2)" in resp.text
 
     @pytest.mark.asyncio
     async def test_renders_notifications_with_forwarded_state(

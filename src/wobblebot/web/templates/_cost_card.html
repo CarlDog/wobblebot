@@ -6,7 +6,7 @@
 <div id="cost-card">
   <div class="card">
     <div class="card-header">
-      <div class="card-title">LLM cost — last 24h</div>
+      <div class="card-title">LLM Cost — Last 24h</div>
       <div class="card-meta">
         {{ snapshot.call_count_24h }} calls ·
         refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
@@ -51,7 +51,7 @@
   {# Stage 8.4 follow-up: Kraken trading fees from live.db trades.fee. #}
   <div class="card">
     <div class="card-header">
-      <div class="card-title">Kraken trading fees</div>
+      <div class="card-title">Kraken Trading Fees</div>
       <div class="card-meta">
         {% if fees_snapshot.live_wired %}
           {{ fees_snapshot.trade_count_all_time }} total trades

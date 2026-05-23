@@ -160,7 +160,7 @@ class TestDashboardRoute:
             # aggregate "Open orders (N)" subtitle from the previous
             # layout is gone with the restructure.
             assert "BTC/USD" in resp.text
-            assert "Recent fills (last 1)" in resp.text
+            assert "Recent Fills (Last 1)" in resp.text
 
 
 # --------------------------------------------------------------------- #

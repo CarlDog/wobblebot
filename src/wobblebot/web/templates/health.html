@@ -4,7 +4,7 @@
 {% block title %}Health — WobbleBot{% endblock %}
 
 {% block content %}
-<h1>Application health</h1>
+<h1>Application Health</h1>
 
 <div class="health-overall health-overall-{{ snapshot.overall.value }}">
   <span class="health-dot health-dot-{{ snapshot.overall.value }}"
@@ -25,7 +25,7 @@
 
 <div class="card">
   <div class="card-header">
-    <div class="card-title">Upstream services</div>
+    <div class="card-title">Upstream Services</div>
   </div>
   {% if snapshot.kraken is none %}
     <p class="placeholder">Kraken health probe is not configured.</p>
