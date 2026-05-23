@@ -873,26 +873,34 @@ table.data.compact td {
   font-style: italic;
 }
 
-/* Headline → article link. Browser-default blue is aggressive against
-   the dark theme; this rule keeps the headline reading at the same
-   weight as a plain headline (body text color + subtle muted underline)
-   and uses the WobbleBot brand accent (the same teal used by
-   .app-footer-link:hover) only on hover/focus. ``:visited`` matches
-   default so purple-history doesn't appear. */
-.news-link,
-.news-link:visited {
-  color: var(--text-primary);
-  text-decoration: underline;
-  text-decoration-color: var(--text-muted);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-  transition: color 120ms ease, text-decoration-color 120ms ease;
+/* Dedicated "link" column on /news. Narrow column whose only job is
+   to carry the article-link glyph for rows that have a URL. Empty cell
+   reads cleanly when the item has no URL (legacy rows pre-2026-05-23
+   migration, or feeds that omit it). Right-aligned so the glyph
+   anchors against the column edge, keeping headlines visually aligned. */
+.news-link-col {
+  width: 36px;
+  text-align: center;
 }
 
-.news-link:hover,
-.news-link:focus-visible {
+/* Article-link glyph (↗). Muted by default to read as secondary
+   metadata; brightens to the WobbleBot brand teal (same color as
+   .app-footer-link:hover) on hover/focus. ``:visited`` matches default
+   so a purple-history glyph doesn't appear. */
+.news-link-icon,
+.news-link-icon:visited {
+  display: inline-block;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 16px;
+  line-height: 1;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.news-link-icon:hover,
+.news-link-icon:focus-visible {
   color: #4dd0e1;
-  text-decoration-color: currentColor;
+  transform: translate(1px, -1px);
 }
 
 .card-subtitle {

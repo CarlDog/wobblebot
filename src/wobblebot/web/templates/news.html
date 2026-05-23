@@ -48,6 +48,7 @@
             <th>published (UTC)</th>
             <th>source</th>
             <th>headline</th>
+            <th class="news-link-col">link</th>
             <th>coins</th>
           </tr>
         </thead>
@@ -61,11 +62,13 @@
                   <span class="news-publisher">{{ item.publisher }}</span>
                 {% endif %}
               </td>
-              <td>
+              <td>{{ item.headline }}</td>
+              <td class="news-link-col">
                 {% if item.url %}
-                  <a class="news-link" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.headline }}</a>
-                {% else %}
-                  {{ item.headline }}
+                  <a class="news-link-icon" href="{{ item.url }}"
+                     target="_blank" rel="noopener noreferrer"
+                     title="Open article in new tab"
+                     aria-label="Open article">↗</a>
                 {% endif %}
               </td>
               <td>
