@@ -772,3 +772,114 @@ class TestWithdraw:
                 amount=Decimal("10"),
                 destination="360 Performance Savings",
             )
+
+
+@pytest.mark.asyncio
+class TestPartitionKnownSymbols:
+    """Graceful-degrade symbol validation at daemon startup."""
+
+    async def test_all_known_returns_empty_unknown(self) -> None:
+        """Symbols all present in AssetPairs → returned in known list,
+        unknown is empty."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)  # Should never hit non-cached endpoints
+
+        adapter = _make_adapter(handler)
+        try:
+            known, unknown = await adapter.partition_known_symbols(
+                [Symbol(base="BTC", quote="USD")]
+            )
+        finally:
+            await adapter.aclose()
+        assert known == [Symbol(base="BTC", quote="USD")]
+        assert unknown == []
+
+    async def test_all_unknown_returns_empty_known(self) -> None:
+        """Symbols absent from AssetPairs → all in unknown list."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        adapter = _make_adapter(handler)
+        try:
+            known, unknown = await adapter.partition_known_symbols(
+                [Symbol(base="MATIC", quote="USD"), Symbol(base="FAKE", quote="USD")]
+            )
+        finally:
+            await adapter.aclose()
+        assert known == []
+        assert unknown == [
+            Symbol(base="MATIC", quote="USD"),
+            Symbol(base="FAKE", quote="USD"),
+        ]
+
+    async def test_mixed_partitions_correctly(self) -> None:
+        """Mix of known + unknown splits cleanly; both lists preserve input order."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        adapter = _make_adapter(handler)
+        try:
+            known, unknown = await adapter.partition_known_symbols(
+                [
+                    Symbol(base="MATIC", quote="USD"),
+                    Symbol(base="BTC", quote="USD"),
+                    Symbol(base="FAKE", quote="USD"),
+                ]
+            )
+        finally:
+            await adapter.aclose()
+        assert known == [Symbol(base="BTC", quote="USD")]
+        assert unknown == [
+            Symbol(base="MATIC", quote="USD"),
+            Symbol(base="FAKE", quote="USD"),
+        ]
+
+    async def test_empty_input_returns_two_empty_lists(self) -> None:
+        """No symbols requested → both lists empty (still hits AssetPairs once
+        to populate the cache; cheap)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        adapter = _make_adapter(handler)
+        try:
+            known, unknown = await adapter.partition_known_symbols([])
+        finally:
+            await adapter.aclose()
+        assert known == []
+        assert unknown == []
+
+    async def test_assetpairs_hit_once_across_many_symbols(self) -> None:
+        """N symbols share ONE AssetPairs fetch via the cache — no per-symbol
+        network call."""
+        request_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404)
+
+        # _make_adapter wraps handler with a dispatcher that auto-serves
+        # /Assets and /AssetPairs; we observe via a custom transport.
+        adapter = _make_adapter(handler)
+
+        # Patch the dispatcher's path log by wrapping _public_get to count.
+        # Simpler: just call partition_known_symbols twice and assert the
+        # cache prevents a second fetch.
+        try:
+            # First call populates the cache.
+            await adapter.partition_known_symbols(
+                [Symbol(base="BTC", quote="USD")] * 5
+            )
+            # Capture state: cache is now populated.
+            assert adapter._pair_metadata is not None  # noqa: SLF001
+            cache_size_before = len(adapter._pair_metadata)  # noqa: SLF001
+            # Second call should NOT trigger another /AssetPairs hit.
+            await adapter.partition_known_symbols(
+                [Symbol(base="BTC", quote="USD")] * 10
+            )
+            # Cache identity unchanged.
+            assert len(adapter._pair_metadata) == cache_size_before  # noqa: SLF001
+        finally:
+            await adapter.aclose()

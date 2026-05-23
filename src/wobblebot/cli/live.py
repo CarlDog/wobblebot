@@ -579,6 +579,29 @@ async def _main_async(config: WobbleBotConfig) -> int:
     storage = SQLiteStorageAdapter(config.live.db)
     await storage.connect()
     adapter = KrakenAdapter(config=kraken_config)
+
+    # Graceful-degrade against Kraken's pair list. WARN on unknown;
+    # exit only if EVERY symbol is bad. Per-tick fault isolation
+    # absorbs subsequent failures; the operator updates the config
+    # and restarts to silence them.
+    try:
+        _known_live, unknown_live = await adapter.partition_known_symbols(config.live.symbols)
+    except WobbleBotPortError as exc:
+        _LOGGER.error("Kraken AssetPairs fetch failed at startup", extra={"error": str(exc)})
+        await adapter.aclose()
+        await storage.close()
+        return 2
+    if unknown_live:
+        _LOGGER.warning(
+            "Kraken does not list these symbols; per-tick polls will fail",
+            extra={"unknown": [str(s) for s in unknown_live]},
+        )
+    if not _known_live:
+        _LOGGER.error("no tradeable Kraken symbols remain; exiting")
+        await adapter.aclose()
+        await storage.close()
+        return 2
+
     engine = GridEngine(adapter, storage, config.grid, config.safety)
 
     # Stage 5.4: optional operator-interaction wiring. When operator_db

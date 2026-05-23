@@ -43,6 +43,7 @@ import urllib.parse
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
+from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
@@ -153,6 +154,42 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         """
         if self._owns_client:
             await self._http.aclose()
+
+    # ------------------------------------------------ Startup validation
+
+    async def partition_known_symbols(
+        self, symbols: Iterable[Symbol]
+    ) -> tuple[list[Symbol], list[Symbol]]:
+        """Split ``symbols`` into (known, unknown) against Kraken's pairs.
+
+        Hits ``/0/public/AssetPairs`` once via the shared pair-metadata
+        cache, then resolves each requested symbol via the same lookup
+        the trading path uses (altname first, then base/quote fallback).
+        Returns two ordered lists preserving the caller's input order:
+        ``known`` (tradeable on Kraken right now) and ``unknown``
+        (missing or delisted).
+
+        Call at daemon startup to graceful-degrade on a partially-bad
+        symbol list. The original "refuse-to-start" design was rejected
+        as too aggressive — losing 1 of 12 symbols shouldn't sideline
+        the other 11. The daemon's policy is:
+          - all symbols known → proceed normally
+          - some unknown → log WARNING listing the bad ones, drop them,
+            proceed with the known subset
+          - none known → refuse to start (no work to do)
+        This caught the MATIC/USD → POL/USD post-Polygon-migration
+        drift during soak Day 6.
+        """
+        await self._ensure_pair_metadata()
+        known: list[Symbol] = []
+        unknown: list[Symbol] = []
+        for symbol in symbols:
+            try:
+                self._pair_metadata_for(symbol)
+                known.append(symbol)
+            except ExchangeError:
+                unknown.append(symbol)
+        return known, unknown
 
     # ------------------------------------------------ ExchangePort: read paths
 

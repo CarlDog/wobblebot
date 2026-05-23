@@ -199,6 +199,29 @@ async def _main_async(config: WobbleBotConfig) -> int:
     await storage.connect()
     adapter = KrakenAdapter(config=kraken_config)
 
+    # Graceful-degrade against Kraken's pair list. WARN on unknown;
+    # exit only if EVERY symbol is bad. Per-tick fault isolation
+    # absorbs subsequent failures; the operator updates settings.yml
+    # and restarts to silence them. Catches typos + delisted pairs
+    # (MATIC/USD post-Polygon-migration is the canonical case).
+    try:
+        _known_obs, unknown_obs = await adapter.partition_known_symbols(config.observe.symbols)
+    except WobbleBotPortError as exc:
+        _LOGGER.error("Kraken AssetPairs fetch failed at startup", extra={"error": str(exc)})
+        await adapter.aclose()
+        await storage.close()
+        return 2
+    if unknown_obs:
+        _LOGGER.warning(
+            "Kraken does not list these symbols; per-tick polls will fail",
+            extra={"unknown": [str(s) for s in unknown_obs]},
+        )
+    if not _known_obs:
+        _LOGGER.error("no tradeable Kraken symbols remain; exiting")
+        await adapter.aclose()
+        await storage.close()
+        return 2
+
     stop_event = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
