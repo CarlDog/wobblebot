@@ -391,6 +391,28 @@ nav.external a:hover {
   border-radius: 3px;
 }
 
+/* Kraken Pro dropdown link — the text label gets the spare horizontal
+   room (margin-right:auto pushes the trailing external-link icon
+   against the dropdown's right edge), so the layout reads
+   ``[brand-icon] [Kraken Pro] ............ [↗]`` for unambiguous
+   "this link opens elsewhere" affordance. */
+.user-menu-external-label {
+  margin-right: auto;
+}
+
+.user-menu-external-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 120ms ease;
+}
+
+.user-menu-external:hover .user-menu-external-icon,
+.user-menu-external:focus-visible .user-menu-external-icon {
+  color: #4dd0e1;
+}
+
 /* Theme selector inside the user-menu dropdown. Three radio-like
    buttons for Light / Dark / Auto. Active state uses a brighter
    nav-hover background so it visually pops above the regular

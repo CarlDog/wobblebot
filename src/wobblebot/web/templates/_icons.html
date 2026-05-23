@@ -1,0 +1,38 @@
+{# Reusable inline SVG icons. Underscore-prefixed filename marks
+   this as a Jinja partial — not a route-renderable page.
+
+   Why inline SVG vs a static sprite: small icon count (one icon as
+   of 2026-05-23) doesn't earn an icons.svg sprite request. Inline
+   SVG inherits currentColor for free, so theme + hover transitions
+   on the parent element Just Work. If the icon count grows past ~5
+   distinct icons, consider promoting to static/icons.svg per the
+   NOTICE.md note.
+
+   Attribution for the icon path data lives in NOTICE.md.
+
+   Usage in a sibling template:
+
+       {% import "_icons.html" as icons %}
+       ...
+       {{ icons.external_link(css_class="news-link-icon-svg") }}
+#}
+
+{# Lucide ``external-link`` (MIT). Standard box-with-arrow icon used
+   for "opens elsewhere" affordances. The aria-hidden + focusable
+   attrs assume the parent anchor carries its own aria-label /
+   title — the SVG itself is decoration. #}
+{% macro external_link(css_class="") -%}
+<svg{% if css_class %} class="{{ css_class }}"{% endif %}
+     viewBox="0 0 24 24"
+     fill="none"
+     stroke="currentColor"
+     stroke-width="2"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     aria-hidden="true"
+     focusable="false">
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+  <polyline points="15 3 21 3 21 9"/>
+  <line x1="10" y1="14" x2="21" y2="3"/>
+</svg>
+{%- endmacro %}

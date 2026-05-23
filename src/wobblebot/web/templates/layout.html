@@ -2,6 +2,7 @@
    nav chrome + content slot. Use this for every page after login;
    the login form itself extends base.html directly. #}
 {% extends "base.html" %}
+{% import "_icons.html" as icons %}
 
 {% block body %}
 <div class="page">
@@ -74,7 +75,8 @@
                class="user-menu-external">
               <img src="/static/kraken-icon.png" alt=""
                    class="user-menu-icon" aria-hidden="true">
-              Kraken Pro&nbsp;↗
+              <span class="user-menu-external-label">Kraken Pro</span>
+              {{ icons.external_link(css_class="user-menu-external-icon") }}
             </a>
           {% endif %}
           <div class="user-menu-section">
