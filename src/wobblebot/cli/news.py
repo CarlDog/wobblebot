@@ -135,7 +135,7 @@ async def _poll_source(
             match = is_duplicate(item, recent, similarity_threshold=dedup.fuzzy_threshold)
             if match is not None:
                 deduped += 1
-                _LOGGER.info(
+                _LOGGER.debug(
                     "news item deduped",
                     extra={
                         "source_id": source.source_id,
