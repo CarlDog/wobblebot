@@ -164,18 +164,33 @@ older rows stay valid). Splits cleanly from the source-tier audit
 above — separate v1.1 entry, separate commit.
 
 **✅ Publisher-attribution gap shipped in v1.0 (2026-05-23,
-`9dd8640`).** The operator promoted this gap into the v1.0 scope
+`9dd8640`) — data path only; UI rendering deferred.** The operator
+promoted the data-collection half of this gap into the v1.0 scope
 during soak day 6 alongside the related click-through-URL request.
 ``NewsItem`` gained both ``publisher: str | None`` (from
 ``source_info.name``) and ``url: str | None`` (from the top-level
 ``url`` field for CryptoCompare and entry ``link`` for RSS). Schema
 migration in ``_migrate_news_items_publisher_url`` is idempotent
-PRAGMA-checked. ``news.html`` renders the headline as
-``<a target="_blank" rel="noopener noreferrer">`` when ``url`` is
-present and surfaces ``publisher`` as a small italic label next to
-the source tag. The wider Tier 1-4 source-coverage work above
-(Messari / Reuters / stocks-finance / general-tech) is still
-deferred per the original deferral reasoning.
+PRAGMA-checked. ``news.html`` renders a ``↗`` link icon in a
+dedicated column when ``url`` is present (`398f7ab`).
+
+The publisher field is **collected + persisted** on every
+CryptoCompare item — operators can already query the data
+(``SELECT publisher, COUNT(*) FROM news_items GROUP BY publisher``)
+to see the per-upstream-publisher mix. But operator pulled the
+visual surface from ``news.html`` (the small italic label next to
+the source tag) during the same session — the layout didn't read
+cleanly with both source tag + publisher label competing for the
+same cell. **Open question for a v1.1 follow-up:** what's the
+right presentation? Candidates worth weighing when the time comes:
+its own column, source-tag tooltip, replace the source tag entirely
+when publisher is set (so "cryptocompare" rows show "CoinDesk" /
+"Bloomberg" instead), or a per-publisher operator-driven analytics
+view. The data is ready; the visualization is the deferred half.
+
+The wider Tier 1-4 source-coverage work above (Messari / Reuters /
+stocks-finance / general-tech) is still deferred per the original
+deferral reasoning.
 
 **Why deferred:** none of the Tier 1-4 work is gating v1.0 launch;
 the soak's news pipeline ran 3882 cryptocompare + 460 direct-RSS

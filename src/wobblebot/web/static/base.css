@@ -862,17 +862,6 @@ table.data.compact td {
 .tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
 .tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
 
-/* Publisher label on news rows — secondary attribution next to the
-   source tag (e.g. "cryptocompare" tag + "CoinDesk" publisher). Small,
-   muted, no background — lower visual weight than the .tag pill. */
-.news-publisher {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
 /* Dedicated "link" column on /news. Narrow column whose only job is
    to carry the article-link glyph for rows that have a URL. Empty cell
    reads cleanly when the item has no URL (legacy rows pre-2026-05-23

@@ -57,10 +57,12 @@
             <tr>
               <td>{{ item.published_at.dt.strftime("%Y-%m-%d %H:%M") }}</td>
               <td>
+                {# publisher attribution is collected + persisted on
+                   NewsItem.publisher but intentionally not rendered
+                   here — operator pulled it 2026-05-23 pending a
+                   better presentation. The field stays in the
+                   pipeline for a future visualization pass. #}
                 <span class="tag">{{ item.source }}</span>
-                {% if item.publisher %}
-                  <span class="news-publisher">{{ item.publisher }}</span>
-                {% endif %}
               </td>
               <td>{{ item.headline }}</td>
               <td class="news-link-col">
