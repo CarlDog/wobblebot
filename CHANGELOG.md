@@ -182,6 +182,107 @@ morning commits' tests counted at the boundary); mypy 110 src
 files clean; pylint 10.00/10; black + isort clean. Real-money
 cost stays at $0.085018.
 
+**Day 6 evening — observe expansion + symbol validation + health
+UX + code-reuse audit closure** (`dc0d428` through `29e3550`,
+12 commits across ~5 hours).
+
+`dc0d428` expanded `observe.symbols` from BTC-only to 12 major-cap
+USD pairs (BTC / ETH / SOL / XRP / DOGE / ADA / AVAX / LINK / DOT
+/ POL / LTC / BCH). The Day-2-outage cli/observe restart had been
+running BTC-only for 3+ days, silently losing observation data on
+every other pair — no upside; storage cost is ~5MB/pair/year. POL
+substituted for MATIC after the Polygon-migration delisted
+MATICUSD on Kraken (caught manually before commit; the next commit
+prevents this kind of typo from crashing daemons).
+
+`0007fc3` added `KrakenAdapter.partition_known_symbols` + a
+graceful-degrade pattern in cli/observe / cli/live / cli/shadow
+startup: hits `/0/public/AssetPairs` once, logs WARNING listing
+any symbols Kraken doesn't trade, refuses to start only when EVERY
+configured symbol is bad. The fix for the MATIC/POL discovery
+above turned into a v1.0 daemon-resilience feature: a future typo
+or delisting in settings.yml produces a clear startup warning
+instead of a cryptic mid-poll `EQuery:Unknown asset pair`
+traceback.
+
+`4af26af` + `d2d40de` consolidated health UX. The status card's
+inline traffic-light icon was redundant with the navbar's
+heart-pulse icon; removed the card variant, upgraded the navbar
+dot from binary red to tiered yellow/red (no dot when healthy)
+with size 8→10px ("tiny-ish" per operator). LIVE badge gained
+symmetric `margin-right: 6px` to balance the breathing room.
+Single source of truth for health UX, consistent with the bell's
+red-dot alert vocabulary.
+
+**Code-reuse audit closure (4 commits).** The 2026-05-23 multi-
+agent audit identified 12 duplication patterns across CLI /
+adapter / web / test surfaces. Closed 6 patterns across 4 commits
+and deferred 3 to v1.1 with rationale:
+
+- `98ff7a9` (audit #1+#2) extracted `install_signal_handlers` (8
+  daemons) + `run_with_clean_exit` (9 daemons) to
+  `wobblebot.cli._common`. Replaces verbatim copies of the SIGINT/
+  SIGTERM wiring + the `asyncio.run` + KeyboardInterrupt +
+  `os._exit` wrapper. The wrapper specifically was the e3a11ce
+  hotfix shape — 8 daemons literally had comments saying "matches
+  the 2026-05-23 cli/web hotfix pattern (commit e3a11ce)". Now one
+  helper means the next bug-fix lands once, not nine times. Net
+  −140 LOC across daemons.
+
+- `86837b8` (audit #3) extracted
+  `partition_or_exit + SymbolPartitioner` Protocol from the
+  symbol-validation block just shipped in 0007fc3 (3 daemons).
+  Helper composes `safe_shutdown` for cleanups so failure-exit
+  carries the same named-phase diagnostic as normal shutdown.
+
+- `b2e972d` (audit #4+#9) made the operator's timezone preference
+  actually apply site-wide. Two problems fused into one fix: the
+  per-route `prefs = storage.get_user_preferences(user.id)` lookup
+  duplicated 8x → new `get_user_preferences` FastAPI dependency in
+  `wobblebot.web.auth` consumed via `Depends()`. Same commit fixes
+  9 templates that used raw `.strftime("%Y-%m-%d %H:%M:%S UTC")`
+  → `| tz_format(operator_tz, ...)`. The settings page was
+  silently no-op on Audit / Advisor / Harvester / News / Command
+  pages prior to this fix. Follow-ups `627025b` stripped "(UTC)"
+  from column headers; `f948f2b` appended `%Z` to news published
+  column so timezones travel with values.
+
+- `d70e0a8` (audit #10) consolidated web-test login boilerplate
+  into `tests/web/_helpers.py` (`TEST_USERNAME` / `TEST_PASSWORD`
+  / `CSRF_RE` / `login_as` / `csrf_from`). 12 test files updated;
+  net −228 LOC. The drift risk was real — `test_auth_routes.py`
+  had been hardcoding a different bcrypt cost than the other
+  files, which would have silently masked a production bcrypt-
+  minimum change.
+
+- `29e3550` (audit #4-cloud+#5+#6) extracted 3 cloud-LLM helpers
+  into `services/llm_cloud_call.py`: `wrap_provider_errors`
+  context manager (6 sites of httpx → port-error translation);
+  `INTENT_ADAPTER` shared `TypeAdapter[OperatorIntent]` (4 sites);
+  `execute_assistant_call` end-to-end orchestrator (3 cloud
+  assistant adapters). Adapter LOC diff −92; new helper code +20
+  (rest is docstring).
+
+`cb4f916` deferred 3 audit items (#7 WiredSnapshot base, #8
+load_with_degrade helper, #11 storage fixture consolidation) to
+`docs/release/v1.1/infrastructure.md` with concrete triggers
+(naming inconsistency between `wired` vs `live_wired` makes #7
+half-broken without a rename pass; #11 saves 160 LOC but at the
+cost of renaming the `storage` parameter in every test method
+signature across 38 files; #8 saves only ~18 LOC alone without
+the #7 base class). Honest rationale for why each one isn't
+worth the v1.0 boundary spend right now.
+
+**Reconciliation closure**: live.db ledger matches Kraken Pro
+within fee precision; per-cycle PnL is ~$0.05 net at current
+maker rates × $10 leg × 1.0% spacing; operator timezone preference
+now actually propagates through every dashboard page.
+
+**Numbers at end of day 6 evening**: 1946 unit tests pass (1941 →
+1946, +5 across the partition_known_symbols regression suite);
+mypy 111 src files clean; pylint **10.00/10**; black + isort
+clean. Real-money cost unchanged at **$0.085018**.
+
 ### Stage 8.4.B-D + soak Day 1-3 events (2026-05-18 → 2026-05-20)
 
 Documentation-freeze sub-slices closed plus the operator-driven
