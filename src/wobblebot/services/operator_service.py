@@ -70,6 +70,7 @@ from wobblebot.ports.operator import (
     SymbolStatusEntry,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cycle_matcher import match_cycles, today_realized_pnl
 from wobblebot.services.grid_engine import GridEngine
 
 # --------------------------------------------------------------------- #
@@ -177,6 +178,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         advise_storage: StoragePort | None = None,
         news_storage: StoragePort | None = None,
         harvest_storage: StoragePort | None = None,
+        observe_storage: StoragePort | None = None,
         harvester_config: HarvesterConfig | None = None,
         session_started_at: Timestamp | None = None,
     ) -> None:
@@ -187,6 +189,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         self._advise_storage = advise_storage
         self._news_storage = news_storage
         self._harvest_storage = harvest_storage
+        self._observe_storage = observe_storage
         self._harvester_config = harvester_config
         self._session_started_at = session_started_at
 
@@ -341,17 +344,15 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 )
             )
 
-        # Session-PnL calculation is deferred to a later stage; v1 ships
-        # zero so the operator's status reply doesn't lie. Recent_fills
-        # query gives them the trade-level view.
         total_usd_balance = await self._fetch_total_usd_balance()
         runtime_seconds = self._runtime_seconds()
         recent_fill_count = await self._recent_fill_count()
+        session_pnl = await self._fetch_today_realized_pnl()
 
         return StatusResult(
             symbols=symbol_entries,
             total_usd_balance=total_usd_balance,
-            session_pnl=0.0,
+            session_pnl=session_pnl,
             session_runtime_seconds=runtime_seconds,
             recent_fill_count=recent_fill_count,
         )
@@ -547,14 +548,47 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
     # ------------------------------------------------------------------ helpers
 
     async def _fetch_total_usd_balance(self) -> float:
+        """Latest USD balance from observe.db's balance_snapshots.
+
+        Stage 5.6's original wiring queried ``self._storage`` (live.db)
+        for balance snapshots — but balance snapshots only live in
+        observe.db (cli/observe's optional balance-polling cadence).
+        After the 2026-05-24 Discord-visibility fix, the OperatorService
+        accepts an optional ``observe_storage`` and prefers it for this
+        lookup. Falls back to ``self._storage`` for backward compat;
+        returns 0.0 if no USD entry exists in either.
+        """
+        balance_storage = self._observe_storage or self._storage
         try:
-            balances = await self._storage.get_latest_balance_snapshot()
+            balances = await balance_storage.get_latest_balance_snapshot()
         except StorageError as exc:
             raise OperatorError(f"Failed to read latest balance snapshot: {exc}") from exc
         for entry in balances:
             if entry.asset.upper() == "USD":
                 return float(entry.total)
         return 0.0
+
+    async def _fetch_today_realized_pnl(self) -> float:
+        """Today's realized PnL from completed BUY→SELL cycles in live.db.
+
+        Pre-2026-05-24 the StatusResult shipped a hardcoded ``session_pnl=0.0``
+        with a comment "deferred to a later stage." Now ``cycle_matcher``
+        is available; the OperatorService computes today's realized PnL
+        the same way the dashboard does. Uses UTC day boundary by default
+        — the Discord bot has no operator-tz context the way the web UI
+        does (web UI threads ``prefs.timezone`` from the auth session;
+        Discord has no equivalent user-preference layer in v1).
+        """
+        try:
+            trades = await self._storage.get_trades(limit=100)
+        except StorageError as exc:
+            raise OperatorError(f"Failed to read recent trades for PnL: {exc}") from exc
+        if not trades:
+            return 0.0
+        cycles = match_cycles(trades)
+        if not cycles:
+            return 0.0
+        return float(today_realized_pnl(cycles))
 
     def _runtime_seconds(self) -> float:
         if self._session_started_at is None:

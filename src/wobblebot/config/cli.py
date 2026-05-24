@@ -471,6 +471,12 @@ class OperatorConfig(BaseModel):
     advise_db: str | None = None
     news_db: str | None = None
     harvest_db: str | None = None
+    # observe.db backs the StatusQuery's USD-balance lookup
+    # (balance_snapshots table is populated by cli/observe's optional
+    # balance-polling cadence). Unwired → balance reports 0.0; the
+    # rest of StatusResult (symbols, session_pnl from trades,
+    # recent_fill_count) still works.
+    observe_db: str | None = None
 
     # ADR-013 decision 5: 10-turn default context window for the
     # assistant's multi-turn prompt. Tunable per-deployment.

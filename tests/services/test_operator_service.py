@@ -104,6 +104,7 @@ async def _service(
     advise_storage: SQLiteStorageAdapter | None = None,
     news_storage: SQLiteStorageAdapter | None = None,
     harvest_storage: SQLiteStorageAdapter | None = None,
+    observe_storage: SQLiteStorageAdapter | None = None,
     harvester_config: HarvesterConfig | None = None,
     session_started_at: Timestamp | None = None,
 ) -> OperatorService:
@@ -116,6 +117,7 @@ async def _service(
         advise_storage=advise_storage,
         news_storage=news_storage,
         harvest_storage=harvest_storage,
+        observe_storage=observe_storage,
         harvester_config=harvester_config,
         session_started_at=session_started_at,
     )
@@ -319,6 +321,90 @@ class TestStatusQuery:
         svc = await _service(storage, exchange_with_btc_and_eth)
         status = await svc.answer_query(StatusQuery())
         assert status.total_usd_balance == 0.0
+
+    async def test_status_balance_reads_observe_storage_when_provided(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        """Regression for 2026-05-24 Discord-visibility bug. Before the
+        fix, StatusQuery queried ``self._storage`` (live.db) for
+        ``balance_snapshots`` — but that table only lives in observe.db.
+        Now the OperatorService prefers ``observe_storage`` when wired.
+        """
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            await observe.save_balance_snapshot(
+                [
+                    Balance(
+                        asset="USD",
+                        total=Decimal("123.45"),
+                        available=Decimal("123.45"),
+                        locked=Decimal("0"),
+                        updated_at=Timestamp(dt=datetime.now(UTC)),
+                    )
+                ]
+            )
+            # storage (live.db) has NO balance snapshot — observe has it
+            svc = await _service(
+                storage, exchange_with_btc_and_eth, observe_storage=observe
+            )
+            status = await svc.answer_query(StatusQuery())
+            assert status.total_usd_balance == 123.45
+        finally:
+            await observe.close()
+
+    async def test_status_session_pnl_reflects_today_realized_cycles(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        """Regression for 2026-05-24 Discord-visibility bug. Before the
+        fix, StatusQuery hard-coded ``session_pnl=0.0``. Now it sums
+        today's realized cycles via cycle_matcher.
+        """
+        from uuid import uuid4
+
+        from wobblebot.domain.models import Trade
+        from wobblebot.domain.value_objects import Amount, Price
+
+        now = datetime.now(UTC)
+        # One BUY + one cheaper-than-SELL pair that produces a real
+        # cycle today.
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="buy",
+                price=Price(amount=Decimal("76000"), currency="USD"),
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("9.956"),
+                executed_at=Timestamp(dt=now - timedelta(hours=2)),
+            )
+        )
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="sell",
+                price=Price(amount=Decimal("76760"), currency="USD"),  # +1%
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("10.055"),
+                executed_at=Timestamp(dt=now - timedelta(hours=1)),
+            )
+        )
+        svc = await _service(storage, exchange_with_btc_and_eth)
+        status = await svc.answer_query(StatusQuery())
+        # net = (76760-76000) * 0.000131 - 0.025 - 0.025
+        #     = 760 * 0.000131 - 0.05
+        #     = 0.09956 - 0.05 = 0.04956
+        assert status.session_pnl > 0.04
+        assert status.session_pnl < 0.06
 
 
 class TestOpenOrdersQuery:

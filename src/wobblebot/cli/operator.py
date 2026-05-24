@@ -72,7 +72,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import Prompt, load_prompt
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.assistant import (
     AssistantPort,
     ConversationContext,
@@ -942,6 +942,23 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             )
             live_storage = None
 
+    # Optional: open observe.db so the StatusQuery's USD-balance lookup
+    # can read balance_snapshots (which only live in observe.db, not
+    # live.db). Unwired → balance reports 0.0 in the Discord status
+    # reply; everything else (symbols, session_pnl, recent_fill_count)
+    # still works.
+    observe_storage: SQLiteStorageAdapter | None = None
+    if operator_cfg.observe_db is not None:
+        observe_storage = SQLiteStorageAdapter(operator_cfg.observe_db)
+        try:
+            await observe_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open observe db; status balance will report 0",
+                extra={"path": operator_cfg.observe_db, "error": str(exc)},
+            )
+            observe_storage = None
+
     # Operator assistant LLM
     try:
         prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
@@ -961,18 +978,25 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     # so it constructs a stand-in via the existing OperatorService class
     # against the live_storage; pause/dispatch commands route through
     # pending_commands (cli/live handles them).
-    # v1 limitation: status queries return symbols as 'active' because
+    # v1 limitation: status queries report symbols as 'active' because
     # pause state lives in cli/live's in-memory engine, not in storage.
+    # Active symbols come from config.live.symbols (the operator's
+    # configured trading set) — fixes the 2026-05-24 Discord-visibility
+    # bug where status used to return symbols: [] regardless of config.
     stub_engine = GridEngine(
         MockExchangeAdapter(starting_balances={}, starting_prices={}),
         live_storage or operator_storage,
         config.grid,
         config.safety,
     )
+    active_symbols: tuple[Symbol, ...] = (
+        tuple(config.live.symbols) if config.live is not None else ()
+    )
     operator_service = OperatorService(
         engine=stub_engine,
         storage=live_storage or operator_storage,
-        active_symbols=(),
+        active_symbols=active_symbols,
+        observe_storage=observe_storage,
         grid_config=config.grid,
         session_started_at=Timestamp(dt=datetime.now(UTC)),
     )
@@ -1082,6 +1106,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         ]
         if live_storage is not None:
             phases.append(("close_live_storage", live_storage.close))
+        if observe_storage is not None:
+            phases.append(("close_observe_storage", observe_storage.close))
         await safe_shutdown(phases, logger=_LOGGER)
     return exit_code
 

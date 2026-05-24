@@ -514,6 +514,13 @@ operator:
   advise_db: "data/wobblebot-advise.db"
   news_db: "data/wobblebot-news.db"
   harvest_db: "data/wobblebot-harvest.db"
+  # observe.db powers the StatusQuery's USD-balance lookup (the
+  # balance_snapshots table lives only in observe.db, populated by
+  # cli/observe's optional balance-polling cadence). Unwired → the
+  # Discord StatusQuery's "USD balance" reports 0.0; everything else
+  # (symbols, session_pnl from cycle_matcher, recent_fill_count)
+  # still works.
+  observe_db: "data/wobblebot-observe.db"
   # ADR-013 decision 5: 10-turn multi-turn context window. Capped at
   # 1-50 by the schema. Higher values give the LLM more history but
   # cost more tokens per call.
