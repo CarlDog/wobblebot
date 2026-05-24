@@ -40,8 +40,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from wobblebot.config.cli import WebConfig
-from wobblebot.domain.users import User
-from wobblebot.ports.storage import StoragePort
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.services.daemon_health import (
     DaemonHealth,
     DaemonHealthThresholds,
@@ -53,10 +52,9 @@ from wobblebot.services.kraken_health import (
     KrakenHealthResult,
     KrakenSystemStatus,
 )
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_config,
-    get_operator_storage,
     get_templates,
 )
 
@@ -176,13 +174,11 @@ async def health_page(
     request: Request,
     user: User = Depends(require_user),
     config: WebConfig = Depends(get_config),
-    storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Full application health page — Upstream + Daemons sections."""
     snapshot = await load_health_snapshot(request, config)
-    assert user.id is not None
-    prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "health.html",

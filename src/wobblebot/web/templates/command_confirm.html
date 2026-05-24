@@ -28,9 +28,9 @@
     <dt>Channel</dt>
     <dd>{{ pending.channel_id }}</dd>
     <dt>Created</dt>
-    <dd>{{ pending.created_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+    <dd>{{ pending.created_at.dt | tz_format(operator_tz, "%Y-%m-%d %H:%M:%S %Z") }}</dd>
     <dt>Expires</dt>
-    <dd>{{ pending.ttl_expires_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+    <dd>{{ pending.ttl_expires_at.dt | tz_format(operator_tz, "%Y-%m-%d %H:%M:%S %Z") }}</dd>
   </dl>
   <form method="post" action="/commands/{{ pending.id }}/confirm" class="command">
     {{ csrf_input(request) }}

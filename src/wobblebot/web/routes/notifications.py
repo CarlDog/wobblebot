@@ -26,11 +26,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.notifier import PersistedNotification
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_operator_storage,
     get_templates,
@@ -65,12 +65,11 @@ async def notifications(
     request: Request,
     user: User = Depends(require_user),
     operator_storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Render the notifications list."""
     snapshot = await _load_snapshot(operator_storage)
-    assert user.id is not None
-    prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "notifications.html",

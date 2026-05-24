@@ -24,11 +24,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.advisor import AdvisorSuggestion
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import get_advise_storage, get_templates
 
 router = APIRouter(tags=["advisor"])
@@ -78,6 +78,7 @@ async def advisor_page(
     request: Request,
     user: User = Depends(require_user),
     advise_storage: StoragePort | None = Depends(get_advise_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Recent advisor suggestions page."""
@@ -85,7 +86,11 @@ async def advisor_page(
     return templates.TemplateResponse(
         request,
         "advisor.html",
-        {"snapshot": snapshot, "username": user.username},
+        {
+            "snapshot": snapshot,
+            "username": user.username,
+            "operator_tz": prefs.timezone,
+        },
     )
 
 

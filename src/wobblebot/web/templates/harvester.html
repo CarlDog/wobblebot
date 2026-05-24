@@ -37,7 +37,7 @@
         <tbody>
           {% for p in snapshot.proposals %}
             <tr>
-              <td>{{ p.created_at.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+              <td>{{ p.created_at.dt | tz_format(operator_tz) }}</td>
               <td>
                 <span class="tag {% if p.direction == 'exchange_to_bank' %}warn{% else %}ok{% endif %}">
                   {{ p.direction }}
@@ -76,7 +76,7 @@
         <tbody>
           {% for r in snapshot.results %}
             <tr>
-              <td>{{ r.timestamp.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+              <td>{{ r.timestamp.dt | tz_format(operator_tz) }}</td>
               <td>
                 <span class="tag
                   {% if r.status == 'completed' %}ok

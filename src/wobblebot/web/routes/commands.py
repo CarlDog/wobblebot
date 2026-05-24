@@ -43,7 +43,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.operator import (
@@ -54,7 +54,7 @@ from wobblebot.ports.operator import (
     StopCommand,
 )
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import get_operator_storage, get_templates
 from wobblebot.web.middleware import require_csrf_token
 
@@ -270,11 +270,12 @@ async def stop_submit(
 
 
 @router.get("/{pending_id}/confirm", response_class=HTMLResponse)
-async def confirm_form(
+async def confirm_form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     pending_id: UUID,
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     pending = await storage.get_pending_command(pending_id)
@@ -291,18 +292,20 @@ async def confirm_form(
         {
             "pending": pending,
             "username": user.username,
+            "operator_tz": prefs.timezone,
         },
     )
 
 
 @router.post("/{pending_id}/confirm")
-async def confirm_submit(
+async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     pending_id: UUID,
     _csrf: None = Depends(require_csrf_token),
     decision: str = Form(..., pattern="^(approve|reject)$"),
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     pending = await storage.get_pending_command(pending_id)
@@ -319,7 +322,12 @@ async def confirm_submit(
         return templates.TemplateResponse(
             request,
             "command_result.html",
-            {"pending": pending, "username": user.username, "already": True},
+            {
+                "pending": pending,
+                "username": user.username,
+                "already": True,
+                "operator_tz": prefs.timezone,
+            },
         )
 
     now = Timestamp(dt=datetime.now(UTC))
@@ -342,13 +350,19 @@ async def confirm_submit(
                 "username": user.username,
                 "already": False,
                 "error": f"failed to persist transition: {exc}",
+                "operator_tz": prefs.timezone,
             },
             status_code=500,
         )
     return templates.TemplateResponse(
         request,
         "command_result.html",
-        {"pending": updated, "username": user.username, "already": False},
+        {
+            "pending": updated,
+            "username": user.username,
+            "already": False,
+            "operator_tz": prefs.timezone,
+        },
     )
 
 

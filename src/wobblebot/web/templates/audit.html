@@ -31,7 +31,7 @@
       <tbody>
         {% for p in snapshot.pending_commands %}
           <tr>
-            <td>{{ p.created_at.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>{{ p.created_at.dt | tz_format(operator_tz) }}</td>
             <td>
               {{ p.command.kind }}
               {% if p.command.kind in ("pause", "resume") %}
@@ -75,7 +75,7 @@
         {% for pn in snapshot.notifications %}
           {% set n = pn.notification %}
           <tr>
-            <td>{{ n.timestamp.dt.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+            <td>{{ n.timestamp.dt | tz_format(operator_tz) }}</td>
             <td>
               <span class="tag
                 {% if n.level == 'info' %}ok

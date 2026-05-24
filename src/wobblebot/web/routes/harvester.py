@@ -18,11 +18,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import get_harvest_storage, get_templates
 
 router = APIRouter(tags=["harvester"])
@@ -66,6 +66,7 @@ async def harvester_page(
     request: Request,
     user: User = Depends(require_user),
     harvest_storage: StoragePort | None = Depends(get_harvest_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Harvester proposals + transfer results page."""
@@ -73,7 +74,11 @@ async def harvester_page(
     return templates.TemplateResponse(
         request,
         "harvester.html",
-        {"snapshot": snapshot, "username": user.username},
+        {
+            "snapshot": snapshot,
+            "username": user.username,
+            "operator_tz": prefs.timezone,
+        },
     )
 
 

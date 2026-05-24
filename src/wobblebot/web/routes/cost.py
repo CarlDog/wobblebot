@@ -38,11 +38,11 @@ from starlette.responses import HTMLResponse, Response
 
 from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import Trade
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_live_storage,
     get_operator_storage,
@@ -296,18 +296,17 @@ async def _load_snapshot(storage: StoragePort) -> CostSnapshot:
 
 
 @router.get("/cost", response_class=HTMLResponse)
-async def cost_page(
+async def cost_page(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
     live_storage: StoragePort | None = Depends(get_live_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Full cost dashboard page — LLM card + trading-fees card."""
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
-    assert user.id is not None
-    prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "cost.html",
@@ -322,11 +321,12 @@ async def cost_page(
 
 
 @router.get("/cost/card", response_class=HTMLResponse)
-async def cost_card(
+async def cost_card(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
-    user: User = Depends(require_user),
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
     storage: StoragePort = Depends(get_operator_storage),
     live_storage: StoragePort | None = Depends(get_live_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """HTMX fragment — LLM cost + trading-fees cards without chrome.
@@ -336,8 +336,6 @@ async def cost_card(
     """
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
-    assert user.id is not None
-    prefs = await storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "_cost_card.html",

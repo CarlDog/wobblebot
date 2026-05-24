@@ -47,7 +47,7 @@
       <dt>Confirmed by</dt>
       <dd>{{ pending.confirming_user_id }}</dd>
       <dt>Confirmed at</dt>
-      <dd>{{ pending.confirmed_at.dt.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+      <dd>{{ pending.confirmed_at.dt | tz_format(operator_tz, "%Y-%m-%d %H:%M:%S %Z") }}</dd>
     {% endif %}
   </dl>
   <div class="form-actions">

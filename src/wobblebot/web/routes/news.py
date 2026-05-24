@@ -17,10 +17,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
 from wobblebot.domain.models import NewsItem
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import get_news_storage, get_templates
 
 router = APIRouter(tags=["news"])
@@ -114,6 +114,7 @@ async def news_page(
     q: str | None = Query(default=None, min_length=0, max_length=64),
     user: User = Depends(require_user),
     news_storage: StoragePort | None = Depends(get_news_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     snapshot = await _load_snapshot(
@@ -124,7 +125,11 @@ async def news_page(
     return templates.TemplateResponse(
         request,
         "news.html",
-        {"snapshot": snapshot, "username": user.username},
+        {
+            "snapshot": snapshot,
+            "username": user.username,
+            "operator_tz": prefs.timezone,
+        },
     )
 
 

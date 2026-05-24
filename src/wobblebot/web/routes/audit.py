@@ -20,12 +20,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.notifier import PersistedNotification
 from wobblebot.ports.operator import PendingCommand
 from wobblebot.ports.storage import StoragePort
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import get_operator_storage, get_templates
 
 router = APIRouter(tags=["audit"])
@@ -73,13 +73,18 @@ async def audit_page(
     request: Request,
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     snapshot = await _load_snapshot(storage)
     return templates.TemplateResponse(
         request,
         "audit.html",
-        {"snapshot": snapshot, "username": user.username},
+        {
+            "snapshot": snapshot,
+            "username": user.username,
+            "operator_tz": prefs.timezone,
+        },
     )
 
 

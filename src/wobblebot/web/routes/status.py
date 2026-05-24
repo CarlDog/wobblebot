@@ -30,16 +30,15 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
-from wobblebot.web.auth import require_user
+from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_live_storage,
     get_observe_storage,
-    get_operator_storage,
     get_templates,
 )
 
@@ -353,7 +352,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
     observe_storage: StoragePort | None = Depends(get_observe_storage),
-    operator_storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
@@ -363,8 +362,6 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     tiered dot now polls /health/overall.json directly.
     """
     snapshot = await _load_snapshot(live_storage, observe_storage)
-    assert user.id is not None
-    prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -380,10 +377,10 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
 @router.get("/status/card", response_class=HTMLResponse)
 async def status_card(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
-    user: User = Depends(require_user),
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
     live_storage: StoragePort | None = Depends(get_live_storage),
     observe_storage: StoragePort | None = Depends(get_observe_storage),
-    operator_storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
@@ -392,8 +389,6 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     2026-05-23 (single source of truth via /health/overall.json).
     """
     snapshot = await _load_snapshot(live_storage, observe_storage)
-    assert user.id is not None
-    prefs = await operator_storage.get_user_preferences(user.id)
     return templates.TemplateResponse(
         request,
         "_status_card.html",

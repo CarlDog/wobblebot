@@ -24,7 +24,7 @@ from __future__ import annotations
 import bcrypt
 from fastapi import Depends, Request
 
-from wobblebot.domain.users import User
+from wobblebot.domain.users import User, UserPreferences
 from wobblebot.ports.storage import StoragePort
 from wobblebot.web.dependencies import get_operator_storage
 
@@ -121,3 +121,27 @@ async def require_user(
     if user is None:
         raise AuthRedirectRequired()
     return user
+
+
+async def get_user_preferences(
+    user: User = Depends(require_user),
+    operator_storage: StoragePort = Depends(get_operator_storage),
+) -> UserPreferences:
+    """FastAPI dependency that fetches the operator's preferences row.
+
+    Routes that render templates referencing ``operator_tz`` (or any
+    other preference) consume this via
+    ``prefs: UserPreferences = Depends(get_user_preferences)``.
+    The dependency depends on ``require_user`` so a missing
+    preferences row only happens for an authenticated operator —
+    storage auto-creates the row on first access.
+
+    Centralizes the per-route ``assert user.id is not None`` +
+    ``await storage.get_user_preferences(user.id)`` pattern that had
+    duplicated 8x across the route layer (audit finding #9 from the
+    2026-05-23 code-reuse pass). A new route forgetting the lookup
+    used to cause silent ``operator_tz``-missing template errors;
+    declaring the dependency makes it impossible to forget.
+    """
+    assert user.id is not None
+    return await operator_storage.get_user_preferences(user.id)

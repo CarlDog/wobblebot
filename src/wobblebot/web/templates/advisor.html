@@ -37,7 +37,7 @@
       <div class="card-header">
         <div class="card-title">
           {{ s.input_summary.get("symbol", "?") }} —
-          <span class="muted">{{ rec.timestamp.dt.strftime("%Y-%m-%d %H:%M UTC") }}</span>
+          <span class="muted">{{ rec.timestamp.dt | tz_format(operator_tz, "%Y-%m-%d %H:%M %Z") }}</span>
         </div>
         <div class="card-meta">
           {{ s.model_name }} ·
