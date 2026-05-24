@@ -58,6 +58,17 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
+# Minimum max_tokens for thinking models. Reasoning models (deepseek-r1,
+# phi4-reasoning, qwq, etc.) emit a chain-of-thought block before the
+# JSON answer; the default 512 cap doesn't leave room for both. 4096
+# is enough for ~3500 tokens of thinking + ~500 tokens of JSON output,
+# which empirically covers every Ollama-served reasoning model we've
+# tested (see docs/reference/operator-llm-models.md). Operators can
+# still set ``assistant.max_tokens`` higher in settings.yml for very
+# verbose reasoning models; the floor only RAISES the configured
+# value, never lowers it.
+_THINKING_MODEL_MIN_TOKENS = 4096
+
 # Models that cannot produce schema-conforming OperatorIntent JSON.
 # Matched case-insensitively against the model tag. Determined empirically
 # via tools/probe_assistant.py + tmp_model_compare.py on 2026-05-24:
@@ -165,7 +176,20 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         self._prompt = prompt
         self._base_url = base_url.rstrip("/")
         self._temperature = temperature
-        self._max_tokens = max_tokens
+        # Raise max_tokens to the thinking-model floor if needed. Lower
+        # configured values for reasoning models result in truncated
+        # thinking blocks with no JSON answer at all.
+        if is_thinking_model(model) and max_tokens < _THINKING_MODEL_MIN_TOKENS:
+            _LOGGER.info(
+                "raising max_tokens from %d to %d for thinking model %r "
+                "(see docs/reference/operator-llm-models.md)",
+                max_tokens,
+                _THINKING_MODEL_MIN_TOKENS,
+                model,
+            )
+            self._max_tokens = _THINKING_MODEL_MIN_TOKENS
+        else:
+            self._max_tokens = max_tokens
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 

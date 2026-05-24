@@ -169,9 +169,7 @@ class TestConstructor:
             OllamaAssistantAdapter(model="qwen3.6:35b-a3b-q8_0", prompt=_operator_prompt())
         assert any("known-degraded" in r.message for r in caplog.records)
 
-    def test_compatible_model_passes_silently(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_compatible_model_passes_silently(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
             OllamaAssistantAdapter(model="phi4:14b-q8_0", prompt=_operator_prompt())
         assert not any("known-degraded" in r.message for r in caplog.records)
@@ -181,6 +179,37 @@ class TestConstructor:
         # The model tag case shouldn't matter.
         with pytest.raises(AssistantError, match="known-incompatible"):
             OllamaAssistantAdapter(model="PHI4-MINI-Reasoning:3.8b", prompt=_operator_prompt())
+
+    def test_thinking_model_auto_bumps_low_max_tokens(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # phi4-reasoning matches the "reasoning" thinking pattern.
+        with caplog.at_level("INFO", logger="wobblebot.adapters.ollama_assistant"):
+            adapter = OllamaAssistantAdapter(
+                model="phi4-reasoning:14b-plus-q8_0",
+                prompt=_operator_prompt(),
+                max_tokens=512,
+            )
+        assert adapter._max_tokens == 4096  # noqa: SLF001  # pylint: disable=protected-access
+        assert any("raising max_tokens" in r.message for r in caplog.records)
+
+    def test_thinking_model_honors_high_max_tokens(self) -> None:
+        # Operator already set a generous value -- adapter must not lower it.
+        adapter = OllamaAssistantAdapter(
+            model="phi4-reasoning:14b-plus-q8_0",
+            prompt=_operator_prompt(),
+            max_tokens=8192,
+        )
+        assert adapter._max_tokens == 8192  # noqa: SLF001  # pylint: disable=protected-access
+
+    def test_non_thinking_model_keeps_configured_max_tokens(self) -> None:
+        # phi4 (no "reasoning"/"thinking" substring) keeps the configured 512.
+        adapter = OllamaAssistantAdapter(
+            model="phi4:14b-q8_0",
+            prompt=_operator_prompt(),
+            max_tokens=512,
+        )
+        assert adapter._max_tokens == 512  # noqa: SLF001  # pylint: disable=protected-access
 
 
 # --------------------------------------------------------------------- #
