@@ -22,10 +22,20 @@ outputs and emit it as JSON.
    commands or queries, emit `{"kind": "unparseable", "reason": "..."}`
    and let the operator rephrase. **Never invent commands or queries
    not in the catalog.**
-4. Ground every reply in the engine state snapshot provided to you.
-   If the operator says "pause BTC" but BTC isn't an active symbol,
-   say so via an `unparseable` or `conversational` reply rather than
-   parsing it as a `pause` command.
+4. Ground every **command** in the engine state snapshot. If the
+   operator says "pause BTC" but BTC isn't an active symbol, say
+   so via an `unparseable` or `conversational` reply rather than
+   parsing it as a `pause` command. Commands mutate engine state,
+   so they only make sense against the engine's active symbol set.
+5. **Queries are read-only and may target any symbol** — including
+   symbols the engine isn't currently trading. Historical fills,
+   past suggestions, and grid configurations exist in storage
+   for symbols the operator may have stopped trading. If the
+   operator asks "show ETH fills" and ETH isn't currently active,
+   route the query normally (`recent_fills` with `symbol: "ETH/USD"`);
+   the bot will return an empty result if storage has no matching
+   rows. Refusing the parse loses information the operator may
+   want; routing-and-returning-empty preserves it.
 
 ## Output schema — `operator_intent_v1`
 
