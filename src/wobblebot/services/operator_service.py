@@ -683,7 +683,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 return hours, anchor
         return 24, now - timedelta(hours=24)
 
-    async def _compose_status_report_narrative(  # pylint: disable=too-many-arguments
+    async def _compose_status_report_narrative(  # pylint: disable=too-many-arguments,too-many-locals
         self,
         *,
         lookback_hours: int,
@@ -707,15 +707,40 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         if self._assistant is None:
             return deterministic
 
-        # Compact data blob — keep under ~3k tokens so the LLM has room
-        # to reply. Use model_dump_json for canonical representation.
-        # GRID_CONFIG is the operator's *current* tier; advisor
-        # suggestions describe *proposed* changes — the LLM needs both
-        # to ground "increase spacing" framing.
+        # Compact data blob. The COUNTS section is pre-computed and
+        # authoritative — every count in the narrative MUST come from
+        # this section, not from re-counting JSON arrays the LLM is
+        # prone to miscount. This block addresses 2026-05-24 audit
+        # finding #4: phi4 was conflating ``STATUS.recent_fill_count``
+        # (engine-wide tally) with the lookback-scoped fill count from
+        # RECENT_FILLS, and miscounting open_orders sides (saying
+        # "five buy orders" when 5 was the total open-order count).
+        open_buys = sum(1 for o in open_orders.orders if o.side == "buy")
+        open_sells = sum(1 for o in open_orders.orders if o.side == "sell")
+        fills_buys = sum(1 for f in recent_fills.fills if f.side == "buy")
+        fills_sells = sum(1 for f in recent_fills.fills if f.side == "sell")
+        counts_block = [
+            f"  lookback_window_hours: {lookback_hours}",
+            f"  open_orders_total: {len(open_orders.orders)}",
+            f"  open_buys: {open_buys}",
+            f"  open_sells: {open_sells}",
+            f"  fills_in_lookback_total: {len(recent_fills.fills)}",
+            f"  fills_in_lookback_buys: {fills_buys}",
+            f"  fills_in_lookback_sells: {fills_sells}",
+            f"  news_in_lookback: {len(recent_news.items)}",
+            f"  recent_suggestions: {len(recent_suggestions.suggestions)}",
+            f"  recent_proposals: {len(recent_proposals.proposals)}",
+            f"  harvester_band: {harvester_status.band}",
+            f"  total_usd_balance: {status.total_usd_balance:,.2f}",
+            f"  todays_realized_pnl: " f"{format_signed_usd(status.session_pnl, decimals=4)}",
+        ]
         blob_lines = [
             f"LOOKBACK_HOURS: {lookback_hours}",
             "",
-            "STATUS:",
+            "COUNTS (authoritative -- cite these verbatim; never re-count):",
+            *counts_block,
+            "",
+            "STATUS (engine-wide; recent_fill_count here is NOT lookback-scoped):",
             status.model_dump_json(indent=2),
             "",
             "GRID_CONFIG (currently in effect):",
@@ -724,7 +749,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "OPEN_ORDERS:",
             open_orders.model_dump_json(indent=2),
             "",
-            "RECENT_FILLS:",
+            "RECENT_FILLS (only the lookback window):",
             recent_fills.model_dump_json(indent=2),
             "",
             "RECENT_SUGGESTIONS (proposed changes, not yet applied):",
@@ -747,16 +772,26 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "happened since they last checked. You will receive structured "
             "JSON for every query the bot can answer; condense it into a "
             "user-friendly 2-3 paragraph plain-text narrative.\n\n"
+            "**The COUNTS section is authoritative.** Every count you "
+            "mention in the narrative (fills, open orders by side, news "
+            "items, suggestions, etc.) MUST come from COUNTS verbatim. "
+            "Do NOT re-count by inspecting JSON arrays in other sections. "
+            "Do NOT use STATUS.recent_fill_count for fill counts -- that "
+            "is engine-wide, not lookback-scoped. The lookback-scoped "
+            "count is COUNTS.fills_in_lookback_total.\n\n"
+            "**If COUNTS.fills_in_lookback_total is 0, say 'no fills in "
+            "the lookback window' -- do not invent fill activity.** "
+            "Same rule for news, suggestions, and proposals.\n\n"
             "Guidelines:\n"
             "- Lead with what changed (fills, new news, harvester movements). "
             "Static state (open orders, grid config) is secondary.\n"
             "- When discussing RECENT_SUGGESTIONS, compare proposed values "
             "against GRID_CONFIG (e.g. 'advisor recommends bumping spacing "
-            "from 1.0% to 1.2%') — don't describe suggestions in isolation.\n"
-            "- Surface numbers, prices, and timestamps that matter. Don't "
-            "invent numbers not in the JSON.\n"
+            "from 1.0% to 1.2%') -- don't describe suggestions in isolation.\n"
+            "- Surface prices and timestamps that matter. Don't invent "
+            "numbers not in the JSON.\n"
             "- If a section is empty, say so briefly; don't pad.\n"
-            "- Use Markdown sparingly — bold for headlines, plain text for the "
+            "- Use Markdown sparingly -- bold for headlines, plain text for the "
             "rest. No code fences, no JSON in the output.\n"
             "- Keep it under ~300 words. The operator wants signal, not noise."
         )

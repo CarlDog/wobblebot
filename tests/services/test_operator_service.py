@@ -675,8 +675,12 @@ class TestStatusReport:
         # headers from the data blob.
         system_prompt, user_content, max_tokens = assistant.calls[0]
         assert "status report" in system_prompt.lower()
-        assert "STATUS:" in user_content
-        assert "RECENT_FILLS:" in user_content
+        # New layout (2026-05-24): STATUS labelled with caveat; RECENT_FILLS
+        # carries a scope hint. Both prefixes still appear at line start.
+        assert "STATUS " in user_content  # noqa: PLR0915
+        assert "RECENT_FILLS " in user_content
+        assert "COUNTS " in user_content
+        assert "fills_in_lookback_total: 0" in user_content
         assert max_tokens == 2048
 
     async def test_assistant_failure_falls_back_deterministic(
