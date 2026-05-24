@@ -82,6 +82,11 @@ class _StubAssistant(AssistantPort):
         self.contexts.append(context)
         return self.intent
 
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        return "stub summary"
+
 
 def _mock_transport() -> Any:
     """Build a MagicMock with the DiscordTransport methods we use."""

@@ -263,6 +263,23 @@ class HelpQuery(BaseModel):
         frozen = True
 
 
+class StatusReportQuery(BaseModel):
+    """Aggregate snapshot across every query + LLM-condensed prose.
+
+    Used by the assistant when the operator asks "give me a status
+    report" / "what's new since last brief". ``lookback_hours = None``
+    means "use the operator's last-status-report timestamp" (falls
+    back to 24h on first invocation); an explicit value overrides
+    the stored anchor and pins a fixed window.
+    """
+
+    kind: Literal["status_report"] = "status_report"
+    lookback_hours: int | None = Field(default=None, gt=0, le=168)
+
+    class Config:
+        frozen = True
+
+
 OperatorQuery = Annotated[
     StatusQuery
     | OpenOrdersQuery
@@ -272,7 +289,8 @@ OperatorQuery = Annotated[
     | HarvesterStatusQuery
     | RecentProposalsQuery
     | GridConfigQuery
-    | HelpQuery,
+    | HelpQuery
+    | StatusReportQuery,
     Field(discriminator="kind"),
 ]
 """Discriminated union over all v1 read-only operator queries."""
@@ -362,6 +380,7 @@ __all__ = (
     "ResumeAllCommand",
     "ResumeCommand",
     "StatusQuery",
+    "StatusReportQuery",
     "StopCommand",
     "SymbolInput",
 )

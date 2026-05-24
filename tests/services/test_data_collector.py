@@ -265,6 +265,12 @@ class _FailingStorage(StoragePort):
     async def get_daemon_heartbeats(self):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def save_status_report_taken(self, channel_id, user_id, taken_at):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_last_status_report_taken_at(self, channel_id, user_id):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:

@@ -214,3 +214,36 @@ class AssistantPort(ABC):
                 validation, or response is malformed in a way that
                 cannot be coerced into an ``Unparseable`` intent.
         """
+
+    @abstractmethod
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        """Generate a free-form text summary from structured input.
+
+        Distinct from :meth:`parse_intent`: this is a one-shot chat
+        completion that returns plain text (no JSON schema, no
+        ``OperatorIntent`` validation). Used by the ``status_report``
+        query to condense aggregated query results into a 2-3 paragraph
+        narrative.
+
+        Args:
+            system_prompt: System-role message — typically loaded from
+                a prompt file (e.g. ``config/prompts/status_report.md``).
+            user_content: User-role message — the structured payload
+                the LLM should summarize.
+            max_tokens: Output budget. Higher than ``parse_intent``'s
+                default because prose summaries are longer than JSON
+                payloads.
+
+        Returns:
+            The LLM's text response, with leading/trailing whitespace
+            stripped. Empty string allowed (caller decides how to
+            handle).
+
+        Raises:
+            AssistantError: LLM unreachable or response malformed.
+            NotImplementedError: Provider hasn't implemented this yet.
+                Cloud providers raise this in Phase 6; Ollama
+                implements it natively.
+        """

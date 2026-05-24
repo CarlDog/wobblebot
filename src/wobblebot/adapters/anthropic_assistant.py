@@ -62,6 +62,7 @@ _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_API_VERSION = "2023-06-01"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
+
 class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instance-attributes
     """Anthropic-backed ``AssistantPort`` for the operator interaction layer.
 
@@ -183,6 +184,14 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
             extract_tokens=extract_anthropic_tokens,
             parse_text_fn=lambda env: parse_text_blocks(env.get("content", []) or []),
             provider_name="Anthropic",
+        )
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        raise NotImplementedError(
+            "Anthropic free-form summarize is not yet wired (v1.1 candidate). "
+            "Switch operator.assistant.provider to 'ollama' to use status_report."
         )
 
     # ---- internals ------------------------------------------------ #

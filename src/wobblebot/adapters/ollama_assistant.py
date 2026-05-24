@@ -144,6 +144,48 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 f"LLM output failed operator_intent_v1 schema validation: {exc}"
             ) from exc
 
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        """One-shot Ollama ``/api/chat`` call returning plain text.
+
+        Used by ``StatusReportQuery`` to condense structured query
+        results into prose. Unlike :meth:`parse_intent` this does NOT
+        request JSON-formatted output — the LLM is free to write
+        Markdown / paragraphs.
+
+        Raises:
+            AssistantError: Transport failure or malformed envelope.
+        """
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "stream": False,
+            "options": {
+                "temperature": self._temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        try:
+            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            envelope: dict[str, Any] = response.json()
+        except httpx.HTTPError as exc:
+            raise AssistantError(f"Ollama summarize request failed: {exc}") from exc
+
+        message = envelope.get("message")
+        if not isinstance(message, dict):
+            raise AssistantError(
+                f"Ollama chat envelope missing 'message' object; keys: {sorted(envelope)}"
+            )
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise AssistantError("Ollama chat envelope 'message.content' is not a string")
+        return content.strip()
+
     # ---- internals ------------------------------------------------ #
 
     def _build_messages(self, context: ConversationContext) -> list[dict[str, str]]:

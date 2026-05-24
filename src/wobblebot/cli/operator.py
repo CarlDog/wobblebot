@@ -714,7 +714,9 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
 ) -> None:
     """Answer a Query via OperatorService and post an embed."""
     try:
-        result = await operator_service.answer_query(intent.query)
+        result = await operator_service.answer_query(
+            intent.query, channel_id=channel_id, user_id=user_id
+        )
     except OperatorError as exc:
         _LOGGER.error(
             "query dispatch failed",
@@ -1169,7 +1171,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         advise_storage=advise_storage,
         news_storage=news_storage,
         harvest_storage=harvest_storage,
+        operator_storage=operator_storage,
         harvester_config=config.harvester,
+        assistant=assistant,
         grid_config=config.grid,
         session_started_at=Timestamp(dt=datetime.now(UTC)),
     )

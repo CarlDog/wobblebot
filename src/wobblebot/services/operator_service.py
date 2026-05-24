@@ -30,7 +30,8 @@ from typing import Any
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
-from wobblebot.ports.exceptions import OperatorError, StorageError
+from wobblebot.ports.assistant import AssistantPort
+from wobblebot.ports.exceptions import AssistantError, OperatorError, StorageError
 from wobblebot.ports.operator import (
     CancelOpenOrdersCommand,
     CommandResult,
@@ -64,6 +65,9 @@ from wobblebot.ports.operator import (
     ResumeAllCommand,
     ResumeCommand,
     StatusQuery,
+    StatusReportQuery,
+    StatusReportResult,
+    StatusReportTally,
     StatusResult,
     StopCommand,
     SuggestionEntry,
@@ -153,6 +157,11 @@ _HELP_ENTRIES: tuple[HelpEntry, ...] = (
     ),
     HelpEntry(kind="grid_config", category="query", description="Current grid params in effect."),
     HelpEntry(kind="help", category="query", description="List available commands and queries."),
+    HelpEntry(
+        kind="status_report",
+        category="query",
+        description="Aggregated activity snapshot + LLM-condensed prose (since last status_report).",
+    ),
 )
 
 
@@ -179,7 +188,9 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         news_storage: StoragePort | None = None,
         harvest_storage: StoragePort | None = None,
         observe_storage: StoragePort | None = None,
+        operator_storage: StoragePort | None = None,
         harvester_config: HarvesterConfig | None = None,
+        assistant: AssistantPort | None = None,
         session_started_at: Timestamp | None = None,
     ) -> None:
         self._engine = engine
@@ -190,7 +201,16 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         self._news_storage = news_storage
         self._harvest_storage = harvest_storage
         self._observe_storage = observe_storage
+        # ``operator_storage`` backs the ``status_report_history`` anchor
+        # used by StatusReportQuery's "since last" lookback. Distinct
+        # from ``storage`` (live.db) because the anchor table lives in
+        # operator.db alongside pending_commands and conversation_turns.
+        self._operator_storage = operator_storage
         self._harvester_config = harvester_config
+        # AssistantPort drives the prose narrative on StatusReportQuery.
+        # Optional — if None, the query falls back to a deterministic
+        # one-line summary so it still works without an LLM.
+        self._assistant = assistant
         self._session_started_at = session_started_at
 
     # ------------------------------------------------------------------ commands
@@ -305,7 +325,11 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
     # ------------------------------------------------------------------ queries
 
     async def answer_query(  # pylint: disable=too-many-return-statements
-        self, query: OperatorQuery
+        self,
+        query: OperatorQuery,
+        *,
+        channel_id: str | None = None,
+        user_id: str | None = None,
     ) -> QueryResult:
         match query:
             case StatusQuery():
@@ -326,6 +350,10 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 return self._answer_grid_config(query)
             case HelpQuery():
                 return HelpResult(entries=list(_HELP_ENTRIES))
+            case StatusReportQuery():
+                return await self._answer_status_report(
+                    query, channel_id=channel_id, user_id=user_id
+                )
             case _:
                 raise OperatorError(f"Unknown OperatorQuery variant: {type(query).__name__}")
 
@@ -544,6 +572,184 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             levels_below=coin.levels_below,
             order_size_usd=float(coin.order_size_usd),
         )
+
+    async def _answer_status_report(
+        self,
+        query: StatusReportQuery,
+        *,
+        channel_id: str | None,
+        user_id: str | None,
+    ) -> StatusReportResult:
+        """Aggregate every read-only query + condense via LLM."""
+        now = datetime.now(UTC)
+        lookback_hours, since = await self._resolve_status_report_window(
+            query, channel_id=channel_id, user_id=user_id, now=now
+        )
+
+        # Run the sub-queries we want to roll up. Failures degrade
+        # gracefully — we still produce a report with the sections that
+        # succeeded so a single broken cross-DB doesn't kill the brief.
+        status = await self._answer_status()
+        open_orders = await self._answer_open_orders(OpenOrdersQuery(symbol=None))
+        recent_fills = await self._answer_recent_fills(
+            RecentFillsQuery(symbol=None, lookback_hours=lookback_hours, limit=20)
+        )
+        recent_suggestions = await self._answer_recent_suggestions(
+            RecentSuggestionsQuery(symbol=None, limit=5)
+        )
+        recent_news = await self._answer_recent_news(
+            RecentNewsQuery(lookback_hours=lookback_hours, limit=10)
+        )
+        harvester_status = await self._answer_harvester_status()
+        recent_proposals = await self._answer_recent_proposals(
+            RecentProposalsQuery(direction=None, lookback_hours=lookback_hours, limit=5)
+        )
+
+        tallies = [
+            StatusReportTally(label="Balance", value=f"${status.total_usd_balance:,.2f}"),
+            StatusReportTally(label="Session PnL", value=f"${status.session_pnl:+,.4f}"),
+            StatusReportTally(label="Open orders", value=str(len(open_orders.orders))),
+            StatusReportTally(
+                label=f"Fills (last {lookback_hours}h)", value=str(len(recent_fills.fills))
+            ),
+            StatusReportTally(
+                label=f"News (last {lookback_hours}h)", value=str(len(recent_news.items))
+            ),
+            StatusReportTally(label="Suggestions", value=str(len(recent_suggestions.suggestions))),
+            StatusReportTally(label="Harvester band", value=harvester_status.band),
+            StatusReportTally(label="Proposals", value=str(len(recent_proposals.proposals))),
+        ]
+
+        narrative = await self._compose_status_report_narrative(
+            lookback_hours=lookback_hours,
+            status=status,
+            open_orders=open_orders,
+            recent_fills=recent_fills,
+            recent_suggestions=recent_suggestions,
+            recent_news=recent_news,
+            harvester_status=harvester_status,
+            recent_proposals=recent_proposals,
+        )
+
+        # Persist the anchor so the next status_report can scope its
+        # window. Persist AFTER the narrative compose so a transient LLM
+        # failure doesn't move the anchor and lose the data window.
+        if self._operator_storage is not None and channel_id is not None and user_id is not None:
+            try:
+                await self._operator_storage.save_status_report_taken(channel_id, user_id, now)
+            except StorageError:
+                # Anchor save failure is non-fatal — operator still sees
+                # the report. Next run just won't have an updated anchor.
+                pass
+
+        return StatusReportResult(
+            lookback_hours=lookback_hours,
+            since=Timestamp(dt=since),
+            narrative=narrative,
+            tallies=tallies,
+        )
+
+    async def _resolve_status_report_window(
+        self,
+        query: StatusReportQuery,
+        *,
+        channel_id: str | None,
+        user_id: str | None,
+        now: datetime,
+    ) -> tuple[int, datetime]:
+        """Pick the lookback window: explicit override > stored anchor > 24h."""
+        if query.lookback_hours is not None:
+            hours = query.lookback_hours
+            return hours, now - timedelta(hours=hours)
+        if self._operator_storage is not None and channel_id is not None and user_id is not None:
+            try:
+                anchor = await self._operator_storage.get_last_status_report_taken_at(
+                    channel_id, user_id
+                )
+            except StorageError:
+                anchor = None
+            if anchor is not None:
+                # Compute hours since anchor, round up to at least 1.
+                delta = now - anchor
+                hours = max(1, int(delta.total_seconds() // 3600))
+                return hours, anchor
+        return 24, now - timedelta(hours=24)
+
+    async def _compose_status_report_narrative(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        lookback_hours: int,
+        status: StatusResult,
+        open_orders: OpenOrdersResult,
+        recent_fills: RecentFillsResult,
+        recent_suggestions: RecentSuggestionsResult,
+        recent_news: RecentNewsResult,
+        harvester_status: HarvesterStatusResult,
+        recent_proposals: RecentProposalsResult,
+    ) -> str:
+        """Build the LLM prompt + call summarize; fall back deterministically."""
+        deterministic = (
+            f"Last {lookback_hours}h snapshot: balance ${status.total_usd_balance:,.2f}, "
+            f"session PnL ${status.session_pnl:+,.4f}, "
+            f"{len(recent_fills.fills)} fills, {len(recent_news.items)} news items, "
+            f"harvester band {harvester_status.band}, "
+            f"{len(open_orders.orders)} open orders."
+        )
+        if self._assistant is None:
+            return deterministic
+
+        # Compact data blob — keep under ~3k tokens so the LLM has room
+        # to reply. Use model_dump_json for canonical representation.
+        blob_lines = [
+            f"LOOKBACK_HOURS: {lookback_hours}",
+            "",
+            "STATUS:",
+            status.model_dump_json(indent=2),
+            "",
+            "OPEN_ORDERS:",
+            open_orders.model_dump_json(indent=2),
+            "",
+            "RECENT_FILLS:",
+            recent_fills.model_dump_json(indent=2),
+            "",
+            "RECENT_SUGGESTIONS:",
+            recent_suggestions.model_dump_json(indent=2),
+            "",
+            "RECENT_NEWS:",
+            recent_news.model_dump_json(indent=2),
+            "",
+            "HARVESTER_STATUS:",
+            harvester_status.model_dump_json(indent=2),
+            "",
+            "RECENT_PROPOSALS:",
+            recent_proposals.model_dump_json(indent=2),
+        ]
+        user_content = "\n".join(blob_lines)
+
+        system_prompt = (
+            "You are the WobbleBot operator assistant generating a status "
+            "report. The operator has asked for a snapshot of what's "
+            "happened since they last checked. You will receive structured "
+            "JSON for every query the bot can answer; condense it into a "
+            "user-friendly 2-3 paragraph plain-text narrative.\n\n"
+            "Guidelines:\n"
+            "- Lead with what changed (fills, new news, harvester movements). "
+            "Static state (open orders, grid config) is secondary.\n"
+            "- Surface numbers, prices, and timestamps that matter. Don't "
+            "invent numbers not in the JSON.\n"
+            "- If a section is empty, say so briefly; don't pad.\n"
+            "- Use Markdown sparingly — bold for headlines, plain text for the "
+            "rest. No code fences, no JSON in the output.\n"
+            "- Keep it under ~300 words. The operator wants signal, not noise."
+        )
+
+        try:
+            narrative = await self._assistant.summarize(
+                system_prompt, user_content, max_tokens=2048
+            )
+        except (AssistantError, NotImplementedError):
+            return deterministic
+        return narrative or deterministic
 
     # ------------------------------------------------------------------ helpers
 

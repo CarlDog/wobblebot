@@ -236,6 +236,44 @@ class HelpResult(BaseModel):
         frozen = True
 
 
+class StatusReportTally(BaseModel):
+    """One ``label / value`` pair inside ``StatusReportResult.tallies``.
+
+    Renders as one embed field (name=label, value=value). Keeps the
+    glanceable numbers separate from the LLM-generated narrative so
+    a malformed narrative can't hide a number the operator wanted to
+    see.
+    """
+
+    label: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+
+class StatusReportResult(BaseModel):
+    """LLM-condensed prose + structured tallies across every query.
+
+    ``narrative`` is the LLM's 2-3 paragraph summary; ``tallies`` are
+    the raw counts the renderer surfaces as glanceable fields below
+    the prose. ``lookback_hours`` is the resolved window (always set
+    even when the query's ``lookback_hours`` was ``None`` — resolved
+    against the stored anchor or fell back to 24h). ``since`` is the
+    same anchor expressed as an absolute timestamp, useful for the
+    embed footer.
+    """
+
+    kind: Literal["status_report"] = "status_report"
+    lookback_hours: int = Field(gt=0)
+    since: Timestamp
+    narrative: str = Field(min_length=1)
+    tallies: list[StatusReportTally] = Field(default_factory=list)
+
+    class Config:
+        frozen = True
+
+
 QueryResult = Annotated[
     StatusResult
     | OpenOrdersResult
@@ -245,7 +283,8 @@ QueryResult = Annotated[
     | HarvesterStatusResult
     | RecentProposalsResult
     | GridConfigResult
-    | HelpResult,
+    | HelpResult
+    | StatusReportResult,
     Field(discriminator="kind"),
 ]
 """Discriminated union over the typed outputs of every query."""
@@ -295,6 +334,8 @@ __all__ = (
     "RecentNewsResult",
     "RecentProposalsResult",
     "RecentSuggestionsResult",
+    "StatusReportResult",
+    "StatusReportTally",
     "StatusResult",
     "SuggestionEntry",
     "SymbolStatusEntry",

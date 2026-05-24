@@ -360,4 +360,19 @@ CREATE TABLE IF NOT EXISTS daemon_heartbeats (
     name            TEXT PRIMARY KEY CHECK (length(name) > 0),
     last_beat_at    TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------- --
+-- status_report_history — last "status_report" query per operator   --
+-- ---------------------------------------------------------------- --
+-- Per-(channel_id, user_id) anchor for the "since last" lookback
+-- semantic on the StatusReportQuery. Each successful status_report
+-- run upserts the row; the next run reads its taken_at to compute
+-- the lookback window. First-ever run finds no row and falls back
+-- to a 24h default. Lives in operator.db.
+CREATE TABLE IF NOT EXISTS status_report_history (
+    channel_id      TEXT NOT NULL CHECK (length(channel_id) > 0),
+    user_id         TEXT NOT NULL CHECK (length(user_id) > 0),
+    taken_at        TEXT NOT NULL,
+    PRIMARY KEY (channel_id, user_id)
+);
 """

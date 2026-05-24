@@ -37,6 +37,8 @@ from wobblebot.ports.operator import (
     ResumeAllCommand,
     ResumeCommand,
     StatusQuery,
+    StatusReportQuery,
+    StatusReportResult,
     StopCommand,
 )
 from wobblebot.services.grid_engine import GridEngine
@@ -95,7 +97,7 @@ async def exchange_with_btc_and_eth() -> AsyncIterator[MockExchangeAdapter]:
     )
 
 
-async def _service(
+async def _service(  # pylint: disable=too-many-arguments
     storage: SQLiteStorageAdapter,
     exchange: MockExchangeAdapter,
     *,
@@ -105,7 +107,9 @@ async def _service(
     news_storage: SQLiteStorageAdapter | None = None,
     harvest_storage: SQLiteStorageAdapter | None = None,
     observe_storage: SQLiteStorageAdapter | None = None,
+    operator_storage: SQLiteStorageAdapter | None = None,
     harvester_config: HarvesterConfig | None = None,
+    assistant: object | None = None,
     session_started_at: Timestamp | None = None,
 ) -> OperatorService:
     engine = GridEngine(exchange, storage, grid_config or _grid_config(), _safety_config())
@@ -118,7 +122,9 @@ async def _service(
         news_storage=news_storage,
         harvest_storage=harvest_storage,
         observe_storage=observe_storage,
+        operator_storage=operator_storage,
         harvester_config=harvester_config,
+        assistant=assistant,  # type: ignore[arg-type]
         session_started_at=session_started_at,
     )
 
@@ -347,9 +353,7 @@ class TestStatusQuery:
                 ]
             )
             # storage (live.db) has NO balance snapshot — observe has it
-            svc = await _service(
-                storage, exchange_with_btc_and_eth, observe_storage=observe
-            )
+            svc = await _service(storage, exchange_with_btc_and_eth, observe_storage=observe)
             status = await svc.answer_query(StatusQuery())
             assert status.total_usd_balance == 123.45
         finally:
@@ -597,4 +601,151 @@ class TestHelpQuery:
             "grid_config",
             "help",
         } <= kinds
-        assert len(result.entries) == 15
+        assert "status_report" in kinds
+        assert len(result.entries) == 16
+
+
+# --------------------------------------------------------------------- #
+# StatusReportQuery                                                     #
+# --------------------------------------------------------------------- #
+
+
+class _RecordingAssistant:
+    """Stub assistant whose ``summarize`` records calls + returns a fixed string."""
+
+    def __init__(self, narrative: str = "all clear, two fills, harvester holding") -> None:
+        self.narrative = narrative
+        self.calls: list[tuple[str, str, int]] = []
+
+    async def parse_intent(self, context):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        self.calls.append((system_prompt, user_content, max_tokens))
+        return self.narrative
+
+
+class _FailingAssistant:
+    """Stub assistant whose ``summarize`` raises NotImplementedError."""
+
+    async def parse_intent(self, context):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        raise NotImplementedError("test stub: no summarize")
+
+
+class TestStatusReport:
+    async def test_no_assistant_falls_back_to_deterministic_narrative(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        service = await _service(storage, exchange_with_btc_and_eth, assistant=None)
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=4), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        assert result.lookback_hours == 4
+        assert "last 4h snapshot" in result.narrative.lower()
+        # Tallies are present even without LLM
+        labels = [t.label for t in result.tallies]
+        assert "Balance" in labels
+        assert "Open orders" in labels
+        assert any("Fills" in label for label in labels)
+
+    async def test_assistant_narrative_used_when_available(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        assistant = _RecordingAssistant(narrative="quiet hour, two fills, no news")
+        service = await _service(storage, exchange_with_btc_and_eth, assistant=assistant)
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=2), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        assert result.narrative == "quiet hour, two fills, no news"
+        assert len(assistant.calls) == 1
+        # System prompt mentions status report; payload includes the section
+        # headers from the data blob.
+        system_prompt, user_content, max_tokens = assistant.calls[0]
+        assert "status report" in system_prompt.lower()
+        assert "STATUS:" in user_content
+        assert "RECENT_FILLS:" in user_content
+        assert max_tokens == 2048
+
+    async def test_assistant_failure_falls_back_deterministic(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        service = await _service(storage, exchange_with_btc_and_eth, assistant=_FailingAssistant())
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=4), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        assert "last 4h snapshot" in result.narrative.lower()
+
+    async def test_explicit_lookback_overrides_anchor(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        # Pre-seed anchor at T-12h.
+        await storage.save_status_report_taken(
+            "C-1", "U-1", datetime.now(UTC) - timedelta(hours=12)
+        )
+        service = await _service(storage, exchange_with_btc_and_eth, operator_storage=storage)
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=3), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        assert result.lookback_hours == 3  # explicit wins over the 12h anchor
+
+    async def test_default_lookback_uses_stored_anchor(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        # Seed anchor at T-6h; expect lookback ~6h.
+        await storage.save_status_report_taken(
+            "C-1", "U-1", datetime.now(UTC) - timedelta(hours=6, minutes=5)
+        )
+        service = await _service(storage, exchange_with_btc_and_eth, operator_storage=storage)
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=None), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        # Round-down: 6h 5min becomes 6.
+        assert result.lookback_hours == 6
+
+    async def test_default_lookback_falls_back_to_24h_when_no_anchor(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        service = await _service(storage, exchange_with_btc_and_eth, operator_storage=storage)
+        result = await service.answer_query(
+            StatusReportQuery(lookback_hours=None), channel_id="C-1", user_id="U-1"
+        )
+        assert isinstance(result, StatusReportResult)
+        assert result.lookback_hours == 24
+
+    async def test_successful_run_persists_new_anchor(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        service = await _service(storage, exchange_with_btc_and_eth, operator_storage=storage)
+        before = datetime.now(UTC) - timedelta(seconds=1)
+        await service.answer_query(
+            StatusReportQuery(lookback_hours=4), channel_id="C-9", user_id="U-9"
+        )
+        anchor = await storage.get_last_status_report_taken_at("C-9", "U-9")
+        assert anchor is not None
+        assert anchor > before

@@ -431,3 +431,11 @@ class GoogleAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             parse_text_fn=parse_candidate_text,
             provider_name="Google",
         )
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        raise NotImplementedError(
+            "Google free-form summarize is not yet wired (v1.1 candidate). "
+            "Switch operator.assistant.provider to 'ollama' to use status_report."
+        )

@@ -174,11 +174,22 @@ class OperatorPort(ABC):
         """
 
     @abstractmethod
-    async def answer_query(self, query: OperatorQuery) -> QueryResult:  # noqa: F405
+    async def answer_query(
+        self,
+        query: OperatorQuery,  # noqa: F405
+        *,
+        channel_id: str | None = None,
+        user_id: str | None = None,
+    ) -> QueryResult:  # noqa: F405
         """Answer a read-only operator query against current state.
 
         Args:
             query: Concrete ``OperatorQuery`` variant to answer.
+            channel_id: Discord channel scope. Optional — only used by
+                ``StatusReportQuery`` (to look up the per-(channel,
+                user) "since last status_report" anchor). Other queries
+                ignore it.
+            user_id: Discord user scope. Same usage as ``channel_id``.
 
         Returns:
             ``QueryResult`` variant matching the query's ``kind``.

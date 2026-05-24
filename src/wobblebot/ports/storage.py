@@ -872,3 +872,41 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: On retrieval failure.
         """
+
+    @abstractmethod
+    async def save_status_report_taken(
+        self, channel_id: str, user_id: str, taken_at: datetime
+    ) -> None:
+        """Upsert the ``status_report`` anchor for ``(channel_id, user_id)``.
+
+        Backs the "since last" semantic on ``StatusReportQuery`` — each
+        successful run records when it happened; the next run with
+        ``lookback_hours=None`` reads this to scope the window.
+
+        Args:
+            channel_id: Discord channel scope (per-channel anchors).
+            user_id: Discord user scope.
+            taken_at: Wallclock at which the status report ran (UTC).
+
+        Raises:
+            StorageError: On persistence failure.
+        """
+
+    @abstractmethod
+    async def get_last_status_report_taken_at(
+        self, channel_id: str, user_id: str
+    ) -> datetime | None:
+        """Return the most-recent ``status_report`` anchor or ``None``.
+
+        Args:
+            channel_id: Discord channel scope.
+            user_id: Discord user scope.
+
+        Returns:
+            Anchor timestamp, or ``None`` if no status_report has run
+            for this (channel, user) pair before. Callers use this to
+            decide lookback (None → 24h default).
+
+        Raises:
+            StorageError: On retrieval failure.
+        """

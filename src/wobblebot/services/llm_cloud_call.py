@@ -391,9 +391,7 @@ async def wrap_provider_errors(
     try:
         yield
     except httpx.HTTPStatusError as exc:
-        raise error_cls(
-            f"{provider_name} request failed: HTTP {exc.response.status_code}"
-        ) from exc
+        raise error_cls(f"{provider_name} request failed: HTTP {exc.response.status_code}") from exc
     except httpx.HTTPError as exc:
         raise error_cls(f"{provider_name} transport error: {exc}") from exc
 

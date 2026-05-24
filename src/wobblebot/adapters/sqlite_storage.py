@@ -1235,6 +1235,56 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             out[name] = parsed
         return out
 
+    async def save_status_report_taken(
+        self, channel_id: str, user_id: str, taken_at: datetime
+    ) -> None:
+        """Upsert the per-(channel, user) status_report anchor."""
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO status_report_history (channel_id, user_id, taken_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(channel_id, user_id) DO UPDATE SET
+                    taken_at = excluded.taken_at
+                """,
+                (channel_id, user_id, taken_at.astimezone(UTC).isoformat()),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to upsert status_report anchor for ({channel_id!r}, {user_id!r}): {exc}"
+            ) from exc
+
+    async def get_last_status_report_taken_at(
+        self, channel_id: str, user_id: str
+    ) -> datetime | None:
+        """Return the most-recent status_report anchor or ``None``."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """
+                SELECT taken_at FROM status_report_history
+                WHERE channel_id = ? AND user_id = ?
+                """,
+                (channel_id, user_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(
+                f"Failed to read status_report anchor for ({channel_id!r}, {user_id!r}): {exc}"
+            ) from exc
+        if row is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(row[0])
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
 
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,

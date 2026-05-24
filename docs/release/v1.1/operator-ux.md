@@ -581,6 +581,87 @@ catalog entries at once is the moment to wire up the
 single-source-of-truth pattern instead of doing it by hand a
 third time.
 
+### `weather_report` query — market-trend summary across multiple days
+
+**What:** a sibling query to v1.0's `status_report` (which condenses
+the operator's bot-internal activity since the last brief). The
+`weather_report` (or whatever final name lands — `market_brief`,
+`forecast`, `daily_outlook` are alternates) would aggregate
+EXTERNAL market signals rather than the bot's own activity:
+
+- News headlines + sentiment scores over the past N days (default
+  3-7 — wider window than `status_report`'s "since last")
+- Price trends per monitored symbol (e.g. ETH 7d % change, BTC
+  realized volatility)
+- Volume + spread anomalies (e.g. unusual taker fee activity)
+- Recent advisor suggestions across all symbols (the LLM's own
+  trend assessments)
+- Possibly: integration with a generic external sentiment feed
+  (CryptoCompare social score, Fear & Greed Index)
+
+Then condense via the same `AssistantPort.summarize` pattern
+`status_report` uses, with a prompt tuned for forward-looking
+commentary: "Based on the news + price + sentiment data below,
+what's the market mood for the next 24-72 hours? Flag anything
+that should make the operator adjust grid spacing or pause a
+symbol."
+
+**Why deferred:** the underlying pieces all exist (news.db,
+observe.db price history, advise.db suggestions) so the
+groundwork is in place. Defer because:
+
+1. Operator wants `status_report` first to internalize the
+   pattern + tune the prompt before adding a second flavor.
+2. Naming + scope are still soft — could overlap with the v1.1
+   "advisor across multiple symbols" candidate or get folded
+   into a richer `cost_summary` if those land first.
+3. Requires a price-trend computation layer that doesn't exist
+   yet (current `/observe` ingests but doesn't compute deltas).
+
+**Trigger:** after `status_report` is in regular operator use
+and the prompt has stabilized; OR when a clear external-sentiment
+signal lands (e.g. CryptoCompare 90-day evaluation per ADR-010
+unlocks richer sentiment data).
+
+**Naming note:** "weather report" is operator-catchy; the formal
+catalog name should still be `<noun>_report` for symmetry with
+`status_report`. Candidates: `market_report`, `weather_report`,
+`outlook`, `forecast`. Decide at implementation time.
+
+### `AssistantPort.summarize` — cloud provider implementations
+
+**What:** v1.0's `status_report` query uses a new
+`AssistantPort.summarize(system_prompt, user_content, max_tokens)`
+method to generate prose narratives. Only the Ollama adapter
+implements it today; Anthropic / OpenAI / Google adapters raise
+`NotImplementedError` with a "switch to ollama" message. If the
+operator switches `operator.assistant.provider` to a cloud
+provider, `status_report` (and any future `*_report` queries
+that ride on `summarize`) stops working.
+
+**Implementation:** mirror each adapter's `parse_intent` shape
+but skip the JSON schema validation. Each adapter:
+
+- Builds a chat-completion request with the system_prompt as the
+  system message and user_content as a single user message.
+- Routes through the existing `execute_assistant_call` cost gate
+  (Phase 6 / ADR-014 — cost-cap enforcement is non-negotiable
+  for cloud providers).
+- Wraps response parsing to return the raw assistant message
+  text (using each provider's existing `parse_text_fn` helper).
+- Honors the `max_tokens` parameter — important because
+  `status_report` uses 2048 tokens, much more than `parse_intent`'s
+  typical 512.
+
+**Why deferred:** operator runs Ollama; cloud paths are
+configured but not actively used. Implementing across three
+providers adds ~200 LOC + provider-specific cost-gate tests
+that v1.0's status_report doesn't need.
+
+**Trigger:** if the operator switches to cloud, OR if a future
+v1.1 feature (weather_report, anomaly_summary) needs the
+broader provider coverage.
+
 ### One-command daemon orchestrator (`cli/up` wrapper)
 
 **What:** a new operator entry point (likely `cli/up` or

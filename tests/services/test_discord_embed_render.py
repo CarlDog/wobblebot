@@ -25,6 +25,8 @@ from wobblebot.ports.operator_results import (
     RecentNewsResult,
     RecentProposalsResult,
     RecentSuggestionsResult,
+    StatusReportResult,
+    StatusReportTally,
     StatusResult,
     SuggestionEntry,
     SymbolStatusEntry,
@@ -402,3 +404,39 @@ class TestRenderHelp:
         commands_value = next(v for n, v in out["fields"] if n == "Commands")
         assert "pause" in commands_value
         assert "resume" in commands_value
+
+
+class TestRenderStatusReport:
+    def test_renders_narrative_as_description_and_tallies_as_fields(self) -> None:
+        result = StatusReportResult(
+            lookback_hours=4,
+            since=_ts(),
+            narrative="Quiet four hours. Two fills, no news. Harvester holding.",
+            tallies=[
+                StatusReportTally(label="Balance", value="$89.92"),
+                StatusReportTally(label="Open orders", value="5"),
+                StatusReportTally(label="Fills (last 4h)", value="2"),
+            ],
+        )
+
+        out = render_query_embed(result)
+
+        assert "4h" in out["title"]
+        assert "Quiet four hours" in out["description"]
+        assert ("Balance", "$89.92") in out["fields"]
+        assert ("Open orders", "5") in out["fields"]
+        assert "since" in out["footer"]
+
+    def test_long_narrative_is_truncated_under_discord_cap(self) -> None:
+        long_text = "x" * 5000
+        result = StatusReportResult(
+            lookback_hours=24,
+            since=_ts(),
+            narrative=long_text,
+            tallies=[],
+        )
+
+        out = render_query_embed(result)
+
+        # Discord caps description at 4096; we truncate well under.
+        assert len(out["description"]) <= 4000

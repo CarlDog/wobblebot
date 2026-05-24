@@ -30,6 +30,7 @@ from wobblebot.ports.operator_results import (
     RecentNewsResult,
     RecentProposalsResult,
     RecentSuggestionsResult,
+    StatusReportResult,
     StatusResult,
     SuggestionEntry,
     SymbolStatusEntry,
@@ -48,7 +49,9 @@ _MAX_LIST_ENTRIES = 10
 _MAX_FIELD_VALUE_CHARS = 1000
 
 
-def render_query_embed(result: QueryResult) -> dict[str, Any]:  # pylint: disable=too-many-return-statements
+def render_query_embed(
+    result: QueryResult,
+) -> dict[str, Any]:  # pylint: disable=too-many-return-statements
     """Convert any ``QueryResult`` variant to ``send_embed`` kwargs.
 
     Dispatches on the discriminated union; each per-variant helper
@@ -74,6 +77,8 @@ def render_query_embed(result: QueryResult) -> dict[str, Any]:  # pylint: disabl
             return _render_grid_config(result)
         case HelpResult():
             return _render_help(result)
+        case StatusReportResult():
+            return _render_status_report(result)
 
 
 # --------------------------------------------------------------------- #
@@ -347,6 +352,21 @@ def _help_list(entries: list[HelpEntry]) -> str:
     lines = [f"`{e.kind}` — {e.description}" for e in entries]
     joined = "\n".join(lines)
     return _truncate(joined, _MAX_FIELD_VALUE_CHARS)
+
+
+def _render_status_report(result: StatusReportResult) -> dict[str, Any]:
+    # Discord caps embed description at 4096 chars. Truncate generously
+    # so the narrative is never silently cut off mid-sentence by Discord.
+    narrative = _truncate(result.narrative, 4000)
+    fields = [(tally.label, tally.value) for tally in result.tallies]
+    since_iso = result.since.dt.isoformat(timespec="minutes")
+    return {
+        "title": f"Status report — last {result.lookback_hours}h",
+        "description": narrative,
+        "color": COLOR_INFO,
+        "fields": fields,
+        "footer": f"since {since_iso}",
+    }
 
 
 # --------------------------------------------------------------------- #

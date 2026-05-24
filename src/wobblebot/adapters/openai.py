@@ -76,6 +76,7 @@ _DEFAULT_TIMEOUT_SECONDS = 60.0
 # their `usage` block always includes `completion_tokens_details`.
 _REASONING_MODEL_PREFIXES = ("o1", "o3")
 
+
 def is_reasoning_model(model: str) -> bool:
     """Return True iff the OpenAI model id is an o-series reasoning model.
 
@@ -449,4 +450,12 @@ class OpenAIAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             extract_tokens=extract_openai_tokens,
             parse_text_fn=parse_message_content,
             provider_name="OpenAI",
+        )
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        raise NotImplementedError(
+            "OpenAI free-form summarize is not yet wired (v1.1 candidate). "
+            "Switch operator.assistant.provider to 'ollama' to use status_report."
         )

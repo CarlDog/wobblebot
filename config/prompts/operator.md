@@ -74,6 +74,11 @@ Available query kinds:
 - `{"kind": "grid_config", "symbol": "BTC/USD"}` — current grid
   parameters in effect
 - `{"kind": "help"}` — list available commands and queries
+- `{"kind": "status_report", "lookback_hours": null}` — aggregated
+  snapshot across every query, condensed by the LLM into a
+  user-friendly narrative. `lookback_hours: null` means "since the
+  operator's last status_report" (24h default on first run). An
+  explicit integer 1-168 pins a fixed window.
 
 ### 3. Conversational (chat with no action)
 
@@ -125,6 +130,14 @@ operator to the structured response instead.
   harvester saying" → `{"kind": "query", "query": {"kind": "harvester_status"}}`.
 - "show grid", "what's my grid look like", "current spacing" →
   `{"kind": "query", "query": {"kind": "grid_config"}}`.
+- "status report", "give me a brief", "what's new", "what's happened
+  since last check", "summary", "morning brief", "daily update",
+  "catch me up" → `{"kind": "query", "query": {"kind": "status_report",
+  "lookback_hours": null}}`. If the operator specifies a window
+  ("brief for the last 4 hours", "summarize the past 2 days"),
+  echo the integer into `lookback_hours` (1-168). Default to `null`
+  whenever they don't specify a window — the bot tracks "since last
+  brief" itself.
 
 Conversational is for greetings ("hi", "thanks"), one-line
 clarifications grounded in the snapshot ("BTC is paused because
