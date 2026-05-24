@@ -75,6 +75,7 @@ from wobblebot.ports.operator import (
 )
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cycle_matcher import match_cycles, today_realized_pnl
+from wobblebot.services.discord_embed_render import format_signed_usd
 from wobblebot.services.grid_engine import GridEngine
 
 # --------------------------------------------------------------------- #
@@ -160,7 +161,7 @@ _HELP_ENTRIES: tuple[HelpEntry, ...] = (
     HelpEntry(
         kind="status_report",
         category="query",
-        description="Aggregated activity snapshot + LLM-condensed prose (since last status_report).",
+        description="Aggregated activity snapshot + LLM-condensed prose (since last brief).",
     ),
 )
 
@@ -573,7 +574,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             order_size_usd=float(coin.order_size_usd),
         )
 
-    async def _answer_status_report(
+    async def _answer_status_report(  # pylint: disable=too-many-locals
         self,
         query: StatusReportQuery,
         *,
@@ -604,10 +605,16 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         recent_proposals = await self._answer_recent_proposals(
             RecentProposalsQuery(direction=None, lookback_hours=lookback_hours, limit=5)
         )
+        # Include default-tier grid config in the data blob so the LLM
+        # can ground "spacing is currently X" claims against advisor
+        # suggestions like "increase spacing to 1.2".
+        grid_config = self._answer_grid_config(GridConfigQuery(symbol=None))
 
         tallies = [
             StatusReportTally(label="Balance", value=f"${status.total_usd_balance:,.2f}"),
-            StatusReportTally(label="Session PnL", value=f"${status.session_pnl:+,.4f}"),
+            StatusReportTally(
+                label="Today's PnL", value=format_signed_usd(status.session_pnl, decimals=4)
+            ),
             StatusReportTally(label="Open orders", value=str(len(open_orders.orders))),
             StatusReportTally(
                 label=f"Fills (last {lookback_hours}h)", value=str(len(recent_fills.fills))
@@ -629,6 +636,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             recent_news=recent_news,
             harvester_status=harvester_status,
             recent_proposals=recent_proposals,
+            grid_config=grid_config,
         )
 
         # Persist the anchor so the next status_report can scope its
@@ -686,11 +694,12 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         recent_news: RecentNewsResult,
         harvester_status: HarvesterStatusResult,
         recent_proposals: RecentProposalsResult,
+        grid_config: GridConfigResult,
     ) -> str:
         """Build the LLM prompt + call summarize; fall back deterministically."""
         deterministic = (
             f"Last {lookback_hours}h snapshot: balance ${status.total_usd_balance:,.2f}, "
-            f"session PnL ${status.session_pnl:+,.4f}, "
+            f"today's PnL {format_signed_usd(status.session_pnl, decimals=4)}, "
             f"{len(recent_fills.fills)} fills, {len(recent_news.items)} news items, "
             f"harvester band {harvester_status.band}, "
             f"{len(open_orders.orders)} open orders."
@@ -700,11 +709,17 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
 
         # Compact data blob — keep under ~3k tokens so the LLM has room
         # to reply. Use model_dump_json for canonical representation.
+        # GRID_CONFIG is the operator's *current* tier; advisor
+        # suggestions describe *proposed* changes — the LLM needs both
+        # to ground "increase spacing" framing.
         blob_lines = [
             f"LOOKBACK_HOURS: {lookback_hours}",
             "",
             "STATUS:",
             status.model_dump_json(indent=2),
+            "",
+            "GRID_CONFIG (currently in effect):",
+            grid_config.model_dump_json(indent=2),
             "",
             "OPEN_ORDERS:",
             open_orders.model_dump_json(indent=2),
@@ -712,7 +727,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "RECENT_FILLS:",
             recent_fills.model_dump_json(indent=2),
             "",
-            "RECENT_SUGGESTIONS:",
+            "RECENT_SUGGESTIONS (proposed changes, not yet applied):",
             recent_suggestions.model_dump_json(indent=2),
             "",
             "RECENT_NEWS:",
@@ -735,6 +750,9 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "Guidelines:\n"
             "- Lead with what changed (fills, new news, harvester movements). "
             "Static state (open orders, grid config) is secondary.\n"
+            "- When discussing RECENT_SUGGESTIONS, compare proposed values "
+            "against GRID_CONFIG (e.g. 'advisor recommends bumping spacing "
+            "from 1.0% to 1.2%') — don't describe suggestions in isolation.\n"
             "- Surface numbers, prices, and timestamps that matter. Don't "
             "invent numbers not in the JSON.\n"
             "- If a section is empty, say so briefly; don't pad.\n"

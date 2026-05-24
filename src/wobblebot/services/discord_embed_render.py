@@ -49,6 +49,20 @@ _MAX_LIST_ENTRIES = 10
 _MAX_FIELD_VALUE_CHARS = 1000
 
 
+def format_signed_usd(value: float, *, decimals: int = 2) -> str:
+    """Format USD with a leading sign — '+$1.23', '-$1.23', '$0.00'.
+
+    Standard convention puts the sign before the currency symbol;
+    Python's ``f"${x:+,.2f}"`` puts it between (``$+1.23``) which
+    reads wrong. Zero is rendered without a sign.
+    """
+    if value > 0:
+        return f"+${value:,.{decimals}f}"
+    if value < 0:
+        return f"-${abs(value):,.{decimals}f}"
+    return f"${0:,.{decimals}f}"
+
+
 def render_query_embed(
     result: QueryResult,
 ) -> dict[str, Any]:  # pylint: disable=too-many-return-statements
@@ -93,7 +107,7 @@ def _render_status(result: StatusResult) -> dict[str, Any]:
     runtime_h, runtime_min = divmod(runtime_min, 60)
     desc_lines = [
         f"**Balance**: ${result.total_usd_balance:,.2f}",
-        f"**Session PnL**: ${result.session_pnl:+,.4f}",
+        f"**Today's PnL**: {format_signed_usd(result.session_pnl, decimals=4)}",
         f"**Runtime**: {runtime_h}h {runtime_min:02d}m {runtime_sec:02d}s",
         f"**Recent fills**: {result.recent_fill_count}",
     ]
