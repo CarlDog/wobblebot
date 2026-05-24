@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 
@@ -10,6 +9,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.services.daemon_health import DaemonHealth, DaemonStatus
@@ -23,10 +23,6 @@ from wobblebot.web.auth import hash_password
 from wobblebot.web.routes.health import OverallStatus, compute_overall_status
 
 pytestmark = pytest.mark.unit
-
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
 
 
 # --------------------------------------------------------------------- #
@@ -130,7 +126,7 @@ class TestComputeOverall:
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -178,21 +174,6 @@ def client_no_probe(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
         yield c
 
 
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
-
 class TestHealthPage:
     def test_unauthenticated_redirects_to_login(self, client_with_probe: TestClient) -> None:
         resp = client_with_probe.get("/health")
@@ -200,13 +181,13 @@ class TestHealthPage:
         assert resp.headers["location"] == "/auth/login"
 
     def test_authenticated_returns_200(self, client_with_probe: TestClient) -> None:
-        _login(client_with_probe)
+        login_as(client_with_probe)
         resp = client_with_probe.get("/health")
         assert resp.status_code == 200
         assert "Application Health" in resp.text
 
     def test_kraken_online_renders_green(self, client_with_probe: TestClient) -> None:
-        _login(client_with_probe)
+        login_as(client_with_probe)
         resp = client_with_probe.get("/health")
         assert "health-overall-green" in resp.text or "health-overall-yellow" in resp.text
         # Daemons aren't wired in this test, so all three are UNKNOWN
@@ -214,7 +195,7 @@ class TestHealthPage:
         assert "health-overall-yellow" in resp.text
 
     def test_no_probe_renders_not_configured(self, client_no_probe: TestClient) -> None:
-        _login(client_no_probe)
+        login_as(client_no_probe)
         resp = client_no_probe.get("/health")
         assert resp.status_code == 200
         assert "Kraken health probe is not configured" in resp.text
@@ -230,7 +211,7 @@ class TestHealthIconEndpointRemoved:
     """
 
     def test_health_icon_endpoint_returns_404(self, client_with_probe: TestClient) -> None:
-        _login(client_with_probe)
+        login_as(client_with_probe)
         resp = client_with_probe.get("/health/icon")
         assert resp.status_code == 404
 
@@ -244,7 +225,7 @@ class TestKrakenMaintenanceRollsUpToRed:
             kraken_health_probe=_stub_probe(KrakenSystemStatus.MAINTENANCE),
         )
         with TestClient(app, follow_redirects=False) as c:
-            _login(c)
+            login_as(c)
             resp = c.get("/health")
             assert resp.status_code == 200
             assert "health-overall-red" in resp.text

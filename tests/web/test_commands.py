@@ -24,6 +24,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.web.app import create_app
@@ -31,9 +32,6 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
 _PENDING_ID_RE = re.compile(r"/commands/([0-9a-f-]+)/confirm")
 
 
@@ -41,7 +39,7 @@ _PENDING_ID_RE = re.compile(r"/commands/([0-9a-f-]+)/confirm")
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -57,27 +55,6 @@ def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
         yield c
 
 
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
-
-def _csrf_from(html: str) -> str:
-    m = _CSRF_RE.search(html)
-    assert m is not None, "no CSRF token in rendered HTML"
-    return m.group("token")
-
-
 # --------------------------------------------------------------------- #
 # GET forms                                                             #
 # --------------------------------------------------------------------- #
@@ -90,21 +67,21 @@ class TestForms:
         assert resp.headers["location"] == "/auth/login"
 
     def test_pause_form_authenticated_renders(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/commands/pause")
         assert resp.status_code == 200
         assert 'name="symbol"' in resp.text
         assert "Pause" in resp.text
 
     def test_resume_form_renders(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/commands/resume")
         assert resp.status_code == 200
         assert 'name="symbol"' in resp.text
         assert "Resume" in resp.text
 
     def test_stop_form_renders_without_symbol_input(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/commands/stop")
         assert resp.status_code == 200
         # Stop is symbol-free
@@ -119,9 +96,9 @@ class TestForms:
 
 class TestCreate:
     def test_pause_post_creates_awaiting_confirmation(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         form = client.get("/commands/pause")
-        token = _csrf_from(form.text)
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/pause",
             data={"symbol": "BTC/USD", "csrf_token": token},
@@ -143,9 +120,9 @@ class TestCreate:
             session_secret="x" * 64,
         )
         with TestClient(app, follow_redirects=False) as client:
-            _login(client)
+            login_as(client)
             form = client.get("/commands/pause")
-            token = _csrf_from(form.text)
+            token = csrf_from(form.text)
             resp = client.post(
                 "/commands/pause",
                 data={"symbol": "BTC/USD", "csrf_token": token},
@@ -157,15 +134,15 @@ class TestCreate:
         row = rows[0]
         assert row.status == "awaiting_confirmation"
         assert row.channel_id == "web"
-        assert row.requesting_user_id == _TEST_USERNAME
+        assert row.requesting_user_id == TEST_USERNAME
         assert row.command.kind == "pause"
         assert row.command.symbol.base == "BTC"
         assert row.command.symbol.quote == "USD"
 
     def test_pause_invalid_symbol_renders_400_with_error(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         form = client.get("/commands/pause")
-        token = _csrf_from(form.text)
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/pause",
             data={"symbol": "notavalidsymbol", "csrf_token": token},
@@ -174,9 +151,9 @@ class TestCreate:
         assert "Invalid symbol" in resp.text
 
     def test_resume_post_creates_resume_kind(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         form = client.get("/commands/resume")
-        token = _csrf_from(form.text)
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/resume",
             data={"symbol": "ETH/USD", "csrf_token": token},
@@ -184,9 +161,9 @@ class TestCreate:
         assert resp.status_code == 303
 
     def test_stop_post_creates_stop_kind(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         form = client.get("/commands/stop")
-        token = _csrf_from(form.text)
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/stop",
             data={"csrf_token": token},
@@ -194,7 +171,7 @@ class TestCreate:
         assert resp.status_code == 303
 
     def test_post_without_csrf_returns_403(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.post("/commands/pause", data={"symbol": "BTC/USD"})
         assert resp.status_code == 403
 
@@ -208,7 +185,7 @@ class TestConfirm:
     def _create_pause(self, client: TestClient) -> str:
         """Round-trip pause-form → POST → redirect; return pending id."""
         form = client.get("/commands/pause")
-        token = _csrf_from(form.text)
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/pause",
             data={"symbol": "BTC/USD", "csrf_token": token},
@@ -219,7 +196,7 @@ class TestConfirm:
         return m.group(1)
 
     def test_confirm_get_renders_summary(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         pid = self._create_pause(client)
         resp = client.get(f"/commands/{pid}/confirm")
         assert resp.status_code == 200
@@ -230,7 +207,7 @@ class TestConfirm:
         assert 'value="reject"' in resp.text
 
     def test_confirm_get_unknown_id_returns_404(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         bogus = uuid4()
         resp = client.get(f"/commands/{bogus}/confirm")
         assert resp.status_code == 404
@@ -244,10 +221,10 @@ class TestConfirm:
             session_secret="x" * 64,
         )
         with TestClient(app, follow_redirects=False) as client:
-            _login(client)
+            login_as(client)
             pid = self._create_pause(client)
             confirm_page = client.get(f"/commands/{pid}/confirm")
-            token = _csrf_from(confirm_page.text)
+            token = csrf_from(confirm_page.text)
             resp = client.post(
                 f"/commands/{pid}/confirm",
                 data={"decision": "approve", "csrf_token": token},
@@ -261,7 +238,7 @@ class TestConfirm:
         row = await storage.get_pending_command(UUID(pid))
         assert row is not None
         assert row.status == "approved"
-        assert row.confirming_user_id == _TEST_USERNAME
+        assert row.confirming_user_id == TEST_USERNAME
         assert row.confirmed_at is not None
 
     @pytest.mark.asyncio
@@ -272,10 +249,10 @@ class TestConfirm:
             session_secret="x" * 64,
         )
         with TestClient(app, follow_redirects=False) as client:
-            _login(client)
+            login_as(client)
             pid = self._create_pause(client)
             confirm_page = client.get(f"/commands/{pid}/confirm")
-            token = _csrf_from(confirm_page.text)
+            token = csrf_from(confirm_page.text)
             resp = client.post(
                 f"/commands/{pid}/confirm",
                 data={"decision": "reject", "csrf_token": token},
@@ -289,7 +266,7 @@ class TestConfirm:
         assert row.status == "rejected"
 
     def test_confirm_without_csrf_returns_403(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         pid = self._create_pause(client)
         resp = client.post(
             f"/commands/{pid}/confirm",
@@ -298,10 +275,10 @@ class TestConfirm:
         assert resp.status_code == 403
 
     def test_invalid_decision_value_returns_422(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         pid = self._create_pause(client)
         confirm_page = client.get(f"/commands/{pid}/confirm")
-        token = _csrf_from(confirm_page.text)
+        token = csrf_from(confirm_page.text)
         resp = client.post(
             f"/commands/{pid}/confirm",
             data={"decision": "hijack", "csrf_token": token},
@@ -319,10 +296,10 @@ class TestConfirm:
             session_secret="x" * 64,
         )
         with TestClient(app, follow_redirects=False) as client:
-            _login(client)
+            login_as(client)
             pid = self._create_pause(client)
             confirm_page = client.get(f"/commands/{pid}/confirm")
-            token = _csrf_from(confirm_page.text)
+            token = csrf_from(confirm_page.text)
             # First approve.
             r1 = client.post(
                 f"/commands/{pid}/confirm",

@@ -6,13 +6,13 @@ Once Stages 7.2-7.4 land their real routes, the only thing in
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.web.app import create_app
@@ -21,15 +21,11 @@ from wobblebot.web.auth import hash_password
 pytestmark = pytest.mark.unit
 
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-
-
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -45,24 +41,6 @@ def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
         yield c
 
 
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
-
 class TestRootRedirect:
     def test_anonymous_root_redirects_to_dashboard(self, client: TestClient) -> None:
         resp = client.get("/")
@@ -70,7 +48,7 @@ class TestRootRedirect:
         assert resp.headers["location"] == "/dashboard"
 
     def test_authenticated_root_redirects_to_dashboard(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/")
         assert resp.status_code == 302
         assert resp.headers["location"] == "/dashboard"

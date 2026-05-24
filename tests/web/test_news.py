@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -10,6 +9,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.models import NewsItem
@@ -19,31 +19,12 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
 
 @pytest_asyncio.fixture
 async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -94,7 +75,7 @@ class TestNewsRoute:
 
     def test_no_news_db_renders_unwired(self, operator_storage: SQLiteStorageAdapter) -> None:
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news")
             assert resp.status_code == 200
             assert "unset" in resp.text.lower()
@@ -105,7 +86,7 @@ class TestNewsRoute:
         news_storage: SQLiteStorageAdapter,
     ) -> None:
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news")
             assert resp.status_code == 200
             assert "No news items" in resp.text
@@ -125,7 +106,7 @@ class TestNewsRoute:
             )
         )
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news")
             assert resp.status_code == 200
             assert "BTC hits 100k" in resp.text
@@ -142,7 +123,7 @@ class TestNewsRoute:
         await news_storage.save_news_item(_item(headline="from coindesk"))
         await news_storage.save_news_item(_item(source="rss:decrypt", headline="from decrypt"))
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news?source=rss:coindesk")
             assert resp.status_code == 200
             assert "from coindesk" in resp.text
@@ -159,7 +140,7 @@ class TestNewsRoute:
         await news_storage.save_news_item(_item(headline="alpha story", coins=["BTC"]))
         await news_storage.save_news_item(_item(headline="beta story", coins=["ETH"]))
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news?q=ETH")
             assert resp.status_code == 200
             assert "beta story" in resp.text
@@ -176,7 +157,7 @@ class TestNewsRoute:
         await news_storage.save_news_item(_item(headline="Coinbase ETF launch", coins=["BTC"]))
         await news_storage.save_news_item(_item(headline="Kraken update", coins=["BTC"]))
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news?q=Coinbase")
             assert resp.status_code == 200
             assert "Coinbase ETF launch" in resp.text
@@ -190,7 +171,7 @@ class TestNewsRoute:
     ) -> None:
         await news_storage.save_news_item(_item(headline="lower btc", coins=["btc"]))
         with _build_client(operator_storage, news_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/news?q=BTC")
             assert resp.status_code == 200
             assert "lower btc" in resp.text

@@ -38,14 +38,12 @@ from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.ports.harvester import TransferProposal
 from wobblebot.ports.notifier import Notification
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
 _PENDING_ID_RE = re.compile(r"/commands/([0-9a-f-]+)/confirm")
 
 
@@ -53,7 +51,7 @@ _PENDING_ID_RE = re.compile(r"/commands/([0-9a-f-]+)/confirm")
 async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     # Pre-seed an LLM cost row + a notification so the cost +
     # audit pages have something to render.
     await adapter.save_llm_call(
@@ -203,20 +201,6 @@ def client(
 class TestE2EWalkthrough:
     """One test that exercises every Phase 7 surface end-to-end."""
 
-    def _login(self, client: TestClient) -> None:
-        page = client.get("/auth/login")
-        token = _CSRF_RE.search(page.text)
-        assert token is not None
-        resp = client.post(
-            "/auth/login",
-            data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
-                "csrf_token": token.group("token"),
-            },
-        )
-        assert resp.status_code == 302
-
     def test_full_walkthrough(self, client: TestClient) -> None:
         # 1. Anonymous → root redirects.
         resp = client.get("/")
@@ -229,7 +213,7 @@ class TestE2EWalkthrough:
         assert resp.headers["location"] == "/auth/login"
 
         # 3. Log in.
-        self._login(client)
+        login_as(client)
 
         # 4. Visit every page; verify each loads with seeded data.
         for path, must_contain in [
@@ -250,13 +234,12 @@ class TestE2EWalkthrough:
         # 5. Visit /commands/pause form and create a pending command.
         form = client.get("/commands/pause")
         assert form.status_code == 200
-        token = _CSRF_RE.search(form.text)
-        assert token is not None
+        token = csrf_from(form.text)
         resp = client.post(
             "/commands/pause",
             data={
                 "symbol": "BTC/USD",
-                "csrf_token": token.group("token"),
+                "csrf_token": token,
             },
         )
         assert resp.status_code == 303
@@ -272,13 +255,12 @@ class TestE2EWalkthrough:
         assert "pause" in confirm.text
 
         # 7. Approve.
-        token = _CSRF_RE.search(confirm.text)
-        assert token is not None
+        token = csrf_from(confirm.text)
         resp = client.post(
             f"/commands/{pid}/confirm",
             data={
                 "decision": "approve",
-                "csrf_token": token.group("token"),
+                "csrf_token": token,
             },
         )
         assert resp.status_code == 200
@@ -299,8 +281,8 @@ class TestE2EWalkthrough:
         assert row is not None
         assert row.status == "approved"
         assert row.channel_id == "web"
-        assert row.requesting_user_id == _TEST_USERNAME
-        assert row.confirming_user_id == _TEST_USERNAME
+        assert row.requesting_user_id == TEST_USERNAME
+        assert row.confirming_user_id == TEST_USERNAME
 
         # 9. The same row should now appear on /audit.
         resp = client.get("/audit")
@@ -311,11 +293,10 @@ class TestE2EWalkthrough:
         # 10. Logout. Get a fresh CSRF token first.
         dash = client.get("/dashboard")
         assert dash.status_code == 200
-        token = _CSRF_RE.search(dash.text)
-        assert token is not None
+        token = csrf_from(dash.text)
         resp = client.post(
             "/auth/logout",
-            data={"csrf_token": token.group("token")},
+            data={"csrf_token": token},
         )
         assert resp.status_code == 302
         assert resp.headers["location"] == "/auth/login"

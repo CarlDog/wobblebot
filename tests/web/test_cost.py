@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -12,6 +11,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.llm_cost import LLMCallRecord
@@ -27,10 +27,6 @@ from wobblebot.web.routes.cost import (
 )
 
 pytestmark = pytest.mark.unit
-
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
 
 
 def _row(
@@ -58,7 +54,7 @@ def _row(
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -72,21 +68,6 @@ def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
     )
     with TestClient(app, follow_redirects=False) as c:
         yield c
-
-
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
 
 
 # --------------------------------------------------------------------- #
@@ -154,7 +135,7 @@ class TestCostRoute:
         assert resp.headers["location"] == "/auth/login"
 
     def test_authenticated_empty_renders(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/cost")
         assert resp.status_code == 200
         assert "Cost" in resp.text
@@ -179,7 +160,7 @@ class TestCostRoute:
             session_secret="x" * 64,
         )
         with TestClient(app, follow_redirects=False) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/cost")
             assert resp.status_code == 200
             assert "0.001234" in resp.text
@@ -193,7 +174,7 @@ class TestCostCardFragment:
         assert resp.status_code == 302
 
     def test_authenticated_returns_fragment(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/cost/card")
         assert resp.status_code == 200
         assert "cost-card" in resp.text

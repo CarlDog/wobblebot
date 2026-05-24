@@ -12,13 +12,13 @@ Coverage:
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.web.app import create_app
@@ -26,16 +26,11 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -51,34 +46,13 @@ def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
         yield c
 
 
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
-
-def _csrf_from(page_text: str) -> str:
-    match = _CSRF_RE.search(page_text)
-    assert match is not None, "CSRF token missing from page"
-    return match.group("token")
-
-
 class TestSettingsPageGET:
     def test_anonymous_redirects_to_login(self, client: TestClient) -> None:
         resp = client.get("/settings")
         assert resp.status_code == 302
 
     def test_authenticated_renders_form(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/settings")
         assert resp.status_code == 200
         # Form is present.
@@ -90,17 +64,17 @@ class TestSettingsPageGET:
         assert "Save" in resp.text
 
     def test_form_includes_csrf_token(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/settings")
         assert resp.status_code == 200
-        assert _CSRF_RE.search(resp.text) is not None
+        csrf_from(resp.text)  # raises if missing
 
 
 class TestSettingsPagePOST:
     def test_valid_tz_persists_and_redirects(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         page = client.get("/settings")
-        token = _csrf_from(page.text)
+        token = csrf_from(page.text)
         resp = client.post(
             "/settings",
             data={"timezone": "America/Chicago", "csrf_token": token},
@@ -114,9 +88,9 @@ class TestSettingsPagePOST:
         assert 'value="America/Chicago"' in page2.text
 
     def test_invalid_tz_redirects_with_invalid_flag(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         page = client.get("/settings")
-        token = _csrf_from(page.text)
+        token = csrf_from(page.text)
         resp = client.post(
             "/settings",
             data={"timezone": "Not/A_Real_Zone", "csrf_token": token},
@@ -129,7 +103,7 @@ class TestSettingsPagePOST:
         assert page2.status_code == 200
 
     def test_missing_csrf_rejected(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.post("/settings", data={"timezone": "UTC"})
         assert resp.status_code == 403
 
@@ -143,9 +117,9 @@ class TestSettingsPagePOST:
     def test_save_round_trip_status_banner(self, client: TestClient) -> None:
         """After a successful save, the redirect target shows a
         confirmation banner reading 'Preferences saved.'"""
-        _login(client)
+        login_as(client)
         page = client.get("/settings")
-        token = _csrf_from(page.text)
+        token = csrf_from(page.text)
         client.post(
             "/settings",
             data={"timezone": "Europe/Berlin", "csrf_token": token},
@@ -158,7 +132,7 @@ class TestSettingsPagePOST:
 
 class TestSettingsLinkInLayout:
     def test_dashboard_includes_settings_nav_link(self, client: TestClient) -> None:
-        _login(client)
+        login_as(client)
         resp = client.get("/dashboard")
         assert resp.status_code == 200
         assert 'href="/settings"' in resp.text

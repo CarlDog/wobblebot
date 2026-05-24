@@ -7,7 +7,6 @@ full request → middleware → handler → storage round-trip.
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -19,6 +18,7 @@ from fastapi.testclient import TestClient
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.web.app import create_app
+from tests.web._helpers import CSRF_RE, TEST_PASSWORD, TEST_USERNAME
 from wobblebot.web.auth import hash_password
 from wobblebot.web.middleware import get_or_create_csrf_token
 
@@ -26,8 +26,6 @@ pytestmark = pytest.mark.unit
 
 
 _TEST_BCRYPT_COST = 4  # cheap hashing for fixtures; production uses 12
-_TEST_PASSWORD = "hunter2"
-_TEST_USERNAME = "operator"
 
 
 @pytest_asyncio.fixture
@@ -35,7 +33,7 @@ async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     """Fresh in-memory SQLite per test."""
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=_TEST_BCRYPT_COST))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=_TEST_BCRYPT_COST))
     yield adapter
     await adapter.close()
 
@@ -78,11 +76,8 @@ def client(storage: SQLiteStorageAdapter, web_config: WebConfig) -> Iterator[Tes
         yield c
 
 
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
 def _extract_csrf(html: str) -> str:
-    m = _CSRF_RE.search(html)
+    m = CSRF_RE.search(html)
     assert m is not None, f"no CSRF token in HTML:\n{html[:400]}"
     return m.group("token")
 
@@ -120,8 +115,8 @@ class TestLoginForm:
         login_resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )
@@ -143,8 +138,8 @@ class TestLoginSubmit:
         resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )
@@ -157,13 +152,13 @@ class TestLoginSubmit:
         client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )
         whoami = client.get("/__test/whoami")
-        assert whoami.text == _TEST_USERNAME
+        assert whoami.text == TEST_USERNAME
 
     def test_wrong_password_returns_401(self, client: TestClient) -> None:
         page = client.get("/auth/login")
@@ -171,7 +166,7 @@ class TestLoginSubmit:
         resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
+                "username": TEST_USERNAME,
                 "password": "wrong",
                 "csrf_token": token,
             },
@@ -185,7 +180,7 @@ class TestLoginSubmit:
         client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
+                "username": TEST_USERNAME,
                 "password": "wrong",
                 "csrf_token": token,
             },
@@ -223,20 +218,20 @@ class TestLoginSubmit:
         r2 = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
+                "username": TEST_USERNAME,
                 "password": "wrong",
                 "csrf_token": token2,
             },
         )
-        b1 = _CSRF_RE.sub('name="csrf_token" value="X"', r1.text)
-        b2 = _CSRF_RE.sub('name="csrf_token" value="X"', r2.text)
+        b1 = CSRF_RE.sub('name="csrf_token" value="X"', r1.text)
+        b2 = CSRF_RE.sub('name="csrf_token" value="X"', r2.text)
         assert b1 == b2
 
     def test_missing_csrf_returns_403(self, client: TestClient) -> None:
         client.get("/auth/login")
         resp = client.post(
             "/auth/login",
-            data={"username": _TEST_USERNAME, "password": _TEST_PASSWORD},
+            data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
         )
         assert resp.status_code == 403
 
@@ -245,8 +240,8 @@ class TestLoginSubmit:
         resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": "fabricated-token-value-but-wrong",
             },
         )
@@ -259,7 +254,7 @@ class TestLoginSubmit:
             "/auth/login",
             data={
                 "username": "",
-                "password": _TEST_PASSWORD,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )
@@ -271,7 +266,7 @@ class TestLoginSubmit:
         resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
+                "username": TEST_USERNAME,
                 "password": "",
                 "csrf_token": token,
             },
@@ -284,8 +279,8 @@ class TestLoginSubmit:
         client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": old_token,
             },
         )
@@ -298,8 +293,8 @@ class TestLoginSubmit:
         client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": old_token,
             },
         )
@@ -320,7 +315,7 @@ class TestRateLimit:
             r = client.post(
                 "/auth/login",
                 data={
-                    "username": _TEST_USERNAME,
+                    "username": TEST_USERNAME,
                     "password": "wrong",
                     "csrf_token": token,
                 },
@@ -331,7 +326,7 @@ class TestRateLimit:
         r = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
+                "username": TEST_USERNAME,
                 "password": "wrong",
                 "csrf_token": token,
             },
@@ -347,7 +342,7 @@ class TestRateLimit:
             client.post(
                 "/auth/login",
                 data={
-                    "username": _TEST_USERNAME,
+                    "username": TEST_USERNAME,
                     "password": "wrong",
                     "csrf_token": token,
                 },
@@ -357,8 +352,8 @@ class TestRateLimit:
         ok = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )
@@ -385,8 +380,8 @@ class TestLogout:
         resp = client.post(
             "/auth/login",
             data={
-                "username": _TEST_USERNAME,
-                "password": _TEST_PASSWORD,
+                "username": TEST_USERNAME,
+                "password": TEST_PASSWORD,
                 "csrf_token": token,
             },
         )

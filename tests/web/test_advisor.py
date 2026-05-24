@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +10,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.value_objects import Timestamp
@@ -20,31 +20,12 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
 
 @pytest_asyncio.fixture
 async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -122,7 +103,7 @@ class TestAdvisorRoute:
 
     def test_no_advise_db_renders_unwired(self, operator_storage: SQLiteStorageAdapter) -> None:
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "unset" in resp.text.lower()
@@ -133,7 +114,7 @@ class TestAdvisorRoute:
         advise_storage: SQLiteStorageAdapter,
     ) -> None:
         with _build_client(operator_storage, advise_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "No advisor suggestions" in resp.text
@@ -148,7 +129,7 @@ class TestAdvisorRoute:
             _make_suggestion(symbol="BTC/USD", role="single")
         )
         with _build_client(operator_storage, advise_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "BTC/USD" in resp.text
@@ -167,7 +148,7 @@ class TestAdvisorRoute:
             _make_suggestion(symbol="ETH/USD", role="aggregated", with_experts=True)
         )
         with _build_client(operator_storage, advise_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "ETH/USD" in resp.text
@@ -184,7 +165,7 @@ class TestAdvisorRoute:
         for sym in ("BTC/USD", "ETH/USD", "DOGE/USD"):
             await advise_storage.save_advisor_suggestion(_make_suggestion(symbol=sym))
         with _build_client(operator_storage, advise_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/advisor")
             assert resp.status_code == 200
             assert "BTC/USD" in resp.text

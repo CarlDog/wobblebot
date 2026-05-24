@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -12,6 +11,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.models import Order, Trade
@@ -21,31 +21,12 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
-_TEST_USERNAME = "operator"
-_TEST_PASSWORD = "hunter2"
-_CSRF_RE = re.compile(r'name="csrf_token"\s+value="(?P<token>[^"]+)"')
-
-
-def _login(client: TestClient) -> None:
-    page = client.get("/auth/login")
-    token = _CSRF_RE.search(page.text)
-    assert token is not None
-    resp = client.post(
-        "/auth/login",
-        data={
-            "username": _TEST_USERNAME,
-            "password": _TEST_PASSWORD,
-            "csrf_token": token.group("token"),
-        },
-    )
-    assert resp.status_code == 302
-
 
 @pytest_asyncio.fixture
 async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
     await adapter.connect()
-    await adapter.create_user(_TEST_USERNAME, hash_password(_TEST_PASSWORD, cost=10))
+    await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     yield adapter
     await adapter.close()
 
@@ -114,7 +95,7 @@ class TestDashboardRoute:
 
     def test_no_live_db_renders_unwired_card(self, operator_storage: SQLiteStorageAdapter) -> None:
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "unset" in resp.text.lower()
@@ -130,7 +111,7 @@ class TestDashboardRoute:
         live_storage: SQLiteStorageAdapter,
     ) -> None:
         with _build_client(operator_storage, live_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             # Stage 8.4.E: title restructured to "Trading Status" + LIVE badge.
@@ -152,7 +133,7 @@ class TestDashboardRoute:
         await live_storage.save_order(_make_order(price="30100"))
         await live_storage.save_trade(_make_trade())
         with _build_client(operator_storage, live_storage) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "30100" in resp.text
@@ -176,7 +157,7 @@ class TestStatusCardFragment:
 
     def test_authenticated_returns_fragment(self, operator_storage: SQLiteStorageAdapter) -> None:
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/status/card")
             assert resp.status_code == 200
             assert "status-card" in resp.text
@@ -197,7 +178,7 @@ class TestStatusCardFragment:
         health-snapshot context variable.
         """
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/status/card")
             assert resp.status_code == 200
             assert 'id="status-health-icon"' not in resp.text
@@ -214,7 +195,7 @@ class TestStatusCardFragment:
         to "Trading Status" + LIVE badge so the same template can
         host SHADOW later. Verifies the badge classes are present."""
         with _build_client(operator_storage, None) as client:
-            _login(client)
+            login_as(client)
             resp = client.get("/status/card")
             assert resp.status_code == 200
             assert "Trading Status" in resp.text
