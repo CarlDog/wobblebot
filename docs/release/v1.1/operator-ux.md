@@ -33,6 +33,54 @@ for that delay.
 **Trigger:** operator finds themselves typing the same phrases
 repeatedly during the soak.
 
+### Discord confirmation UX: replace emoji reactions with UI buttons
+
+**What:** swap the current confirmation embed's pre-populated
+✅ + ❌ reactions for `discord.ui.View` + `Button` components.
+The operator clicks an actual button labelled "Approve" or
+"Reject" instead of clicking one of two emoji reactions the bot
+already placed.
+
+**Why it bothers operators:** when the bot pre-populates ✅ + ❌
+on its own confirmation embed (Stage 5.2's ``send_confirmation``),
+the visual result is "WobbleBot reacted with ✅ 1 and ❌ 1 to its
+own message." Reading the embed's footer ("react ✅ to approve,
+❌ to reject") clarifies that they're vote buttons, not the bot
+endorsing both outcomes — but several seconds of "wait, did the
+bot just approve AND reject?" confusion is the experience until
+the operator parses the footer. The 2026-05-24 soak surfaced
+this as visually weird-but-not-broken.
+
+**Implementation:** v1.0 uses emoji reactions because Stage 5.2's
+implementation predated discord.py's `View`/`Button`/`Interaction`
+machinery being commonly idiomatic. v1.1 candidate:
+
+1. Replace ``DiscordTransport.send_confirmation``'s embed-plus-
+   reactions with an embed-plus-View. The View carries two
+   `discord.ui.Button` instances (Approve / Reject) with
+   `style=ButtonStyle.success` / `ButtonStyle.danger`.
+2. Each button's callback transitions the matching
+   `PendingCommand` row to `approved` / `rejected` directly —
+   replaces the current ``_handle_reaction`` + in-memory
+   `pending_message_map` indirection.
+3. Per ADR-013 decision 3 the firewall stays intact: the button
+   click writes to ``pending_commands`` with `status='approved'`
+   and cli/live's ADR-002 poll picks it up. No engine call
+   bypass.
+4. Buttons auto-disable after click (`view.stop()`), so the
+   operator can't double-approve a single PendingCommand.
+
+**Why deferred:** the emoji-reaction flow works end-to-end. The
+``_handle_reaction`` handler + `pending_message_map` are
+exercised by 5+ existing tests; swapping them for Views means
+rewriting those tests against the discord.py interaction-event
+shape. Worth doing once for cleaner UX, but not v1.0-blocking.
+
+**Trigger:** post-v1.0 tag. Pair with the Stage 5.4 reaction
+handler simplification — `pending_message_map` (in-memory) goes
+away once the button callback has the `pending_id` baked in
+via View construction.
+
 ### Web UI per-entity action buttons (generic "decide + audit" pattern)
 
 **What:** add commit-vs-reject buttons directly to the persisted
