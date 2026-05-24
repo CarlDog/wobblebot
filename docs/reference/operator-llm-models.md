@@ -239,10 +239,20 @@ prompts; predict-next-token only.
 
 - `llama3:text`, `llama2:text` — base completion variants of
   the chat models. Use the instruct variants (`llama3:8b`,
-  `llama2:7b`) instead.
+  `llama2:7b-chat-q8_0`) instead.
 - `mistral:7b-text-v0.2` — base completion Mistral; use
   `mistral:7b` (instruct) instead.
 - Anything tagged `:base` or `:text` on Ollama's library.
+
+**Important pitfall**: many model families publish a plain
+`<size>` tag (no `-instruct` / `-chat` suffix) that maps to the
+BASE model, not the instruct variant. `ollama pull qwen2.5:1.5b`
+fetches a base completion model that can't follow our prompt;
+`ollama pull qwen2.5:1.5b-instruct-q8_0` fetches the instruct
+variant. See `docs/reference/ollama-tag-verification.md` for
+the per-family convention matrix (which families default the
+plain tag to instruct vs base) and a reusable verification
+script.
 
 **Math / reasoning specialists with too-narrow training** —
 trained on math problems exclusively; pattern-match every
