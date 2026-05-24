@@ -407,7 +407,36 @@ multi-coin width during documentation freeze would be premature.
 or any time the status card starts wrapping mid-ticker on a
 normal desktop window width.
 
-### Discord response quality: data + presentation + model attribution
+### Discord response quality: data + presentation + model attribution — ✅ shipped in v1.0 (2026-05-24)
+
+**Status:** ✅ Shipped in three commits 2026-05-24 during the soak.
+All three parts landed:
+
+1. **StatusQuery + similar query handlers read live.db** — shipped
+   2026-05-23 as `a2dcbf1` (Discord StatusQuery reports honest
+   engine state). Three stacked wiring gaps closed: cli/operator
+   now opens observe.db for balance lookups, `active_symbols`
+   threaded from `config.live.symbols`, `OperatorService` reads
+   `today_realized_pnl` for session_pnl instead of hardcoded 0.
+2. **QueryResult → embed rendering** — shipped 2026-05-24 as
+   `227c327`. New `services/discord_embed_render.py` with one
+   pure renderer per QueryResult variant (9 total) returning
+   `send_embed` kwargs. Color-coded (StatusResult success / warning
+   on paused symbols, HarvesterStatusResult by band, etc.) and
+   overflow-capped at 10 entries per embed with "N more not shown"
+   marker. 21 tests covering every variant + empty + overflow.
+3. **Model attribution footer** — shipped 2026-05-24 as `c4cd95b`.
+   Query embeds footer with `parsed by <model_name>` sourced from
+   `operator_cfg.assistant.model` (no AssistantPort signature
+   change needed — the configured model is the parsing model).
+   Bonus from the same commit: ack-reactions on inbound messages
+   (👀 ACK_EMOJI on parsed intent, ⚠️ WARN_EMOJI on Unparseable)
+   leveraging the previously-unused `add_reactions` permission.
+
+Together: 27 new unit tests, mypy clean, pylint 10.00/10. The
+original entry body is retained below for historical context.
+
+---
 
 **What:** three related improvements to how cli/operator's Discord
 responses look + what they contain. Discoverable as one coherent
@@ -471,6 +500,86 @@ correct data, so the operator isn't flying blind.
 **Trigger:** post-soak, packaged together so the Discord response
 posture changes once (predictable for operators) rather than across
 three separate commits that each shift the embed format slightly.
+
+### Operator command catalog: single source of truth across prompt + code
+
+**What:** today the catalog of available operator commands and
+queries is defined in two places that have to be kept in sync by
+hand:
+
+1. `config/prompts/operator.md` — the system prompt loaded into
+   every LLM parse. The "Available command kinds" and "Available
+   query kinds" sections enumerate every parseable intent (pause /
+   resume / pause_all / resume_all / cancel_open_orders / stop on
+   the command side; status / open_orders / recent_fills /
+   recent_suggestions / recent_news / harvester_status /
+   recent_proposals / grid_config / help on the query side). The
+   LLM uses this list to ground parsing — anything outside it
+   should become `{"kind": "unparseable"}`.
+2. `services/operator_service.py` — the module-level
+   `_HELP_ENTRIES` tuple (~15 `HelpEntry` rows) that backs
+   `HelpQuery → HelpResult`. The operator asks "help" or "what
+   can you do" and the Discord embed lists these.
+
+These two lists describe the same catalog but in different
+formats — the prompt is human-readable Markdown bullets with JSON
+shape examples; `_HELP_ENTRIES` is a Pydantic tuple. They have
+drifted in the past (add a new query, update the code, forget the
+prompt → LLM treats the new query as out-of-catalog and emits
+`unparseable`). The reverse direction is just as bad (prompt
+mentions a capability that doesn't exist; LLM happily emits the
+intent shape; dispatch dies on `match _: raise`).
+
+**Why high value:** the LLM is the only thing between operator
+natural language and the parsed intent. If its catalog drifts
+from the code's catalog, parses silently fail in either direction.
+The cost is operator surprise — "I asked for X and it told me it
+couldn't parse" or "it parsed but nothing happened" — not data
+corruption, but the kind of friction that erodes trust in the
+operator surface.
+
+**Implementation options (pick one):**
+
+1. **Derive prompt from code.** Treat `_HELP_ENTRIES` (or a
+   richer descriptor including JSON examples) as the source of
+   truth; the prompt becomes a Jinja template that interpolates
+   the catalog at load time. `config/prompts.load_prompt` already
+   has the frontmatter+Markdown loader hook; extend it to accept
+   a context dict for rendering. Pro: code-first, prompt drift
+   is impossible. Con: prompts are touched by operators (per
+   `wobblebot.config.prompts.load_prompt`'s "operators edit
+   freely" comment), so any operator-tunable wording (system
+   role, constraints, output schema) has to stay editable.
+2. **Code derives from prompt.** Parse the catalog sections out
+   of `operator.md` into the `_HELP_ENTRIES` tuple at module
+   import time. Pro: prompt stays human-edited. Con: relies on
+   parser robustness against prompt edits; an operator
+   reformatting a bullet could break catalog loading at startup.
+3. **Schema-drift test (lowest risk).** A unit test that parses
+   the prompt's command + query lists and asserts they match
+   `_HELP_ENTRIES`. Doesn't fix the drift mechanically, but
+   catches it in CI / pre-commit before it ships. Pro: tiny
+   change, no runtime impact, prompt and code both stay where
+   they are. Con: doesn't prevent the gap window between code
+   change and prompt edit on the same branch.
+
+Recommended starting point: option 3 (test) since it's the
+smallest change and converts "silently drifts" into "loudly
+fails on the next test run". Promote to option 1 if the
+test-failure rate makes the manual sync feel obviously wrong.
+
+**Why deferred:** the existing drift is recoverable per-incident
+(operator notices, files a bug, both lists get updated). The
+catalog has been stable across the last six stages — adds happen
+once per phase, not once per week — so the practical drift rate
+is low. Worth queuing for v1.1 but not blocking v1.0.
+
+**Trigger:** next time the operator catalog gains a new command
+or query (most likely candidates: a `re-anchor` command per the
+related v1.1 entry, or a `cost_summary` query). Adding two new
+catalog entries at once is the moment to wire up the
+single-source-of-truth pattern instead of doing it by hand a
+third time.
 
 ### One-command daemon orchestrator (`cli/up` wrapper)
 
