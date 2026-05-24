@@ -549,6 +549,59 @@ correct data, so the operator isn't flying blind.
 posture changes once (predictable for operators) rather than across
 three separate commits that each shift the embed format slightly.
 
+### Discord status_report tally section: compact table instead of stacked fields
+
+**What:** the status_report embed renders its 8+ tallies (Balance,
+Today's PnL, Open orders, Fills, News, Suggestions, Harvester
+band, Proposals) as separate embed fields with ``inline=False``,
+which Discord stacks vertically -- label on one line, value on
+the next. The result looks like:
+
+```
+Balance
+$79.92
+Today's PnL
+$0.0000
+Open orders
+5
+Fills (last 1h)
+0
+News (last 1h)
+6
+...
+```
+
+That's ~16 vertical lines after the narrative, which dominates
+the embed on mobile and forces the operator to scroll past the
+narrative they actually wanted.
+
+**Fix options (pick at implementation time):**
+
+1. **inline=True on tally fields.** Discord packs inline fields
+   three-per-row, so eight tallies collapse to 2-3 lines. Smallest
+   change -- only requires plumbing per-field ``inline`` through
+   ``DiscordTransport.send_embed`` (currently hardcodes False) and
+   the renderer's tally output.
+2. **Single description-style table.** Combine all tallies into
+   one Markdown table in a single ``inline=False`` field. Better
+   visual alignment than option 1's auto-pack, but Discord's
+   monospace rendering in embed fields is inconsistent across
+   client versions.
+3. **Move tallies into the embed description** (above or below
+   the narrative). Frees the fields surface entirely. Tradeoff:
+   harder to scan because each tally is plain text rather than
+   labelled.
+
+Recommended starting point: option 1. Minimal blast radius;
+visually compact; trivially reversible if it surprises anyone.
+
+**Why deferred:** v1.0's stacked layout is verbose-but-correct.
+Cosmetic UX issue, not a data correctness one.
+
+**Trigger:** operator-flagged 2026-05-24 after the post-restart
+probe battery showed how dominant the tally stack is relative
+to the narrative.
+
 ### Operator command catalog: single source of truth across prompt + code
 
 **What:** today the catalog of available operator commands and
