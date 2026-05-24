@@ -248,15 +248,53 @@ prompts; predict-next-token only.
 trained on math problems exclusively; pattern-match every
 prompt to a math problem (see phi4-mini-reasoning's 0/14).
 **Scope note:** these rejections apply to the OPERATOR-ASSISTANT
-role only. Math specialists may be a strong fit for a future
-**MoE quant-expert** role (Phase 3.4's mixture-of-experts
-advisor has a `quant.md` slot intended for numerical analysis
-of performance summaries, win/loss ratios, volatility, etc.).
-We have NOT tested any math-specialist model in that role yet
-because the role isn't wired through the advisor adapter path
-today — the rejection here only documents operator-assistant
-unsuitability, not general uselessness. Keep these installed
-for potential MoE-quant testing when that path materializes.
+role only. WobbleBot is fundamentally a numerical-reasoning
+application -- prices, percentages, ratios, fee accounting,
+volatility, position sizing -- so math specialists have several
+plausible high-value homes in the codebase. We have NOT tested
+any math-specialist model in any of them yet; the rejection
+here only documents operator-assistant unsuitability. Keep
+these installed for the candidate roles below.
+
+Candidate roles for math-specialist LLMs in WobbleBot:
+
+1. **MoE quant-expert** (Phase 3.4's `config/prompts/quant.md`
+   advisor slot). Already designed as the "numerical analysis
+   of performance summaries" expert; a math specialist is the
+   on-paper-correct fit. Output is still JSON-schema-bound
+   (AdvisorRecommendation), so the rejection mechanism would
+   need similar evaluation but against a different prompt.
+2. **Backtest / cycle analysis prose** (future feature). Free-
+   form prose describing Sharpe / Sortino / drawdown /
+   win-loss-ratio for a window. No schema constraint;
+   math-specialist's narrative-step-by-step style is well-
+   matched.
+3. **Anomaly detector scoring** (v1.1 entry in
+   `observability.md`). Spec'd as deterministic Z-score / IQR
+   today, but a math specialist could ALSO explain WHY a value
+   is anomalous in operator-friendly prose ("the cancel rate
+   spiked because the engine is churning under the new
+   tighter spacing -- expect ~Nx more cancels per fill").
+4. **Recalibration recommendations** (extension of
+   `cli/recalibrate`). The current scaler does linear math; a
+   math specialist could reason about non-linear effects like
+   Kraken's tiered fee schedule, slippage characteristics at
+   different order sizes, optimal grid density for a given
+   realized volatility regime.
+5. **`weather_report` query** (v1.1 entry in `operator-ux.md`).
+   Market-trend math: sentiment + price + volume aggregation.
+   The narrative-from-numbers pattern fits.
+6. **Cost-honesty dashboard math** (v1.1 entry in
+   `operator-ux.md`). Compute infrastructure cost per cycle,
+   electricity per cycle, fees per cycle. Heavy on arithmetic
+   + explanation.
+
+If you're considering wiring any of these, the
+`KNOWN_INCOMPATIBLE_FOR_ASSISTANT` blocklist does NOT apply --
+the gate is in `adapters/ollama_assistant.py`, which only
+constructs the operator-assistant role. The advisor adapter
+(`adapters/ollama.py`) and any future math-role adapter live
+on separate paths.
 
 - `phi4-mini-reasoning:3.8b-fp16` — empirically 0/14 on the
   operator-assistant routing battery. Hard-blocked in

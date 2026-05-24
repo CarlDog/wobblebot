@@ -1094,3 +1094,79 @@ commitment still applies — charts must be server-rendered.
 
 **Trigger:** operator points at the web UI and says "I can't see
 the trend here, I have to mentally aggregate the table rows."
+
+### Math-specialist LLM integration paths
+
+**What:** wobblebot is fundamentally a numerical-reasoning
+application -- prices, percentages, ratios, fee accounting,
+volatility, position sizing. The current LLM choices (phi4,
+mistral-nemo) are general instruct models that handle math
+OK but aren't optimized for it. Math-specialist models
+(phi4-mini-reasoning, mathstral, wizardmath) are blocked
+from the operator-assistant role today because they can't
+produce schema-conforming intent JSON, but they may produce
+better-quality output in any role where the LLM's job is to
+crunch numbers and explain results in prose.
+
+**Candidate roles (none wired today):**
+
+1. **MoE quant-expert** -- Phase 3.4's `quant.md` advisor
+   slot is the obvious first target. Already designed to do
+   numerical analysis of performance summaries; a math
+   specialist is the on-paper-correct fit. Implementation:
+   add a model-suitability check to the AdvisorPort path
+   that mirrors the OllamaAssistantAdapter's, but evaluates
+   against AdvisorRecommendation schema instead of
+   OperatorIntent.
+2. **Backtest / cycle analysis prose** -- new feature.
+   Operator asks "explain my last 50 cycles", math specialist
+   produces a Sharpe / Sortino / drawdown / win-loss prose
+   summary. Mirrors the `status_report` summarize pattern
+   but with a math-specialist prompt + AssistantPort.summarize.
+3. **Anomaly detector explanation layer** -- pairs with the
+   v1.1 anomaly detector daemon (deterministic Z-score). Math
+   specialist explains WHY a value is anomalous in operator-
+   friendly prose.
+4. **`weather_report` query enrichment** -- the v1.1
+   weather_report entry already calls for market-trend math
+   (sentiment + price + volume aggregation). Math specialist
+   is a natural fit for the aggregation step.
+5. **Cost-honesty dashboard math** -- the v1.1 cost-honesty
+   entry calls for infrastructure-cost / electricity / fees
+   per cycle accounting. Heavy arithmetic plus operator-
+   friendly explanation.
+6. **Recalibration recommendations** -- extension of
+   `cli/recalibrate`. The current scaler does linear math;
+   a math specialist could reason about non-linear effects
+   (Kraken's tiered fee schedule, slippage characteristics
+   at different order sizes, optimal grid density for a
+   given realized volatility regime).
+
+**Implementation pattern:**
+
+Each candidate role would need:
+- A dedicated prompt file in `config/prompts/<role>.md`
+- Either a new adapter (if the schema differs from existing
+  advisor / assistant) or reuse of `AssistantPort.summarize`
+  for the prose-only cases
+- Configuration in `settings.yml` to pick the math-specialist
+  model for that specific role (separate from the operator-
+  assistant model)
+- A model-suitability list scoped to that role (mirror the
+  `KNOWN_INCOMPATIBLE_FOR_ASSISTANT` pattern -- "models that
+  can't do math well" would be blocked from quant roles)
+
+**Why deferred:** v1.0 trades successfully with the existing
+LLM substrate; the math-specialist paths are quality
+enhancements, not gaps. The work is best done one role at a
+time as features land (MoE quant when MoE goes live, weather
+report when that feature ships, etc.) rather than as a
+speculative scaffold.
+
+**Trigger:** any of the six candidate roles getting prioritized
+for v1.1+ work. Operator-flagged 2026-05-24 ("mathematical
+specialists I think have a very special role in our app, and
+we should try to include them if possible"). Cross-reference:
+the math-specialist rejection scope note in
+`docs/reference/operator-llm-models.md` enumerates the same
+candidate-role list with implementation specifics per role.
