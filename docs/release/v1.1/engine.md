@@ -443,3 +443,59 @@ mis-configuration loud at startup time, not at incident time.
 
 **Trigger:** v1.1 hardening. Operator-flagged 2026-05-23 during
 the financial-grade security audit as a queue-not-skip item.
+
+### Partial-grid placement: WARN → INFO with degraded-state context
+
+**What:** when the engine lays out a fresh grid and Kraken
+refuses one or more orders due to insufficient balance, the
+current log line is:
+
+```
+[WARNING] wobblebot.services.grid_engine: order refused by exchange: insufficient balance
+```
+
+That reads as a scary edge case — operator sees the WARN, assumes
+something's broken. In practice it's the expected response when
+BTC inventory is below the full SELL-layout target (or USD below
+the BUY target). The engine handles it correctly: places what it
+can, moves on, no retry loop. The log just over-states the
+severity.
+
+**Proposed:** demote to INFO, include the degraded-but-correct
+state in the message::
+
+```
+[INFO] partial grid placed: 3 BUYs + 2 SELLs of 3 target;
+       BTC inventory below full SELL layout target (need
+       0.000126 BTC for SELL @ $79,180; have 0.000011)
+```
+
+Operator immediately sees what got placed, what didn't, and why.
+No alarm, just a status line. The current WARN-level alarm
+should be reserved for genuine refusals (rate limit, auth, bad
+parameters).
+
+**Implementation outline:**
+- In `services/grid_engine.py`, where the order-place loop
+  catches Kraken's `EOrder:Insufficient funds`, count per-side
+  placed-vs-target.
+- After the layout completes, emit ONE summary INFO line if
+  any leg was skipped, with the placed/target counts + the
+  inferred insufficiency (BTC for skipped SELLs, USD for
+  skipped BUYs).
+- Genuine errors (rate limit, auth, validation) keep the
+  per-order WARN.
+
+**Why deferred to v1.1:** operator-flagged 2026-05-23 immediately
+after a fresh cli/live restart where 1 SELL got skipped due to
+short BTC inventory. The behavior is correct; only the messaging
+is misleading. Doesn't block v1.0; ships as a quality-of-life
+refinement.
+
+**Companion concern:** the duplicate-storage-row issue surfaced
+during the same restart (5 storage-only reconciliations where
+only 3 unique exchange_ids existed; some orders had two rows at
+different precisions). Cleaner v1.1 entry pending — likely a
+reconciler edge case worth tracing before fixing the partial-
+grid messaging, since both affect the operator's restart
+experience.
