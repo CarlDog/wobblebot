@@ -183,6 +183,118 @@ when matching candidates by VRAM:
 | `command-r:35b` | 19GB | Cohere Command R (haven't tested) |
 | `nous-hermes2-mixtral:8x7b` | 26GB | Mixtral-based hermes2 |
 
+### Rejected from testing (and why)
+
+Models considered during the 2026-05-24 curation and the
+2026-05-25 deep-list expansion that were intentionally excluded
+from the candidate tables above. Documenting the rationale so
+future contributors don't re-litigate the same decisions.
+
+**Roleplay / uncensored / creative-writing variants** —
+fine-tuned for content-policy-free chat, character play, or
+fiction. Not optimized for schema-conforming structured output;
+likely to "stay in character" rather than emit clean JSON.
+
+- `vanilj/mistral-nemo-12b-celeste-v1.9:Q8_0` — Celeste
+  roleplay variant. The base `mistral-nemo:12b-instruct-2407`
+  is in the validated set (14/14).
+- `LESSTHANSUPER/RP-INK-Qwen2.5-32b:Q5_K_S` — RP-INK
+  roleplay variant.
+- `nchapman/mn-12b-mag-mell-r1:latest` — community RP fine-tune.
+- `dolphin-mistral`, `dolphin-llama3`, `dolphin2.5-mixtral` —
+  Eric Hartford's Dolphin series uncensored fine-tunes. The
+  smaller `dolphin-phi:2.7b` is in Tier C for completeness but
+  expect lower routing accuracy than the underlying phi3.
+- `wizard-vicuna-uncensored`, `wizardlm-uncensored` —
+  uncensored chat-only fine-tunes.
+
+**Coding-specialized models** — fine-tuned on code corpora;
+strong at code completion but the JSON-schema-conforming chat
+format is outside their training distribution.
+
+- `deepseek-coder-v2:16b-lite-instruct-q8_0` (installed locally
+  but excluded from the comparison). Use `deepseek-llm:7b` or
+  `deepseek-r1:14b-qwen-distill` for chat-style intent parsing.
+- `codellama:7b`, `codellama:13b`, `codellama:34b` — Meta's
+  CodeLlama family.
+- `starcoder:7b`, `starcoder2:15b` — BigCode's StarCoder series.
+- `codegemma:7b` — Google's coding-focused Gemma variant.
+- `granite-code:8b` — IBM's coding variant; the general
+  `granite3` series is in Tier D instead.
+
+**Vision / multimodal models** — fundamentally can't reliably
+produce text JSON to our schema; cannot route a text-only
+operator message into a typed intent.
+
+- `llava:13b`, `llava:7b`, `llava:34b` — installed `llava:13b`
+  is hard-blocked in `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`.
+- `bakllava:7b` — alternative llava fork.
+- `moondream:1.8b` — small vision-language model.
+- `llama3.2-vision:11b`, `llama3.2-vision:90b` — Meta's
+  multimodal Llama 3.2.
+
+**Pre-instruction-tuned base models** — base completion-only
+weights without instruct fine-tuning. Can't follow complex
+prompts; predict-next-token only.
+
+- `llama3:text`, `llama2:text` — base completion variants of
+  the chat models. Use the instruct variants (`llama3:8b`,
+  `llama2:7b`) instead.
+- `mistral:7b-text-v0.2` — base completion Mistral; use
+  `mistral:7b` (instruct) instead.
+- Anything tagged `:base` or `:text` on Ollama's library.
+
+**Math / reasoning specialists with too-narrow training** —
+trained on math problems exclusively; pattern-match every
+prompt to a math problem (see phi4-mini-reasoning's 0/14).
+
+- `phi4-mini-reasoning:3.8b-fp16` — empirically 0/14. Hard-
+  blocked in `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`.
+- `mathstral:7b` — Mistral's math-specialized variant.
+  Probably exhibits the same pattern but untested.
+- `wizardmath:7b`, `wizardmath:13b` — WizardLM math-tuned
+  variants.
+
+**Domain specialists outside operator-assistant scope** —
+trained for medical, legal, finance, biology, etc. The general
+instruct models in the candidate tiers will outperform on
+WobbleBot's catalog routing task.
+
+- `meditron:7b` (medical), `medllama2:7b`
+- `everythinglm:13b` (story generation)
+- `nexusraven:13b` (function calling — could theoretically work
+  but the JSON schema differs from ours; would need testing).
+
+**Discontinued / orphaned models** — models that pulled from
+Ollama's library or whose maintainers stopped updating. Worth
+noting so contributors don't waste time chasing them.
+
+- `falcon:7b`, `falcon:40b` — TII Falcon; older generation,
+  weak instruction-following vs current candidates.
+- `vicuna:7b`, `vicuna:13b`, `vicuna:33b` — LMSYS Vicuna;
+  superseded by the underlying Llama-2/3 chat fine-tunes.
+- `wizardlm:7b`, `wizardlm:13b`, `wizardlm:70b` — WizardLM
+  general chat; superseded.
+
+**Reasoning models that work but were excluded for runtime
+cost** — these CAN run our routing battery but the latency
+makes them poor operator-assistant picks.
+
+- `deepseek-r1:7b` — likely similar 30-50s/call to the 14B
+  variant tested. The 14B is in the validated set.
+- `deepseek-r1:32b`, `deepseek-r1:70b` — even slower; only
+  worth testing if quality matters more than latency.
+- `o1-` Ollama variants — same reasoning-overhead concern.
+
+If you want to test ANY of the above, the
+`KNOWN_INCOMPATIBLE_FOR_ASSISTANT` / `KNOWN_DEGRADED_FOR_ASSISTANT`
+lists in `src/wobblebot/adapters/ollama_assistant.py` are the
+guardrails. The adapter refuses to start with a blocked model,
+which means you can pin one in `settings.yml`, run
+`probe_assistant.py` against it, and if it surprises us
+(produces clean JSON anyway) you can argue for removing it
+from the blocklist.
+
 ### Notes on legacy candidates
 
 The "older generation" picks (anything tagged legacy or pre-3
