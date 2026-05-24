@@ -44,7 +44,6 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.config.prompts import Prompt
 from wobblebot.domain.llm_cost import LLMRole
@@ -60,9 +59,10 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenTuple,
+    execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
-    parse_intent_dict,
+    wrap_provider_errors,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_pricing import estimate_cost_ceiling
@@ -75,12 +75,6 @@ _DEFAULT_TIMEOUT_SECONDS = 60.0
 # These models accept `reasoning_effort` and ignore `temperature`;
 # their `usage` block always includes `completion_tokens_details`.
 _REASONING_MODEL_PREFIXES = ("o1", "o3")
-
-# Module-level TypeAdapter — cheap to construct once, expensive to
-# rebuild per call. Materializes the operator_intent_v1 discriminated
-# union on the assistant path.
-_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
-
 
 def is_reasoning_model(model: str) -> bool:
     """Return True iff the OpenAI model id is an o-series reasoning model.
@@ -323,17 +317,13 @@ class OpenAIAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
             provider="openai",
             model=self._model,
         )
-        try:
+        async with wrap_provider_errors("OpenAI", AdvisorError):
             envelope = await execute_cloud_call(
                 ctx=ctx,
                 estimated_cost_usd=estimate,
                 call_fn=_call,
                 extract_tokens=extract_openai_tokens,
             )
-        except httpx.HTTPStatusError as exc:
-            raise AdvisorError(f"OpenAI request failed: HTTP {exc.response.status_code}") from exc
-        except httpx.HTTPError as exc:
-            raise AdvisorError(f"OpenAI transport error: {exc}") from exc
 
         raw_text = parse_message_content(envelope)
         return parse_advisor_recommendation(
@@ -452,23 +442,11 @@ class OpenAIAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             provider="openai",
             model=self._model,
         )
-        try:
-            envelope = await execute_cloud_call(
-                ctx=ctx,
-                estimated_cost_usd=estimate,
-                call_fn=_call,
-                extract_tokens=extract_openai_tokens,
-            )
-        except httpx.HTTPStatusError as exc:
-            raise AssistantError(f"OpenAI request failed: HTTP {exc.response.status_code}") from exc
-        except httpx.HTTPError as exc:
-            raise AssistantError(f"OpenAI transport error: {exc}") from exc
-
-        raw_text = parse_message_content(envelope)
-        inner = parse_intent_dict(raw_text, provider_name="OpenAI")
-        try:
-            return _INTENT_ADAPTER.validate_python(inner)
-        except ValidationError as exc:
-            raise AssistantError(
-                f"LLM output failed operator_intent_v1 schema validation: {exc}"
-            ) from exc
+        return await execute_assistant_call(
+            ctx=ctx,
+            estimated_cost_usd=estimate,
+            call_fn=_call,
+            extract_tokens=extract_openai_tokens,
+            parse_text_fn=parse_message_content,
+            provider_name="OpenAI",
+        )

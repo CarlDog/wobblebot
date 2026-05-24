@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -39,7 +40,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.adapters.ollama import OllamaJsonExtractError, extract_last_json_object
 from wobblebot.domain.exceptions import LLMCostCapExceeded
@@ -47,6 +48,7 @@ from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation
 from wobblebot.ports.exceptions import AdvisorError, AssistantError, StorageError
+from wobblebot.ports.operator import OperatorIntent
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cost_gate import (
     GateDeny,
@@ -341,14 +343,122 @@ def parse_intent_dict(
 ) -> dict[str, Any]:
     """Parse raw LLM text into a dict, raising ``AssistantError`` on failure.
 
-    Caller (per-port adapter) runs the dict through its
-    ``TypeAdapter[OperatorIntent]`` to validate against the
-    operator_intent_v1 discriminated union — that validation stays at
-    the call site since it requires the adapter's port-specific
-    TypeAdapter import.
+    Used internally by :func:`execute_assistant_call` and exposed for
+    adapters that do their own dispatch (e.g. ``OllamaAssistantAdapter``
+    which has a different transport-error shape).
     """
     return _parse_json_from_text(
         raw_text,
         provider_name=provider_name,
         error_factory=AssistantError,
     )
+
+
+# ---------------------------------------------------------------------- #
+# Shared OperatorIntent TypeAdapter + assistant call orchestrator         #
+# ---------------------------------------------------------------------- #
+
+# Module-level TypeAdapter — Pydantic discriminator resolution against
+# ``OperatorIntent``'s two-level discriminated union is moderately
+# expensive to set up. Construct once at import; reuse across every
+# assistant adapter call site. Extracted 2026-05-23 from 4 verbatim
+# copies that lived in each assistant adapter (audit finding #6).
+INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
+
+
+@asynccontextmanager
+async def wrap_provider_errors(
+    provider_name: str,
+    error_cls: type[Exception],
+) -> AsyncIterator[None]:
+    """Translate ``httpx.HTTPStatusError`` / ``httpx.HTTPError`` to a port error.
+
+    Every cloud-LLM adapter used to repeat the same 5-line pair of
+    except clauses around its ``execute_cloud_call`` site. Audit
+    finding #4-cloud surfaced 6 verbatim copies (3 providers × 2
+    adapter classes). Centralizing here means a new provider adapter
+    author can't forget either clause — they'd both stay missing
+    until a test caught the leak.
+
+    Args:
+        provider_name: Display name for the error message (e.g.
+            ``"Anthropic"``). Conventionally Title Case since it
+            renders to operator-facing logs.
+        error_cls: The port's domain error type — ``AdvisorError`` for
+            advisor adapters, ``AssistantError`` for assistant
+            adapters.
+    """
+    try:
+        yield
+    except httpx.HTTPStatusError as exc:
+        raise error_cls(
+            f"{provider_name} request failed: HTTP {exc.response.status_code}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise error_cls(f"{provider_name} transport error: {exc}") from exc
+
+
+async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    *,
+    ctx: CloudCallContext,
+    estimated_cost_usd: Decimal,
+    call_fn: Callable[[], Awaitable[dict[str, Any]]],
+    extract_tokens: Callable[[dict[str, Any]], TokenTuple],
+    parse_text_fn: Callable[[dict[str, Any]], str],
+    provider_name: str,
+) -> OperatorIntent:
+    """End-to-end execute + parse + validate for assistant adapters.
+
+    Wraps :func:`execute_cloud_call` with the assistant-specific
+    final-mile: extract the text payload via ``parse_text_fn``, parse
+    the JSON via :func:`parse_intent_dict`, then validate against the
+    shared :data:`INTENT_ADAPTER`. HTTP/transport errors get
+    translated to :class:`AssistantError` via
+    :func:`wrap_provider_errors`. Schema-validation failures land as
+    ``AssistantError`` too with a stable message format.
+
+    Extracted 2026-05-23 from 3 cloud assistant adapters (anthropic,
+    openai, google) where the same 10-line tail block had drifted
+    independently (audit finding #5). ``OllamaAssistantAdapter`` keeps
+    its own dispatch because its transport-error shape differs (no
+    HTTPStatusError vs HTTPError differentiation; local server).
+
+    Args:
+        ctx: Cost-context bundle (storage / tracker / cost+retry
+            configs / role / provider / model).
+        estimated_cost_usd: Output of
+            :func:`estimate_cost_ceiling` for the gate check.
+        call_fn: Zero-arg async returning the provider's response
+            envelope (already JSON-decoded). Typically a closure that
+            calls the provider's ``post_*`` helper.
+        extract_tokens: Provider-specific usage extractor —
+            ``(tokens_in, tokens_out, tokens_reasoning)``.
+        parse_text_fn: Provider-specific text-from-envelope extractor.
+            Returns the raw model output the JSON parser should read.
+        provider_name: Display name for error messages
+            (``"Anthropic"`` / ``"OpenAI"`` / ``"Google"``).
+
+    Returns:
+        The validated ``OperatorIntent`` (one of the discriminated
+        union variants).
+
+    Raises:
+        LLMCostCapExceeded: Cost gate denied the call.
+        AssistantError: Transport failure, malformed envelope, JSON
+            parse failure, or schema validation failure.
+    """
+    async with wrap_provider_errors(provider_name, AssistantError):
+        envelope = await execute_cloud_call(
+            ctx=ctx,
+            estimated_cost_usd=estimated_cost_usd,
+            call_fn=call_fn,
+            extract_tokens=extract_tokens,
+        )
+    raw_text = parse_text_fn(envelope)
+    inner = parse_intent_dict(raw_text, provider_name=provider_name)
+    try:
+        return INTENT_ADAPTER.validate_python(inner)
+    except ValidationError as exc:
+        raise AssistantError(
+            f"LLM output failed operator_intent_v1 schema validation: {exc}"
+        ) from exc

@@ -63,6 +63,7 @@ from wobblebot.services.llm_cloud_call import (
     TokenTuple,
     execute_cloud_call,
     parse_advisor_recommendation,
+    wrap_provider_errors,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_pricing import estimate_cost_ceiling
@@ -235,19 +236,13 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
             provider="anthropic",
             model=self._model,
         )
-        try:
+        async with wrap_provider_errors("Anthropic", AdvisorError):
             envelope = await execute_cloud_call(
                 ctx=ctx,
                 estimated_cost_usd=estimate,
                 call_fn=_call,
                 extract_tokens=extract_anthropic_tokens,
             )
-        except httpx.HTTPStatusError as exc:
-            raise AdvisorError(
-                f"Anthropic request failed: HTTP {exc.response.status_code}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise AdvisorError(f"Anthropic transport error: {exc}") from exc
 
         raw_text = parse_text_blocks(envelope.get("content", []) or [])
         return parse_advisor_recommendation(

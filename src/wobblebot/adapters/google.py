@@ -46,7 +46,6 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.config.prompts import Prompt
 from wobblebot.domain.llm_cost import LLMRole
@@ -62,9 +61,10 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenTuple,
+    execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
-    parse_intent_dict,
+    wrap_provider_errors,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_pricing import estimate_cost_ceiling
@@ -72,11 +72,6 @@ from wobblebot.services.llm_retry import LLMRetryConfig
 
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-
-# Module-level TypeAdapter — Pydantic discriminator resolution is the
-# only way to materialize the right OperatorIntent variant. Cheap to
-# construct once.
-_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
 
 
 def extract_google_tokens(envelope: dict[str, Any]) -> TokenTuple:
@@ -295,17 +290,13 @@ class GoogleAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
             provider="google",
             model=self._model,
         )
-        try:
+        async with wrap_provider_errors("Google", AdvisorError):
             envelope = await execute_cloud_call(
                 ctx=ctx,
                 estimated_cost_usd=estimate,
                 call_fn=_call,
                 extract_tokens=extract_google_tokens,
             )
-        except httpx.HTTPStatusError as exc:
-            raise AdvisorError(f"Google request failed: HTTP {exc.response.status_code}") from exc
-        except httpx.HTTPError as exc:
-            raise AdvisorError(f"Google transport error: {exc}") from exc
 
         raw_text = parse_candidate_text(envelope)
         return parse_advisor_recommendation(
@@ -432,23 +423,11 @@ class GoogleAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             provider="google",
             model=self._model,
         )
-        try:
-            envelope = await execute_cloud_call(
-                ctx=ctx,
-                estimated_cost_usd=estimate,
-                call_fn=_call,
-                extract_tokens=extract_google_tokens,
-            )
-        except httpx.HTTPStatusError as exc:
-            raise AssistantError(f"Google request failed: HTTP {exc.response.status_code}") from exc
-        except httpx.HTTPError as exc:
-            raise AssistantError(f"Google transport error: {exc}") from exc
-
-        raw_text = parse_candidate_text(envelope)
-        inner = parse_intent_dict(raw_text, provider_name="Google")
-        try:
-            return _INTENT_ADAPTER.validate_python(inner)
-        except ValidationError as exc:
-            raise AssistantError(
-                f"LLM output failed operator_intent_v1 schema validation: {exc}"
-            ) from exc
+        return await execute_assistant_call(
+            ctx=ctx,
+            estimated_cost_usd=estimate,
+            call_fn=_call,
+            extract_tokens=extract_google_tokens,
+            parse_text_fn=parse_candidate_text,
+            provider_name="Google",
+        )

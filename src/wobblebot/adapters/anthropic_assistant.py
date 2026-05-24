@@ -37,7 +37,6 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.adapters.anthropic import (
     extract_anthropic_tokens,
@@ -51,8 +50,7 @@ from wobblebot.ports.operator import OperatorIntent
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
-    execute_cloud_call,
-    parse_intent_dict,
+    execute_assistant_call,
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_pricing import estimate_cost_ceiling
@@ -63,12 +61,6 @@ from wobblebot.services.llm_retry import LLMRetryConfig
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_API_VERSION = "2023-06-01"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-
-# Module-level TypeAdapter — Pydantic discriminator resolution is the only
-# way to materialize the right OperatorIntent variant. Cheap to construct
-# once.
-_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
-
 
 class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instance-attributes
     """Anthropic-backed ``AssistantPort`` for the operator interaction layer.
@@ -184,28 +176,14 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
             provider="anthropic",
             model=self._model,
         )
-        try:
-            envelope = await execute_cloud_call(
-                ctx=ctx,
-                estimated_cost_usd=estimate,
-                call_fn=_call,
-                extract_tokens=extract_anthropic_tokens,
-            )
-        except httpx.HTTPStatusError as exc:
-            raise AssistantError(
-                f"Anthropic request failed: HTTP {exc.response.status_code}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise AssistantError(f"Anthropic transport error: {exc}") from exc
-
-        raw_text = parse_text_blocks(envelope.get("content", []) or [])
-        inner = parse_intent_dict(raw_text, provider_name="Anthropic")
-        try:
-            return _INTENT_ADAPTER.validate_python(inner)
-        except ValidationError as exc:
-            raise AssistantError(
-                f"LLM output failed operator_intent_v1 schema validation: {exc}"
-            ) from exc
+        return await execute_assistant_call(
+            ctx=ctx,
+            estimated_cost_usd=estimate,
+            call_fn=_call,
+            extract_tokens=extract_anthropic_tokens,
+            parse_text_fn=lambda env: parse_text_blocks(env.get("content", []) or []),
+            provider_name="Anthropic",
+        )
 
     # ---- internals ------------------------------------------------ #
 

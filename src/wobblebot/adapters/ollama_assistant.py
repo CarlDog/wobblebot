@@ -39,7 +39,7 @@ import json
 from typing import Any
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from wobblebot.adapters.ollama import (
     OllamaJsonExtractError,
@@ -50,13 +50,10 @@ from wobblebot.config.prompts import Prompt
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
 from wobblebot.ports.exceptions import AssistantError
 from wobblebot.ports.operator import OperatorIntent
+from wobblebot.services.llm_cloud_call import INTENT_ADAPTER
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-
-# Module-level TypeAdapter — cheap to construct once, expensive to rebuild
-# per call. Validates the operator_intent_v1 discriminated union.
-_INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
 
 
 class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instance-attributes
@@ -141,7 +138,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         inner = self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
 
         try:
-            return _INTENT_ADAPTER.validate_python(inner)
+            return INTENT_ADAPTER.validate_python(inner)
         except ValidationError as exc:
             raise AssistantError(
                 f"LLM output failed operator_intent_v1 schema validation: {exc}"
