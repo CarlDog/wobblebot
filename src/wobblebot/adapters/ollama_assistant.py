@@ -211,6 +211,42 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         if self._owns_client:
             await self._client.aclose()
 
+    async def warmup(self) -> None:
+        """Fire a no-op call to load the model into Ollama's VRAM.
+
+        Empirically every Ollama model takes 25-60s on its first
+        ``/api/chat`` request because Ollama lazy-loads the weights
+        on first hit. Subsequent calls are 2-10s. If cli/operator
+        warms up at startup, the operator's first real message
+        feels instant instead of stalled.
+
+        Failures here are non-fatal -- logged at WARNING but
+        swallowed. The first real parse_intent will pay the cold-
+        start cost if warmup fails, which is the same behavior we'd
+        have without warmup at all.
+        """
+        # ``/api/generate`` with empty prompt + tiny num_predict is
+        # the cheapest way to force model load without burning tokens
+        # on a real chat completion.
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/api/generate",
+                json={
+                    "model": self._model,
+                    "prompt": "",
+                    "stream": False,
+                    "options": {"num_predict": 1},
+                },
+            )
+            response.raise_for_status()
+            _LOGGER.info("warmed up Ollama model %r", self._model)
+        except httpx.HTTPError as exc:
+            _LOGGER.warning(
+                "warmup for model %r failed (%s); first message will pay cold-start cost",
+                self._model,
+                exc,
+            )
+
     async def parse_intent(self, context: ConversationContext) -> OperatorIntent:
         """Send the conversation context to Ollama and return a typed intent.
 

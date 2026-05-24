@@ -638,3 +638,35 @@ class TestLifecycle:
         await adapter.aclose()
         assert not client.is_closed
         await client.aclose()
+
+    async def test_warmup_fires_generate_endpoint(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Warmup should POST /api/generate with an empty prompt + tiny
+        # num_predict, NOT /api/chat. The mocktransport asserts the URL.
+        seen_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            return httpx.Response(200, json={"model": "test-model", "response": "", "done": True})
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            with caplog.at_level("INFO", logger="wobblebot.adapters.ollama_assistant"):
+                await adapter.warmup()
+        finally:
+            await adapter.aclose()
+        assert seen_paths == ["/api/generate"]
+        assert any("warmed up" in r.message for r in caplog.records)
+
+    async def test_warmup_swallows_http_failure(self, caplog: pytest.LogCaptureFixture) -> None:
+        # Ollama down at startup should NOT crash cli/operator -- the
+        # first real parse_intent retries the model load.
+        def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"error": "model not loaded"})
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
+                await adapter.warmup()  # must NOT raise
+        finally:
+            await adapter.aclose()
+        assert any("warmup" in r.message and "failed" in r.message for r in caplog.records)

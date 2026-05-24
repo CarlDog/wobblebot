@@ -1144,6 +1144,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     if assistant is None:
         await operator_storage.close()
         return 2
+    # Pre-warm the model so the operator's first message doesn't pay
+    # the cold-start cost. Only Ollama-served models benefit (cloud
+    # APIs are stateless); the cloud adapters don't expose a warmup
+    # method, so we hasattr-check.
+    if hasattr(assistant, "warmup"):
+        await assistant.warmup()
 
     # Operator service for query answering. cli/operator has no engine,
     # so it constructs a stand-in via the existing OperatorService class
