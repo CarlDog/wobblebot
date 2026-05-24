@@ -65,6 +65,8 @@ COLOR_PENDING = 0xF1C40F  # yellow — for confirmation embeds awaiting operator
 
 CONFIRM_EMOJI = "✅"
 REJECT_EMOJI = "❌"
+ACK_EMOJI = "👀"  # bot acknowledges a parsed inbound message
+WARN_EMOJI = "⚠️"  # bot flags an unparseable inbound message
 
 
 # --------------------------------------------------------------------- #
@@ -264,6 +266,31 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 f"Failed to send embed to channel {channel_id}: {exc}"
             ) from exc
         return str(message.id)
+
+    async def add_reaction(self, channel_id: str, message_id: str, emoji: str) -> None:
+        """Add a reaction emoji to an existing message in ``channel_id``.
+
+        Used by ``cli/operator`` to acknowledge inbound messages — a
+        lightweight signal that the bot saw + parsed the message,
+        without consuming an outbound message slot in the channel.
+
+        Wraps the message fetch (``channel.fetch_message``) and the
+        reaction add (``message.add_reaction``); both can raise
+        ``discord.DiscordException`` which is re-wrapped as
+        ``DiscordTransportError``.
+        """
+        channel = await self._resolve_text_channel(channel_id)
+        try:
+            numeric_msg_id = int(message_id)
+        except ValueError as exc:
+            raise DiscordTransportError(f"Message id {message_id!r} is not numeric") from exc
+        try:
+            message = await channel.fetch_message(numeric_msg_id)
+            await message.add_reaction(emoji)
+        except discord.DiscordException as exc:
+            raise DiscordTransportError(
+                f"Failed to add reaction to message {message_id}: {exc}"
+            ) from exc
 
     async def send_confirmation(
         self,

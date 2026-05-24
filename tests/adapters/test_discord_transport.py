@@ -391,6 +391,34 @@ class TestOutbound:
         assert sent_message.add_reaction.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_add_reaction_adds_to_existing_message(self) -> None:
+        t = _transport()
+        channel = _mock_channel()
+        existing_message = MagicMock()
+        existing_message.add_reaction = AsyncMock(return_value=None)
+        channel.fetch_message = AsyncMock(return_value=existing_message)
+        t.attach_client(_mock_client(channel))
+        await t.add_reaction("100", "555", "✅")
+        channel.fetch_message.assert_awaited_once_with(555)
+        existing_message.add_reaction.assert_awaited_once_with("✅")
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_non_numeric_message_id_raises(self) -> None:
+        t = _transport()
+        t.attach_client(_mock_client(_mock_channel()))
+        with pytest.raises(DiscordTransportError, match="not numeric"):
+            await t.add_reaction("100", "not-a-number", "✅")
+
+    @pytest.mark.asyncio
+    async def test_add_reaction_wraps_discord_exception(self) -> None:
+        t = _transport()
+        channel = _mock_channel()
+        channel.fetch_message = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "boom"))
+        t.attach_client(_mock_client(channel))
+        with pytest.raises(DiscordTransportError, match="Failed to add reaction"):
+            await t.add_reaction("100", "555", "✅")
+
+    @pytest.mark.asyncio
     async def test_send_without_client_raises(self) -> None:
         t = _transport()
         with pytest.raises(DiscordTransportError, match="not started"):

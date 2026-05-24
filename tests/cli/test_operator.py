@@ -87,6 +87,7 @@ def _mock_transport() -> Any:
     t.send_message = AsyncMock(return_value="msg-id")
     t.send_embed = AsyncMock(return_value="embed-id")
     t.send_confirmation = AsyncMock(return_value="confirm-msg-id")
+    t.add_reaction = AsyncMock(return_value=None)
     return t
 
 
@@ -229,6 +230,7 @@ class TestHandleInboundMessage:
             context_window_turns=10,
             confirm_ttl_seconds=300,
             pending_message_map=pending_map,
+            assistant_model_name="test-model",
         )
 
         # Pending command persisted with awaiting_confirmation
@@ -262,6 +264,7 @@ class TestHandleInboundMessage:
             context_window_turns=10,
             confirm_ttl_seconds=300,
             pending_message_map={},
+            assistant_model_name="test-model",
         )
         # Query result posted as embed
         transport.send_embed.assert_awaited_once()
@@ -283,6 +286,7 @@ class TestHandleInboundMessage:
             context_window_turns=10,
             confirm_ttl_seconds=300,
             pending_message_map={},
+            assistant_model_name="test-model",
         )
         transport.send_message.assert_awaited_once_with("100", "you're welcome")
 
@@ -300,10 +304,75 @@ class TestHandleInboundMessage:
             context_window_turns=10,
             confirm_ttl_seconds=300,
             pending_message_map={},
+            assistant_model_name="test-model",
         )
         transport.send_message.assert_awaited_once()
         args, _ = transport.send_message.await_args
         assert "no symbol XYZ" in args[1]
+
+    async def test_parsed_intent_reacts_with_ack_emoji(self, storage: SQLiteStorageAdapter) -> None:
+        from wobblebot.adapters.discord_transport import ACK_EMOJI
+
+        intent: OperatorIntent = IntentConversational(reply_text="hi")
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="hello", message_id="msg-abc", channel_id="C-9"),
+            operator_storage=storage,
+            live_storage=None,
+            assistant=_StubAssistant(intent),
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            pending_message_map={},
+            assistant_model_name="test-model",
+        )
+        transport.add_reaction.assert_awaited_once_with("C-9", "msg-abc", ACK_EMOJI)
+
+    async def test_unparseable_intent_reacts_with_warn_emoji(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.adapters.discord_transport import WARN_EMOJI
+
+        intent: OperatorIntent = IntentUnparseable(reason="huh")
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="wibble", message_id="msg-xyz", channel_id="C-7"),
+            operator_storage=storage,
+            live_storage=None,
+            assistant=_StubAssistant(intent),
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            pending_message_map={},
+            assistant_model_name="test-model",
+        )
+        transport.add_reaction.assert_awaited_once_with("C-7", "msg-xyz", WARN_EMOJI)
+
+    async def test_query_embed_footer_contains_model_name(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        intent: OperatorIntent = IntentQuery(query=StatusQuery())
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="status"),
+            operator_storage=storage,
+            live_storage=None,
+            assistant=_StubAssistant(intent),
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            pending_message_map={},
+            assistant_model_name="claude-sonnet-4-6",
+        )
+        transport.send_embed.assert_awaited_once()
+        _, kwargs = transport.send_embed.await_args
+        assert "claude-sonnet-4-6" in kwargs["footer"]
 
 
 # --------------------------------------------------------------------- #

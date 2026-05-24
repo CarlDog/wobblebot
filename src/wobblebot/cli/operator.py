@@ -41,11 +41,13 @@ from uuid import UUID, uuid4
 
 from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.discord_transport import (
+    ACK_EMOJI,
     COLOR_ERROR,
     COLOR_INFO,
     COLOR_WARNING,
     CONFIRM_EMOJI,
     REJECT_EMOJI,
+    WARN_EMOJI,
     DiscordTransport,
     DiscordTransportConfig,
     DiscordTransportError,
@@ -347,6 +349,7 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     context_window_turns: int,
     confirm_ttl_seconds: int,
     pending_message_map: dict[str, UUID],
+    assistant_model_name: str,
 ) -> None:
     """Parse an inbound operator message + route the resulting intent.
 
@@ -428,6 +431,12 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
             extra={"turn_id": str(operator_turn.id), "error": str(exc)},
         )
 
+    # Lightweight ack: reacting on the inbound message proves the bot
+    # saw + parsed it, without consuming an outbound message slot.
+    # WARN_EMOJI signals "I read this but couldn't make sense of it".
+    ack_emoji = WARN_EMOJI if isinstance(intent, IntentUnparseable) else ACK_EMOJI
+    await _safe_add_reaction(transport, message.channel_id, message.message_id, ack_emoji)
+
     await _route_intent(
         intent=intent,
         channel_id=message.channel_id,
@@ -438,6 +447,7 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         outbound_channel_id=outbound_channel_id,
         confirm_ttl_seconds=confirm_ttl_seconds,
         pending_message_map=pending_message_map,
+        assistant_model_name=assistant_model_name,
     )
 
 
@@ -452,6 +462,7 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
     outbound_channel_id: str,
     confirm_ttl_seconds: int,
     pending_message_map: dict[str, UUID],
+    assistant_model_name: str,
 ) -> None:
     """Dispatch the parsed intent to the right handler."""
     match intent:
@@ -475,6 +486,7 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
                 operator_service=operator_service,
                 transport=transport,
                 outbound_channel_id=outbound_channel_id,
+                assistant_model_name=assistant_model_name,
             )
         case IntentConversational():
             await _handle_conversational(
@@ -580,6 +592,7 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
     operator_service: OperatorService,
     transport: DiscordTransport,
     outbound_channel_id: str,
+    assistant_model_name: str,
 ) -> None:
     """Answer a Query via OperatorService and post an embed."""
     try:
@@ -597,6 +610,7 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
         return
 
     embed_kwargs = render_query_embed(result)
+    embed_kwargs["footer"] = f"parsed by {assistant_model_name}"
     try:
         await transport.send_embed(outbound_channel_id, **embed_kwargs)
     except DiscordTransportError as exc:
@@ -748,6 +762,19 @@ async def _safe_send_message(transport: DiscordTransport, channel_id: str, conte
         await transport.send_message(channel_id, content)
     except DiscordTransportError as exc:
         _LOGGER.error("send_message failed", extra={"error": str(exc)})
+
+
+async def _safe_add_reaction(
+    transport: DiscordTransport, channel_id: str, message_id: str, emoji: str
+) -> None:
+    """``transport.add_reaction`` with errors logged + swallowed."""
+    try:
+        await transport.add_reaction(channel_id, message_id, emoji)
+    except DiscordTransportError as exc:
+        _LOGGER.warning(
+            "add_reaction failed",
+            extra={"channel_id": channel_id, "message_id": message_id, "error": str(exc)},
+        )
 
 
 async def _safe_save_turn(storage: StoragePort, turn: ConversationTurn) -> None:
@@ -1010,6 +1037,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             context_window_turns=operator_cfg.context_window_turns,
             confirm_ttl_seconds=operator_cfg.confirm_ttl_seconds,
             pending_message_map=pending_message_map,
+            assistant_model_name=operator_cfg.assistant.model,
         )
 
     async def _on_reaction(evt: ReactionEvent) -> None:
