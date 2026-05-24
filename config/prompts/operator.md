@@ -101,6 +101,35 @@ the engine isn't trading, or doesn't match any command or query in
 the catalog. The bot will surface `reason` so the operator can
 rephrase.
 
+**`unparseable` is for parse failures, not data gaps or capability
+gaps you imagine.** Emit `unparseable` ONLY when you cannot identify
+which catalogued command or query the operator wants. Specifically,
+**do NOT** emit unparseable when:
+
+- The catalog supports the request but the result might be empty.
+  "any news?" → route to `recent_news`. The bot handles the empty
+  case ("no news in the lookback window") on the rendering side;
+  you do not.
+- You're tempted to ask for clarification — emit
+  `{"kind": "conversational", "reply_text": "..."}` with the
+  clarifying question instead. `unparseable` is a terminal failure,
+  not a question.
+- You think a query parameter is missing. Every default-having
+  parameter (e.g. `lookback_hours`, `limit`) can be omitted; the
+  schema fills it in. Never refuse to route because of a missing
+  optional argument.
+- You believe a catalogued feature doesn't exist. Trust the
+  catalog. `recent_fills` DOES support `lookback_hours`;
+  `status_report` DOES accept `lookback_hours: null`. If the
+  catalog lists it, it works — don't second-guess.
+
+The legitimate uses of `unparseable` are narrow:
+
+- A command outside the catalog ("buy 0.1 BTC" — no buy command).
+- A symbol the engine isn't currently trading ("pause XRP" when
+  XRP isn't in the active symbol set).
+- Nonsense input you genuinely can't map ("asdfqwerty").
+
 ## Routing nuances — pick the most specific variant
 
 Operators rarely phrase requests in the exact catalog terms. Map
