@@ -595,8 +595,21 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         recent_fills = await self._answer_recent_fills(
             RecentFillsQuery(symbol=None, lookback_hours=lookback_hours, limit=20)
         )
-        recent_suggestions = await self._answer_recent_suggestions(
-            RecentSuggestionsQuery(symbol=None, limit=5)
+        # RecentSuggestionsQuery has no lookback_hours parameter -- the
+        # query returns the most-recent N suggestions regardless of when
+        # they were made. For status_report we need them lookback-scoped
+        # like fills and news, so we widen the limit and filter
+        # post-query by created_at.
+        suggestions_raw = await self._answer_recent_suggestions(
+            RecentSuggestionsQuery(symbol=None, limit=50)
+        )
+        lookback_cutoff = now - timedelta(hours=lookback_hours)
+        recent_suggestions = suggestions_raw.model_copy(
+            update={
+                "suggestions": [
+                    s for s in suggestions_raw.suggestions if s.created_at.dt > lookback_cutoff
+                ]
+            }
         )
         recent_news = await self._answer_recent_news(
             RecentNewsQuery(lookback_hours=lookback_hours, limit=10)
@@ -622,7 +635,10 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             StatusReportTally(
                 label=f"News (last {lookback_hours}h)", value=str(len(recent_news.items))
             ),
-            StatusReportTally(label="Suggestions", value=str(len(recent_suggestions.suggestions))),
+            StatusReportTally(
+                label=f"Suggestions (last {lookback_hours}h)",
+                value=str(len(recent_suggestions.suggestions)),
+            ),
             StatusReportTally(label="Harvester band", value=harvester_status.band),
             StatusReportTally(label="Proposals", value=str(len(recent_proposals.proposals))),
         ]
@@ -728,8 +744,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             f"  fills_in_lookback_buys: {fills_buys}",
             f"  fills_in_lookback_sells: {fills_sells}",
             f"  news_in_lookback: {len(recent_news.items)}",
-            f"  recent_suggestions: {len(recent_suggestions.suggestions)}",
-            f"  recent_proposals: {len(recent_proposals.proposals)}",
+            f"  suggestions_in_lookback: {len(recent_suggestions.suggestions)}",
+            f"  proposals_in_lookback: {len(recent_proposals.proposals)}",
             f"  harvester_band: {harvester_status.band}",
             f"  total_usd_balance: {status.total_usd_balance:,.2f}",
             f"  todays_realized_pnl: " f"{format_signed_usd(status.session_pnl, decimals=4)}",
@@ -752,7 +768,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "RECENT_FILLS (only the lookback window):",
             recent_fills.model_dump_json(indent=2),
             "",
-            "RECENT_SUGGESTIONS (proposed changes, not yet applied):",
+            "RECENT_SUGGESTIONS (only the lookback window; proposed changes, not yet applied):",
             recent_suggestions.model_dump_json(indent=2),
             "",
             "RECENT_NEWS:",
@@ -774,14 +790,21 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             "user-friendly 2-3 paragraph plain-text narrative.\n\n"
             "**The COUNTS section is authoritative.** Every count you "
             "mention in the narrative (fills, open orders by side, news "
-            "items, suggestions, etc.) MUST come from COUNTS verbatim. "
-            "Do NOT re-count by inspecting JSON arrays in other sections. "
-            "Do NOT use STATUS.recent_fill_count for fill counts -- that "
-            "is engine-wide, not lookback-scoped. The lookback-scoped "
-            "count is COUNTS.fills_in_lookback_total.\n\n"
-            "**If COUNTS.fills_in_lookback_total is 0, say 'no fills in "
-            "the lookback window' -- do not invent fill activity.** "
-            "Same rule for news, suggestions, and proposals.\n\n"
+            "items, suggestions, proposals) MUST come from COUNTS "
+            "verbatim. Do NOT re-count by inspecting JSON arrays in "
+            "other sections. Do NOT use STATUS.recent_fill_count for "
+            "fill counts -- that is engine-wide, not lookback-scoped. "
+            "Every COUNTS field ending in ``_in_lookback`` is scoped to "
+            "the requested window.\n\n"
+            "**If a `_in_lookback` count is 0, say so explicitly** and "
+            "do not invent activity. Examples:\n"
+            "  - fills_in_lookback_total=0 -> 'no fills in the lookback window'\n"
+            "  - news_in_lookback=0 -> 'no news in the lookback window'\n"
+            "  - suggestions_in_lookback=0 -> 'no new advisor suggestions in "
+            "the lookback window' (existing advice from earlier still "
+            "applies; just don't pretend new ones arrived)\n"
+            "  - proposals_in_lookback=0 -> 'no harvester proposals in the "
+            "lookback window'\n\n"
             "Guidelines:\n"
             "- Lead with what changed (fills, new news, harvester movements). "
             "Static state (open orders, grid config) is secondary.\n"
