@@ -43,7 +43,6 @@ from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.discord_transport import (
     COLOR_ERROR,
     COLOR_INFO,
-    COLOR_SUCCESS,
     COLOR_WARNING,
     CONFIRM_EMOJI,
     REJECT_EMOJI,
@@ -94,6 +93,7 @@ from wobblebot.ports.operator import (
     PendingCommand,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.operator_service import OperatorService
@@ -596,13 +596,9 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
         )
         return
 
+    embed_kwargs = render_query_embed(result)
     try:
-        await transport.send_embed(
-            outbound_channel_id,
-            title=f"Query: {intent.query.kind}",
-            description=_summarize_query_result(result),
-            color=COLOR_SUCCESS,
-        )
+        await transport.send_embed(outbound_channel_id, **embed_kwargs)
     except DiscordTransportError as exc:
         _LOGGER.error("failed to post query result", extra={"error": str(exc)})
 
@@ -611,24 +607,11 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
         channel_id=channel_id,
         user_id=user_id,
         role="assistant",
-        content=_summarize_query_result(result),
+        content=f"{embed_kwargs['title']}: {embed_kwargs['description']}",
         intent=None,
         timestamp=Timestamp(dt=datetime.now(UTC)),
     )
     await _safe_save_turn(operator_storage, assistant_reply)
-
-
-def _summarize_query_result(result: Any) -> str:
-    """One-line summary of a QueryResult for the embed description.
-
-    Generic: just dumps the model as JSON. The Discord-side richer
-    rendering is a future enhancement; for v1 the JSON is enough.
-    """
-    try:
-        dumped: str = result.model_dump_json(indent=2)
-        return dumped[:1800]
-    except Exception:  # pylint: disable=broad-exception-caught
-        return repr(result)[:1800]
 
 
 async def _handle_conversational(  # pylint: disable=too-many-arguments
@@ -1110,8 +1093,6 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             phases.append(("close_observe_storage", observe_storage.close))
         await safe_shutdown(phases, logger=_LOGGER)
     return exit_code
-
-
 
 
 def _build_overrides(_args: argparse.Namespace) -> dict[str, Any]:
