@@ -146,6 +146,42 @@ class TestConstructor:
         with pytest.raises(AssistantError, match="requires an operator-role prompt"):
             OllamaAssistantAdapter(model="x", prompt=_quant_prompt())
 
+    def test_rejects_phi4_mini_reasoning(self) -> None:
+        # Empirically 0/14 on the 2026-05-24 routing battery -- math
+        # specialist, never emits JSON. Hard-blocked.
+        with pytest.raises(AssistantError, match="known-incompatible"):
+            OllamaAssistantAdapter(model="phi4-mini-reasoning:3.8b-fp16", prompt=_operator_prompt())
+
+    def test_rejects_llava(self) -> None:
+        # Vision model; not text-instruct-tuned for JSON-schema output.
+        with pytest.raises(AssistantError, match="known-incompatible"):
+            OllamaAssistantAdapter(model="llava:13b", prompt=_operator_prompt())
+
+    def test_incompatible_error_lists_alternatives(self) -> None:
+        with pytest.raises(AssistantError) as exc_info:
+            OllamaAssistantAdapter(model="phi4-mini-reasoning:3.8b", prompt=_operator_prompt())
+        assert "phi4:14b-q8_0" in str(exc_info.value)
+        assert "mistral-nemo" in str(exc_info.value)
+
+    def test_qwen36_warns_but_allows(self, caplog: pytest.LogCaptureFixture) -> None:
+        # 11/14 with 3 empty-content errors -- soft-warn, not block.
+        with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
+            OllamaAssistantAdapter(model="qwen3.6:35b-a3b-q8_0", prompt=_operator_prompt())
+        assert any("known-degraded" in r.message for r in caplog.records)
+
+    def test_compatible_model_passes_silently(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
+            OllamaAssistantAdapter(model="phi4:14b-q8_0", prompt=_operator_prompt())
+        assert not any("known-degraded" in r.message for r in caplog.records)
+        assert not any("known-incompatible" in r.message for r in caplog.records)
+
+    def test_case_insensitive_match(self) -> None:
+        # The model tag case shouldn't matter.
+        with pytest.raises(AssistantError, match="known-incompatible"):
+            OllamaAssistantAdapter(model="PHI4-MINI-Reasoning:3.8b", prompt=_operator_prompt())
+
 
 # --------------------------------------------------------------------- #
 # Happy paths — each intent variant                                     #

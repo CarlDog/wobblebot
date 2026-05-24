@@ -36,6 +36,7 @@ never imports this module.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -52,8 +53,74 @@ from wobblebot.ports.exceptions import AssistantError
 from wobblebot.ports.operator import OperatorIntent
 from wobblebot.services.llm_cloud_call import INTENT_ADAPTER
 
+_LOGGER = logging.getLogger(__name__)
+
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
+
+# Models that cannot produce schema-conforming OperatorIntent JSON.
+# Matched case-insensitively against the model tag. Determined empirically
+# via tools/probe_assistant.py + tmp_model_compare.py on 2026-05-24:
+#
+# - ``phi4-mini-reasoning:3.8b-fp16`` -- math-reasoning specialist; 0/14
+#   on the routing battery. Treats every prompt as a math problem
+#   ("calculate x in a quadratic equation" / "compute profit from 0.5
+#   BTC at $40k") and never emits any JSON. 3.8B params + math
+#   specialization is fundamentally wrong-fit for instruction-following
+#   intent parsing. No prompt edit can salvage this.
+# - ``llava`` -- vision model, not text-instruction-tuned.
+#
+# These models stay INSTALLED in Ollama for potential use by other
+# wobblebot roles (e.g. a future MoE quant-expert that does numerical
+# analysis). This list only gates the operator-assistant role.
+KNOWN_INCOMPATIBLE_FOR_ASSISTANT = (
+    "phi4-mini-reasoning",
+    "llava",
+)
+
+# Models that work but with observed failure modes (degraded). Operator
+# is warned but the daemon still starts. Empirically determined as above:
+#
+# - ``qwen3.6:35b-a3b-q8_0`` -- 11/14 on the routing battery with 3
+#   silent "empty message.content and no thinking field" returns.
+#   Likely transient model hiccups; operator should expect occasional
+#   "Sorry, I couldn't process that" replies.
+KNOWN_DEGRADED_FOR_ASSISTANT = ("qwen3.6:35b-a3b",)
+
+
+def check_model_suitability(model: str) -> None:
+    """Refuse known-incompatible models; warn on known-degraded.
+
+    Called at adapter ``__init__``. Hard-fails with ``AssistantError``
+    when the configured model is on the incompatible list; logs a
+    WARNING when it's on the degraded list. Anything else passes
+    silently.
+
+    Pattern match is substring case-insensitive against the model
+    tag, so e.g. ``phi4-mini-reasoning:3.8b-fp16`` matches the
+    ``phi4-mini-reasoning`` entry.
+    """
+    name = model.lower()
+    for pattern in KNOWN_INCOMPATIBLE_FOR_ASSISTANT:
+        if pattern in name:
+            raise AssistantError(
+                f"Model {model!r} is known-incompatible with the "
+                f"operator-assistant role (pattern matched: {pattern!r}). "
+                f"Pick a general instruct-tuned model -- recommendations: "
+                f"phi4:14b-q8_0, mistral-nemo:12b-instruct-2407-q8_0, "
+                f"phi4-reasoning:14b-plus-q8_0, granite4.1:30b-q5_K_M. "
+                f"See docs/reference/operator-llm-models.md for the full "
+                f"compatibility matrix."
+            )
+    for pattern in KNOWN_DEGRADED_FOR_ASSISTANT:
+        if pattern in name:
+            _LOGGER.warning(
+                "model %r is known-degraded for the operator-assistant role "
+                "(pattern: %r). Expect occasional parse failures. See "
+                "docs/reference/operator-llm-models.md for alternatives.",
+                model,
+                pattern,
+            )
 
 
 class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instance-attributes
@@ -93,6 +160,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 f"OllamaAssistantAdapter requires an operator-role prompt; "
                 f"got role={prompt.metadata.role!r}"
             )
+        check_model_suitability(model)
         self._model = model
         self._prompt = prompt
         self._base_url = base_url.rstrip("/")
