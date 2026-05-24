@@ -247,13 +247,28 @@ prompts; predict-next-token only.
 **Math / reasoning specialists with too-narrow training** —
 trained on math problems exclusively; pattern-match every
 prompt to a math problem (see phi4-mini-reasoning's 0/14).
+**Scope note:** these rejections apply to the OPERATOR-ASSISTANT
+role only. Math specialists may be a strong fit for a future
+**MoE quant-expert** role (Phase 3.4's mixture-of-experts
+advisor has a `quant.md` slot intended for numerical analysis
+of performance summaries, win/loss ratios, volatility, etc.).
+We have NOT tested any math-specialist model in that role yet
+because the role isn't wired through the advisor adapter path
+today — the rejection here only documents operator-assistant
+unsuitability, not general uselessness. Keep these installed
+for potential MoE-quant testing when that path materializes.
 
-- `phi4-mini-reasoning:3.8b-fp16` — empirically 0/14. Hard-
-  blocked in `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`.
+- `phi4-mini-reasoning:3.8b-fp16` — empirically 0/14 on the
+  operator-assistant routing battery. Hard-blocked in
+  `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`. **Untested in the quant
+  role**; the small-model + math-specialization combination
+  could plausibly produce good numerical reasoning even though
+  it can't follow our intent schema.
 - `mathstral:7b` — Mistral's math-specialized variant.
-  Probably exhibits the same pattern but untested.
+  Probably exhibits the same operator-assistant pattern but
+  untested. **Untested in the quant role.**
 - `wizardmath:7b`, `wizardmath:13b` — WizardLM math-tuned
-  variants.
+  variants. **Untested in the quant role.**
 
 **Domain specialists outside operator-assistant scope** —
 trained for medical, legal, finance, biology, etc. The general
