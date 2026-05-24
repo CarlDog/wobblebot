@@ -76,6 +76,29 @@ prompt iteration.
   makes operator interactions feel sluggish. Acceptable for batch
   use, not chat.
 
+## Untested small-model candidates (low-VRAM gap)
+
+The lightest validated model is `mistral-nemo:12b-instruct-2407-q8_0`
+at 12GB. That excludes operators on consumer GPUs with 8GB or
+less VRAM. Worth testing when the operator (or a contributor)
+has bandwidth:
+
+| Candidate | Approx size | Notes |
+|---|---|---|
+| `llama3.2:1b` | 1.3GB | Meta's smallest; instruction-tuned |
+| `llama3.2:3b` | 2GB | Meta; balance of size + capability |
+| `gemma2:2b` | 1.6GB | Google's smaller gemma |
+| `phi3.5:3.8b` | 2.2GB | Earlier phi, before phi4 |
+| `qwen2.5:1.5b` | 1GB | Smallest qwen series |
+| `qwen2.5:3b` | 2GB | Larger qwen for low-end hardware |
+
+Workflow: `ollama pull <model>`, then
+`python tools/probe_assistant.py --model <model> --skip-multi-turn`,
+then append the result row to the main compatibility table
+above. If <11/14 OR persistent silent errors, add to
+`KNOWN_INCOMPATIBLE_FOR_ASSISTANT` or `KNOWN_DEGRADED_FOR_ASSISTANT`
+in `src/wobblebot/adapters/ollama_assistant.py`.
+
 ## How to add a new model to this list
 
 1. Install in Ollama: `ollama pull <model>`

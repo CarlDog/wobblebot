@@ -200,3 +200,50 @@ commit, then introduce the base class.
 who forgets the ``wired`` field on a new cross-DB dashboard.
 Until extraction, code review (and the test suite — every web
 test asserts against the snapshot fields) catches this.
+
+### GitHub workflow — flag new LLM model releases
+
+**What:** a scheduled GitHub Action that polls each
+LLM-provider's model-list endpoint daily / weekly, diffs against
+a checked-in `data/known_llm_models.json`, and opens an issue
+when new models appear. Covers Ollama (via
+`https://ollama.com/library` scrape or the registry API),
+Anthropic (`GET /v1/models`), OpenAI (`GET /v1/models`), Google
+(`GET /v1beta/models?key=...`).
+
+**Why high value:** today the operator-LLM compatibility matrix
+in `docs/reference/operator-llm-models.md` is a manual snapshot.
+When a new Claude model drops or Ollama adds `qwen3.7`, no
+process exists to flag it for testing. Operators silently miss
+upgrades. The same workflow could trigger on Anthropic's
+deprecation notices ("Claude 3 Opus retiring 2026-09") so we
+notice before a model the operator depends on disappears.
+
+**Implementation sketch:**
+
+1. New `.github/workflows/llm-model-watcher.yml`. Runs on
+   `schedule: cron: '0 12 * * *'` (daily noon UTC) plus
+   workflow_dispatch.
+2. Python helper script (likely `tools/check_new_llm_models.py`)
+   that loads `data/known_llm_models.json`, calls each provider's
+   list endpoint, and emits a diff.
+3. New entries -> `gh issue create` with a body templating the
+   model name + a checklist (test via `tools/probe_assistant.py`,
+   add to compatibility matrix, update `KNOWN_INCOMPATIBLE` /
+   `KNOWN_DEGRADED` lists if needed).
+4. Removed entries (deprecated/retired) -> `gh issue create`
+   with higher urgency labels.
+
+Auth: workflow runs with `secrets.GITHUB_TOKEN` for the gh
+calls. Cloud provider API keys would come from repo secrets
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`).
+Ollama library endpoint is public.
+
+**Why deferred:** zero impact on v1.0 trading; nice-to-have
+proactive awareness. v1.0 takes the explicit-snapshot approach
+to the compatibility matrix; v1.1 automates the detection step.
+
+**Trigger:** any time a major LLM provider drops a new model
+the operator didn't know about within a week of release.
+Operator-flagged on 2026-05-24 ("we should create a github
+workflow to flag us when there are new llm models out there").

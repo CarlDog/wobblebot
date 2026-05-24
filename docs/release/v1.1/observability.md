@@ -371,3 +371,52 @@ manually summing fees-plus-LLM-plus-power and dividing by
 realized PnL to verify the strategy is still net-positive. Or
 when scaling capital, since the answer shifts non-linearly
 (earnings scale with capital, infra cost stays roughly flat).
+
+### LLM health check on the /health page
+
+**What:** add an "LLM" section to the `/health` web page that
+shows the status of every configured LLM endpoint. For Ollama,
+ping the `/api/tags` or `/api/show` endpoint and verify the
+configured model is loaded / loadable. For cloud providers
+(Anthropic / OpenAI / Google), ping a cheap models-list or
+balance endpoint and verify the API key is accepted. Cache the
+result with a TTL (mirror the Kraken SystemStatus pattern) so
+the /health view doesn't hammer the LLM endpoints on every page
+load.
+
+**Why high value:** today the only signal that an LLM endpoint
+is unhealthy is operator-visible failure ("Sorry, I couldn't
+process that" in Discord, or empty advise.db rows after a tick).
+By the time the operator notices, the engine has been blind for
+N ticks. A health check on /health gives proactive visibility:
+"Ollama unreachable since 14:22 UTC" or "Anthropic key returns
+401 (rotated?)".
+
+**Implementation:**
+
+- New `services/llm_health.py` with a `LLMHealthChecker` that
+  knows how to probe each provider's "are you alive" endpoint.
+  Cheapest non-billable probes per provider:
+  - Ollama: `GET /api/tags` (no model load required) or call
+    the existing ``OllamaAssistantAdapter.warmup()`` which is
+    already non-billable.
+  - Anthropic: `GET /v1/models` (free, lists available models).
+  - OpenAI: `GET /v1/models` (free).
+  - Google: `GET /v1beta/models?key=...` (free, lists Gemini
+    models).
+- TTL cache (60s+) so /health refreshes don't spam vendors.
+- New `daemon_heartbeats`-style table OR an in-memory cache for
+  the health state; web layer reads + renders.
+- Surface in the /health page's existing daemon-freshness table,
+  and contribute to the navbar's tiered alert dot.
+
+**Why deferred:** v1.0 ships /health that covers daemon
+liveness; LLM endpoint health is a sibling concern but operator
+hasn't been hit by an LLM outage during soak yet. The pre-warm
+shipped in 2026-05-24's commit `3ccd93c` already gives
+``OllamaAssistantAdapter.warmup()`` as a substrate the health
+checker can reuse.
+
+**Trigger:** any operator-visible LLM outage during soak, OR an
+operator request to "tell me when my Ollama dies before I notice
+it through Discord silence".
