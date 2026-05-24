@@ -1170,3 +1170,83 @@ we should try to include them if possible"). Cross-reference:
 the math-specialist rejection scope note in
 `docs/reference/operator-llm-models.md` enumerates the same
 candidate-role list with implementation specifics per role.
+
+### Foreign-language operator support -- audit + test coverage
+
+**What:** wobblebot is end-to-end English today, with no
+visibility into how the operator-assistant LLM, embed renderer,
+status_report narrative, or compatibility matrix behave under
+non-English operator input. A non-English-speaking operator's
+experience is currently undocumented and untested.
+
+**Surfaces affected:**
+
+1. **Operator-assistant prompt** -- `config/prompts/operator.md`
+   is entirely in English. It doesn't tell the LLM "the
+   operator may write in any language; parse the intent even if
+   the input is Spanish / French / German / Mandarin / etc.
+   while emitting JSON in the catalog's English ``kind`` values."
+   Most modern LLMs (llama3.2, qwen2.5, gemma2, mistral) have
+   multilingual training and SHOULD handle this gracefully, but
+   the prompt doesn't acknowledge or test it.
+2. **status_report narrative** -- LLM-generated prose is in
+   whatever language the model prefers given the prompt
+   (currently English-only). Operator can't ask for a Spanish
+   brief.
+3. **Embed labels** -- "Engine status", "Today's PnL",
+   "Recent fills", "No fills in the lookback window", etc. all
+   hardcoded English in the renderer.
+4. **Compatibility matrix** -- the 14-message routing battery
+   in `tools/probe_assistant.py` is entirely English. We have
+   ZERO data on how our chosen Ollama models handle non-English
+   operator input.
+5. **News pipeline** -- already ingests non-English headlines
+   from CryptoCompare without sanitization; no specific
+   handling but no breakage observed either.
+6. **`operator-llm-models.md` doc** -- caveats only mention the
+   English-only test battery in passing; the compatibility
+   scores don't tell a German operator anything useful about
+   their experience.
+
+**Implementation paths (pick at scoping time):**
+
+1. **Audit only** -- run the routing battery in 3-5 target
+   languages (e.g. Spanish, French, German, Japanese, Mandarin)
+   against the top-scoring English models from
+   `docs/reference/operator-llm-models.md`. Document the
+   accuracy delta. Cheapest path; identifies whether the
+   English-only assumption is actually load-bearing.
+2. **Prompt expansion** -- update `operator.md` with explicit
+   "respond in the operator's language for conversational /
+   unparseable replies; keep JSON ``kind`` values English"
+   language. Add a few non-English routing examples. Rerun the
+   compat matrix.
+3. **i18n the embed labels** -- introduce a small string
+   catalog (Python ``gettext`` or a simple dict) and let
+   operators set `web.locale` / `operator.locale` in
+   `settings.yml`. Mostly mechanical translation work but
+   touches every renderer.
+4. **Full multilingual status_report** -- localize the
+   narrative section's system prompt so the LLM outputs prose
+   in the operator's language. Combines with #2 and #3.
+
+**Why deferred:** zero evidence yet that any operator wants
+this. The v1.0 operator is English-speaking. Audit-only
+(option 1) is cheapest to disprove or confirm the need; the
+fuller paths (#2-#4) wait for community signal.
+
+**Trigger:** any operator (community or otherwise) asking for
+non-English support, OR observed news-pipeline garbling on
+non-Latin character sets (would be a different fix path but
+same i18n umbrella). Operator-flagged 2026-05-25 ("we have yet
+to test foreign language capabilities in any part of this
+project") -- noted as a known gap, not an immediate priority.
+
+**Cross-references:**
+
+- `docs/reference/operator-llm-models.md` -- add a methodology
+  note that the routing battery is English-only.
+- `tools/probe_assistant.py` -- DEFAULT_BATTERY is English; a
+  non-English variant would be a sibling battery.
+- `config/prompts/operator.md` -- the language-agnosticism
+  clause goes here when path #2 lands.

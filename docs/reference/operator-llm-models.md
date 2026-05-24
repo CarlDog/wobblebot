@@ -9,6 +9,21 @@ operator-assistant routing battery. Driven by `tools/probe_assistant.py`
 Use this when picking `operator.assistant.model` in `settings.yml`,
 or when adding a new model to the operator's Ollama install.
 
+**Methodology caveats:**
+
+- **Language**: every battery message is English. Non-English
+  routing accuracy is untested. Most modern multilingual
+  models (llama3.2, qwen2.5, gemma2, mistral) should handle
+  non-English input via the LLM's own translation step, but
+  we have no data. See the "Foreign-language operator support
+  -- audit + test coverage" v1.1 entry in
+  `docs/release/v1.1/operator-ux.md` for the planned audit.
+- **Quantization**: scores below are at `q8_0` for the
+  apples-to-apples capability ceiling. A low-VRAM operator
+  running `q4_K_M` (the common default for tier B/C/D
+  candidates) may see 5-15% degradation; a planned q4 second
+  pass against the q8 passers will quantify this.
+
 ## Battery
 
 14 messages exercising every routing surface:
