@@ -137,6 +137,8 @@ class TestRenderOpenOrders:
         assert len(out["fields"]) == 2
         assert "BUY BTC/USD" in out["fields"][0][0]
         assert "76,000" in out["fields"][0][1]
+        assert "created" in out["fields"][0][1]
+        assert "2026-05-24" in out["fields"][0][1]
 
     def test_overflow_truncates_with_marker(self) -> None:
         orders = [
@@ -242,6 +244,8 @@ class TestRenderRecentSuggestions:
         assert "claude-sonnet-4-6" in out["fields"][0][0]
         assert "high" in out["fields"][0][1]
         assert "Volume up" in out["fields"][0][1]
+        assert "2026-05-24" in out["fields"][0][1]
+        assert "created" in out["fields"][0][1]
 
 
 class TestRenderRecentNews:

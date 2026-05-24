@@ -134,7 +134,8 @@ def _render_open_orders(result: OpenOrdersResult) -> dict[str, Any]:
 def _open_order_value(order: OpenOrderEntry) -> str:
     return (
         f"price `${order.price:,.4f}` • amount `{order.amount:.8f}`\n"
-        f"id `{order.order_id[:12]}…`"
+        f"id `{order.order_id[:12]}…`\n"
+        f"created `{order.created_at.dt.isoformat(timespec='seconds')}`"
     )
 
 
@@ -190,9 +191,11 @@ def _render_recent_suggestions(result: RecentSuggestionsResult) -> dict[str, Any
 
 
 def _suggestion_value(entry: SuggestionEntry) -> str:
-    rationale = _truncate(entry.rationale, _MAX_FIELD_VALUE_CHARS - 100)
+    rationale = _truncate(entry.rationale, _MAX_FIELD_VALUE_CHARS - 120)
     return (
-        f"confidence `{entry.confidence}` • id `{entry.recommendation_id[:12]}…`\n" f"{rationale}"
+        f"confidence `{entry.confidence}` • id `{entry.recommendation_id[:12]}…`\n"
+        f"created `{entry.created_at.dt.isoformat(timespec='seconds')}`\n"
+        f"{rationale}"
     )
 
 
