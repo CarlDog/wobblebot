@@ -424,6 +424,13 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
 
     exit_code = 0
     tick = 0
+    # Terminal-visible periodic heartbeat (separate from the operator.db
+    # daemon_heartbeats row). After the 2026-05-23 logging-audit demoted
+    # per-tick "tick complete" from INFO to DEBUG, a long quiet period
+    # left the terminal looking dead. Initialize so the FIRST heartbeat
+    # fires `terminal_heartbeat_seconds` after session-start, not right
+    # at boot (where it'd duplicate the session-start INFO line).
+    last_terminal_heartbeat_at = time.monotonic()
     try:
         while not stop_event.is_set():
             # Stage 8.4.E follow-up — emit a heartbeat at the top of
@@ -448,8 +455,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     await _process_pending_commands(operator_service, operator_storage)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
-                        "pending_commands poll failed; continuing",
-                        extra={"error": str(exc)},
+                        "pending_commands poll failed; continuing: %s",
+                        exc,
+                        extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
 
             # Soft-stop honored after the poll so a StopCommand processed
@@ -462,6 +470,27 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             if await _run_one_tick(adapter, engine, live, tick, started_value_usd, notifier):
                 exit_code = 1
                 break
+
+            # Periodic terminal-visible heartbeat. Cheap (just a log
+            # line) — no Kraken/Storage calls. Proves the loop is
+            # alive without flooding the terminal at tick cadence.
+            now = time.monotonic()
+            since_heartbeat = now - last_terminal_heartbeat_at
+            if since_heartbeat >= live.terminal_heartbeat_seconds:
+                session_elapsed_seconds = now - started_at
+                _LOGGER.info(
+                    "periodic heartbeat: tick %d, elapsed %dh %02dm, symbols %s",
+                    tick,
+                    int(session_elapsed_seconds // 3600),
+                    int((session_elapsed_seconds % 3600) // 60),
+                    ",".join(str(s) for s in live.symbols),
+                    extra={
+                        "tick": tick,
+                        "elapsed_seconds": round(session_elapsed_seconds, 1),
+                        "symbols": [str(s) for s in live.symbols],
+                    },
+                )
+                last_terminal_heartbeat_at = now
 
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=live.tick_seconds)

@@ -82,6 +82,15 @@ class LiveConfig(BaseModel):
     # 9 the engine code path stays the same either way — only the poll
     # is gated on this field.
     operator_db: str | None = None
+    # Cadence for the periodic INFO heartbeat line in the terminal
+    # (separate from the operator.db daemon_heartbeats row which the
+    # /health page consumes). After today's logging audit demoted
+    # per-tick "tick complete" from INFO to DEBUG, a long quiet period
+    # left the terminal looking dead. This emits one INFO every N
+    # seconds with tick + elapsed-time + symbol list — proves liveness
+    # to an operator watching the terminal. Default 15 min keeps the
+    # signal-to-noise ratio sane.
+    terminal_heartbeat_seconds: float = Field(default=900.0, gt=0)
 
     class Config:
         frozen = True
