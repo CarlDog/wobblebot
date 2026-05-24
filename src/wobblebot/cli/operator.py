@@ -283,46 +283,44 @@ async def _ttl_expirer_loop(
 async def _compose_engine_state_snapshot(
     *,
     live_storage: StoragePort | None,
-    active_symbols: tuple[str, ...] = (),
+    observe_storage: StoragePort | None = None,
+    active_symbols: tuple[Symbol, ...] = (),
 ) -> EngineStateSnapshot:
     """Build a best-effort engine state snapshot for the assistant prompt.
 
-    Reads from live.db (open orders + latest balance) when available;
-    fills in zeros / empty lists when not. Per the Stage 5.6 v1
-    limitation noted in stage-5.1-design.md decision 8: pause state
-    is in-memory in cli/live's engine and not visible from
-    cli/operator, so all active symbols are reported as ``"active"``.
+    Reads from ``live.db`` for open orders, ``observe.db`` (falling
+    back to ``live.db``) for the USD balance — balance_snapshots only
+    live in observe.db so an unwired observe_storage means the
+    balance reports 0.0. Per the Stage 5.6 v1 limitation noted in
+    stage-5.1-design.md decision 8: pause state lives in cli/live's
+    in-memory engine and not in storage, so all active symbols are
+    reported as ``"active"``.
     """
     now = Timestamp(dt=datetime.now(UTC))
-    if live_storage is None:
-        return EngineStateSnapshot(
-            snapshot_at=now,
-            symbols=[],
-            total_usd_balance=0.0,
-            session_pnl=0.0,
-            session_runtime_seconds=0.0,
-        )
     symbols: list[SymbolStateSnapshot] = []
-    for symbol_str in active_symbols:
+    if live_storage is not None:
         try:
             opens = await live_storage.get_open_orders()
-            # No Symbol-from-string parsing here; the engine_state
-            # snapshot's symbol field is the plain string form anyway.
-            open_for_symbol = sum(1 for o in opens if str(o.symbol) == symbol_str)
         except StorageError:
-            open_for_symbol = 0
-        symbols.append(
-            SymbolStateSnapshot(
-                symbol=symbol_str,
-                state="active",
-                open_order_count=open_for_symbol,
+            opens = []
+        for symbol in active_symbols:
+            symbol_str = str(symbol)
+            open_for_symbol = sum(1 for o in opens if str(o.symbol) == symbol_str)
+            symbols.append(
+                SymbolStateSnapshot(
+                    symbol=symbol_str,
+                    state="active",
+                    open_order_count=open_for_symbol,
+                )
             )
-        )
-    try:
-        balances = await live_storage.get_latest_balance_snapshot()
-        usd_total = next((float(b.total) for b in balances if b.asset.upper() == "USD"), 0.0)
-    except StorageError:
-        usd_total = 0.0
+    balance_storage = observe_storage or live_storage
+    usd_total = 0.0
+    if balance_storage is not None:
+        try:
+            balances = await balance_storage.get_latest_balance_snapshot()
+            usd_total = next((float(b.total) for b in balances if b.asset.upper() == "USD"), 0.0)
+        except StorageError:
+            usd_total = 0.0
     return EngineStateSnapshot(
         snapshot_at=now,
         symbols=symbols,
@@ -456,6 +454,8 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     *,
     operator_storage: StoragePort,
     live_storage: StoragePort | None,
+    observe_storage: StoragePort | None,
+    active_symbols: tuple[Symbol, ...],
     assistant: AssistantPort,
     operator_service: OperatorService,
     transport: DiscordTransport,
@@ -498,7 +498,11 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         )
         return
 
-    snapshot = await _compose_engine_state_snapshot(live_storage=live_storage)
+    snapshot = await _compose_engine_state_snapshot(
+        live_storage=live_storage,
+        observe_storage=observe_storage,
+        active_symbols=active_symbols,
+    )
     try:
         recent = await operator_storage.get_conversation_turns(
             message.channel_id, message.user_id, limit=context_window_turns
@@ -1083,6 +1087,47 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             )
             observe_storage = None
 
+    # Optional: cross-DB stores for the four "recent_X" queries. Each
+    # is independently optional — any one that fails to open just
+    # makes its corresponding query return an empty result via the
+    # graceful-degrade factories in OperatorService. Discord users
+    # see "No suggestions found" instead of a stack trace.
+    advise_storage: SQLiteStorageAdapter | None = None
+    if operator_cfg.advise_db is not None:
+        advise_storage = SQLiteStorageAdapter(operator_cfg.advise_db)
+        try:
+            await advise_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open advise db; recent_suggestions queries will be empty",
+                extra={"path": operator_cfg.advise_db, "error": str(exc)},
+            )
+            advise_storage = None
+
+    news_storage: SQLiteStorageAdapter | None = None
+    if operator_cfg.news_db is not None:
+        news_storage = SQLiteStorageAdapter(operator_cfg.news_db)
+        try:
+            await news_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open news db; recent_news queries will be empty",
+                extra={"path": operator_cfg.news_db, "error": str(exc)},
+            )
+            news_storage = None
+
+    harvest_storage: SQLiteStorageAdapter | None = None
+    if operator_cfg.harvest_db is not None:
+        harvest_storage = SQLiteStorageAdapter(operator_cfg.harvest_db)
+        try:
+            await harvest_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open harvest db; harvester queries will be empty",
+                extra={"path": operator_cfg.harvest_db, "error": str(exc)},
+            )
+            harvest_storage = None
+
     # Operator assistant LLM
     try:
         prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
@@ -1121,6 +1166,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         storage=live_storage or operator_storage,
         active_symbols=active_symbols,
         observe_storage=observe_storage,
+        advise_storage=advise_storage,
+        news_storage=news_storage,
+        harvest_storage=harvest_storage,
+        harvester_config=config.harvester,
         grid_config=config.grid,
         session_started_at=Timestamp(dt=datetime.now(UTC)),
     )
@@ -1144,6 +1193,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             msg,
             operator_storage=operator_storage,
             live_storage=live_storage,
+            observe_storage=observe_storage,
+            active_symbols=active_symbols,
             assistant=assistant,
             operator_service=operator_service,
             transport=transport,
@@ -1244,6 +1295,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             phases.append(("close_live_storage", live_storage.close))
         if observe_storage is not None:
             phases.append(("close_observe_storage", observe_storage.close))
+        if advise_storage is not None:
+            phases.append(("close_advise_storage", advise_storage.close))
+        if news_storage is not None:
+            phases.append(("close_news_storage", news_storage.close))
+        if harvest_storage is not None:
+            phases.append(("close_harvest_storage", harvest_storage.close))
         await safe_shutdown(phases, logger=_LOGGER)
     return exit_code
 

@@ -34,6 +34,7 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.operator import (
     _backfill_history_for_channel,
+    _compose_engine_state_snapshot,
     _forward_pending_notifications,
     _handle_inbound_message,
     _handle_reaction,
@@ -224,6 +225,8 @@ class TestHandleInboundMessage:
             _inbound(content="pause BTC"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -258,6 +261,8 @@ class TestHandleInboundMessage:
             _inbound(content="status?"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -280,6 +285,8 @@ class TestHandleInboundMessage:
             _inbound(content="thanks"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -298,6 +305,8 @@ class TestHandleInboundMessage:
             _inbound(content="wibble"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -320,6 +329,8 @@ class TestHandleInboundMessage:
             _inbound(content="hello", message_id="msg-abc", channel_id="C-9"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -342,6 +353,8 @@ class TestHandleInboundMessage:
             _inbound(content="wibble", message_id="msg-xyz", channel_id="C-7"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -362,6 +375,8 @@ class TestHandleInboundMessage:
             _inbound(content="status"),
             operator_storage=storage,
             live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
             assistant=_StubAssistant(intent),
             operator_service=_operator_service(storage),
             transport=transport,
@@ -654,3 +669,59 @@ class TestBackfillHistory:
             limit=20,
         )
         assert inserted == 0
+
+
+# --------------------------------------------------------------------- #
+# _compose_engine_state_snapshot — LLM context for the assistant        #
+# --------------------------------------------------------------------- #
+
+
+class TestComposeEngineStateSnapshot:
+    async def test_no_storage_returns_zeros(self) -> None:
+        snap = await _compose_engine_state_snapshot(live_storage=None)
+        assert snap.symbols == []
+        assert snap.total_usd_balance == 0.0
+
+    async def test_active_symbols_populated_from_tuple_of_symbols(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        symbols = (
+            Symbol(base="BTC", quote="USD"),
+            Symbol(base="ETH", quote="USD"),
+        )
+        snap = await _compose_engine_state_snapshot(live_storage=storage, active_symbols=symbols)
+        assert [s.symbol for s in snap.symbols] == ["BTC/USD", "ETH/USD"]
+        assert all(s.state == "active" for s in snap.symbols)
+        assert all(s.open_order_count == 0 for s in snap.symbols)
+
+    async def test_balance_prefers_observe_storage_when_provided(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.domain.models import Balance
+
+        # Seed observe.db with a USD balance snapshot; live.db stays empty.
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            balances = [Balance(asset="USD", total=89.92, locked=0.0, available=89.92)]
+            await observe.save_balance_snapshot(balances)
+
+            snap = await _compose_engine_state_snapshot(
+                live_storage=storage,
+                observe_storage=observe,
+                active_symbols=(Symbol(base="BTC", quote="USD"),),
+            )
+            assert snap.total_usd_balance == 89.92
+        finally:
+            await observe.close()
+
+    async def test_balance_falls_back_to_live_storage(self, storage: SQLiteStorageAdapter) -> None:
+        from wobblebot.domain.models import Balance
+
+        await storage.save_balance_snapshot(
+            [Balance(asset="USD", total=12.34, locked=0.0, available=12.34)]
+        )
+        snap = await _compose_engine_state_snapshot(
+            live_storage=storage, observe_storage=None, active_symbols=()
+        )
+        assert snap.total_usd_balance == 12.34
