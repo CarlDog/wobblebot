@@ -231,8 +231,18 @@ async def _load_current_prices(
 async def _load_snapshot(  # pylint: disable=too-many-locals
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
+    *,
+    operator_tz: str = "UTC",
 ) -> StatusSnapshot:
-    """Pull open orders + recent fills + current prices; degrade gracefully."""
+    """Pull open orders + recent fills + current prices; degrade gracefully.
+
+    ``operator_tz`` scopes the "today" filter for the realized-PnL
+    header so the day boundary matches the operator-tz timestamps
+    rendered on cycle rows. Without this, the header rolled over at
+    UTC midnight while the operator's CST clock still read late
+    evening on the same calendar day, silently showing "Today: $0.00"
+    against cycles that the operator considered today's.
+    """
     if live_storage is None:
         return _empty_snapshot(wired=False)
     try:
@@ -244,7 +254,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         return _empty_snapshot(wired=True, error=f"failed to query live.db: {exc}")
     recent = all_recent[:20]
     cycles = tuple(match_cycles(all_recent))
-    today_pnl = today_realized_pnl(cycles) if cycles else None
+    today_pnl = today_realized_pnl(cycles, tz_name=operator_tz) if cycles else None
     last_age: float | None = None
     if recent:
         most_recent = max(recent, key=lambda t: t.executed_at.dt)
@@ -361,7 +371,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     light was removed 2026-05-23 and the navbar heart-pulse icon's
     tiered dot now polls /health/overall.json directly.
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage)
+    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -388,7 +398,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     No health snapshot — the navbar dot owns health UX since
     2026-05-23 (single source of truth via /health/overall.json).
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage)
+    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
     return templates.TemplateResponse(
         request,
         "_status_card.html",

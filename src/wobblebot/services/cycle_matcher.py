@@ -43,8 +43,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wobblebot.domain.models import Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
@@ -177,26 +178,44 @@ def today_realized_pnl(
     cycles: Sequence[RecentCycle],
     *,
     now: datetime | None = None,
+    tz_name: str | None = None,
 ) -> Decimal:
-    """Sum net_pnl across cycles whose SELL fired today (UTC).
+    """Sum net_pnl across cycles whose SELL fired today in the operator's tz.
 
-    "Today" = the calendar date in UTC. A cycle whose BUY fired
-    yesterday but whose SELL fired today counts toward today —
-    PnL is realized at the SELL.
+    "Today" = the calendar date in ``tz_name`` (operator preference) —
+    or UTC when ``tz_name`` is ``None`` / unknown. The dashboard now
+    renders cycle timestamps in operator-tz (per the 2026-05-23 sweep);
+    using a different day boundary for the PnL filter than for the
+    timestamps in the same row caused "Today: $0.00" to silently appear
+    after UTC midnight while the operator's local clock still read late
+    evening on the same calendar day. The tz_name parameter aligns the
+    filter with the display.
+
+    A cycle whose BUY fired yesterday but whose SELL fired today still
+    counts toward today — PnL is realized at the SELL.
 
     Args:
         cycles: Completed cycles from ``match_cycles``.
         now: Override for the current time (testing seam). Defaults
             to ``datetime.now(UTC)``.
+        tz_name: IANA timezone name (e.g. ``"America/Chicago"``) that
+            scopes the "today" day boundary. ``None`` or an unknown
+            zone falls back to UTC — matching the behavior pre-fix.
 
     Returns:
         Sum of net_pnl, or ``Decimal(0)`` when no cycles match.
     """
+    tz: tzinfo = UTC
+    if tz_name is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz = UTC
     reference = now if now is not None else datetime.now(UTC)
-    today = reference.astimezone(UTC).date()
+    today = reference.astimezone(tz).date()
     total = Decimal(0)
     for cycle in cycles:
-        if cycle.sell_executed_at.dt.astimezone(UTC).date() == today:
+        if cycle.sell_executed_at.dt.astimezone(tz).date() == today:
             total += cycle.net_pnl
     return total
 

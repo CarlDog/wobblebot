@@ -277,3 +277,63 @@ class TestTodayRealizedPnl:
         cycles: list[RecentCycle] = []
         result = today_realized_pnl(cycles)
         assert result == Decimal("0")
+
+    def test_operator_tz_filters_by_local_day_not_utc(self) -> None:
+        """Regression for 2026-05-23 evening bug.
+
+        After UTC midnight but before local midnight, a cycle that
+        fired earlier "today" in the operator's tz fell outside the
+        UTC-day filter, silently showing "Today: $0.00" on the
+        dashboard. Filter must scope by the operator's tz when
+        provided. With ``tz_name="America/Chicago"`` (UTC-5/-6 CST/
+        CDT), a cycle whose SELL fired at 20:55 UTC on May 23
+        (= 15:55 CDT on May 23) is "today" if we're now at 04:03 UTC
+        May 24 (= 23:03 CDT May 23).
+        """
+        # Now: 04:03 UTC May 24 — past UTC midnight, but only ~11pm
+        # local on May 23 in Chicago.
+        now = datetime(2026, 5, 24, 4, 3, tzinfo=UTC)
+        # Cycle: SELL at 20:55 UTC May 23 (= 15:55 CDT May 23).
+        sell_at_utc = datetime(2026, 5, 23, 20, 55, tzinfo=UTC)
+        cycles = [
+            RecentCycle(
+                symbol=_BTC_USD,
+                buy_executed_at=Timestamp(dt=sell_at_utc - timedelta(hours=2)),
+                sell_executed_at=Timestamp(dt=sell_at_utc),
+                buy_price=Price(amount=Decimal("76105.80"), currency="USD"),
+                sell_price=Price(amount=Decimal("76874.60"), currency="USD"),
+                amount=Amount(value=Decimal("0.00013139"), asset="BTC"),
+                buy_fee=Decimal("0.025"),
+                sell_fee=Decimal("0.02525"),
+                net_pnl=Decimal("0.0508"),
+            ),
+        ]
+        # UTC behavior: cycle is "yesterday" → 0
+        assert today_realized_pnl(cycles, now=now) == Decimal("0")
+        # America/Chicago behavior: cycle IS today → 0.0508
+        assert today_realized_pnl(
+            cycles, now=now, tz_name="America/Chicago"
+        ) == Decimal("0.0508")
+
+    def test_unknown_tz_falls_back_to_utc(self) -> None:
+        """An invalid IANA name must NOT raise — settings page
+        validates on write, but the renderer must stay robust."""
+        now = datetime(2026, 5, 23, 15, 0, tzinfo=UTC)
+        cycles = [
+            RecentCycle(
+                symbol=_BTC_USD,
+                buy_executed_at=Timestamp(dt=now - timedelta(hours=2)),
+                sell_executed_at=Timestamp(dt=now - timedelta(hours=1)),
+                buy_price=Price(amount=Decimal("77000"), currency="USD"),
+                sell_price=Price(amount=Decimal("77800"), currency="USD"),
+                amount=Amount(value=Decimal("0.000129"), asset="BTC"),
+                buy_fee=Decimal("0.04"),
+                sell_fee=Decimal("0.04"),
+                net_pnl=Decimal("0.10"),
+            ),
+        ]
+        # Both fire today UTC, so a bogus tz that falls back to UTC
+        # still sees them as today.
+        assert today_realized_pnl(
+            cycles, now=now, tz_name="Not/A_Real_Zone"
+        ) == Decimal("0.10")
