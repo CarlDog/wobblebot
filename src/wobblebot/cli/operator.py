@@ -33,7 +33,6 @@ import argparse
 import asyncio
 import logging
 import os
-import signal
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -62,8 +61,10 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     emit_heartbeat,
+    install_signal_handlers,
     load_operator_env,
     run_poll_loop,
+    run_with_clean_exit,
     safe_shutdown,
 )
 from wobblebot.config.cli import OperatorConfig
@@ -1015,7 +1016,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     transport.on_reaction(_on_reaction)
 
     stop_event = asyncio.Event()
-    _install_signal_handlers(asyncio.get_running_loop(), stop_event)
+    install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
     forwarder_task = asyncio.create_task(
         _forwarder_loop(
@@ -1085,18 +1086,6 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     return exit_code
 
 
-def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
-    """SIGINT/SIGTERM → set stop_event. Windows asyncio falls back to KeyboardInterrupt."""
-
-    def _set_stop() -> None:
-        _LOGGER.info("signal received; initiating clean shutdown")
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, _set_stop)
-        except NotImplementedError:
-            return
 
 
 def _build_overrides(_args: argparse.Namespace) -> dict[str, Any]:
@@ -1127,20 +1116,7 @@ def main() -> int:
     # Catch KeyboardInterrupt at the top so Ctrl+C produces a clean
     # exit-code-0 line instead of a CancelledError traceback —
     # mirrors the pattern cli/live and cli/web already use.
-    try:
-        rc = asyncio.run(_main_async(config))
-    except KeyboardInterrupt:
-        _LOGGER.info("KeyboardInterrupt at top level; exiting clean")
-        rc = 0
-    # Force-exit so non-daemon library threads (httpx pool, discord.py
-    # heartbeat, etc.) can't keep the interpreter alive after the
-    # asyncio loop has finished. safe_shutdown in the finally block
-    # already ran the data-integrity cleanups; this just bypasses
-    # Python's wait-for-non-daemon-threads phase. Matches the
-    # 2026-05-23 cli/web hotfix pattern (commit e3a11ce).
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(rc)
+    run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

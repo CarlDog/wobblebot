@@ -35,11 +35,12 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -257,6 +258,85 @@ async def run_poll_loop(
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
         except asyncio.TimeoutError:
             pass
+
+
+def install_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    stop_event: asyncio.Event,
+    *,
+    logger: logging.Logger,
+) -> None:
+    """Wire SIGINT + SIGTERM to ``stop_event.set()`` on ``loop``.
+
+    Shared shape extracted 2026-05-23 — previously every long-running
+    daemon hand-rolled the same 8-line function. Centralizing here
+    means a fix (e.g. adding SIGHUP, restructuring the
+    ``NotImplementedError`` early-out so SIGTERM gets a chance after
+    SIGINT fails on Windows) lands once.
+
+    The ``NotImplementedError`` catch is the Windows guard:
+    ``add_signal_handler`` raises on the Proactor loop. We ``return``
+    after the first miss so SIGTERM isn't attempted either — preserves
+    pre-extraction behavior. If Windows signal handling ever matters,
+    fix it here once instead of in 8 places.
+
+    Args:
+        loop: The running asyncio loop (typically
+            ``asyncio.get_running_loop()``).
+        stop_event: The shared shutdown event the daemon's poll loop
+            checks. Flipped to True on signal receipt.
+        logger: Daemon's logger so the "signal received" line lands in
+            the right namespace (``wobblebot.cli.live`` vs
+            ``wobblebot.cli.observe`` etc.).
+    """
+
+    def _set_stop() -> None:
+        logger.info("signal received; initiating clean shutdown")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _set_stop)
+        except NotImplementedError:
+            return
+
+
+def run_with_clean_exit(
+    coro: Coroutine[Any, Any, int],
+    *,
+    logger: logging.Logger,
+) -> NoReturn:
+    """Run ``coro`` via ``asyncio.run``; on completion ``os._exit`` the rc.
+
+    Shared shape extracted 2026-05-23 — replaces the boilerplate at
+    the bottom of every long-running daemon's ``main()``: try/except
+    ``KeyboardInterrupt`` + flush stdio + ``os._exit(rc)``. Without
+    ``os._exit`` non-daemon library threads (httpx connection pool,
+    discord.py heartbeat, uvicorn worker) can keep the interpreter
+    alive after the asyncio loop has finished, leaving the operator's
+    terminal hung. The cli/web Ctrl-C hang surfaced 2026-05-23 (commit
+    ``e3a11ce``) was this exact failure mode.
+
+    DO NOT use for one-shot CLIs that return a value (cli/apply,
+    cli/preflight, cli/status, cli/sandbox, cli/recalibrate). Those
+    don't spawn long-running connection pools and ``os._exit`` would
+    bypass any pending atexit hooks unnecessarily.
+
+    Args:
+        coro: The ``_main_async(config)`` coroutine the daemon would
+            otherwise pass to ``asyncio.run``.
+        logger: Daemon's logger for the KeyboardInterrupt info line.
+
+    Does not return — always exits via ``os._exit``.
+    """
+    try:
+        rc = asyncio.run(coro)
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt at top level; exiting clean")
+        rc = 0
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
 
 
 async def safe_shutdown(
