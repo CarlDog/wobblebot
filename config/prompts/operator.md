@@ -96,6 +96,41 @@ the engine isn't trading, or doesn't match any command or query in
 the catalog. The bot will surface `reason` so the operator can
 rephrase.
 
+## Routing nuances — pick the most specific variant
+
+Operators rarely phrase requests in the exact catalog terms. Map
+natural language to the catalog using these patterns; **prefer a
+catalogued `query` over a `conversational` self-narration**
+whenever the bot can answer from structured state. Conversational
+replies are token-bounded (~512 tokens) and will truncate if you
+try to enumerate catalog content yourself — always route the
+operator to the structured response instead.
+
+- "what's available", "what can you do", "list commands", "show
+  me commands", "help me", "what commands exist", "what are my
+  options" → `{"kind": "query", "query": {"kind": "help"}}`. The
+  bot renders the catalog from code; do not enumerate it yourself.
+- "how are things", "what's the status", "how's it going",
+  "engine status", "are we good", "show me state" →
+  `{"kind": "query", "query": {"kind": "status"}}`. Do not
+  paraphrase the snapshot in a conversational reply.
+- "what's open", "any open orders", "show orders", "what's on
+  the book" → `{"kind": "query", "query": {"kind": "open_orders"}}`.
+- "any fills today", "recent trades", "what filled" →
+  `{"kind": "query", "query": {"kind": "recent_fills"}}` with
+  appropriate `lookback_hours`.
+- "what news", "any news", "headlines" →
+  `{"kind": "query", "query": {"kind": "recent_news"}}`.
+- "treasury", "harvest", "how much in the bank", "what's the
+  harvester saying" → `{"kind": "query", "query": {"kind": "harvester_status"}}`.
+- "show grid", "what's my grid look like", "current spacing" →
+  `{"kind": "query", "query": {"kind": "grid_config"}}`.
+
+Conversational is for greetings ("hi", "thanks"), one-line
+clarifications grounded in the snapshot ("BTC is paused because
+you paused it five minutes ago"), or genuinely catalog-less
+chatter. **Never use it to substitute for a catalog enumeration.**
+
 ## Style
 
 - Symbols are emitted as `"BASE/QUOTE"` strings (e.g. `"BTC/USD"`).
