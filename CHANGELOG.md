@@ -283,6 +283,74 @@ now actually propagates through every dashboard page.
 mypy 111 src files clean; pylint **10.00/10**; black + isort
 clean. Real-money cost unchanged at **$0.085018**.
 
+**Day 6 night — operator-flagged regression + 2 small follow-ups**
+(`bec097d`, `67daf68`, `a7d8f14`, plus the end-of-day docs pass
+in `be46dd9`).
+
+Operator noticed Today's PnL on the dashboard reading $0 after
+all of today's work. Hypothesis: the timezone fix shipped earlier
+this evening (b2e972d) only converted the display layer; the
+``today_realized_pnl`` helper kept filtering by UTC day. After
+UTC midnight but before local midnight, cycles from earlier "today"
+in operator-tz silently fell out of the header — operator saw
+"Today: $0.00" while the cycle rows below still showed today's
+fills. Reproduced against live.db at 04:17 UTC: UTC filter
+returned 0; America/Chicago filter returned $0.1025. Hotfix
+`bec097d` adds an ``tz_name`` parameter to ``today_realized_pnl``
+that scopes the day boundary by IANA timezone (defaults to UTC
+for backward compat; unknown name falls back to UTC). Status
+routes thread ``operator_tz=prefs.timezone`` through. Two
+regression tests pin the UTC-midnight boundary case + the
+unknown-tz fallback.
+
+After PnL fix landed, operator also noticed cli/live's terminal
+output had been silent for ~10 hours (only fills + 1 WARN logged
+since 1:32 PM start). Today's morning logging-rebalance audit
+(c9e7781) had correctly demoted "tick complete" from INFO to
+DEBUG to cut 5s-cadence noise — but the side effect was an idle
+bot looking indistinguishable from a hung process in plain format.
+`67daf68` adds a ``live.terminal_heartbeat_seconds`` knob (default
+900s = 15 min) and a periodic INFO line that proves the loop is
+alive without flooding the terminal::
+
+    periodic heartbeat: tick 1839, elapsed 7h 22m, symbols BTC/USD
+
+Separate from the operator.db daemon_heartbeats row that backs
+the /health page; this one's just the terminal-visible equivalent.
+Also inlined the WARN-extras for the pending_commands poll WARN
+on the same path so plain-format consumers see what failed.
+
+Operator-initiated cli/live restart at 23:31 CDT (04:31 UTC May
+24) surfaced two more concerns worth logging:
+
+- ``startup reconciliation`` marked 5 storage-only orders as
+  canceled, but live.db inspection showed those were actually 3
+  unique ``exchange_id``s with duplicate rows at different
+  precision strings. Likely a reconciler edge case from one of
+  today's restart cycles; queued for tracing.
+- ``order refused by exchange: insufficient balance`` WARN on the
+  3rd SELL of the fresh grid layout. Engine handled it correctly
+  (placed 3 BUYs + 2 SELLs with the BTC inventory it had;
+  did not retry-loop or crash). The behavior is correct
+  degraded-state for short BTC inventory; the WARN-level alarm
+  over-states the severity. `a7d8f14` logs a v1.1 entry in
+  ``docs/release/v1.1/engine.md`` proposing demotion to INFO
+  with a "partial grid placed (3 BUYs + 2 SELLs of 3 target);
+  BTC inventory below full SELL layout target" summary message
+  so operator immediately sees the degraded-but-correct state.
+
+End-of-day state: 5 open orders on Kraken matching live.db, bot
+healthy, partial grid is the correct response to BTC inventory
+short of the full 3-SELL layout target. cli/live restarted on
+fresh code that includes the PnL fix + terminal heartbeat.
+
+**Numbers at end of day 6 night**: 1948 unit tests pass (1946 →
+1948, +2 across the today_realized_pnl tz regression suite);
+mypy 111 src files clean; pylint **10.00/10**; black + isort
+clean. Real-money cost unchanged at **$0.085018**. **21 commits
+shipped today** (morning audit + afternoon code-reuse-audit
+closure + evening hotfix + night follow-ups).
+
 ### Stage 8.4.B-D + soak Day 1-3 events (2026-05-18 → 2026-05-20)
 
 Documentation-freeze sub-slices closed plus the operator-driven
