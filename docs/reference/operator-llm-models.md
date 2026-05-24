@@ -76,23 +76,152 @@ prompt iteration.
   makes operator interactions feel sluggish. Acceptable for batch
   use, not chat.
 
-## Untested small-model candidates (low-VRAM gap)
+## Untested candidates by VRAM tier
 
 The lightest validated model is `mistral-nemo:12b-instruct-2407-q8_0`
 at 12GB. That excludes operators on consumer GPUs with 8GB or
-less VRAM. Worth testing when the operator (or a contributor)
-has bandwidth:
+less VRAM, and gives no data for users with mid-range hardware
+(8GB) or older generation hardware that can only run pre-Llama-3
+models. The candidates below span every hardware tier from
+mobile-class to high-end consumer plus a "legacy / superseded"
+section for users specifically running older models on dated
+hardware.
 
-| Candidate | Approx size | Notes |
+All sizes are q4_K_M or q4_0 quantized unless noted -- match
+Ollama's default pull. q8 doubles the footprint but improves
+output quality; preferable when the hardware can hold it.
+
+### Tier A — sub-1GB (mobile-class / SBC / Raspberry Pi 5)
+
+For operators running on embedded boards or who want to ship
+the operator-assistant role on a model that fits in spare RAM
+on a laptop's iGPU.
+
+| Candidate | Approx q4 size | Notes |
 |---|---|---|
-| `llama3.2:1b` | 1.3GB | Meta's smallest; instruction-tuned |
-| `llama3.2:3b` | 2GB | Meta; balance of size + capability |
-| `gemma2:2b` | 1.6GB | Google's smaller gemma |
-| `phi3.5:3.8b` | 2.2GB | Earlier phi, before phi4 |
-| `qwen2.5:1.5b` | 1GB | Smallest qwen series |
-| `qwen2.5:3b` | 2GB | Larger qwen for low-end hardware |
+| `tinyllama:1.1b` | 0.7GB | The classic tiny model; useful as a baseline floor |
+| `qwen2.5:0.5b` | 0.4GB | Qwen's smallest 2.5 variant |
+| `qwen2:0.5b` | 0.4GB | Earlier Qwen 2 (pre-2.5) |
+| `smollm2:360m` | 0.3GB | HuggingFace's small instruct model |
+| `smollm2:1.7b` | 1GB | SmolLM2 larger variant -- still tier-A |
 
-Workflow: `ollama pull <model>`, then
+Expect most to fail on the routing battery -- under 1B params
+struggles with our complex multi-variant schema. Worth testing
+to confirm + document the floor.
+
+### Tier B — 1-2GB (entry consumer GPU, 3-4GB total)
+
+| Candidate | Approx q4 size | Notes |
+|---|---|---|
+| `llama3.2:1b` | 1.3GB | Meta's smallest current; instruction-tuned |
+| `qwen2.5:1.5b` | 1GB | Qwen 2.5 small |
+| `qwen1.5:1.8b` | 1.1GB | Qwen 1.5 small (older gen) |
+| `gemma2:2b` | 1.6GB | Google's smaller gemma2 |
+| `gemma:2b` | 1.4GB | First-gen Gemma (legacy) |
+| `granite3:2b` | 1.5GB | IBM Granite small |
+
+### Tier C — 2-4GB (low-end consumer GPU, 6GB total)
+
+| Candidate | Approx q4 size | Notes |
+|---|---|---|
+| `llama3.2:3b` | 2GB | Meta 3B current gen |
+| `qwen2.5:3b` | 2GB | Qwen 2.5 mid-small |
+| `qwen1.5:4b` | 2.4GB | Qwen 1.5 (older gen, larger than 1.5:1.8b) |
+| `phi3.5:3.8b` | 2.2GB | Pre-phi4 phi3.5 |
+| `phi3:3.8b` | 2.3GB | Original phi3 (legacy) |
+| `phi2:2.7b` | 1.6GB | Microsoft Phi-2 (legacy; pre-phi3) |
+| `nemotron-mini:4b` | 2.5GB | NVIDIA's small model |
+| `stablelm-zephyr:3b` | 1.9GB | Stability AI's zephyr fine-tune |
+| `stablelm2:1.6b` | 1GB | Stability AI's smaller (legacy) |
+| `orca-mini:3b` | 1.9GB | Microsoft Orca-Mini (legacy) |
+| `dolphin-phi:2.7b` | 1.6GB | Dolphin fine-tune of Phi-2; may be uncensored-flavored |
+
+### Tier D — 4-8GB (mid-range consumer GPU, 8GB total)
+
+This is the bracket where most operators on prosumer hardware
+land. Most promising tier for a "small but functional" pick.
+
+| Candidate | Approx q4 size | Notes |
+|---|---|---|
+| `llama3.1:8b` | 5GB | Llama 3.1 8B instruct (current) |
+| `llama3:8b` | 4.7GB | Llama 3 8B instruct (earlier, legacy) |
+| `llama2:7b` | 4GB | Llama 2 (truly legacy, pre-Llama-3) |
+| `llama2:13b` | 7.5GB | Llama 2 larger variant (legacy) |
+| `mistral:7b` | 4.4GB | Mistral 7B instruct (current v0.3) |
+| `mistral:7b-instruct-v0.2` | 4.4GB | Mistral v0.2 (legacy) |
+| `mistral:7b-instruct-v0.1` | 4.4GB | Mistral v0.1 (legacy) |
+| `qwen2.5:7b` | 4.7GB | Qwen 2.5 7B |
+| `qwen2:7b` | 4.7GB | Qwen 2 7B (earlier gen) |
+| `qwen:7b` | 4.5GB | Original Qwen 1.0 (legacy) |
+| `qwen1.5:7b` | 4.5GB | Qwen 1.5 (legacy) |
+| `gemma2:9b` | 5.5GB | Google Gemma 2 9B |
+| `gemma:7b` | 5GB | First-gen Gemma 7B (legacy) |
+| `granite3:8b` | 4.9GB | IBM Granite 8B |
+| `granite3-dense:8b` | 4.9GB | Granite 3 dense variant |
+| `yi:6b` | 3.5GB | 01.AI Yi 6B |
+| `yi:9b` | 5.2GB | 01.AI Yi 9B |
+| `internlm2:7b` | 4.4GB | Shanghai AI Lab InternLM 2 |
+| `openchat:7b` | 4.4GB | OpenChat fine-tuned chat model |
+| `starling-lm:7b` | 4.4GB | Starling RLHF |
+| `neural-chat:7b` | 4.4GB | Intel Neural Chat |
+| `zephyr:7b` | 4.4GB | Mistral-tuned zephyr |
+| `solar:10.7b` | 6.5GB | Upstage SOLAR (larger 7B-class) |
+| `nous-hermes:7b` | 4GB | Nous Research fine-tune (legacy) |
+| `nous-hermes2:10.7b` | 6.6GB | Nous Hermes 2 (newer) |
+| `deepseek-llm:7b` | 4GB | DeepSeek 7B (older, before R1) |
+
+### Tier E — 8-16GB (high-end consumer, our existing tested band)
+
+Already covered by validated models; listed here for completeness
+when matching candidates by VRAM:
+
+| Candidate | Approx q4 size | Notes |
+|---|---|---|
+| `mistral-nemo:12b-instruct-2407-q8_0` | 12GB (q8) | ✅ tested 14/14 |
+| `phi4:14b-q8_0` | 14GB (q8) | ✅ tested 14/14 (current default) |
+| `phi4-reasoning:14b-plus-q8_0` | 16GB (q8) | ✅ tested 14/14 |
+| `command-r:35b` | 19GB | Cohere Command R (haven't tested) |
+| `nous-hermes2-mixtral:8x7b` | 26GB | Mixtral-based hermes2 |
+
+### Notes on legacy candidates
+
+The "older generation" picks (anything tagged legacy or pre-3
+above) are mostly here as **a fallback path for operators on
+genuinely dated hardware** -- a 2019-era laptop GPU with 4GB
+VRAM that can't run Llama 3 cleanly but might handle Llama 2
+or Mistral v0.1. They are NOT preferred when newer alternatives
+fit in the same VRAM envelope:
+
+- Llama 2 < Llama 3 < Llama 3.1 < Llama 3.2 -- all at ~5GB
+  for the 7-8B class.
+- Qwen 1.0 < Qwen 1.5 < Qwen 2 < Qwen 2.5 -- successive
+  generations consistently outperform on instruction-following.
+- Gemma 1 < Gemma 2 -- significant capability jump.
+- Phi-2 < Phi-3 < Phi-3.5 < Phi-4 -- Microsoft's small-model
+  series; each gen materially better.
+
+Test a legacy model only if the current-gen equivalent in the
+same VRAM tier fails or won't run.
+
+### Suggested test sequence
+
+When time permits, validate in this order to get max coverage
+per probe-hour spent:
+
+1. **Tier B current-gen (1-2GB)**: `llama3.2:1b`, `qwen2.5:1.5b`,
+   `gemma2:2b`, `granite3:2b`. These set the realistic
+   "smallest viable" floor.
+2. **Tier C current-gen (2-4GB)**: `llama3.2:3b`, `qwen2.5:3b`,
+   `phi3.5:3.8b`, `nemotron-mini:4b`. Most-likely sweet spot
+   for low-VRAM users.
+3. **Tier D current-gen (4-8GB)**: `llama3.1:8b`, `mistral:7b`,
+   `qwen2.5:7b`, `gemma2:9b`, `granite3:8b`, `openchat:7b`.
+   Most promising tier for "small but actually works."
+4. **Tier A (<1GB)** + **legacy variants**: only after the
+   current-gen tiers are mapped out -- diminishing returns vs
+   testing time.
+
+Workflow per candidate: `ollama pull <model>`, then
 `python tools/probe_assistant.py --model <model> --skip-multi-turn`,
 then append the result row to the main compatibility table
 above. If <11/14 OR persistent silent errors, add to
