@@ -56,6 +56,7 @@ from wobblebot.cli._common import (
     load_operator_env,
     notify,
     parse_symbol_csv,
+    partition_or_exit,
     run_with_clean_exit,
     safe_shutdown,
 )
@@ -565,27 +566,17 @@ async def _main_async(config: WobbleBotConfig) -> int:
     await storage.connect()
     adapter = KrakenAdapter(config=kraken_config)
 
-    # Graceful-degrade against Kraken's pair list. WARN on unknown;
-    # exit only if EVERY symbol is bad. Per-tick fault isolation
-    # absorbs subsequent failures; the operator updates the config
-    # and restarts to silence them.
-    try:
-        _known_live, unknown_live = await adapter.partition_known_symbols(config.live.symbols)
-    except WobbleBotPortError as exc:
-        _LOGGER.error("Kraken AssetPairs fetch failed at startup", extra={"error": str(exc)})
-        await adapter.aclose()
-        await storage.close()
-        return 2
-    if unknown_live:
-        _LOGGER.warning(
-            "Kraken does not list these symbols; per-tick polls will fail",
-            extra={"unknown": [str(s) for s in unknown_live]},
-        )
-    if not _known_live:
-        _LOGGER.error("no tradeable Kraken symbols remain; exiting")
-        await adapter.aclose()
-        await storage.close()
-        return 2
+    exit_code = await partition_or_exit(
+        adapter,
+        config.live.symbols,
+        logger=_LOGGER,
+        cleanups=[
+            ("close_kraken_adapter", adapter.aclose),
+            ("close_live_storage", storage.close),
+        ],
+    )
+    if exit_code is not None:
+        return exit_code
 
     engine = GridEngine(adapter, storage, config.grid, config.safety)
 

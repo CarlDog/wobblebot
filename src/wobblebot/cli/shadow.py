@@ -69,6 +69,7 @@ from wobblebot.cli._common import (
     install_signal_handlers,
     load_operator_env,
     parse_symbol_csv,
+    partition_or_exit,
     run_with_clean_exit,
 )
 from wobblebot.config.cli import ShadowConfig
@@ -381,28 +382,17 @@ async def _main_async(config: WobbleBotConfig) -> int:
     await storage.connect()
     live_adapter = KrakenAdapter(config=kraken_config)
 
-    # Graceful-degrade against Kraken's pair list (shadow uses live
-    # prices). WARN on unknown; exit only if EVERY symbol is bad
-    # (nothing to do). Per-tick fault isolation absorbs subsequent
-    # per-poll failures for unknown symbols — the operator updates
-    # the config and restarts to silence them.
-    try:
-        _known_sh, unknown_sh = await live_adapter.partition_known_symbols(config.shadow.symbols)
-    except WobbleBotPortError as exc:
-        _LOGGER.error("Kraken AssetPairs fetch failed at startup", extra={"error": str(exc)})
-        await live_adapter.aclose()
-        await storage.close()
-        return 2
-    if unknown_sh:
-        _LOGGER.warning(
-            "Kraken does not list these symbols; per-tick polls will fail",
-            extra={"unknown": [str(s) for s in unknown_sh]},
-        )
-    if not _known_sh:
-        _LOGGER.error("no tradeable Kraken symbols remain; exiting")
-        await live_adapter.aclose()
-        await storage.close()
-        return 2
+    exit_code = await partition_or_exit(
+        live_adapter,
+        config.shadow.symbols,
+        logger=_LOGGER,
+        cleanups=[
+            ("close_kraken_adapter", live_adapter.aclose),
+            ("close_shadow_storage", storage.close),
+        ],
+    )
+    if exit_code is not None:
+        return exit_code
 
     shadow_adapter = ShadowExchangeAdapter(
         live_exchange=live_adapter,

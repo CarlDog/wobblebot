@@ -37,14 +37,14 @@ import logging
 import os
 import signal
 import sys
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NoReturn, TypeVar
+from typing import Any, NoReturn, Protocol, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
-from wobblebot.domain.value_objects import Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
@@ -258,6 +258,88 @@ async def run_poll_loop(
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
         except asyncio.TimeoutError:
             pass
+
+
+class SymbolPartitioner(Protocol):
+    """Structural type for adapters that can partition a symbol list.
+
+    Lets ``partition_or_exit`` accept any adapter implementing the
+    ``KrakenAdapter.partition_known_symbols`` contract without
+    importing the adapter module directly (preserves the
+    cli/_common-doesn't-depend-on-adapters layering).
+    """
+
+    async def partition_known_symbols(
+        self, symbols: Iterable[Symbol]
+    ) -> tuple[list[Symbol], list[Symbol]]: ...
+
+
+async def partition_or_exit(
+    adapter: SymbolPartitioner,
+    symbols: Iterable[Symbol],
+    *,
+    logger: logging.Logger,
+    cleanups: list[ShutdownPhase],
+) -> int | None:
+    """Validate ``symbols`` against the adapter's tradeable pairs.
+
+    Hits the adapter's AssetPairs cache once (or its equivalent). On
+    success returns ``None`` — the caller proceeds with whatever
+    they had. On hard failure (AssetPairs fetch raised, or every
+    requested symbol is unknown to the exchange) logs an error,
+    drains the supplied ``cleanups`` via :func:`safe_shutdown`, and
+    returns ``2`` for the caller to bubble up as the process exit
+    code.
+
+    Mid-case (some symbols unknown but at least one is good): logs a
+    WARNING naming the bad symbols and returns ``None``. Per-tick
+    fault isolation in each daemon's poll loop absorbs the
+    subsequent failed polls; the operator updates the config and
+    restarts to silence the warning.
+
+    Extracted 2026-05-23 from cli/observe + cli/live + cli/shadow
+    where the same 17-line block had just been shipped 3x in
+    commit 0007fc3 — the audit's #3 finding.
+
+    Args:
+        adapter: Anything implementing the
+            ``partition_known_symbols`` Protocol — typically
+            ``KrakenAdapter``.
+        symbols: The configured symbol list (e.g.
+            ``config.observe.symbols``).
+        logger: Daemon's logger so the WARN/ERROR lines land in the
+            right namespace.
+        cleanups: ``(phase_name, async_callable)`` pairs, same shape
+            ``safe_shutdown`` accepts. Run only on hard failure;
+            successful path leaves resource cleanup to the daemon's
+            normal ``finally`` block.
+
+    Returns:
+        ``None`` on success, ``2`` on hard failure. Idiomatic usage::
+
+            exit_code = await partition_or_exit(adapter, symbols, ...)
+            if exit_code is not None:
+                return exit_code
+    """
+    try:
+        known, unknown = await adapter.partition_known_symbols(symbols)
+    except WobbleBotPortError as exc:
+        logger.error(
+            "Kraken AssetPairs fetch failed at startup",
+            extra={"error": str(exc)},
+        )
+        await safe_shutdown(cleanups, logger=logger)
+        return 2
+    if unknown:
+        logger.warning(
+            "Kraken does not list these symbols; per-tick polls will fail",
+            extra={"unknown": [str(s) for s in unknown]},
+        )
+    if not known:
+        logger.error("no tradeable Kraken symbols remain; exiting")
+        await safe_shutdown(cleanups, logger=logger)
+        return 2
+    return None
 
 
 def install_signal_handlers(
