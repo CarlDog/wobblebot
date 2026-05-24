@@ -173,3 +173,65 @@ class TestOperatorQueryUnion:
         dumped = adapter.dump_python(q)
         revived = adapter.validate_python(dumped)
         assert revived == q
+
+
+class TestNullDefaultCoercion:
+    """LLMs sometimes emit ``null`` for default-having int fields.
+
+    The ``_null_means_default`` BeforeValidator on each affected
+    field coerces ``None`` → the field's default so the schema stays
+    ``int`` (consumers don't need to handle ``int | None``) while
+    LLM-emitted nulls don't blow up parse_intent.
+    """
+
+    def test_recent_fills_null_lookback_hours_coerces_to_default(self) -> None:
+        q = RecentFillsQuery.model_validate({"lookback_hours": None})
+        assert q.lookback_hours == 24
+
+    def test_recent_fills_null_limit_coerces_to_default(self) -> None:
+        q = RecentFillsQuery.model_validate({"limit": None})
+        assert q.limit == 20
+
+    def test_recent_suggestions_null_limit_coerces_to_default(self) -> None:
+        q = RecentSuggestionsQuery.model_validate({"limit": None})
+        assert q.limit == 5
+
+    def test_recent_news_null_lookback_hours_coerces_to_default(self) -> None:
+        q = RecentNewsQuery.model_validate({"lookback_hours": None})
+        assert q.lookback_hours == 24
+
+    def test_recent_news_null_limit_coerces_to_default(self) -> None:
+        q = RecentNewsQuery.model_validate({"limit": None})
+        assert q.limit == 10
+
+    def test_recent_proposals_null_lookback_hours_coerces_to_default(self) -> None:
+        q = RecentProposalsQuery.model_validate({"lookback_hours": None})
+        assert q.lookback_hours == 24
+
+    def test_recent_proposals_null_limit_coerces_to_default(self) -> None:
+        q = RecentProposalsQuery.model_validate({"limit": None})
+        assert q.limit == 10
+
+    def test_explicit_int_still_honored(self) -> None:
+        # Belt-and-braces: the BeforeValidator must NOT mangle valid ints.
+        q = RecentFillsQuery.model_validate({"lookback_hours": 6, "limit": 50})
+        assert q.lookback_hours == 6
+        assert q.limit == 50
+
+    def test_invalid_int_still_rejected(self) -> None:
+        # The gt=0 / le=200 constraints still apply post-coercion.
+        with pytest.raises(ValidationError):
+            RecentFillsQuery.model_validate({"lookback_hours": 0})
+        with pytest.raises(ValidationError):
+            RecentFillsQuery.model_validate({"limit": 1000})
+
+    def test_full_discriminated_union_null_lookback(self) -> None:
+        # Reproduce the exact bug surface: TypeAdapter[OperatorQuery] with
+        # a query payload containing null defaults.
+        adapter = _adapter()
+        revived = adapter.validate_python(
+            {"kind": "recent_fills", "symbol": "BTC/USD", "lookback_hours": None, "limit": None}
+        )
+        assert isinstance(revived, RecentFillsQuery)
+        assert revived.lookback_hours == 24
+        assert revived.limit == 20

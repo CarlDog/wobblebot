@@ -31,6 +31,7 @@ existing callsites that do
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -40,6 +41,28 @@ from wobblebot.domain.value_objects import Symbol
 # --------------------------------------------------------------------- #
 # Symbol coercion helper                                                #
 # --------------------------------------------------------------------- #
+
+
+def _null_means_default(default_value: int) -> Callable[[object], object]:
+    """BeforeValidator factory: coerce ``None`` → ``default_value``.
+
+    LLMs sometimes emit ``null`` for fields that have defaults
+    (e.g. ``"lookback_hours": null`` or ``"limit": null``). Our
+    schema otherwise types these as plain ``int``, which Pydantic
+    rejects on ``null``. The factory closes over the field's default
+    value; the validator returns the default whenever the LLM sent
+    ``null``, otherwise lets the raw input flow through to the
+    standard ``int`` validation.
+
+    Consumers continue to see plain ``int`` — the type doesn't
+    become ``int | None``; the default just becomes resilient to
+    LLM-emitted nulls.
+    """
+
+    def _validator(value: object) -> object:
+        return default_value if value is None else value
+
+    return _validator
 
 
 def _coerce_symbol(value: object) -> object:
@@ -184,8 +207,12 @@ class RecentFillsQuery(BaseModel):
 
     kind: Literal["recent_fills"] = "recent_fills"
     symbol: OptionalSymbolInput = None
-    lookback_hours: int = Field(default=24, gt=0)
-    limit: int = Field(default=20, gt=0, le=200)
+    lookback_hours: Annotated[int, BeforeValidator(_null_means_default(24))] = Field(
+        default=24, gt=0
+    )
+    limit: Annotated[int, BeforeValidator(_null_means_default(20))] = Field(
+        default=20, gt=0, le=200
+    )
 
     class Config:
         frozen = True
@@ -196,7 +223,7 @@ class RecentSuggestionsQuery(BaseModel):
 
     kind: Literal["recent_suggestions"] = "recent_suggestions"
     symbol: OptionalSymbolInput = None
-    limit: int = Field(default=5, gt=0, le=50)
+    limit: Annotated[int, BeforeValidator(_null_means_default(5))] = Field(default=5, gt=0, le=50)
 
     class Config:
         frozen = True
@@ -206,8 +233,12 @@ class RecentNewsQuery(BaseModel):
     """List recent news headlines from ``news.db``."""
 
     kind: Literal["recent_news"] = "recent_news"
-    lookback_hours: int = Field(default=24, gt=0)
-    limit: int = Field(default=10, gt=0, le=100)
+    lookback_hours: Annotated[int, BeforeValidator(_null_means_default(24))] = Field(
+        default=24, gt=0
+    )
+    limit: Annotated[int, BeforeValidator(_null_means_default(10))] = Field(
+        default=10, gt=0, le=100
+    )
 
     class Config:
         frozen = True
@@ -230,8 +261,12 @@ class RecentProposalsQuery(BaseModel):
 
     kind: Literal["recent_proposals"] = "recent_proposals"
     direction: Literal["exchange_to_bank", "bank_to_exchange"] | None = None
-    lookback_hours: int = Field(default=24, gt=0)
-    limit: int = Field(default=10, gt=0, le=100)
+    lookback_hours: Annotated[int, BeforeValidator(_null_means_default(24))] = Field(
+        default=24, gt=0
+    )
+    limit: Annotated[int, BeforeValidator(_null_means_default(10))] = Field(
+        default=10, gt=0, le=100
+    )
 
     class Config:
         frozen = True
