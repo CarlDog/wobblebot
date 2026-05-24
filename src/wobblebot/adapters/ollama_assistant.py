@@ -279,6 +279,15 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         try:
             return INTENT_ADAPTER.validate_python(inner)
         except ValidationError as exc:
+            # DEBUG-log the LLM's actual payload so operators
+            # diagnosing a new model can see exactly what shape it
+            # emitted without re-running probes. Truncated to keep
+            # the log under one screen.
+            _LOGGER.debug(
+                "schema validation failed for model %r; raw inner payload: %s",
+                self._model,
+                json.dumps(inner)[:2000],
+            )
             raise AssistantError(
                 f"LLM output failed operator_intent_v1 schema validation: {exc}"
             ) from exc
@@ -422,6 +431,15 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             try:
                 return extract_last_json_object(combined)
             except OllamaJsonExtractError as exc:
+                # DEBUG-log a chunk of what the model emitted so operators
+                # diagnosing a new model can see WHY no JSON was found
+                # without re-running probes.
+                _LOGGER.debug(
+                    "no JSON object in thinking-mode output for model %r;"
+                    " first 2000 chars: %s",
+                    self._model,
+                    combined[:2000],
+                )
                 raise AssistantError(str(exc)) from exc
 
         try:
