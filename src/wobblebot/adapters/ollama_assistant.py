@@ -55,6 +55,19 @@ from wobblebot.services.llm_cloud_call import INTENT_ADAPTER
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class _OllamaEmptyContentRetry(Exception):
+    """Marker raised by the envelope extractor when Ollama returns an
+    empty ``message.content`` and no ``thinking`` field.
+
+    Caught by ``parse_intent`` to trigger a single same-payload retry.
+    Empirically (per docs/reference/operator-llm-models.md) qwen3.6
+    returns empty content on 3/14 messages as a transient model hiccup;
+    a single retry recovers most of these without surfacing the
+    failure to the operator.
+    """
+
+
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
@@ -201,10 +214,15 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
     async def parse_intent(self, context: ConversationContext) -> OperatorIntent:
         """Send the conversation context to Ollama and return a typed intent.
 
+        Retries once on transient empty-content responses (see the
+        ``_OllamaEmptyContentRetry`` marker). Schema-validation failures
+        do NOT retry -- they're content issues, not transport hiccups.
+
         Raises:
             AssistantError: Transport failure, malformed envelope,
                 JSON parse failure, or output that fails
-                ``OperatorIntent`` schema validation.
+                ``OperatorIntent`` schema validation. Empty-content
+                failures raise only after the retry also returns empty.
         """
         messages = self._build_messages(context)
         thinking_mode = is_thinking_model(self._model)
@@ -220,14 +238,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         if not thinking_mode:
             payload["format"] = "json"
 
-        try:
-            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
-            response.raise_for_status()
-            envelope: dict[str, Any] = response.json()
-        except httpx.HTTPError as exc:
-            raise AssistantError(f"Ollama chat request failed: {exc}") from exc
-
-        inner = self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
+        inner = await self._request_with_retry(payload, thinking_mode=thinking_mode)
 
         try:
             return INTENT_ADAPTER.validate_python(inner)
@@ -235,6 +246,37 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             raise AssistantError(
                 f"LLM output failed operator_intent_v1 schema validation: {exc}"
             ) from exc
+
+    async def _request_with_retry(
+        self, payload: dict[str, Any], *, thinking_mode: bool
+    ) -> dict[str, Any]:
+        """POST + extract the inner dict, retrying once on empty content."""
+        try:
+            return await self._post_and_extract(payload, thinking_mode=thinking_mode)
+        except _OllamaEmptyContentRetry as exc:
+            _LOGGER.warning(
+                "Ollama returned empty content for model %r; retrying once",
+                self._model,
+            )
+            try:
+                return await self._post_and_extract(payload, thinking_mode=thinking_mode)
+            except _OllamaEmptyContentRetry as retry_exc:
+                # Both attempts empty -- surface as the original
+                # AssistantError shape so callers don't need to know
+                # about the marker.
+                raise AssistantError(str(retry_exc)) from exc
+
+    async def _post_and_extract(
+        self, payload: dict[str, Any], *, thinking_mode: bool
+    ) -> dict[str, Any]:
+        """One POST + envelope extraction; transport errors wrap as AssistantError."""
+        try:
+            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            envelope: dict[str, Any] = response.json()
+        except httpx.HTTPError as exc:
+            raise AssistantError(f"Ollama chat request failed: {exc}") from exc
+        return self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
 
     async def summarize(
         self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
@@ -333,7 +375,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         thinking_present = bool(raw_thinking_field.strip())
 
         if content_empty and not thinking_present:
-            raise AssistantError(
+            raise _OllamaEmptyContentRetry(
                 "Ollama chat returned empty 'message.content' and no 'thinking' field"
             )
 

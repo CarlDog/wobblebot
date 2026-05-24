@@ -516,8 +516,13 @@ class TestErrorPaths:
         finally:
             await adapter.aclose()
 
-    async def test_empty_content_and_no_thinking(self) -> None:
+    async def test_empty_content_and_no_thinking_after_retry(self) -> None:
+        # Both attempts return empty -- expected to surface as AssistantError.
+        call_count = 0
+
         def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
             return httpx.Response(200, json=_chat_envelope(""))
 
         adapter = _build_adapter(httpx.MockTransport(handler))
@@ -526,6 +531,34 @@ class TestErrorPaths:
                 await adapter.parse_intent(_context())
         finally:
             await adapter.aclose()
+        # Confirms a retry actually fired (2 POSTs, not 1).
+        assert call_count == 2
+
+    async def test_empty_content_retry_succeeds(self, caplog: pytest.LogCaptureFixture) -> None:
+        # First response is empty; second succeeds. Operator never sees an
+        # error -- the transient hiccup is invisible end-to-end.
+        call_count = 0
+        intent_payload = {
+            "kind": "query",
+            "query": {"kind": "status"},
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(200, json=_chat_envelope(""))
+            return httpx.Response(200, json=_chat_envelope(json.dumps(intent_payload)))
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
+                intent = await adapter.parse_intent(_context())
+        finally:
+            await adapter.aclose()
+        assert isinstance(intent, IntentQuery)
+        assert call_count == 2
+        assert any("retrying once" in r.message for r in caplog.records)
 
     async def test_invalid_json_content(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
