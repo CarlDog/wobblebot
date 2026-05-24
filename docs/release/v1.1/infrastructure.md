@@ -129,3 +129,74 @@ plaintext-but-bcrypted-passwords posture is the right answer.
 operator-ux.md weighs Synology/Pi/cloud deployment shapes;
 SQLCipher becomes load-bearing the moment that entry picks
 a cloud or shared-storage path.
+
+### Test fixture consolidation — bare ":memory:" SQLite storage
+
+**What:** 40 test files each declare an identical
+``@pytest_asyncio.fixture async def storage()`` that constructs
+``SQLiteStorageAdapter(":memory:")``, connects, yields, closes.
+Same 4 lines × 40 files = ~160 LOC of mechanical duplication.
+
+**Why deferred from v1.0:** audit-rated HIGH severity (#11 in
+the 2026-05-23 code-reuse pass) but the practical migration cost
+exceeds the win. Field names vary across the suite (``storage``
+vs ``operator_storage`` vs ``live_storage`` vs ``news_storage``)
+which means a shared ``memory_storage`` fixture in
+``tests/conftest.py`` would require renaming the fixture
+PARAMETER in every test method's signature too — invasive across
+~38 files and N test methods each. The bug-prevention framing
+("a pragma change requires editing 38 files") is already
+mitigated because ``SQLiteStorageAdapter.connect()`` owns the
+pragma setup (WAL + ``synchronous=NORMAL`` per Stage 8.3), not
+the fixture body.
+
+**Trigger:** if the SQLite setup discipline ever needs to grow
+beyond what ``connect()`` owns — e.g., uniform ``caplog``
+attachment, foreign-keys-on verification at fixture level, or a
+new pragma that's NOT adapter-owned — then 40-file uniformity
+matters and the rename effort becomes worth it.
+
+**Sketch:** ``tests/conftest.py`` gets
+``@pytest_asyncio.fixture async def memory_storage`` (bare
+connect/yield/close). Each per-file ``storage`` fixture becomes
+a one-line alias: ``@pytest.fixture; def storage(memory_storage):
+return memory_storage`` — or fixture-renaming sweep across the
+suite (preferred but bigger).
+
+### WiredSnapshot base class + load_with_degrade helper for web routes
+
+**What:** 5 of 6 web-route snapshot dataclasses share a
+``wired: bool`` (or ``live_wired: bool``) + ``error: str | None``
+shape; all 6 ``_load_snapshot`` functions share a 3-branch
+"unwired / StorageError / success" skeleton. The audit's #7 + #8
+findings propose a ``WiredSnapshot`` base in
+``src/wobblebot/web/snapshots.py`` and a ``load_with_degrade``
+helper in ``src/wobblebot/web/routes/_common.py``.
+
+**Why deferred from v1.0:** the inheritance approach is
+half-broken by naming inconsistency:
+
+- ``AdvisorSnapshot`` / ``HarvesterSnapshot`` / ``NewsSnapshot``
+  use ``wired: bool``.
+- ``StatusSnapshot`` / ``TradingFeesSnapshot`` use
+  ``live_wired: bool``.
+- ``CostSnapshot`` has no wired flag at all (operator.db is
+  mandatory, never None).
+
+So a single base class covers 3 of 6 cleanly; the other 3 need a
+field rename + template + route changes spread across 8+ sites
+before the base class earns its keep. The load-helper alone
+(without the base) saves only ~3 lines per file × 6 = ~18 LOC,
+which is below the threshold for a focused refactor.
+
+**Trigger:** add a new dashboard surface that needs the
+unwired-fallback pattern (the natural moment when the absence of
+the helper would force a 7th copy of the boilerplate). At that
+point: rename ``live_wired`` to ``wired`` in the existing
+StatusSnapshot + TradingFeesSnapshot + templates as the same
+commit, then introduce the base class.
+
+**Bug class the deferral keeps open:** a future snapshot author
+who forgets the ``wired`` field on a new cross-DB dashboard.
+Until extraction, code review (and the test suite — every web
+test asserts against the snapshot fields) catches this.
