@@ -488,24 +488,41 @@ nav.utility {
 }
 
 /* Generic "needs attention" indicator dot for utility-nav icons.
-   Used by the bell (unread notifications) AND the health icon
-   (overall status non-green). Hidden until the parent .nav-icon
-   has the .has-alert class added by layout.html's polling scripts.
-   Border tracks nav bg so the dot looks "cut out" of the navbar. */
+   Two consumers with different vocabularies:
+     - Bell: binary .has-alert (red, unread notifications)
+     - Health: tiered .has-alert-yellow / .has-alert-red since
+       2026-05-23 (replaces the redundant status-card traffic
+       light; navbar is the single source of truth for health UX).
+   Hidden by default; top-right of icon square per iOS/Android
+   badge convention. Border tracks nav bg so the dot looks "cut
+   out" of the navbar background. */
 .nav-icon-dot {
   position: absolute;
   top: 4px;
   right: 4px;
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--bell-unread-dot);
   border: 1.5px solid var(--nav-bg);
   display: none;
 }
 
+/* Bell — binary red dot. */
 .nav-icon.has-alert .nav-icon-dot {
   display: block;
+}
+
+/* Health — tiered colors. Yellow uses --trend-down's amber sibling;
+   red reuses the bell's red so unread+error look the same severity. */
+.nav-icon.has-alert-yellow .nav-icon-dot {
+  display: block;
+  background: #ca8a04;
+}
+
+.nav-icon.has-alert-red .nav-icon-dot {
+  display: block;
+  background: var(--bell-unread-dot);
 }
 
 form.logout {
@@ -1404,22 +1421,10 @@ table.data th {
   border-color: #16a34a;
 }
 
-/* Status-card health-icon mount — sits AFTER the LIVE badge and is
-   HTMX-populated with the dot anchor. Inline-flex so the dot
-   vertically centers with the title text. ``min-width`` reserves
-   the slot before HTMX populates so the title text doesn't reflow
-   on the initial swap (operator-surfaced 2026-05-22 soak Day 5:
-   when the dot was leading the title, every refresh shifted the
-   "Trading Status" text). 24px = ~10px dot + 4px padding side. */
-.status-card-health-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: 6px;
-  min-width: 24px;
-  min-height: 18px;
-  vertical-align: middle;
-}
+/* (.status-card-health-icon removed 2026-05-23 along with the
+   redundant traffic-light on the status card; navbar heart-pulse
+   icon's tiered alert dot is now the single source of truth for
+   health UX.) */
 
 /* Trading-mode badge — LIVE (red, attention-getting) for the live
    trading card; SHADOW (purple, deliberately distinct) for the

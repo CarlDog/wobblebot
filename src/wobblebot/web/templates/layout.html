@@ -175,10 +175,15 @@
       const { overall } = await r.json();
       const health = document.getElementById('nav-health');
       if (!health) return;
-      if (overall && overall !== 'green') {
-        health.classList.add('has-alert');
-      } else {
-        health.classList.remove('has-alert');
+      // Tiered dot since 2026-05-23: yellow=degraded, red=error,
+      // no dot when green. The status-card traffic light was
+      // removed in the same change — this is now the only health
+      // indicator in the chrome.
+      health.classList.remove('has-alert-yellow', 'has-alert-red');
+      if (overall === 'yellow') {
+        health.classList.add('has-alert-yellow');
+      } else if (overall === 'red') {
+        health.classList.add('has-alert-red');
       }
     } catch (e) {
       // Silent — health dot isn't critical UX; the /health page is
