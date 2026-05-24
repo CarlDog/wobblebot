@@ -14,7 +14,7 @@ persisted, embeds sent, conversation turns saved).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -33,6 +33,7 @@ from wobblebot.adapters.discord_transport import (
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.operator import (
+    _backfill_history_for_channel,
     _forward_pending_notifications,
     _handle_inbound_message,
     _handle_reaction,
@@ -500,3 +501,156 @@ class TestHandleReaction:
             event, operator_storage=storage, pending_message_map={"msg-1": uuid4()}
         )
         # No exception
+
+
+# --------------------------------------------------------------------- #
+# _backfill_history_for_channel — startup conversation_turns seeding    #
+# --------------------------------------------------------------------- #
+
+
+def _history_message(
+    *,
+    user_id: str = "U-1",
+    channel_id: str = "C-1",
+    content: str,
+    ts: datetime,
+    message_id: str | None = None,
+) -> InboundMessage:
+    return InboundMessage(
+        message_id=message_id or f"m-{ts.timestamp()}",
+        channel_id=channel_id,
+        user_id=user_id,
+        content=content,
+        timestamp=Timestamp(dt=ts),
+    )
+
+
+def _backfill_transport(history: list[InboundMessage]) -> Any:
+    t = _mock_transport()
+    t.fetch_channel_history = AsyncMock(return_value=history)
+    return t
+
+
+class TestBackfillHistory:
+    async def test_limit_zero_is_no_op(self, storage: SQLiteStorageAdapter) -> None:
+        transport = _backfill_transport([])
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset({"U-1"}),
+            limit=0,
+        )
+        assert inserted == 0
+        transport.fetch_channel_history.assert_not_called()
+
+    async def test_empty_allowlist_is_no_op(self, storage: SQLiteStorageAdapter) -> None:
+        transport = _backfill_transport([])
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset(),
+            limit=20,
+        )
+        assert inserted == 0
+
+    async def test_inserts_all_messages_for_empty_storage(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        now = datetime.now(UTC)
+        history = [
+            _history_message(content="msg1", ts=now - timedelta(minutes=5)),
+            _history_message(content="msg2", ts=now - timedelta(minutes=3)),
+            _history_message(content="msg3", ts=now - timedelta(minutes=1)),
+        ]
+        transport = _backfill_transport(history)
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset({"U-1"}),
+            limit=20,
+        )
+        assert inserted == 3
+        stored = await storage.get_conversation_turns("C-1", "U-1")
+        assert {t.content for t in stored} == {"msg1", "msg2", "msg3"}
+        assert all(t.role == "operator" for t in stored)
+        assert all(t.intent is None for t in stored)
+
+    async def test_skips_messages_at_or_before_stored_max_timestamp(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        now = datetime.now(UTC)
+        # Pre-seed a stored turn at T-2min
+        existing_ts = now - timedelta(minutes=2)
+        await storage.save_conversation_turn(
+            ConversationTurn(
+                id=uuid4(),
+                channel_id="C-1",
+                user_id="U-1",
+                role="operator",
+                content="previous",
+                intent=None,
+                timestamp=Timestamp(dt=existing_ts),
+            )
+        )
+        history = [
+            # Older than stored max → skip
+            _history_message(content="old", ts=now - timedelta(minutes=5)),
+            # Exactly equal to stored max → skip
+            _history_message(content="dup", ts=existing_ts),
+            # Newer → insert
+            _history_message(content="new1", ts=now - timedelta(minutes=1)),
+            _history_message(content="new2", ts=now),
+        ]
+        transport = _backfill_transport(history)
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset({"U-1"}),
+            limit=20,
+        )
+        assert inserted == 2
+        stored = await storage.get_conversation_turns("C-1", "U-1")
+        contents = {t.content for t in stored}
+        assert "previous" in contents
+        assert "new1" in contents
+        assert "new2" in contents
+        assert "old" not in contents
+        assert "dup" not in contents
+
+    async def test_filters_messages_to_matching_user(self, storage: SQLiteStorageAdapter) -> None:
+        now = datetime.now(UTC)
+        history = [
+            _history_message(user_id="U-1", content="mine", ts=now - timedelta(minutes=2)),
+            _history_message(user_id="U-2", content="other", ts=now - timedelta(minutes=1)),
+        ]
+        transport = _backfill_transport(history)
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset({"U-1"}),
+            limit=20,
+        )
+        assert inserted == 1
+        stored = await storage.get_conversation_turns("C-1", "U-1")
+        assert {t.content for t in stored} == {"mine"}
+
+    async def test_fetch_failure_returns_zero(self, storage: SQLiteStorageAdapter) -> None:
+        from wobblebot.adapters.discord_transport import DiscordTransportError
+
+        transport = _mock_transport()
+        transport.fetch_channel_history = AsyncMock(
+            side_effect=DiscordTransportError("rate limited")
+        )
+        inserted = await _backfill_history_for_channel(
+            channel_id="C-1",
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=frozenset({"U-1"}),
+            limit=20,
+        )
+        assert inserted == 0

@@ -497,6 +497,13 @@ class OperatorConfig(BaseModel):
     # the operator's expectation is "wait a minute, maybe two".
     ttl_expirer_poll_seconds: float = Field(default=30.0, gt=0)
 
+    # On startup, fetch the last N messages from each allowlisted
+    # channel via Discord's ``read_message_history`` permission and
+    # persist any not-yet-stored ones as ``conversation_turns`` rows.
+    # Lets the LLM see recent operator chatter after a daemon restart.
+    # 0 disables the backfill entirely.
+    history_backfill_messages: int = Field(default=20, ge=0, le=100)
+
     log_format: LogFormat = "plain"
 
     class Config:

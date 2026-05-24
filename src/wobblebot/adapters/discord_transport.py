@@ -38,6 +38,7 @@ Design choices ratified in ``stage-5.1-design.md`` decision 8 + ADR-013:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -159,6 +160,19 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         self._message_handlers: list[MessageHandler] = []
         self._reaction_handlers: list[ReactionHandler] = []
         self._bot_user_id: str | None = None
+        # Set in ``on_ready``; cli/operator's backfill task awaits this
+        # before invoking ``fetch_channel_history`` so the Gateway has
+        # finished its IDENTIFY + READY handshake.
+        self._ready_event = asyncio.Event()
+
+    async def wait_until_ready(self) -> None:
+        """Block until the Gateway has fired ``on_ready``.
+
+        cli/operator's history-backfill task awaits this before calling
+        ``fetch_channel_history`` — ``discord.py`` raises if you call
+        ``channel.history()`` before the client is fully connected.
+        """
+        await self._ready_event.wait()
 
     # ---- handler registration ------------------------------------- #
 
@@ -292,6 +306,32 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 f"Failed to add reaction to message {message_id}: {exc}"
             ) from exc
 
+    async def fetch_channel_history(
+        self, channel_id: str, *, limit: int = 20
+    ) -> list[InboundMessage]:
+        """Return up to ``limit`` most-recent messages from ``channel_id``.
+
+        Results are in chronological (oldest-first) order so callers can
+        replay them. The bot's own messages are filtered out, mirroring
+        the live event-stream allowlist. Used by ``cli/operator`` on
+        startup to backfill ``conversation_turns`` so the LLM retains
+        context across daemon restarts.
+
+        ``read_message_history`` permission must be granted in Discord.
+        """
+        channel = await self._resolve_text_channel(channel_id)
+        messages: list[InboundMessage] = []
+        try:
+            async for message in channel.history(limit=limit, oldest_first=True):
+                if self._bot_user_id is not None and str(message.author.id) == self._bot_user_id:
+                    continue
+                messages.append(_inbound_from_message(message))
+        except discord.DiscordException as exc:
+            raise DiscordTransportError(
+                f"Failed to fetch history for channel {channel_id}: {exc}"
+            ) from exc
+        return messages
+
     async def send_confirmation(
         self,
         channel_id: str,
@@ -355,6 +395,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         await self._client.close()
         self._client = None
         self._bot_user_id = None
+        self._ready_event.clear()
 
     def attach_client(self, client: discord.Client) -> None:
         """Bind a ``discord.Client`` instance and register event handlers.
@@ -400,6 +441,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         async def on_ready() -> None:  # pragma: no cover — Gateway-bound
             # pylint: disable=protected-access
             transport._bot_user_id = str(client.user.id) if client.user else None
+            transport._ready_event.set()
             LOGGER.info(
                 "discord transport connected",
                 extra={"bot_user_id": transport._bot_user_id},

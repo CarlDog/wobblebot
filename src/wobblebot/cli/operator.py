@@ -333,6 +333,120 @@ async def _compose_engine_state_snapshot(
 
 
 # --------------------------------------------------------------------- #
+# History backfill — pull recent operator chatter from Discord          #
+# --------------------------------------------------------------------- #
+
+
+async def _backfill_history_for_channel(
+    *,
+    channel_id: str,
+    transport: DiscordTransport,
+    storage: StoragePort,
+    allowed_user_ids: frozenset[str],
+    limit: int,
+) -> int:
+    """Persist Discord history messages newer than the most-recent stored turn.
+
+    For each allowlisted (channel, user) pair, find the timestamp of the
+    last stored ``conversation_turns`` row (if any), fetch up to
+    ``limit`` messages from Discord, and insert any whose timestamp is
+    strictly greater AND whose author is the same user. Returns the
+    total count inserted across users for this channel.
+
+    No-op when ``limit == 0``.
+    """
+    if limit == 0 or not allowed_user_ids:
+        return 0
+    try:
+        history = await transport.fetch_channel_history(channel_id, limit=limit)
+    except DiscordTransportError as exc:
+        _LOGGER.warning(
+            "history backfill: fetch_channel_history failed",
+            extra={"channel_id": channel_id, "error": str(exc)},
+        )
+        return 0
+
+    inserted = 0
+    for user_id in allowed_user_ids:
+        try:
+            recent = await storage.get_conversation_turns(channel_id, user_id, limit=1)
+        except StorageError as exc:
+            _LOGGER.warning(
+                "history backfill: get_conversation_turns failed",
+                extra={"channel_id": channel_id, "user_id": user_id, "error": str(exc)},
+            )
+            continue
+        max_ts = recent[-1].timestamp.dt if recent else None
+        for msg in history:
+            if msg.user_id != user_id:
+                continue
+            if max_ts is not None and msg.timestamp.dt <= max_ts:
+                continue
+            turn = ConversationTurn(
+                id=uuid4(),
+                channel_id=msg.channel_id,
+                user_id=msg.user_id,
+                role="operator",
+                content=msg.content,
+                intent=None,
+                timestamp=msg.timestamp,
+            )
+            try:
+                await storage.save_conversation_turn(turn)
+                inserted += 1
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "history backfill: save_conversation_turn failed",
+                    extra={"turn_id": str(turn.id), "error": str(exc)},
+                )
+    return inserted
+
+
+async def _backfill_history_task(  # pylint: disable=too-many-arguments
+    *,
+    transport: DiscordTransport,
+    storage: StoragePort,
+    allowed_channel_ids: frozenset[str],
+    allowed_user_ids: frozenset[str],
+    limit: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Wait for Discord ready, then backfill each allowlisted channel once.
+
+    Aborts cleanly if ``stop_event`` is set before the ready handshake
+    completes (e.g. operator hit Ctrl-C during connect).
+    """
+    if limit == 0:
+        _LOGGER.info("history backfill disabled (limit=0)")
+        return
+    ready_wait = asyncio.create_task(transport.wait_until_ready())
+    stop_wait = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait({ready_wait, stop_wait}, return_when=asyncio.FIRST_COMPLETED)
+        if stop_wait in done:
+            return
+    finally:
+        for t in (ready_wait, stop_wait):
+            if not t.done():
+                t.cancel()
+
+    total = 0
+    for channel_id in allowed_channel_ids:
+        count = await _backfill_history_for_channel(
+            channel_id=channel_id,
+            transport=transport,
+            storage=storage,
+            allowed_user_ids=allowed_user_ids,
+            limit=limit,
+        )
+        total += count
+    _LOGGER.info(
+        "history backfill complete",
+        extra={"total_inserted": total, "channels": sorted(allowed_channel_ids)},
+    )
+
+
+# --------------------------------------------------------------------- #
 # Conversation flow — message handler                                   #
 # --------------------------------------------------------------------- #
 
@@ -1071,6 +1185,17 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         ),
         name="operator-ttl-expirer",
     )
+    backfill_task = asyncio.create_task(
+        _backfill_history_task(
+            transport=transport,
+            storage=operator_storage,
+            allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
+            allowed_user_ids=operator_cfg.auth.allowed_user_ids,
+            limit=operator_cfg.history_backfill_messages,
+            stop_event=stop_event,
+        ),
+        name="operator-history-backfill",
+    )
 
     _LOGGER.info(
         "operator daemon starting",
@@ -1098,7 +1223,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         stop_event.set()
 
         async def _cancel_background_tasks() -> None:
-            for task in (forwarder_task, ttl_expirer_task):
+            for task in (forwarder_task, ttl_expirer_task, backfill_task):
                 task.cancel()
                 try:
                     await task

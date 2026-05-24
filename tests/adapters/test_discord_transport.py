@@ -323,6 +323,37 @@ def _mock_client(channel: Any) -> Any:
     return client
 
 
+def _fake_discord_message(
+    *,
+    message_id: int,
+    author_id: int | str,
+    content: str,
+) -> Any:
+    """Build a minimal discord.Message-shaped mock for history iteration."""
+    m = MagicMock()
+    m.id = message_id
+    m.content = content
+    m.author = MagicMock()
+    m.author.id = author_id
+    m.channel = MagicMock()
+    m.channel.id = 100
+    m.created_at = datetime.now(UTC)
+    return m
+
+
+async def _async_iter(items: list[Any]) -> Any:
+    """Build an async iterator from a list (for channel.history mocks)."""
+    for item in items:
+        yield item
+
+
+async def _async_iter_raises(exc: BaseException) -> Any:
+    """Build an async iterator that raises on first iteration."""
+    if False:  # pragma: no cover — makes this a true async generator
+        yield None
+    raise exc
+
+
 def _mock_channel(*, message_id: int = 12345) -> Any:
     """Build a mock text channel.
 
@@ -417,6 +448,55 @@ class TestOutbound:
         t.attach_client(_mock_client(channel))
         with pytest.raises(DiscordTransportError, match="Failed to add reaction"):
             await t.add_reaction("100", "555", "✅")
+
+    @pytest.mark.asyncio
+    async def test_fetch_channel_history_returns_inbound_messages(self) -> None:
+        t = _transport()
+        channel = _mock_channel()
+        msg_a = _fake_discord_message(message_id=1, author_id=42, content="hi")
+        msg_b = _fake_discord_message(message_id=2, author_id=42, content="status?")
+        channel.history = MagicMock(return_value=_async_iter([msg_a, msg_b]))
+        t.attach_client(_mock_client(channel))
+        out = await t.fetch_channel_history("100", limit=10)
+        assert len(out) == 2
+        assert out[0].content == "hi"
+        assert out[1].content == "status?"
+        assert all(m.channel_id == "100" for m in out)
+
+    @pytest.mark.asyncio
+    async def test_fetch_channel_history_filters_bot_self(self) -> None:
+        t = _transport()
+        t._bot_user_id = "999"  # pylint: disable=protected-access
+        channel = _mock_channel()
+        bot_msg = _fake_discord_message(message_id=1, author_id=999, content="hi")
+        op_msg = _fake_discord_message(message_id=2, author_id=42, content="status?")
+        channel.history = MagicMock(return_value=_async_iter([bot_msg, op_msg]))
+        t.attach_client(_mock_client(channel))
+        out = await t.fetch_channel_history("100")
+        assert len(out) == 1
+        assert out[0].content == "status?"
+
+    @pytest.mark.asyncio
+    async def test_fetch_channel_history_wraps_discord_exception(self) -> None:
+        t = _transport()
+        channel = _mock_channel()
+        channel.history = MagicMock(
+            return_value=_async_iter_raises(discord.HTTPException(MagicMock(), "boom"))
+        )
+        t.attach_client(_mock_client(channel))
+        with pytest.raises(DiscordTransportError, match="Failed to fetch history"):
+            await t.fetch_channel_history("100")
+
+    @pytest.mark.asyncio
+    async def test_wait_until_ready_blocks_until_event_set(self) -> None:
+        import asyncio as _asyncio
+
+        t = _transport()
+        wait_task = _asyncio.create_task(t.wait_until_ready())
+        await _asyncio.sleep(0)  # let it block
+        assert not wait_task.done()
+        t._ready_event.set()  # pylint: disable=protected-access
+        await wait_task  # should unblock cleanly
 
     @pytest.mark.asyncio
     async def test_send_without_client_raises(self) -> None:

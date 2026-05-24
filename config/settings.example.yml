@@ -536,6 +536,12 @@ operator:
   # TTL expirer poll cadence. Doesn't need to be fast — the operator's
   # expectation is "wait a minute, maybe two".
   ttl_expirer_poll_seconds: 30.0
+  # On startup, pull the last N messages from each allowlisted channel
+  # via Discord's read_message_history permission and persist any
+  # not-yet-seen ones to conversation_turns. Lets the LLM regain
+  # recent operator context after a daemon restart. Set to 0 to
+  # disable. Bounded 0-100 by the schema.
+  history_backfill_messages: 20
   log_format: plain                       # plain | json
 
 # ============================================================================
