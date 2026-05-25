@@ -129,7 +129,7 @@ def format_intent(intent) -> str:  # type: ignore[no-untyped-def]  # pylint: dis
 
 
 async def main_async(  # pylint: disable=too-many-locals
-    messages: list[str], include_multi_turn: bool
+    messages: list[str], include_multi_turn: bool, model_override: str | None
 ) -> int:
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
     operator_cfg = config.operator
@@ -145,13 +145,15 @@ async def main_async(  # pylint: disable=too-many-locals
         return 2
 
     prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
+    model = model_override or operator_cfg.assistant.model
+    print(f"# probe model: {model}")
     adapter = OllamaAssistantAdapter(
-        model=operator_cfg.assistant.model,
+        model=model,
         prompt=prompt,
         base_url=operator_cfg.assistant.base_url,
         temperature=operator_cfg.assistant.temperature,
         max_tokens=operator_cfg.assistant.max_tokens,
-        timeout_seconds=120.0,
+        timeout_seconds=180.0,
     )
     snapshot = make_snapshot()
 
@@ -251,6 +253,17 @@ def main() -> int:
         action="store_true",
         help="Skip the multi-turn drift reproduction block at the end.",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help=(
+            "Override the configured operator.assistant.model (e.g. "
+            "'gemma4:e4b-it-q8_0'). Useful for A/B comparison across "
+            "Ollama-served models without editing settings.yml or "
+            "restarting cli/operator. Default: use the configured model."
+        ),
+    )
     args = parser.parse_args()
 
     if args.messages:
@@ -258,7 +271,7 @@ def main() -> int:
     else:
         messages = [m for _, m in DEFAULT_BATTERY]
 
-    return asyncio.run(main_async(messages, not args.skip_multi_turn))
+    return asyncio.run(main_async(messages, not args.skip_multi_turn, args.model))
 
 
 if __name__ == "__main__":
