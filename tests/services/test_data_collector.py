@@ -73,6 +73,9 @@ class _FailingExchange(ExchangePort):
     ) -> list[Trade]:
         raise NotImplementedError
 
+    async def get_ohlc(self, symbol, interval_minutes=1, since=None):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("data collector tests don't exercise OHLC")
+
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError
 

@@ -5,10 +5,11 @@ orders, balances). Adapters implement this interface for specific exchanges.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Price, Symbol
+from wobblebot.domain.value_objects import OHLCBar, Price, Symbol
 
 
 class ExchangePort(ABC):
@@ -156,6 +157,38 @@ class ExchangePort(ABC):
             ExchangeError: If trade history cannot be retrieved
         """
         pass
+
+    @abstractmethod
+    async def get_ohlc(
+        self,
+        symbol: Symbol,
+        interval_minutes: int = 1,
+        since: datetime | None = None,
+    ) -> list[OHLCBar]:
+        """Fetch historical OHLC bars for ``symbol``.
+
+        v1.1 addition driving the cli/observe --backfill feature and
+        the future backtester/historian. Returns at most one page of
+        bars (exchanges typically cap response size — Kraken returns
+        up to 720 per call). The caller paginates by passing the last
+        returned bar's ``opened_at`` as the next call's ``since``.
+
+        Args:
+            symbol: Trading pair.
+            interval_minutes: Bar duration. Must be one of
+                ``OHLCBar.ALLOWED_INTERVALS`` (Kraken-aligned set).
+            since: Exclusive lower bound — only bars STRICTLY AFTER
+                this timestamp are returned. ``None`` returns the
+                most-recent page available.
+
+        Returns:
+            Bars in chronological order. Empty list when no bars match
+            the window (newer than ``since``).
+
+        Raises:
+            ExchangeError: On transport / protocol / parse failure.
+            ValueError: If ``interval_minutes`` is outside the allowed set.
+        """
 
     @abstractmethod
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:

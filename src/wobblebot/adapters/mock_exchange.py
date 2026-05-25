@@ -28,7 +28,14 @@ from decimal import Decimal
 
 from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import (
+    Amount,
+    OHLCBar,
+    OrderSide,
+    Price,
+    Symbol,
+    Timestamp,
+)
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
@@ -91,6 +98,30 @@ class MockExchangeAdapter(ExchangePort):
         if symbol not in self._prices:
             raise ExchangeError(f"No market price set for {symbol}")
         return Price(amount=self._prices[symbol], currency=symbol.quote)
+
+    async def get_ohlc(
+        self,
+        symbol: Symbol,
+        interval_minutes: int = 1,
+        since: datetime | None = None,
+    ) -> list[OHLCBar]:
+        """Historical OHLC bars don't apply to the in-memory mock.
+
+        The mock has no concept of "historical price action" — it
+        only knows the current price the test has set. Backfill is a
+        feature of the live-data path; callers driving the engine via
+        the mock should drive prices directly via ``set_price``.
+
+        Raises ``NotImplementedError`` rather than silently returning
+        an empty list so a test that accidentally exercises the
+        backfill path against the mock fails loudly.
+        """
+        raise NotImplementedError(
+            "MockExchangeAdapter has no historical OHLC data; "
+            "the mock represents current-tick state only. Use "
+            "KrakenAdapter (or ShadowExchangeAdapter, which forwards "
+            "to the live adapter) for backfill workflows."
+        )
 
     async def get_balances(self) -> list[Balance]:
         return [self._balance_for(asset) for asset in sorted(self._balances)]

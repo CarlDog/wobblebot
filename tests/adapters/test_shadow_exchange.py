@@ -15,7 +15,14 @@ import pytest
 
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import (
+    Amount,
+    OHLCBar,
+    OrderSide,
+    Price,
+    Symbol,
+    Timestamp,
+)
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
@@ -65,6 +72,14 @@ class _StubLiveExchange(ExchangePort):
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]:
         raise NotImplementedError
+
+    async def get_ohlc(
+        self,
+        symbol: Symbol,
+        interval_minutes: int = 1,
+        since: datetime | None = None,
+    ) -> list[OHLCBar]:
+        raise NotImplementedError("shadow tests don't exercise get_ohlc")
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError

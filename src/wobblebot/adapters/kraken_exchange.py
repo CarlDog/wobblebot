@@ -40,10 +40,10 @@ import hashlib
 import hmac
 import time
 import urllib.parse
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
-from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
@@ -52,7 +52,14 @@ import httpx
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import (
+    Amount,
+    OHLCBar,
+    OrderSide,
+    Price,
+    Symbol,
+    Timestamp,
+)
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
@@ -210,6 +217,75 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         # "current price" per docs/reference/kraken-api-reference.md.
         last_price_str = ticker["c"][0]
         return Price(amount=Decimal(last_price_str), currency=symbol.quote)
+
+    async def get_ohlc(
+        self,
+        symbol: Symbol,
+        interval_minutes: int = 1,
+        since: datetime | None = None,
+    ) -> list[OHLCBar]:
+        """Fetch historical OHLC bars via ``/0/public/OHLC``.
+
+        Kraken returns the bars keyed by the X/Z-prefixed pair name
+        (e.g. ``XXBTZUSD``) alongside a ``last`` cursor. We accept any
+        key shape — single-pair requests mean the bars are the only
+        list-valued entry in the result dict, regardless of how Kraken
+        labels it.
+
+        Each bar in the response is the array
+        ``[time, open, high, low, close, vwap, volume, count]`` per
+        Kraken's published schema.
+
+        v1.1 addition driving the cli/observe --backfill feature.
+        """
+        if interval_minutes not in OHLCBar.ALLOWED_INTERVALS:
+            raise ValueError(
+                f"interval_minutes must be one of "
+                f"{sorted(OHLCBar.ALLOWED_INTERVALS)}; got {interval_minutes}"
+            )
+        altname = _symbol_to_kraken_altname(symbol)
+        params: dict[str, str] = {
+            "pair": altname,
+            "interval": str(interval_minutes),
+        }
+        if since is not None:
+            if since.tzinfo is None:
+                raise ValueError("`since` must be timezone-aware")
+            params["since"] = str(int(since.astimezone(UTC).timestamp()))
+        result = await self._public_get("/0/public/OHLC", params)
+        if not result:
+            raise ExchangeError(f"Kraken returned no OHLC data for pair {altname!r}")
+        # The result dict has one list-valued entry (the bars) plus an
+        # int "last" cursor. Take whichever value is a list.
+        bars_raw = next(
+            (v for v in result.values() if isinstance(v, list)),
+            None,
+        )
+        if bars_raw is None:
+            raise ExchangeError(f"Kraken OHLC response missing bars array for pair {altname!r}")
+        out: list[OHLCBar] = []
+        for entry in bars_raw:
+            # Defensive on shape — Kraken occasionally evolves wire
+            # formats and a missing field should fail-fast at the
+            # boundary rather than wedge a backfill mid-stream.
+            if not isinstance(entry, list) or len(entry) < 8:
+                raise ExchangeError(f"Kraken OHLC entry has unexpected shape: {entry!r}")
+            opened_at = datetime.fromtimestamp(int(entry[0]), tz=UTC)
+            out.append(
+                OHLCBar(
+                    symbol=symbol,
+                    interval_minutes=interval_minutes,
+                    opened_at=opened_at,
+                    open=Decimal(str(entry[1])),
+                    high=Decimal(str(entry[2])),
+                    low=Decimal(str(entry[3])),
+                    close=Decimal(str(entry[4])),
+                    vwap=Decimal(str(entry[5])),
+                    volume=Decimal(str(entry[6])),
+                    count=int(entry[7]),
+                )
+            )
+        return out
 
     async def get_balances(self) -> list[Balance]:
         """Fetch all account balances via ``/0/private/BalanceEx``.

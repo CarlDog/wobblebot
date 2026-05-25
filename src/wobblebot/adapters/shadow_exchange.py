@@ -37,11 +37,12 @@ acknowledges this as a small-order-size acceptable approximation.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OrderSide, Price, Symbol
+from wobblebot.domain.value_objects import OHLCBar, OrderSide, Price, Symbol
 from wobblebot.ports.exchange import ExchangePort
 
 _DEFAULT_MAKER_FEE_RATE = Decimal("0.0026")
@@ -108,6 +109,21 @@ class ShadowExchangeAdapter(ExchangePort):
         price = await self._live.get_current_price(symbol)
         self._mock.set_price(symbol, price.amount)
         return price
+
+    async def get_ohlc(
+        self,
+        symbol: Symbol,
+        interval_minutes: int = 1,
+        since: datetime | None = None,
+    ) -> list[OHLCBar]:
+        """Forward to the live adapter — OHLC is real-market historical
+        data, not part of the synthetic ledger.
+
+        Shadow mode's "synthetic" half is execution state (balances,
+        orders, fills). Price discovery — current and historical — is
+        always real-market via the wrapped live adapter.
+        """
+        return await self._live.get_ohlc(symbol, interval_minutes, since)
 
     async def get_balances(self) -> list[Balance]:
         return await self._mock.get_balances()
