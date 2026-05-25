@@ -139,19 +139,16 @@ def pull_model(model: str) -> tuple[bool, str]:
     return True, f"pulled in {elapsed:.0f}s"
 
 
-def run_probe(model: str) -> dict:
+def run_probe(model: str, skip_multi_turn: bool) -> dict:
     """Run probe_assistant.py against the model; capture output + parse stats."""
     print(f"  probing {model}...", flush=True)
     t0 = time.monotonic()
+    cmd = [sys.executable, "tools/probe_assistant.py", "--model", model]
+    if skip_multi_turn:
+        cmd.append("--skip-multi-turn")
     try:
         r = subprocess.run(
-            [
-                sys.executable,
-                "tools/probe_assistant.py",
-                "--model",
-                model,
-                "--skip-multi-turn",
-            ],
+            cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -186,6 +183,12 @@ EXPECTED: list[tuple[str, str]] = [
     ("what's the weather", "conversational"),
     ("show recent fills", "query:recent_fills"),
     ("news from the past 12 hours", "query:recent_news"),
+    # Multi-turn drift follow-up (only scored when --skip-multi-turn
+    # is NOT passed). After history walks fills BTC -> ETH -> BTC, the
+    # follow-up "what about the past 6 hours" should still parse as a
+    # recent_fills query (ideally with lookback=6, symbol=BTC/USD).
+    # Models that lose the conversation thread score MISSING here.
+    ("what about the past 6 hours", "query:recent_fills"),
 ]
 
 
@@ -262,6 +265,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "'granite3-dense:8b-instruct-q8_0'). Default: run every entry in CANDIDATES."
         ),
     )
+    parser.add_argument(
+        "--skip-multi-turn",
+        action="store_true",
+        help=(
+            "Skip probe_assistant.py's multi-turn drift block (the conversation-"
+            "drift follow-up at the end). Default: include multi-turn -- it's the "
+            "main differentiator between models that hold context across turns "
+            "and those that don't."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -280,7 +293,7 @@ def main(argv: list[str] | None = None) -> None:
                 _write_summary(summary)
                 continue
             print(f"  {msg}", flush=True)
-            result = run_probe(model)
+            result = run_probe(model, args.skip_multi_turn)
             if not result.get("ok"):
                 print(f"  -> PROBE FAILED: {result.get('error')}", flush=True)
                 summary.append({"model": model, "status": f"PROBE_FAILED: {result.get('error')}"})
