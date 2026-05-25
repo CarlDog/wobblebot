@@ -262,6 +262,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Reconfigure stdout/stderr to UTF-8 because PowerShell's default
+    # cp1252 cannot encode Braille-spinner characters that show up in
+    # ``ollama pull``'s captured stderr when a model fails to pull. The
+    # 2026-05-25 first advisor sweep crashed printing such output from
+    # a wizardmath:7b pull failure mid-run.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
     args = _parse_args(argv)
     models = args.models or CANDIDATES
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
