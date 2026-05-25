@@ -223,38 +223,12 @@ def _parse_probe_output(output: str) -> dict:
     }
 
 
-def main() -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    summary: list[dict] = []
-    for i, model in enumerate(CANDIDATES, 1):
-        print(f"\n[{i}/{len(CANDIDATES)}] {model}", flush=True)
-        ok, msg = pull_model(model)
-        if not ok:
-            print(f"  -> SKIP ({msg})", flush=True)
-            summary.append({"model": model, "status": f"PULL_FAILED: {msg}"})
-            continue
-        print(f"  {msg}", flush=True)
-        result = run_probe(model)
-        if not result.get("ok"):
-            print(f"  -> PROBE FAILED: {result.get('error')}", flush=True)
-            summary.append({"model": model, "status": f"PROBE_FAILED: {result.get('error')}"})
-            continue
-        line = (
-            f"  -> {result['correct']}/{result['total']} correct, "
-            f"{result['errors']} errors, {result['elapsed']:.0f}s total"
-        )
-        print(line, flush=True)
-        summary.append(
-            {
-                "model": model,
-                "status": "OK",
-                "correct": result["correct"],
-                "total": result["total"],
-                "errors": result["errors"],
-                "elapsed": result["elapsed"],
-            }
-        )
+def _write_summary(summary: list[dict]) -> None:
+    """Persist the running summary so an interrupted sweep isn't lost."""
+    (RESULTS_DIR / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
+
+def _print_summary(summary: list[dict]) -> None:
     print(f"\n\n{'='*70}\nSUMMARY\n{'='*70}", flush=True)
     print(f"{'Model':50s}  {'Result':12s}  {'Total time':>10s}")
     print("-" * 80)
@@ -268,9 +242,47 @@ def main() -> None:
     for s in failed:
         print(f"{s['model']:50s}  {s['status']}")
 
-    (RESULTS_DIR / "summary.json").write_text(json.dumps(summary, indent=2))
-    print(f"\nFull per-model outputs: {RESULTS_DIR}/*.txt")
-    print(f"Summary JSON: {RESULTS_DIR}/summary.json")
+
+def main() -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    summary: list[dict] = []
+    try:
+        for i, model in enumerate(CANDIDATES, 1):
+            print(f"\n[{i}/{len(CANDIDATES)}] {model}", flush=True)
+            ok, msg = pull_model(model)
+            if not ok:
+                print(f"  -> SKIP ({msg})", flush=True)
+                summary.append({"model": model, "status": f"PULL_FAILED: {msg}"})
+                _write_summary(summary)
+                continue
+            print(f"  {msg}", flush=True)
+            result = run_probe(model)
+            if not result.get("ok"):
+                print(f"  -> PROBE FAILED: {result.get('error')}", flush=True)
+                summary.append({"model": model, "status": f"PROBE_FAILED: {result.get('error')}"})
+                _write_summary(summary)
+                continue
+            line = (
+                f"  -> {result['correct']}/{result['total']} correct, "
+                f"{result['errors']} errors, {result['elapsed']:.0f}s total"
+            )
+            print(line, flush=True)
+            summary.append(
+                {
+                    "model": model,
+                    "status": "OK",
+                    "correct": result["correct"],
+                    "total": result["total"],
+                    "errors": result["errors"],
+                    "elapsed": result["elapsed"],
+                }
+            )
+            _write_summary(summary)
+    finally:
+        _print_summary(summary)
+        _write_summary(summary)
+        print(f"\nFull per-model outputs: {RESULTS_DIR}/*.txt")
+        print(f"Summary JSON: {RESULTS_DIR}/summary.json")
 
 
 if __name__ == "__main__":
