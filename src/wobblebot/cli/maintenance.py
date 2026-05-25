@@ -347,10 +347,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.log_format is not None
         else (config.maintenance.log_format if config.maintenance else "plain")
     )
-    rotating_path: Path | None = None
-    if config.maintenance is not None and config.maintenance.log_file_path:
-        rotating_path = Path(config.maintenance.log_file_path)
-    configure_logging(log_format=log_format, rotating_file_path=rotating_path)
+    log_file_path = config.maintenance.log_file_path if config.maintenance else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
     run_with_clean_exit(_main_async(config), logger=_LOGGER)
 

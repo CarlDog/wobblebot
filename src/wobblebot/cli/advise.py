@@ -641,7 +641,8 @@ def main() -> int:
         return 2
 
     log_format = config.advise.log_format if config.advise else "plain"
-    configure_logging(log_format=log_format)
+    log_file_path = config.advise.log_file_path if config.advise else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
     run_with_clean_exit(_main_async(config), logger=_LOGGER)
 

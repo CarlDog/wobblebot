@@ -324,7 +324,8 @@ def _serve_command(args: argparse.Namespace) -> int:
         if args.log_format is not None
         else (config.web.log_format if config.web else "plain")
     )
-    configure_logging(log_format=log_format)
+    log_file_path = config.web.log_file_path if config.web else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
     run_with_clean_exit(_serve_async(config), logger=_LOGGER)
 
@@ -425,7 +426,8 @@ def _create_user_command(args: argparse.Namespace) -> int:
         if args.log_format is not None
         else (config.web.log_format if config.web else "plain")
     )
-    configure_logging(log_format=log_format)
+    log_file_path = config.web.log_file_path if config.web else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
     return asyncio.run(_create_user_async(config))
 
 

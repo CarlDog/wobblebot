@@ -69,11 +69,11 @@ _PLAIN_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _ROTATING_HANDLER_NAME = "wobblebot.rotating-file"
 
 
-def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     level: str | None = None,
     log_format: LogFormat | None = None,
     stream: IO[str] | None = None,
-    rotating_file_path: Path | None = None,
+    rotating_file_path: Path | str | None = None,
     rotate_when: str = "midnight",
     rotate_backup_count: int = 7,
 ) -> None:
@@ -141,11 +141,15 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
     root.addHandler(handler)
 
     # Optional rotating-file handler (Stage 8.2.D). Added ALONGSIDE
-    # the stream handler — the operator gets both streams.
+    # the stream handler — the operator gets both streams. Accepts
+    # str or Path so daemon CLIs can pass `config.<daemon>.log_file_path`
+    # directly without coercing per-callsite (added 2026-05-25 when
+    # file logging was wired across every daemon).
     if rotating_file_path is not None:
-        rotating_file_path.parent.mkdir(parents=True, exist_ok=True)
+        rotating_path = Path(rotating_file_path)
+        rotating_path.parent.mkdir(parents=True, exist_ok=True)
         rotating = logging.handlers.TimedRotatingFileHandler(
-            filename=str(rotating_file_path),
+            filename=str(rotating_path),
             when=rotate_when,
             backupCount=rotate_backup_count,
             encoding="utf-8",

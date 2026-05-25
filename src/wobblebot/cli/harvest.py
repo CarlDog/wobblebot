@@ -699,7 +699,8 @@ def main() -> int:
         if args.log_format is not None
         else (config.harvest.log_format if config.harvest else "plain")
     )
-    configure_logging(log_format=log_format)
+    log_file_path = config.harvest.log_file_path if config.harvest else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
     run_with_clean_exit(
         _main_async(config, execute_proposal_id=args.execute),

@@ -305,7 +305,8 @@ def main() -> int:
         return 2
 
     log_format = config.news.log_format if config.news else "plain"
-    configure_logging(log_format=log_format)
+    log_file_path = config.news.log_file_path if config.news else None
+    configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
     run_with_clean_exit(_main_async(config), logger=_LOGGER)
 

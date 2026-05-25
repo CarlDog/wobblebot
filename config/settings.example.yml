@@ -140,6 +140,11 @@ live:
   max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 5.0           # mark-to-market portfolio drop (USD) that aborts the session
   log_format: plain                   # plain | json
+  # Rotating-file log with daily rotation (7-day retention). Soak-period
+  # follow-up (2026-05-25) wired this through every long-running daemon
+  # so a silent crash leaves a postmortem trail. Set to null for stderr-
+  # only. Default applies even when this line is absent.
+  log_file_path: "data/logs/live.log"
   # Stage 5.4: wires cli/live to the operator interaction layer. With
   # this set, cli/live writes session/fill/cap notifications to the
   # notifications table AND polls pending_commands WHERE status='approved'
@@ -159,6 +164,7 @@ shadow:
   max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 100.0         # synthetic — be generous
   log_format: plain
+  log_file_path: "data/logs/shadow.log"  # daily rotation, 7-day retention. null = stderr only.
 
   # Synthetic balances at session start. Operator-supplied; never
   # inferred from real Kraken (per ADR-008's muscle-memory guard).
@@ -200,6 +206,7 @@ observe:
     - BCH/USD
   db: "data/wobblebot-observe.db"
   log_format: plain
+  log_file_path: "data/logs/observe.log"  # daily rotation, 7-day retention. null = stderr only.
 
 # ============================================================================
 # Per-CLI: preflight (cli/preflight)
@@ -303,6 +310,7 @@ news:
     fuzzy_threshold: 60.0
 
   log_format: plain
+  log_file_path: "data/logs/news.log"  # daily rotation, 7-day retention. null = stderr only.
 
 # ============================================================================
 # Per-CLI: advise (cli/advise — Stage 3.3 Passive Advisory Workflow)
@@ -330,6 +338,7 @@ advise:
   news_match_coin: false                    # true = only news mentioning the symbol's base
   news_limit: 20                            # cap items per cycle (prompt-token budget)
   log_format: plain
+  log_file_path: "data/logs/advise.log"     # daily rotation, 7-day retention. null = stderr only.
 
 # ============================================================================
 # Strategy Advisor (Phase 3 — see ADR-007 + ADR-009)
@@ -388,6 +397,7 @@ advisor:
 harvest:
   db: "data/wobblebot-harvest.db"       # transfer_proposals lands here
   log_format: plain                     # plain | json
+  log_file_path: "data/logs/harvest.log"  # daily rotation, 7-day retention. null = stderr only.
   # Stage 5.5: wires cli/harvest to the notifications table so proposal
   # generated / withdrawal failed / withdrawal executed events surface
   # to Discord via cli/operator's forwarder. Set to null to run silent.
@@ -543,6 +553,7 @@ operator:
   # disable. Bounded 0-100 by the schema.
   history_backfill_messages: 20
   log_format: plain                       # plain | json
+  log_file_path: "data/logs/operator.log" # daily rotation, 7-day retention. null = stderr only.
 
 # ============================================================================
 # Cloud LLM cost caps + retry policy (Phase 6 — ADR-014 + ADR-015)
@@ -648,6 +659,7 @@ web:
   observe_db: "data/wobblebot-observe.db"
   news_db: "data/wobblebot-news.db"
   log_format: plain                       # plain | json
+  log_file_path: "data/logs/web.log"      # daily rotation, 7-day retention. null = stderr only.
 
 # ============================================================================
 # Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
@@ -700,11 +712,7 @@ maintenance:
   keep_n_daily_backups: 7
 
   log_format: plain                       # plain | json
-
-  # Optional rotating-file log destination. When set, the daemon
-  # also writes to this file with daily rotation (7 day retention).
-  # Leave commented to keep stdout-only behavior.
-  # log_file_path: "data/logs/maintenance.log"
+  log_file_path: "data/logs/maintenance.log"  # daily rotation, 7-day retention. null = stderr only.
 
   # Stage 8.4.E follow-up — when set, cli/maintenance opens operator.db
   # and writes a daemon_heartbeat row at the top of each scheduled

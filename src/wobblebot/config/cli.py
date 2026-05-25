@@ -75,6 +75,12 @@ class LiveConfig(BaseModel):
     max_runtime_minutes: float | None = Field(default=60.0, gt=0)
     max_session_loss_usd: Decimal = Field(default=Decimal("5"), gt=Decimal("0"))
     log_format: LogFormat = "plain"
+    # Soak-period reliability follow-up (2026-05-25): every long-running
+    # daemon defaults to file logging now. The previous default of
+    # stderr-only meant a daemon that died silently left no postmortem
+    # trail once its terminal closed; today's cli/harvest diagnostic gap
+    # made the cost concrete. Operator opts out by setting null.
+    log_file_path: str | None = "data/logs/live.log"
     # Stage 5.4: path to the operator interaction DB. When set, cli/live
     # opens it as a second StoragePort + wires the OperatorService poll
     # loop. When None, cli/live runs Discord-ignorant (no operator
@@ -121,6 +127,7 @@ class ShadowConfig(BaseModel):
     max_runtime_minutes: float | None = Field(default=60.0, gt=0)
     max_session_loss_usd: Decimal = Field(default=Decimal("100"), gt=Decimal("0"))
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/shadow.log"
 
     initial_balances: dict[str, Decimal]
     maker_fee_rate: Decimal = Field(default=Decimal("0.0026"), ge=Decimal("0"))
@@ -158,6 +165,7 @@ class ObserveConfig(BaseModel):
     symbols: list[Symbol]
     db: str = "data/wobblebot-observe.db"
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/observe.log"
 
     class Config:
         frozen = True
@@ -312,6 +320,7 @@ class NewsConfig(BaseModel):
     cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
     dedup: NewsDedupConfig = Field(default_factory=NewsDedupConfig)
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/news.log"
 
     class Config:
         frozen = True
@@ -348,6 +357,7 @@ class AdviseConfig(BaseModel):
     news_match_coin: bool = False
     news_limit: int = Field(default=20, ge=0)
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/advise.log"
 
     class Config:
         frozen = True
@@ -382,6 +392,7 @@ class HarvestConfig(BaseModel):
 
     db: str = "data/wobblebot-harvest.db"
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/harvest.log"
     # Stage 5.5: path to the operator interaction DB. When set,
     # cli/harvest opens it as a second StoragePort and writes outbound
     # event Notifications (proposal generated, withdrawal executed,
@@ -505,6 +516,7 @@ class OperatorConfig(BaseModel):
     history_backfill_messages: int = Field(default=20, ge=0, le=100)
 
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/operator.log"
 
     class Config:
         frozen = True
@@ -578,6 +590,7 @@ class WebConfig(BaseModel):
     news_db: str | None = None
 
     log_format: LogFormat = "plain"
+    log_file_path: str | None = "data/logs/web.log"
 
     class Config:
         frozen = True
@@ -644,10 +657,12 @@ class MaintenanceConfig(BaseModel):
 
     log_format: LogFormat = "plain"
 
-    # Optional rotating-file log destination. When set, configure_logging
-    # adds a TimedRotatingFileHandler alongside stderr. Default None
-    # keeps stdout-only behavior.
-    log_file_path: str | None = None
+    # Rotating-file log destination. Default points at data/logs/
+    # alongside every other daemon's log per the 2026-05-25 soak-
+    # period file-logging audit. configure_logging adds a
+    # TimedRotatingFileHandler alongside stderr. Set null to disable
+    # (stdout/stderr only).
+    log_file_path: str | None = "data/logs/maintenance.log"
 
     # ---- Operator interaction ---- #
 

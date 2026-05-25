@@ -1339,7 +1339,8 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     log_format = config.operator.log_format if config.operator is not None else "plain"
-    configure_logging(level="INFO", log_format=log_format)
+    log_file_path = config.operator.log_file_path if config.operator is not None else None
+    configure_logging(level="INFO", log_format=log_format, rotating_file_path=log_file_path)
     # Catch KeyboardInterrupt at the top so Ctrl+C produces a clean
     # exit-code-0 line instead of a CancelledError traceback —
     # mirrors the pattern cli/live and cli/web already use.
