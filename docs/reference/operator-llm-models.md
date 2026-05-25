@@ -18,11 +18,22 @@ or when adding a new model to the operator's Ollama install.
   we have no data. See the "Foreign-language operator support
   -- audit + test coverage" v1.1 entry in
   `docs/release/v1.1/operator-ux.md` for the planned audit.
-- **Quantization**: scores below are at `q8_0` for the
-  apples-to-apples capability ceiling. A low-VRAM operator
-  running `q4_K_M` (the common default for tier B/C/D
-  candidates) may see 5-15% degradation; a planned q4 second
-  pass against the q8 passers will quantify this.
+- **Quantization**: the top-of-page "Results" table is at
+  `q8_0` — the apples-to-apples capability ceiling on the
+  operator's high-RAM workstation. A separate **Low-end
+  hardware recommendations** section below carries `q4_K_M`
+  scores from the 2026-05-25 audit, suitable for operators
+  on consumer laptops or older GPUs. The q8→q4 quality drop
+  is real but smaller than expected — 7-10B-class models
+  hold their routing accuracy through quantization; the 1B
+  class collapses regardless of quantization.
+- **Multi-turn drift**: results from 2026-05-25 onward are
+  scored out of **15** because the conversation-drift
+  follow-up (BTC → ETH → BTC fills history, then "what about
+  the past 6 hours") was added to ``EXPECTED``. Pre-2026-05-25
+  results stay at /14. The follow-up is the main
+  differentiator between models that hold context across
+  turns and those that don't.
 
 ## Battery
 
@@ -90,6 +101,73 @@ prompt iteration.
 - `deepseek-r1:14b-qwen-distill-q8_0` — functional but **44s/call**
   makes operator interactions feel sluggish. Acceptable for batch
   use, not chat.
+
+## Low-end hardware recommendations (q4_K_M)
+
+Audit run 2026-05-25 against 12 `q4_K_M` candidates spanning
+the three hardware tiers an operator with weaker-than-the-
+maintainer's hardware would reach for. The maintainer runs
+phi4 at q8_0 on a 64GB workstation; these recommendations
+are for everyone else.
+
+Scored on the same routing battery as the top table, plus
+the multi-turn drift follow-up (total /15).
+
+### Recommended pick per tier
+
+| Hardware budget | Recommended | Score | Disk | Why |
+|---|---|---|---|---|
+| **Bottom — 8GB RAM, no GPU** | `qwen2.5:1.5b-instruct-q4_K_M` | 11/15 (1 err) | ~1GB | The only sub-2B model that scores above floor on this prompt. Beats every 2B candidate in the audit. 39s probe time was the fastest in the sweep. |
+| **Mid — 16GB RAM, no GPU** | `qwen2.5:3b-instruct-q4_K_M` | **13/15 (0 err)** | ~1.9GB | The standout — zero parse errors at 3B, matches the 7B and 10B class. Strongest "value pick" in the audit. |
+| **Upper-mid — 16GB + 4-6GB VRAM** | `solar:10.7b-instruct-v1-q4_K_M` | **14/15 (0 err)** | ~6.5GB | Highest score in the entire low-end sweep — beat granite3-dense:8b's q4 result by one point. Upstage's SOLAR 10.7B has a noticeable affinity for structured-output prompts. |
+
+### Full audit data
+
+Ranked by accuracy then speed. Speed numbers reflect first-load latency on the operator's hardware on 2026-05-25 (models hosted on memory-card storage — typical disks will be faster).
+
+| Model | Score | Errors | Time | Notes |
+|---|---|---|---|---|
+| `solar:10.7b-instruct-v1-q4_K_M` | **14/15** | 0 | 136s | Sweep winner |
+| `qwen2.5:3b-instruct-q4_K_M` | 13/15 | 0 | 89s | Best efficiency |
+| `qwen2.5:7b-instruct-q4_K_M` | 13/15 | 0 | 104s | Diminishing returns vs 3b |
+| `granite3-dense:8b-instruct-q4_K_M` | 13/15 | 0 | 115s | q8 was 13/14; q4 holds |
+| `mistral:7b-instruct-v0.3-q4_K_M` | 12/15 | 1 | 114s | Solid baseline |
+| `nemotron-mini:4b-instruct-q4_K_M` | 12/15 | 1 | 121s | NVIDIA's mid-class |
+| `qwen2.5:1.5b-instruct-q4_K_M` | 11/15 | 1 | 39s | Bottom-tier winner |
+| `phi3.5:3.8b-mini-instruct-q4_K_M` | 11/15 | 0 | 80s | Zero errors but lower score |
+| `gemma2:2b-instruct-q4_K_M` | 10/15 | 2 | 91s | Marginal |
+| `llama3:8b-instruct-q4_K_M` | 10/15 | 1 | 114s | q8 was 12/14; quantization hurt this one |
+| `granite3-dense:2b-instruct-q4_K_M` | 9/15 | 3 | 66s | Underperforms qwen2.5:1.5b |
+| `llama3.2:1b-instruct-q4_K_M` | **1/15** | 11 | 129s | **Incompatible — pattern matches q8 1b failure** |
+
+### Avoid at low-end
+
+- **`llama3.2:1b-*`** at any quantization. 1/15 at q4, 4/14 at
+  q8 (yesterday's audit). The 1B parameter count is below the
+  threshold for following this routing schema regardless of
+  quantization — operators reaching for a sub-2B model should
+  pick `qwen2.5:1.5b-instruct-q4_K_M` instead.
+- **`granite3-dense:2b`** — underperforms qwen2.5:1.5b at
+  roughly the same disk size. Stick to qwen2.5 below 4B.
+
+### q4 vs q8 reality check
+
+Three models were tested at both quantizations:
+
+| Model | q8 score (2026-05-24) | q4 score (2026-05-25) | Delta |
+|---|---|---|---|
+| `granite3-dense:8b` | 13/14 | 13/15 (+1 multi-turn) | flat |
+| `qwen2.5:7b` | 12/14 | 13/15 (+1 multi-turn) | flat |
+| `qwen2.5:3b` | 12/14 | 13/15 (+1 multi-turn) | flat |
+| `llama3:8b` | 12/14 | 10/15 | **−2 effective** |
+| `mistral:7b-instruct-v0.3` | 11/14 | 12/15 (+1 multi-turn) | flat |
+
+The 7-10B `qwen2.5` and `granite3-dense` families lose
+essentially nothing at q4_K_M for this prompt — operators on
+mid-tier hardware can use q4 without quality concerns.
+`llama3:8b` is the exception; its quantization sensitivity is
+unusual and bears watching if operators report routing
+regressions.
 
 ## Untested candidates by VRAM tier
 
