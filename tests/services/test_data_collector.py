@@ -150,6 +150,9 @@ class _FailingStorage(StoragePort):
     async def delete_price_snapshots(self, *, before: datetime) -> int:
         raise StorageError(self._message)
 
+    async def save_price_snapshots(self, snapshots):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def save_ohlc_bars(self, bars):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

@@ -239,6 +239,34 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
         pass
 
+    @abstractmethod
+    async def save_price_snapshots(self, snapshots: list[tuple[Symbol, Price, Timestamp]]) -> int:
+        """Bulk-append price observations to the snapshot history.
+
+        Batch variant of ``save_price_snapshot`` introduced for v1.1
+        backfill — synthesizing snapshots from OHLC bars writes 10k+
+        rows per symbol; one INSERT per row dominates wall-clock.
+
+        v1.1 limitation: ``price_snapshots`` has no UNIQUE constraint
+        on ``(symbol, observed_at)`` yet, so re-running a backfill over
+        an already-written window produces duplicate snapshot rows.
+        ``ohlc_bars`` is the canonical record and IS idempotent;
+        ``price_snapshots`` is a derived view operators populate via
+        backfill. The migration to a UNIQUE constraint is queued as a
+        v1.1+ follow-up.
+
+        Args:
+            snapshots: List of (symbol, price, observed_at) tuples.
+                Empty list is a 0-row no-op.
+
+        Returns:
+            Count of rows inserted (= len(snapshots) since no dedup
+            yet).
+
+        Raises:
+            StorageError: On DB write failure.
+        """
+
     # OHLC bar operations (v1.1 backfill — 2026-05-25)
     @abstractmethod
     async def save_ohlc_bars(self, bars: list[OHLCBar]) -> int:

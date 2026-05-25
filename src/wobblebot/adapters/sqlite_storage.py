@@ -403,6 +403,40 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await conn.rollback()
             raise StorageError(f"Failed to save price snapshot for {symbol}: {exc}") from exc
 
+    async def save_price_snapshots(self, snapshots: list[tuple[Symbol, Price, Timestamp]]) -> int:
+        """Bulk-write price snapshots via executemany.
+
+        Empty input is a clean 0-row return — no DB round-trip.
+        """
+        if not snapshots:
+            return 0
+        conn = self._require_conn()
+        rows = [
+            (
+                symbol.base,
+                symbol.quote,
+                str(price.amount),
+                price.currency,
+                observed_at.dt.isoformat(),
+            )
+            for symbol, price, observed_at in snapshots
+        ]
+        try:
+            await conn.executemany(
+                """
+                INSERT INTO price_snapshots (
+                    symbol_base, symbol_quote,
+                    price_amount, price_currency, observed_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            await conn.commit()
+            return len(rows)
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save price snapshots: {exc}") from exc
+
     async def save_ohlc_bars(self, bars: list[OHLCBar]) -> int:
         """Persist OHLC bars; idempotent via UNIQUE constraint.
 
