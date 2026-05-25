@@ -223,6 +223,45 @@ async def _run_loop(
     return 0
 
 
+async def _close_news_sources(
+    sources: list[NewsPort],
+    *,
+    per_source_timeout_seconds: float = 2.0,
+) -> None:
+    """Close every news source with a per-source time budget.
+
+    The 2026-05-25 shutdown audit found that httpx-backed sources
+    (CryptoCompareAdapter, RssNewsAdapter) can wait several seconds
+    inside ``aclose()`` for in-flight pool connections to drain.
+    With a typical config of CryptoCompare + 4-6 RSS feeds, the
+    serial-close pattern dominated the shutdown budget on bounce.
+
+    Cap each source's close at ``per_source_timeout_seconds`` (2s by
+    default). On overrun, log a warning and continue to the next
+    source -- losing pool drain on one source beats holding up the
+    daemon's exit. The outer ``safe_shutdown`` still wraps the whole
+    sequence with its own 10s cap as a backstop.
+    """
+    for source in sources:
+        aclose = getattr(source, "aclose", None)
+        if aclose is None:
+            continue
+        try:
+            await asyncio.wait_for(aclose(), timeout=per_source_timeout_seconds)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "source close exceeded %ss budget; proceeding",
+                per_source_timeout_seconds,
+                extra={"source_id": source.source_id},
+            )
+        except (NewsError, OSError) as exc:
+            _LOGGER.warning(
+                "source close failed: %s",
+                exc,
+                extra={"source_id": source.source_id, "error": str(exc)},
+            )
+
+
 async def _main_async(config: WobbleBotConfig) -> int:
     if config.news is None:
         _LOGGER.error("settings.yml is missing the `news:` section")
@@ -251,17 +290,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
     async def _close_all_sources() -> None:
-        for source in sources:
-            aclose = getattr(source, "aclose", None)
-            if aclose is None:
-                continue
-            try:
-                await aclose()
-            except (NewsError, OSError) as exc:
-                _LOGGER.warning(
-                    "source close failed",
-                    extra={"source_id": source.source_id, "error": str(exc)},
-                )
+        await _close_news_sources(sources)
 
     try:
         return await _run_loop(sources, storage, config.news, interval, stop_event)
