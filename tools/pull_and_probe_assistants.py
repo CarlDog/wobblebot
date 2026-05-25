@@ -17,6 +17,7 @@ At the end, print a summary table sorted by accuracy.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -243,12 +244,35 @@ def _print_summary(summary: list[dict]) -> None:
         print(f"{s['model']:50s}  {s['status']}")
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Sweep an Ollama-served candidate list against the operator-assistant "
+            "routing battery. With no positional args the full hard-coded CANDIDATES "
+            "list runs (~40 models); pass explicit model tags to run a subset (e.g. "
+            "to re-probe just the top tier from a prior sweep)."
+        ),
+    )
+    parser.add_argument(
+        "models",
+        nargs="*",
+        help=(
+            "Explicit Ollama tags to probe. Overrides the default CANDIDATES list. "
+            "Use the same tag format the default list uses (e.g. "
+            "'granite3-dense:8b-instruct-q8_0'). Default: run every entry in CANDIDATES."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    models = args.models or CANDIDATES
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     summary: list[dict] = []
     try:
-        for i, model in enumerate(CANDIDATES, 1):
-            print(f"\n[{i}/{len(CANDIDATES)}] {model}", flush=True)
+        for i, model in enumerate(models, 1):
+            print(f"\n[{i}/{len(models)}] {model}", flush=True)
             ok, msg = pull_model(model)
             if not ok:
                 print(f"  -> SKIP ({msg})", flush=True)
