@@ -160,9 +160,22 @@ async def emit_heartbeat(operator_storage: StoragePort | None, daemon_name: str)
     try:
         await operator_storage.upsert_daemon_heartbeat(daemon_name, datetime.now(UTC))
     except WobbleBotPortError as exc:
+        # Inline the daemon name + error class + message into the
+        # log line itself. extra={...} is invisible in plain log
+        # format (only json format renders it), and operators
+        # running with the default plain format previously saw a
+        # context-free "heartbeat emit failed; continuing" with no
+        # way to diagnose the underlying StorageError / etc.
         _HEARTBEAT_LOGGER.warning(
-            "heartbeat emit failed; continuing",
-            extra={"daemon": daemon_name, "error": str(exc)},
+            "heartbeat emit for %s failed: %s: %s; continuing",
+            daemon_name,
+            type(exc).__name__,
+            exc,
+            extra={
+                "daemon": daemon_name,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
         )
 
 
