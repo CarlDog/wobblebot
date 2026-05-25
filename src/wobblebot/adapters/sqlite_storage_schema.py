@@ -96,6 +96,30 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
     ON price_snapshots(symbol_base, symbol_quote, observed_at);
 
+-- v1.1 backfill (2026-05-25): OHLC bars from Kraken's /0/public/OHLC.
+-- Populated by cli/observe --backfill and the daemon-startup auto-gap-
+-- fill hook. Idempotent via UNIQUE(symbol, interval, opened_at); re-
+-- running a backfill over the same window is a no-op.
+CREATE TABLE IF NOT EXISTS ohlc_bars (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_base      TEXT NOT NULL,
+    symbol_quote     TEXT NOT NULL,
+    interval_minutes INTEGER NOT NULL,
+    opened_at        TEXT NOT NULL,
+    open             TEXT NOT NULL,
+    high             TEXT NOT NULL,
+    low              TEXT NOT NULL,
+    close            TEXT NOT NULL,
+    vwap             TEXT NOT NULL,
+    volume           TEXT NOT NULL,
+    count            INTEGER NOT NULL,
+    fetched_at       TEXT NOT NULL,
+    UNIQUE (symbol_base, symbol_quote, interval_minutes, opened_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ohlc_bars_symbol_interval_time
+    ON ohlc_bars(symbol_base, symbol_quote, interval_minutes, opened_at);
+
 CREATE TABLE IF NOT EXISTS news_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source          TEXT NOT NULL,

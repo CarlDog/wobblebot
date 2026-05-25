@@ -50,7 +50,7 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
-from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.exceptions import StorageError
@@ -402,6 +402,82 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save price snapshot for {symbol}: {exc}") from exc
+
+    async def save_ohlc_bars(self, bars: list[OHLCBar]) -> int:
+        """Persist OHLC bars; idempotent via UNIQUE constraint.
+
+        Uses INSERT OR IGNORE so a re-run over an already-fetched
+        window is a no-op. Returns the count of rows actually inserted
+        (sqlite3 ``cursor.rowcount`` accumulates across executemany
+        with ``OR IGNORE``).
+
+        Empty input is a clean 0-row return — no DB round-trip.
+        """
+        if not bars:
+            return 0
+        conn = self._require_conn()
+        fetched_at = datetime.now(UTC).isoformat()
+        rows = [
+            (
+                ohlc.symbol.base,
+                ohlc.symbol.quote,
+                ohlc.interval_minutes,
+                ohlc.opened_at.isoformat(),
+                str(ohlc.open),
+                str(ohlc.high),
+                str(ohlc.low),
+                str(ohlc.close),
+                str(ohlc.vwap),
+                str(ohlc.volume),
+                ohlc.count,
+                fetched_at,
+            )
+            for ohlc in bars
+        ]
+        try:
+            cursor = await conn.executemany(
+                """
+                INSERT OR IGNORE INTO ohlc_bars (
+                    symbol_base, symbol_quote, interval_minutes, opened_at,
+                    open, high, low, close, vwap, volume, count, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            inserted = cursor.rowcount if cursor.rowcount is not None else 0
+            await conn.commit()
+            return max(0, inserted)
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save OHLC bars: {exc}") from exc
+
+    async def get_latest_observed_at(self, symbol: Symbol) -> datetime | None:
+        """Return the most-recent ``price_snapshots.observed_at`` for ``symbol``.
+
+        Returns None when no snapshots have ever been written for the
+        symbol — a fresh observe DB or a never-tracked symbol both look
+        the same to the caller, which is fine for the gap-fill use case
+        (in either situation the daemon shouldn't auto-backfill).
+        """
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """
+                SELECT MAX(observed_at) AS latest
+                FROM price_snapshots
+                WHERE symbol_base = ? AND symbol_quote = ?
+                """,
+                (symbol.base, symbol.quote),
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read latest observed_at for {symbol}: {exc}") from exc
+        if row is None or row[0] is None:
+            return None
+        parsed = datetime.fromisoformat(str(row[0]))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
 
     async def save_news_item(self, item: NewsItem) -> None:
         conn = self._require_conn()

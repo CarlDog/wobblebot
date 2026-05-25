@@ -12,7 +12,7 @@ from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
-from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
@@ -238,6 +238,48 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: If save fails.
         """
         pass
+
+    # OHLC bar operations (v1.1 backfill — 2026-05-25)
+    @abstractmethod
+    async def save_ohlc_bars(self, bars: list[OHLCBar]) -> int:
+        """Persist a batch of OHLC bars; idempotent on (symbol, interval, opened_at).
+
+        Re-running a backfill over the same window is a no-op at the
+        storage layer — the UNIQUE constraint causes duplicate inserts
+        to be silently ignored. Counts only NEW rows inserted so the
+        backfill service can report "actually fetched N new bars".
+
+        Args:
+            bars: OHLC bars to persist. Empty list is a 0-row no-op.
+
+        Returns:
+            Count of rows actually inserted (after dedup). May be less
+            than ``len(bars)`` if some bars were already present.
+
+        Raises:
+            StorageError: On reasons other than dedup (DB unreachable,
+                schema mismatch, etc.).
+        """
+
+    @abstractmethod
+    async def get_latest_observed_at(self, symbol: Symbol) -> datetime | None:
+        """Return the most-recent ``observed_at`` for ``symbol`` in price_snapshots.
+
+        Backs the cli/observe daemon-startup gap-fill detection (v1.1):
+        the daemon computes ``now - get_latest_observed_at(symbol)`` to
+        decide whether to run an auto-backfill before entering the
+        normal poll loop.
+
+        Args:
+            symbol: Trading pair.
+
+        Returns:
+            UTC datetime of the most-recent snapshot for ``symbol``, or
+            ``None`` if no snapshots have ever been written for it.
+
+        Raises:
+            StorageError: On DB read failure.
+        """
 
     # News item operations (Stage 3.2.5 — News Ingestion)
     @abstractmethod
