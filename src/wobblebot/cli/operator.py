@@ -1029,6 +1029,43 @@ def _build_assistant(  # pylint: disable=too-many-return-statements
     return None
 
 
+async def _close_transport_with_cap(
+    transport: DiscordTransport,
+    gateway_task: asyncio.Task[None],
+    *,
+    timeout_seconds: float = 10.0,
+) -> None:
+    """Close the Discord transport with a hard time budget.
+
+    discord.py's Gateway-websocket close routinely takes 20-30s on
+    Windows: it waits for the WS close frame, the heartbeat-task
+    teardown, and the rate-limit recorder to flush. The 2026-05-25
+    bounce experience surfaced this as a multi-second perceived hang
+    on Ctrl-C across every cli/operator restart.
+
+    If transport.close() doesn't return within ``timeout_seconds``,
+    log a warning and proceed; the gateway_task is cancelled to make
+    sure the orphan coroutine doesn't dangle past process exit. The
+    cancellation is wrapped in a try/except for ``CancelledError``
+    (the expected outcome of cancel-then-await) and
+    ``DiscordTransportError`` (which may surface during teardown).
+    """
+    try:
+        await asyncio.wait_for(transport.close(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "discord transport close exceeded %ss budget; "
+            "cancelling gateway task and proceeding to shutdown",
+            timeout_seconds,
+        )
+    if not gateway_task.done():
+        gateway_task.cancel()
+    try:
+        await gateway_task
+    except (asyncio.CancelledError, DiscordTransportError):
+        pass
+
+
 async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
     config: WobbleBotConfig,
 ) -> int:
@@ -1275,8 +1312,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         # SIGINT triggers transport.close() via the signal handler.
         gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
         await stop_event.wait()
-        await transport.close()
-        await gateway_task
+        await _close_transport_with_cap(transport, gateway_task)
     except DiscordTransportError as exc:
         _LOGGER.error("discord transport failed; exiting", extra={"error": str(exc)})
         exit_code = 1
