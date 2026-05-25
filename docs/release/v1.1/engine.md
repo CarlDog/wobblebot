@@ -216,6 +216,62 @@ where the concurrency picture changes.
 volume. Earlier triggers if anomaly detector surfaces lock
 contention metrics post-launch.
 
+### operator.db SQLite write-contention: busy_timeout + retry-on-lock
+
+**What:** tune the SQLite connection's `busy_timeout` higher than
+the aiosqlite default (effectively 5s via Python `sqlite3.connect`
+default), AND wrap the small handful of operator.db writers
+(emit_heartbeat, save_notification, save_pending_command) in a
+short retry-on-`database is locked` loop. Three retries with
+50ms backoff would absorb almost all real contention.
+
+**Why high value:** the 2026-05-25 emit_heartbeat-visibility fix
+(commit `4868613`) surfaced its first real ``database is locked``
+event the same afternoon:
+
+```
+2026-05-25 17:34:05  WARNING wobblebot.cli.heartbeat:
+  heartbeat emit for cli/operator failed:
+  StorageError: Failed to upsert heartbeat for 'cli/operator':
+  database is locked; continuing
+```
+
+Both cli/live (heartbeats every 5s) and cli/operator (heartbeats
+every 2s via forwarder cadence) write to ``operator.db``'s
+``daemon_heartbeats`` table. WAL mode allows concurrent readers
+but serializes writers; a write that can't get the lock inside
+``busy_timeout`` falls through to ``SQLITE_BUSY``. The
+heartbeat's `except WobbleBotPortError` catches it, logs, and
+continues -- correct safety behavior, but it means the
+``/health`` view's freshness threshold can briefly flap to STALE
+for whichever daemon lost the race.
+
+**What's missing:**
+
+- An explicit ``PRAGMA busy_timeout = 30000`` (or similar) call in
+  ``SQLiteStorageAdapter.connect()`` after WAL setup. The
+  aiosqlite default isn't documented to track Python `sqlite3`'s
+  5s default, and a longer wait is cheap insurance for the
+  hot-write daemons.
+- A small `services/storage_retry.py` helper:
+  ``async def retry_on_locked(callable, attempts=3, backoff=0.05)``.
+  Used by the three known concurrent writers (emit_heartbeat,
+  save_notification, save_pending_command). Doesn't generalize to
+  every storage method -- only the ones with documented contention.
+
+**Why deferred:** the failure mode is benign today (heartbeat
+warnings, no data loss). The fix is small but the verification
+that "we didn't introduce a deadlock" requires the SQLite
+concurrency stress test above to land first. They pair naturally.
+
+**Trigger:** ship after the SQLite concurrency stress test; or
+earlier if ``database is locked`` warnings cross a frequency
+threshold the operator finds annoying.
+
+**Cross-references:** pairs with the **SQLite concurrency stress
+test** entry above; the stress test provides the verification
+harness, this entry is the concrete fix it would validate.
+
 ### Reconciler fill-vs-cancel disambiguation
 
 **What:** extend `services/reconciler.py`'s storage-only handling
