@@ -96,6 +96,14 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
     ON price_snapshots(symbol_base, symbol_quote, observed_at);
 
+-- v1.1 backfill follow-up (2026-05-25): UNIQUE index on
+-- (symbol_base, symbol_quote, observed_at) intentionally NOT declared
+-- here -- a pre-existing observe.db with duplicate rows would fail
+-- at schema apply before the migration could dedup. The migration
+-- function _migrate_price_snapshots_unique in sqlite_storage.py
+-- creates the index after dedup; this handles both fresh DBs (no
+-- rows, no dedup, just creates) and legacy DBs (dedup then create).
+
 -- v1.1 backfill (2026-05-25): OHLC bars from Kraken's /0/public/OHLC.
 -- Populated by cli/observe --backfill and the daemon-startup auto-gap-
 -- fill hook. Idempotent via UNIQUE(symbol, interval, opened_at); re-

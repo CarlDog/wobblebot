@@ -78,10 +78,15 @@ recently-added symbols (the 12 observe.symbols added Day 3 only had
 restart so the operator doesn't have to remember to backfill after
 every bounce.
 
-**v1.1 limitation:** `price_snapshots` has no UNIQUE constraint yet,
+~~**v1.1 limitation:** `price_snapshots` has no UNIQUE constraint yet,
 so re-running an overlapping backfill window duplicates synthesized
-snapshots. `ohlc_bars` stays idempotent. UNIQUE-constraint migration
-queued as a v1.1+ follow-up.
+snapshots.~~ ✅ **resolved 2026-05-25** in a slice-3 follow-up. The
+`_migrate_price_snapshots_unique` migration in `sqlite_storage.py`
+dedups any existing rows then adds the UNIQUE index; both
+`save_price_snapshot` and `save_price_snapshots` use INSERT OR
+IGNORE so concurrent backfill-during-daemon produces no duplicate
+rows. Both halves (`ohlc_bars` + `price_snapshots`) are now fully
+idempotent.
 
 **Cross-references:** the "Proper OHLC + TA indicators" entry below
 now has its data-acquisition substrate in place — implementing

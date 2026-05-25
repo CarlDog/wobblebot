@@ -247,21 +247,22 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         backfill — synthesizing snapshots from OHLC bars writes 10k+
         rows per symbol; one INSERT per row dominates wall-clock.
 
-        v1.1 limitation: ``price_snapshots`` has no UNIQUE constraint
-        on ``(symbol, observed_at)`` yet, so re-running a backfill over
-        an already-written window produces duplicate snapshot rows.
-        ``ohlc_bars`` is the canonical record and IS idempotent;
-        ``price_snapshots`` is a derived view operators populate via
-        backfill. The migration to a UNIQUE constraint is queued as a
-        v1.1+ follow-up.
+        Idempotent on ``(symbol, observed_at)``: re-running an
+        overlapping backfill window is a no-op at the storage layer
+        thanks to the UNIQUE index on price_snapshots. The
+        SQLiteStorageAdapter uses ``INSERT OR IGNORE`` so duplicate
+        rows are silently dropped. Existing observe.db files migrate
+        on connect (dedup-then-add-index, logged WARNING if any rows
+        were collapsed).
 
         Args:
             snapshots: List of (symbol, price, observed_at) tuples.
                 Empty list is a 0-row no-op.
 
         Returns:
-            Count of rows inserted (= len(snapshots) since no dedup
-            yet).
+            Count of rows actually inserted (after dedup). May be less
+            than ``len(snapshots)`` if any duplicates of existing rows
+            were silently skipped.
 
         Raises:
             StorageError: On DB write failure.

@@ -22,6 +22,7 @@ two cohesive methods across files.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -58,6 +59,8 @@ from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
+
+_LOGGER = logging.getLogger("wobblebot.adapters.sqlite_storage")
 
 
 class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
@@ -115,6 +118,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await _migrate_news_items_publisher_url(self._conn)
+            await _migrate_price_snapshots_unique(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -385,7 +389,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             await conn.execute(
                 """
-                INSERT INTO price_snapshots (
+                INSERT OR IGNORE INTO price_snapshots (
                     symbol_base, symbol_quote,
                     price_amount, price_currency, observed_at
                 ) VALUES (?, ?, ?, ?, ?)
@@ -422,17 +426,18 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             for symbol, price, observed_at in snapshots
         ]
         try:
-            await conn.executemany(
+            cursor = await conn.executemany(
                 """
-                INSERT INTO price_snapshots (
+                INSERT OR IGNORE INTO price_snapshots (
                     symbol_base, symbol_quote,
                     price_amount, price_currency, observed_at
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 rows,
             )
+            inserted = cursor.rowcount if cursor.rowcount is not None else 0
             await conn.commit()
-            return len(rows)
+            return max(0, inserted)
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save price snapshots: {exc}") from exc
@@ -1429,3 +1434,67 @@ async def _migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE news_items ADD COLUMN publisher TEXT")
     if "url" not in cols:
         await conn.execute("ALTER TABLE news_items ADD COLUMN url TEXT")
+
+
+async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
+    conn: aiosqlite.Connection,
+) -> None:
+    """Make ``price_snapshots`` idempotent on ``(symbol, observed_at)``.
+
+    v1.1 backfill follow-up (2026-05-25). The UNIQUE index is NOT
+    declared in SCHEMA because a pre-existing observe.db with
+    duplicate rows would fail at schema apply before this function
+    could dedup. Sequence:
+
+    1. Count existing duplicates (cheap aggregate scan).
+    2. If duplicates exist, log a WARN with the count and DELETE
+       all but ``MIN(snapshot_id)`` per (symbol, observed_at) group.
+    3. Create the UNIQUE INDEX (IF NOT EXISTS makes it idempotent
+       across re-runs).
+
+    In practice the daemon writes ``datetime.now(UTC)`` with
+    microsecond precision -- duplicates basically don't exist -- so
+    step 2 is almost always a no-op. The WARN exists so the operator
+    notices unusual duplicate-producing behavior if it does fire.
+    """
+    async with conn.execute("SELECT COUNT(*) FROM price_snapshots") as cursor:
+        row = await cursor.fetchone()
+    row_count = int(row[0]) if row else 0
+
+    if row_count > 0:
+        async with conn.execute(
+            """
+            SELECT COUNT(*) - COUNT(DISTINCT
+                symbol_base || '|' || symbol_quote || '|' || observed_at)
+            FROM price_snapshots
+            """
+        ) as cursor:
+            row = await cursor.fetchone()
+        duplicate_count = int(row[0]) if row else 0
+
+        if duplicate_count > 0:
+            _LOGGER.warning(
+                "price_snapshots: collapsing %d duplicate row(s) before adding UNIQUE index",
+                duplicate_count,
+                extra={
+                    "duplicate_count": duplicate_count,
+                    "total_rows": row_count,
+                },
+            )
+            await conn.execute(
+                """
+                DELETE FROM price_snapshots
+                WHERE snapshot_id NOT IN (
+                    SELECT MIN(snapshot_id) FROM price_snapshots
+                    GROUP BY symbol_base, symbol_quote, observed_at
+                )
+                """
+            )
+
+    # Create the index unconditionally; IF NOT EXISTS handles re-runs.
+    # Runs against deduplicated data so the constraint applies cleanly
+    # even on legacy DBs.
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_price_snapshots_unique "
+        "ON price_snapshots(symbol_base, symbol_quote, observed_at)"
+    )
