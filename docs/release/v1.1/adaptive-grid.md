@@ -26,7 +26,74 @@ a single operator command.
 extended periods and the operator wanting a faster, less
 error-prone way to re-anchor than the manual sequence.
 
+### cli/observe --backfill + auto gap-fill — ✅ shipped in v1.1 (2026-05-25)
+
+**Status:** ✅ Shipped in five commits 2026-05-25 (`d0f2992`,
+`43afa79`, `866ce16`, `3d688d8`, `e1b916a`). 75 new tests; pylint
+10/10; mypy clean.
+
+**What shipped:**
+
+1. `OHLCBar` domain value object with Kraken-aligned interval
+   validation (1m/5m/15m/30m/1h/4h/1d/1w/15d frozenset) +
+   tz-aware-UTC normalization (same contract as `Timestamp`).
+2. `ExchangePort.get_ohlc(symbol, interval_minutes, since)` —
+   implemented on `KrakenAdapter` via `/0/public/OHLC` (defensive
+   wire-shape parsing; altname translation reused from Ticker),
+   forwarded on `ShadowExchangeAdapter` (live data path), refused
+   on `MockExchangeAdapter` with a clear redirect message.
+3. `ohlc_bars` table in `observe.db` with
+   `UNIQUE(symbol, interval_minutes, opened_at)` for INSERT-OR-IGNORE
+   idempotency. New `StoragePort.save_ohlc_bars(bars) -> int` (batch
+   write; returns post-dedup rowcount) + `save_price_snapshots`
+   (batch executemany — sequential commits would dominate wall-clock
+   on 10k+ row backfills) + `get_latest_observed_at(symbol)` (backs
+   the auto-gap-fill detection).
+4. `services/backfill.backfill_range()` — pure-logic orchestrator
+   with Kraken-exclusive-`since` pagination, configurable rate limit
+   (default 1.0s for Kraken free-tier), 10,000-iteration safety cap,
+   dual-write to `ohlc_bars` (canonical) + `price_snapshots`
+   (synthesized as `(opened_at, open)` per bar). On ExchangeError /
+   StorageError stops cleanly and populates `BackfillResult.error`
+   plus `last_opened_at` as the resume cursor.
+5. `python -m wobblebot.cli.observe --backfill --since DATE
+   [--until DATE] [--interval N] [--symbols A,B]` — manual mode.
+   Date parser accepts bare ISO 8601 (midnight UTC) or full
+   timestamps with `Z` / offset suffixes; interval parser accepts
+   `1m/5m/15m/30m/1h/4h/1d/1w` or bare minute counts, validated
+   against the OHLCBar set.
+6. **Auto gap-fill on daemon startup.** New ObserveConfig fields
+   `autogapfill_enabled` (default True), `autogapfill_threshold_minutes`
+   (default 10.0), `autogapfill_max_hours` (default 24.0). Before the
+   poll loop, each symbol's `now - latest_observed_at` gap is computed:
+   - no history → skip silently (explicit `--backfill` required)
+   - gap < threshold → skip silently (normal restart)
+   - threshold..max → run bounded 1m-granularity backfill
+   - gap > max → WARN; operator runs `--backfill --since X` manually
+
+**Why it mattered:** unblocks Phase-3 advisor metrics on
+recently-added symbols (the 12 observe.symbols added Day 3 only had
+~5 days of history pre-backfill), gives the planned Backtester
+(below) real data to chew on, and lets short outages self-heal on
+restart so the operator doesn't have to remember to backfill after
+every bounce.
+
+**v1.1 limitation:** `price_snapshots` has no UNIQUE constraint yet,
+so re-running an overlapping backfill window duplicates synthesized
+snapshots. `ohlc_bars` stays idempotent. UNIQUE-constraint migration
+queued as a v1.1+ follow-up.
+
+**Cross-references:** the "Proper OHLC + TA indicators" entry below
+now has its data-acquisition substrate in place — implementing
+TA-on-bars is the next-step v1.1 candidate that builds on top.
+
 ### Proper OHLC + technical analysis indicators for the advisor
+
+**Status update (2026-05-25):** the data-acquisition substrate
+(OHLC bar fetch + persistence) is now in place — see the
+backfill section above. This entry is now reduced to the metrics
+computation layer; the adapter / storage / orchestrator wiring is
+already done.
 
 **What:** ingest Kraken's `/0/public/OHLC` candle data (intervals
 1m through 21d) into a new SQLite table; extend
@@ -248,8 +315,8 @@ observe.db — that violates the daemon-per-concern boundary.
 - Prompt file at ``config/prompts/historian.md`` with the
   long-horizon framing.
 - Web UI ``/historian`` page rendering recent findings.
-- A separate ``cli/observe --backfill`` feature (companion, not
-  part of this entry — would be a separate v1.1 item).
+- ~~A separate ``cli/observe --backfill`` feature~~ ✅ **shipped
+  2026-05-25** — see the backfill entry at the top of this file.
 
 **Why deferred:** feature work. Also realistically needs
 **months of data** to be useful — running a historian on 5 days
@@ -378,10 +445,15 @@ the iterator from ``price_snapshots`` (or fetched OHLC bars).
 Output: a ``backtest_runs`` table for comparing configs over
 time + a Jinja2-rendered report.
 
-**Why deferred:** feature work. Also needs OHLC+TA in place for
-the gap-fill story (price_snapshots only go back as far as
-cli/observe has run; backfilling pre-soak periods needs the
-OHLC endpoint).
+**Why deferred:** feature work. ~~Also needs OHLC+TA in place for
+the gap-fill story~~ — the OHLC backfill substrate shipped
+2026-05-25, so the backtester can now read either live
+`price_snapshots` OR the synthesized snapshots that backfill
+populates from OHLC bars. The TA-indicator layer on top of
+`ohlc_bars` is still pending (see the entry near the top of this
+file), but the backtester doesn't strictly need it — running
+against `price_snapshots` (now historically backfillable) is
+sufficient for the v1.1 first cut.
 
 **Trigger:** post-v1.0. Operator's first use case will be
 validating tweaks to the v1.0 config against the soak period's
