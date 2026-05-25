@@ -284,7 +284,11 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
             return exit_code
 
         _LOGGER.info(
-            "backfill starting",
+            "backfill starting: %d symbol(s), %dm interval, %s -> %s",
+            len(symbols),
+            interval_minutes,
+            since.isoformat(),
+            until.isoformat(),
             extra={
                 "symbols": [str(s) for s in symbols],
                 "since": since.isoformat(),
@@ -308,7 +312,9 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
                 any_error = True
 
         _LOGGER.info(
-            "backfill done",
+            "backfill done: %d symbol(s), succeeded=%s",
+            len(symbols),
+            not any_error,
             extra={
                 "symbols": [str(s) for s in symbols],
                 "succeeded": not any_error,
@@ -332,21 +338,32 @@ def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
     with ``--since <last_opened_at>`` to pick up where it left off.
     """
     if result.error is not None:
+        resume_at = (
+            result.last_opened_at.isoformat() if result.last_opened_at is not None else "none"
+        )
         _LOGGER.error(
-            "backfill failed for symbol; re-run with --since to resume",
+            "backfill %s failed after %d bar(s) in %.1fs: %s; resume with --since %s",
+            symbol,
+            result.bars_inserted,
+            result.elapsed_seconds,
+            result.error,
+            resume_at,
             extra={
                 "symbol": str(symbol),
                 "error": result.error,
-                "resume_at": (
-                    result.last_opened_at.isoformat() if result.last_opened_at is not None else None
-                ),
+                "resume_at": resume_at if resume_at != "none" else None,
                 "bars_inserted_before_failure": result.bars_inserted,
                 "elapsed_seconds": round(result.elapsed_seconds, 1),
             },
         )
     else:
         _LOGGER.info(
-            "backfill complete for symbol",
+            "backfill %s complete: %d bars inserted, %d snapshots, %d Kraken req, %.1fs",
+            symbol,
+            result.bars_inserted,
+            result.snapshots_inserted,
+            result.requests_made,
+            result.elapsed_seconds,
             extra={
                 "symbol": str(symbol),
                 "bars_fetched": result.bars_fetched,
