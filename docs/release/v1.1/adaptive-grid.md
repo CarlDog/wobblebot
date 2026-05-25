@@ -92,6 +92,81 @@ idempotent.
 now has its data-acquisition substrate in place — implementing
 TA-on-bars is the next-step v1.1 candidate that builds on top.
 
+### cli/observe --backfill: v1.1 ergonomics + scenario catalog
+
+**Companion to the shipped backfill feature above.** The substrate
+landed 2026-05-25 but the operator-facing UX assumes a savvy
+caller who computes ISO dates by hand, copies resume cursors out
+of error logs, and accepts silent terminal during multi-minute
+fetches. The polish items below close those gaps; the scenarios
+below explain what real-world usage looks like so the priority
+order makes sense.
+
+#### Scenarios driving demand (sized at free-tier Kraken rate)
+
+| Scenario | Driven by | Typical command | Bars | Kraken calls | Wall-clock |
+|---|---|---|---|---|---|
+| **New-symbol catch-up** (operator adds a coin to `observe.symbols`) | Phase 3 advisor metrics; future backtester | `--since <90d-ago> --symbols NEW` | ~130k | ~180 | ~3 min |
+| **Backtester pre-flight** | v1.1 backtester replay | `--since <30-90d-ago>` (all symbols) | ~50-130k each | ~70-180 each | ~2-3 min/symbol |
+| **Historian boot-up** | v1.1 Historian (months-to-years pattern recognition) | `--since <1y-ago> --interval 1h` (all symbols) | ~8.7k × 12 | ~145 total | ~3 min |
+| **Regime detector calibration** | v1.1 regime classifier | `--since <6mo-ago> --interval 4h` | ~1.1k × 12 | ~24 total | ~30s |
+| **Outage recovery (medium)** | Manual fall-back when auto-gap-fill's 24h cap is exceeded | `--since <when-observe-died>` | varies | varies | varies |
+| **Pre-1.1 bulk seed** (one-time before any v1.1 consumer ships) | All the above | `--since <90-180d-ago>` × 12 symbols at 1m + 1h | ~1.5M | ~2200 | ~37 min |
+
+**Why this matters:** Scenario 6 is the largest single operator event
+the feature will ever absorb. At ~37 minutes of silent terminal +
+hand-computed dates + no resume on transient failure, the current
+UX makes that event painful. Each of the polish items below is
+sized against this scenario.
+
+#### Polish items (priority order)
+
+| # | Item | Operator pain it removes | Implementation |
+|---|---|---|---|
+| 1 | `--days N` shorthand | Computing ISO date for `--since` every invocation | argparse alias resolving to `now - timedelta(days=N)`. Single helper + arg-group exclusion with `--since`. |
+| 2 | `--catchup` / `--since=auto` | Operator manually queries DB for `MAX(observed_at)` per symbol then pastes it into `--since` | `_backfill_main` calls `storage.get_latest_observed_at(symbol)` per symbol to resolve `since`; same code path the slice-5 auto-gap-fill already uses. |
+| 3 | `--rate-limit-seconds` | Paid Kraken users stuck at conservative free-tier 1/sec | Already a service kwarg; just plumb the CLI flag. Validate non-negative. |
+| 4 | Per-cycle progress on terminal | 37-min seeds look hung; `progress_callback` exists but CLI never wires it | One INFO log per chunk: `"backfill BTC/USD: %d bars so far, cursor at %s, %.1fs elapsed"`. Render every N chunks to keep the log volume sane. |
+| 5 | `--resume` (auto-pickup after error) | `--since <cursor>` must be hand-copied from prior error log | Treat `--resume --symbols A,B` as `--catchup` semantically: each symbol resolves to its own latest `opened_at` in `ohlc_bars` (not `price_snapshots` — which could be from daemon polls and lie about backfill progress). |
+| 6 | `--intervals 1m,1h` | Backtester wants 1m + historian wants 1h → two separate invocations of the same command | Inner loop iterates the intervals list; per-symbol stats reported per-interval. |
+| 7 | Kraken historical-horizon probe | A naive `--since 2020-01-01` silently succeeds with whatever Kraken retains, which can be much shorter than requested for fine intervals | One-line WARN if returned bar count is materially less than `(until - since) / interval`. |
+
+#### Implementation order
+
+**Ship 1 + 2 together as the first follow-up:** they cover scenarios
+1, 5, and the most common "I want to top up" pattern at minimal
+cost. Item 4 (progress logging) pairs naturally with the bulk-seed
+scenario when v1.1 consumers actually need that seed run.
+
+Items 3, 6, 7 are smaller follow-ons that can land independently as
+operators request them.
+
+#### What's NOT a gap (worth saying out loud)
+
+- **Parallel fetch across symbols is NOT a gap.** Kraken's free-tier
+  1/sec rate limit is per IP — parallelizing 12 symbols would burn
+  that and produce 429s. The serial-per-symbol shape is correct
+  under free-tier; only paid-tier operators benefit from parallel +
+  tighter `--rate-limit`, and they're a separate audience.
+- **Disk space is NOT a constraint.** 1.5M rows of OHLC at ~80
+  bytes/row = ~120 MB total. Negligible vs the GB-scale storage
+  operators provision.
+- **The dual-write to ohlc_bars + price_snapshots is NOT redundant.**
+  ohlc_bars is the canonical TA-vocabulary record; price_snapshots
+  is the metrics-layer view consumers like the existing
+  DataCollector already read. The synthesis means scenarios 1 and
+  2 work *without* requiring the TA-indicator service to land
+  first.
+
+**Why deferred:** UX polish on a feature whose substrate ships
+solid. Each item is independently small and ships when an operator
+hits the pain it removes.
+
+**Trigger:** earliest individually justified once a v1.1 consumer
+(backtester / historian / regime detector) begins requiring a
+bulk-seed event. Items 1 + 2 are operator-comfort and could ship
+on any quiet afternoon.
+
 ### Proper OHLC + technical analysis indicators for the advisor
 
 **Status update (2026-05-25):** the data-acquisition substrate
