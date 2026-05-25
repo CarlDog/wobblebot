@@ -193,7 +193,9 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
 # --------------------------------------------------------------------- #
 
 
-async def _main_async(config: WobbleBotConfig) -> int:  # pylint: disable=too-many-locals
+async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
+    config: WobbleBotConfig,
+) -> int:
     if config.maintenance is None:
         _LOGGER.error(
             "settings.yml is missing the `maintenance:` section; "
@@ -262,19 +264,63 @@ async def _main_async(config: WobbleBotConfig) -> int:  # pylint: disable=too-ma
         # Stage 8.4.E — any of the three tasks heartbeating keeps the
         # cli/maintenance row fresh on /health.
         await emit_heartbeat(operator_storage, "cli/maintenance")
+        # 2026-05-25 follow-up: the sync VACUUM/backup calls block the
+        # asyncio event loop for their full duration -- SIGINT queued
+        # mid-cycle can't be processed until the work returns. Log
+        # start + end + elapsed so an operator watching the log file
+        # can tell "shutdown is waiting on VACUUM" vs "shutdown is
+        # hung on something else". The wall-clock elapsed value also
+        # gives operators a sense of expected duration for future
+        # cycles on the same hardware.
+        cycle_started = time.monotonic()
+        _LOGGER.info("vacuum cycle starting", extra={"db_count": len(target_dbs)})
         ok = _vacuum_all(target_dbs)
         vacuum_runs += ok
+        _LOGGER.info(
+            "vacuum cycle complete",
+            extra={
+                "db_count": len(target_dbs),
+                "succeeded": ok,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
 
     async def _prune_cycle() -> None:
         nonlocal prune_total_deleted
         await emit_heartbeat(operator_storage, "cli/maintenance")
-        prune_total_deleted += await _prune_one_cycle(maintenance)
+        cycle_started = time.monotonic()
+        _LOGGER.info(
+            "prune cycle starting",
+            extra={
+                "source_db": maintenance.prune_source_db,
+                "older_than_days": maintenance.prune_price_snapshots_older_than_days,
+            },
+        )
+        deleted = await _prune_one_cycle(maintenance)
+        prune_total_deleted += deleted
+        _LOGGER.info(
+            "prune cycle complete",
+            extra={
+                "rows_deleted": deleted,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
 
     async def _backup_cycle() -> None:
         nonlocal backup_runs
         await emit_heartbeat(operator_storage, "cli/maintenance")
+        cycle_started = time.monotonic()
+        _LOGGER.info("backup cycle starting", extra={"db_count": len(maintenance.target_dbs)})
         ok = _backup_all(maintenance)
         backup_runs += ok
+        _LOGGER.info(
+            "backup cycle complete",
+            extra={
+                "db_count": len(maintenance.target_dbs),
+                "succeeded": ok,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
 
     try:
         await asyncio.gather(
