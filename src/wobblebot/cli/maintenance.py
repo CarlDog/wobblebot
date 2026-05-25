@@ -193,7 +193,7 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
 # --------------------------------------------------------------------- #
 
 
-async def _main_async(config: WobbleBotConfig) -> int:
+async def _main_async(config: WobbleBotConfig) -> int:  # pylint: disable=too-many-locals
     if config.maintenance is None:
         _LOGGER.error(
             "settings.yml is missing the `maintenance:` section; "
