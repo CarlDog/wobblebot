@@ -358,6 +358,127 @@ def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
         )
 
 
+async def _run_auto_gap_fill(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    adapter: KrakenAdapter,
+    storage: SQLiteStorageAdapter,
+    symbols: list[Symbol],
+    *,
+    threshold_minutes: float,
+    max_hours: float,
+    now: datetime | None = None,
+) -> None:
+    """On daemon startup, per-symbol fill the gap from latest snapshot to now.
+
+    Decisions per symbol:
+        no prior history    -> skip silently (DEBUG log)
+        gap < threshold     -> skip silently (DEBUG log)
+        gap > max           -> WARN; operator must run --backfill manually
+        threshold..max      -> run backfill_range at 1m granularity
+
+    All failures are absorbed (per-symbol exceptions don't block startup,
+    Kraken-unreachable doesn't prevent the daemon from entering the poll
+    loop). Side-effect-only: nothing returned.
+
+    The ``now`` kwarg is the test seam — production callers pass
+    ``None`` and the function reads the current wallclock.
+    """
+    if not symbols:
+        return
+    resolved_now = now if now is not None else datetime.now(UTC)
+    threshold = timedelta(minutes=threshold_minutes)
+    max_window = timedelta(hours=max_hours)
+
+    for symbol in symbols:
+        try:
+            latest = await storage.get_latest_observed_at(symbol)
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "auto-gap-fill: failed reading latest observed_at: %s: %s",
+                type(exc).__name__,
+                exc,
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            continue
+
+        if latest is None:
+            _LOGGER.debug(
+                "auto-gap-fill: no prior history; explicit --backfill needed",
+                extra={"symbol": str(symbol)},
+            )
+            continue
+
+        gap = resolved_now - latest
+        gap_minutes = gap.total_seconds() / 60.0
+        if gap < threshold:
+            _LOGGER.debug(
+                "auto-gap-fill: gap below threshold; skipping",
+                extra={
+                    "symbol": str(symbol),
+                    "gap_minutes": round(gap_minutes, 1),
+                    "threshold_minutes": threshold_minutes,
+                },
+            )
+            continue
+        if gap > max_window:
+            _LOGGER.warning(
+                "auto-gap-fill: gap exceeds max (%.1f hours > %.1f); skipping "
+                "-- run `cli/observe --backfill --since <date>` manually",
+                gap.total_seconds() / 3600.0,
+                max_hours,
+                extra={
+                    "symbol": str(symbol),
+                    "gap_hours": round(gap.total_seconds() / 3600.0, 2),
+                    "max_hours": max_hours,
+                    "latest_observed_at": latest.isoformat(),
+                },
+            )
+            continue
+
+        _LOGGER.info(
+            "auto-gap-fill: filling %.1f minute gap on %s",
+            gap_minutes,
+            symbol,
+            extra={
+                "symbol": str(symbol),
+                "gap_minutes": round(gap_minutes, 1),
+                "since": latest.isoformat(),
+                "until": resolved_now.isoformat(),
+            },
+        )
+        result = await backfill_range(
+            adapter,
+            storage,
+            symbol=symbol,
+            since=latest,
+            until=resolved_now,
+            interval_minutes=1,
+        )
+        if result.error is not None:
+            _LOGGER.warning(
+                "auto-gap-fill: backfill failed for %s; continuing to poll loop: %s",
+                symbol,
+                result.error,
+                extra={
+                    "symbol": str(symbol),
+                    "error": result.error,
+                    "bars_inserted": result.bars_inserted,
+                },
+            )
+        else:
+            _LOGGER.info(
+                "auto-gap-fill: filled %d bars on %s in %.1fs",
+                result.bars_inserted,
+                symbol,
+                result.elapsed_seconds,
+                extra={
+                    "symbol": str(symbol),
+                    "bars_inserted": result.bars_inserted,
+                    "snapshots_inserted": result.snapshots_inserted,
+                    "elapsed_seconds": round(result.elapsed_seconds, 1),
+                },
+            )
+
+
 async def _main_async(config: WobbleBotConfig) -> int:
     if config.observe is None:
         _LOGGER.error("settings.yml is missing the `observe:` section")
@@ -391,6 +512,15 @@ async def _main_async(config: WobbleBotConfig) -> int:
     )
     if exit_code is not None:
         return exit_code
+
+    if config.observe.autogapfill_enabled:
+        await _run_auto_gap_fill(
+            adapter,
+            storage,
+            list(config.observe.symbols),
+            threshold_minutes=config.observe.autogapfill_threshold_minutes,
+            max_hours=config.observe.autogapfill_max_hours,
+        )
 
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)

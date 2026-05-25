@@ -208,6 +208,19 @@ observe:
   log_format: plain
   log_file_path: "data/logs/observe.log"  # daily rotation, 7-day retention. null = stderr only.
 
+  # v1.1 auto gap-fill (2026-05-25). On daemon startup, observe checks
+  # each symbol's most-recent snapshot vs `now`. If the gap is in the
+  # [threshold, max] window, it runs a bounded 1m-granularity backfill
+  # before entering the poll loop -- restoring coverage lost to a
+  # recent outage. Outside the window, gaps are either ignored
+  # (smaller than threshold = normal restart) or surfaced as warnings
+  # (larger than max = operator should run `cli/observe --backfill
+  # --since X` explicitly rather than hammer the API for hours on
+  # every restart).
+  autogapfill_enabled: true
+  autogapfill_threshold_minutes: 10.0   # gaps below this skip silently
+  autogapfill_max_hours: 24.0           # gaps above this warn + skip
+
 # ============================================================================
 # Per-CLI: preflight (cli/preflight)
 # ============================================================================

@@ -167,6 +167,23 @@ class ObserveConfig(BaseModel):
     log_format: LogFormat = "plain"
     log_file_path: str | None = "data/logs/observe.log"
 
+    # v1.1 auto gap-fill (2026-05-25). On daemon startup, cli/observe
+    # checks each configured symbol's most-recent price_snapshot. If
+    # the gap to now is in the window
+    # [autogapfill_threshold_minutes, autogapfill_max_hours], it runs
+    # a bounded backfill at 1m granularity BEFORE entering the poll
+    # loop -- restoring lost coverage from a recent outage.
+    #
+    # Defaults:
+    #   threshold 10m  -- below this, normal restarts skip the work
+    #   max       24h  -- above this, the operator runs `cli/observe
+    #                     --backfill --since X` explicitly (avoids
+    #                     surprise multi-hour API hammering on
+    #                     startup after a long downtime)
+    autogapfill_enabled: bool = True
+    autogapfill_threshold_minutes: float = Field(default=10.0, ge=0.0)
+    autogapfill_max_hours: float = Field(default=24.0, gt=0.0)
+
     class Config:
         frozen = True
 
