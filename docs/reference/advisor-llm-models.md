@@ -456,16 +456,22 @@ candidates, each with a different fix:
 | **Small (3.8B-class)** like `phi4-mini-reasoning:3.8b` | Long system prompts saturate the model's attention budget; falls back to training-default output (math-textbook for math-tuned variants) | Compact prompt (<300 chars) + `format=json` |
 | **Large (14B+)** like `phi4-reasoning:14b-plus`, `deepseek-r1:14b-qwen-distill` | Unbounded chain-of-thought consumes the probe's `num_predict` budget before JSON emission | `format=json` (suppresses `<think>`) OR raise `num_predict` past 4000 |
 
-**Implication for production use:** the original "reasoning
-latency disqualifies these models for live advisor runs"
-verdict needs revision. With `format=json` the chain-of-thought
-is gone and the model's wall-clock latency drops to roughly the
-same envelope as non-reasoning models of similar size. **Queued
-for v1.1 follow-up (merged into the prompt-redesign entry):**
-re-sweep phi4-reasoning + deepseek-r1 with `format=json`
-enabled to establish their real quality scores. The "no
-schema-conforming output without big probe budget" claim should
-be retested before being relied on.
+**Implication for production use (revised 2026-05-26 after v2
+follow-up):** the original "reasoning latency disqualifies these
+models" verdict has been re-investigated across two rounds and
+returns to "not recommended." With `format=json` the chain-of-
+thought is gone and the latency envelope matches non-reasoning
+models — but the SCORES sit at the 11/18 lazy-baseline cluster,
+indistinguishable from "always slight widen." phi4-mini-reasoning
+specifically failed both the 2026-05-25 first-pass compact prompt
+(8/18 over-widen) and the 2026-05-26 v2 compact prompt (4/18 with
+4 errors) — definitively incompatible at 3.8B params. The 14B+
+reasoning models work but don't justify their latency over
+non-reasoning peers. **Reasoning-model support is dropped from
+v1.1 active work** — see the revised entry in
+`docs/release/v1.1/operator-ux.md`. The diagnose-before-blocklist
+methodology proved its value (testing the verdict twice gives
+confidence in the answer); it did NOT recover the model.
 
 ### nemotron3:33b is the only "calibrated" model in the sweep
 
@@ -538,20 +544,26 @@ Phase 3.4a MoE `quant` expert seat.
 - `granite4.1:30b-q5_K_M` — 5/18, 3 wrong-direction calls. Joins
   the wrong-direction outlier tier despite being a substantially
   larger and more recent model than the other two.
-- `phi4-mini-reasoning:3.8b` — 0/18 against the current
-  `quant.md`, BUT the failure is prompt-length saturation per
-  the 2026-05-25 diagnostic (works with a stripped prompt +
-  `format=json`). Recoverable for the advisor role via prompt
-  redesign — see v1.1 follow-up "Compact prompt variants for
-  small reasoning models".
-- `phi4-reasoning:14b-plus-q8_0` — **RE-TESTED 2026-05-25**:
-  scored **11/18 under `--force-json` against quant.md**, ties
-  the lazy-baseline cluster. The TIMEOUT verdict was a probe
-  artifact (unbounded `<think>` block consuming `num_predict`).
-  Same caveat as the 21-model 11/18 cluster — the score is
-  indistinguishable from "always slight widen" lazy strategy.
-  Viable for the advisor role only if the operator accepts
-  lazy-baseline scoring.
+- `phi4-mini-reasoning:3.8b` — **incompatible (confirmed
+  2026-05-26 v2 follow-up).** Two rounds of investigation:
+  the 2026-05-25 diagnostic surfaced prompt-length saturation
+  and a first-pass compact prompt produced 8/18 (over-widen
+  pattern, OVERSHOOT band). The 2026-05-26 v2 compact prompt
+  added the ±25% magnitude rule that v1 dropped — model
+  errored on 4/6 fixtures (4/18 total, regression from v1). At
+  3.8B params + reasoning fine-tuning the model can EITHER
+  emit valid JSON under a short prompt OR honor magnitude
+  constraints under a longer prompt, not both. Prompt redesign
+  is not a path forward. Stays on the incompatible list.
+- `phi4-reasoning:14b-plus-q8_0` — **not recommended.** Under
+  `--force-json` it scores 11/18 (ties the lazy-baseline
+  cluster) — the TIMEOUT verdict was a probe artifact, but the
+  rehabilitated score emits `spacing=1.2` for every fixture
+  (the literal "always slight widen" baseline). Adds 131s of
+  inference latency vs ~31-90s for non-reasoning advisor
+  models in the same cluster. No differentiation justifies
+  the latency. Use a non-reasoning advisor model from the
+  recommended tier instead.
 - Sub-1B models (`smollm2:360m`, `tinyllama`, `orca-mini`) — below
   the schema-following capacity threshold.
 

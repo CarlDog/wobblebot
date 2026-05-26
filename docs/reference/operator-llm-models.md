@@ -90,34 +90,44 @@ prompt iteration.
 
 ### Models to avoid
 
-- `phi4-mini-reasoning:3.8b-fp16` — **incompatible across both
-  the current operator.md AND the first-pass compact-prompt
-  draft.** Two failure modes documented (2026-05-25):
+- `phi4-mini-reasoning:3.8b-fp16` — **incompatible (confirmed
+  2026-05-26 after v2 compact-prompt follow-up).** Two failure
+  modes documented across three rounds of investigation:
   - Standard `operator.md` (8706 chars): model invents math
     problems, never engages with the routing task. Prompt-length
     saturation kicks in.
-  - Compact `operator-compact.md` (1364 chars) + `--force-json`:
-    model emits CONTEXTUALLY RELATED JSON for each input — but
-    treats inputs as data requests, not routing tasks. Example:
-    `"what's the weather"` → `{"weather":"sunny","temperature":75}`
-    instead of `{"kind":"conversational",...}`. 0/29 schema fails.
-  The compact prompt suppressed the math-mode default but did
-  NOT successfully convey "you are a router, not an answerer."
-  Recovery requires a stronger router-focused prompt with explicit
-  few-shot examples — queued as a v1.1 second-pass redesign. The
-  isolated 175-char stripped-prompt diagnostic worked for ONE
-  fixture (showing the model CAN produce routing JSON given the
-  right framing), but scaling that framing to cover the full
-  routing surface is non-trivial. Adapter still refuses to
-  construct unless `--bypass-suitability-check` is passed (probe
-  tooling only).
+  - Compact `operator-compact.md` v1 (1364 chars) +
+    `--force-json`: model emits CONTEXTUALLY RELATED JSON but
+    treats inputs as data requests, not routing tasks. 0/29.
+  - Compact `operator-compact.md` v2 (4435 chars) + `--force-json`:
+    added explicit "router not answerer" framing + 6 anti-pattern
+    examples + "first key is always `kind`" rule. Same 0/29 with
+    same off-topic hallucinations (database joins, pollution
+    levels, geometry queens). The added framing didn't reach the
+    model. At 3.8B + reasoning fine-tuning, structured-output
+    routing is out of capability range regardless of prompt
+    design. **Stays on `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`.**
+  Adapter still refuses to construct unless
+  `--bypass-suitability-check` is passed (probe tooling only).
 - `llava:13b` — **incompatible**. Vision model, not text-instruct-
   tuned for JSON-schema output. Refused by the adapter.
 - `qwen3.6:35b-a3b-q8_0` — **degraded**. 3/14 silent empty-content
   failures. The adapter logs a startup WARNING but doesn't block.
-- `deepseek-r1:14b-qwen-distill-q8_0` — functional but **44s/call**
-  makes operator interactions feel sluggish. Acceptable for batch
-  use, not chat.
+- `deepseek-r1:14b-qwen-distill-q8_0` — **not recommended.**
+  Functional at 44s/call baseline; `--force-json` (2026-05-25
+  re-test) improves to 25s/call with full routing fidelity. Still
+  ~2× the latency of non-reasoning operator models (qwen2.5:3b at
+  ~13s, granite3-dense:8b at ~14s). Use a non-reasoning operator
+  model unless reasoning visibility is specifically wanted.
+- `phi4-reasoning:14b-plus-q8_0` — **operator: 14/14 at 6.2s
+  without special handling — works fine in the regular flow.**
+  No longer recommended for the advisor role (11/18 lazy baseline
+  at 131s — see `advisor-llm-models.md`). The reasoning-model
+  class as a whole is dropped from v1.1 active work after the
+  2026-05-26 v2 follow-up confirmed phi4-mini-reasoning's
+  blocklist verdict; this model continues to work in its current
+  classification, but isn't a recommended differentiator over
+  non-reasoning alternatives.
 
 **Note on dual-role candidates:** several models in the table
 above (notably `granite4.1:30b-q5_K_M` at 14/14 operator) score
