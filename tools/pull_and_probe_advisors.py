@@ -42,16 +42,26 @@ _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 # quant since math specialists are evaluated FOR THIS ROLE for the first
 # time -- baseline before optimization.
 CANDIDATES: list[str] = [
-    # ===== Math specialists (NEW for advisor role) ===== #
+    # ===== Math specialists (advisor-role candidates) ===== #
     # Rejected from operator-assistant per
-    # docs/reference/operator-llm-models.md. Tested here for the first
-    # time because the advisor's task is numerical-reasoning over
-    # PerformanceSummary metrics, which is exactly what these models
-    # were trained for.
+    # docs/reference/operator-llm-models.md. Advisor-role candidates
+    # because the task is numerical-reasoning over PerformanceSummary
+    # metrics. WizardMath uses the hyphenated tag (wizard-math) on
+    # Ollama's library, not wizardmath -- 2026-05-25 sweep tried the
+    # latter and got "manifest not found" until the operator caught
+    # the correct URL.
     "mathstral:7b",
-    "wizardmath:7b",
-    "wizardmath:13b",
+    "wizard-math:7b",
+    "wizard-math:13b",
     "phi4-mini-reasoning:3.8b",
+    # ===== Newer-gen general-purpose (added 2026-05-25 follow-up) ===== #
+    # TII Falcon3 series -- newer than the rejected "falcon" family
+    # in docs/reference/operator-llm-models.md. Treat as a fresh
+    # candidate rather than inheriting the older Falcon's rejection.
+    "falcon3:1b-instruct-q8_0",
+    "falcon3:3b-instruct-q8_0",
+    "falcon3:7b-instruct-q8_0",
+    "falcon3:10b-instruct-q8_0",
     # ===== Tier A (<1GB) =====
     "tinyllama:1.1b-chat-v1-q8_0",
     "qwen2.5:0.5b-instruct-q8_0",

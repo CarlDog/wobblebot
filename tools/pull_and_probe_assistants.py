@@ -47,6 +47,13 @@ _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 # variants (llama2, qwen, mistral v0.1/v0.2, gemma v1) appended.
 
 CANDIDATES: list[str] = [
+    # ===== Newer-gen general-purpose (added 2026-05-25 follow-up) ===== #
+    # TII Falcon3 series -- newer than the "falcon" family rejected in
+    # docs/reference/operator-llm-models.md. Treat as fresh candidate.
+    "falcon3:1b-instruct-q8_0",
+    "falcon3:3b-instruct-q8_0",
+    "falcon3:7b-instruct-q8_0",
+    "falcon3:10b-instruct-q8_0",
     # ===== Tier A (<1GB) =====
     "tinyllama:1.1b-chat-v1-q8_0",
     "qwen2.5:0.5b-instruct-q8_0",
