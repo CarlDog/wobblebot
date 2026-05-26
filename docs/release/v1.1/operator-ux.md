@@ -423,6 +423,85 @@ metadata. With more concurrent symbols (multi-coin status card
 layout entry above), the meta line can't carry per-symbol fill
 ages — the section-level home scales better.
 
+### "Today's PnL" — split cycle realization-day from earning-day
+
+**What:** v1.0's "Today's PnL" headline (dashboard + Discord
+`status_report` + operator `/dashboard`) sums `cycle.net_pnl`
+across cycles whose SELL fired today in the operator's timezone
+(`services/cycle_matcher.py:177-220` `today_realized_pnl`). The
+matcher pairs BUYs to SELLs via amount-equality primary
+(`cycle_matcher.py:131-137`) and falls back to "oldest cheaper"
+(`cycle_matcher.py:139-141`) for pre-engine, manual, or
+re-anchored fills where the engine's actual counter-pair was
+canceled. When the fallback fires, a SELL closing inventory
+from days ago can produce a single anomalously-large cycle whose
+PnL is mostly multi-day price drift, not today's grid spread.
+The headline then misrepresents what the bot earned today.
+
+**Concrete example (2026-05-26 soak):** dashboard reported
+**+$0.3460** for the day. Trade history showed one SELL today
+(0.00012879 BTC @ $77,643.30) matched via fallback to a BUY from
+2026-05-23 (0.00013410 BTC @ $74,568.30). Spread $3,075/BTC ×
+0.00012879 − $0.05 fees = $0.3460 — arithmetically correct, but
+the May 23 BUY's actual engine-placed counter-SELL never fired
+(cap-trip + re-anchor on 2026-05-22), so the operator effectively
+held inventory for 3 days through upward drift. The other 4
+matched cycles in the trade history all sit at $0.0508–$0.0518
+(normal 1% grid spread). The $0.3460 was the only outlier and
+it was the fallback cycle. Cash-basis verification: cost basis
+on the matched 0.00012879 BTC slice = $9.5995 + $0.025 fee =
+$9.6245; SELL proceeds = $9.9726; difference = $0.3481 ≈ matcher's
+$0.3460.
+
+**Two implementation paths:**
+
+1. **Split the headline.** Render `Today's PnL: $0.3460 (normal
+   $0.00 + recovery $0.3460)` where "normal" sums cycles whose
+   BUY and SELL both fired within a normal-grid window (e.g.
+   24h) and "recovery" sums fallback cycles whose BUY is older.
+   Operator sees the realized cash flow AND the breakdown.
+2. **Annotate per-cycle in the Recent Cycles list.** Flag cycles
+   where `sell.executed_at − buy.executed_at > N hours` with a
+   small icon or "long hold" label. Headline stays as-is; the
+   operator drills in for context.
+
+Recommended starting point: option 2 (cheaper change; doesn't
+relitigate the headline semantics; surfaces the same information
+without re-bucketing). Promote to option 1 if the headline keeps
+producing confusion across soak cycles.
+
+**Implementation:** the matcher already knows which pairing
+heuristic fired (the loop at `cycle_matcher.py:131-148` is the
+discriminator). Extend `RecentCycle` with a `pairing_method`
+enum (`engine_counter` | `fallback`) and a derived
+`hold_duration` property. Template logic in
+`_status_card.html` / Discord embed renderer reads those fields;
+no engine code changes. `today_realized_pnl` either gains an
+optional `pairing_filter` parameter (option 1) or stays
+unchanged (option 2).
+
+**Why deferred:** v1.0 ships the matched-cycle math correctly —
+the 2026-05-23 fix (`engine.md` "ledger reconciliation
+companion fix") swapped the matcher's primary heuristic from
+FIFO-cheapest to amount-equality, which is exactly right for
+the engine-counter case. The fallback path is the residual
+ambiguity and only fires when the trade log has unmatchable
+inventory (re-anchor / manual fills / pre-engine seed). The
+display question is a presentation choice that benefits from
+operator preference data — easier to gather post-tag.
+
+**Pairs with:** the `cycle_matcher.py` docstring at lines 31-39
+already names the re-anchor + manual-fill cases as known
+heuristic limitations; this entry adds the display-layer
+mitigation.
+
+**Trigger:** operator-flagged 2026-05-26 after the cap-trip
+recovery cycle ($0.3460 fallback) produced a headline that
+diverged from the day's actual grid earnings ($0.00 in normal
+cycles). Repeated occurrences during multi-coin soak (every
+re-anchor or manual close creates one) would promote this from
+candidate to scheduled.
+
 ### Status card multi-coin layout
 
 **What:** the current-price line on the status card renders as
