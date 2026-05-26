@@ -1,13 +1,22 @@
-"""Focused diagnostic for phi4-mini-reasoning:3.8b-fp16.
+"""Focused diagnostic for reasoning-tuned Ollama models.
 
-The model scored 0/14 on the operator-assistant battery and 0/18 on
-the advisor battery. The compatibility docs claim "math-mode prose,
-no valid JSON" without ever showing the actual output. This script
-fixes that gap.
+Originally written to investigate phi4-mini-reasoning:3.8b-fp16
+(0/14 operator + 0/18 advisor sweep verdicts) but generalized via
+``--model`` flag for any reasoning-tuned candidate. The 2026-05-25
+runs against both phi4-mini-reasoning AND phi4-reasoning:14b-plus
+surfaced two distinct failure modes:
 
-Sends three styles of prompt directly to Ollama, prints the **raw
-unparsed text response** for each, then runs three workarounds that
-might coax structured output:
+- **Small (3.8B):** prompt-length saturation -- model can't hold
+  a long system prompt and falls back to training-default math-
+  textbook output. Fix: compact prompt + ``format=json``.
+- **Large (14B+):** unbounded chain-of-thought -- model reasons
+  thoroughly but burns the ``num_predict`` budget before emitting
+  JSON. Fix: ``format=json`` (suppresses the <think> block
+  entirely) OR raise ``num_predict`` past 4000.
+
+Sends three baseline prompt styles directly to Ollama, prints the
+**raw unparsed text response** for each, then runs three workarounds
+that might coax structured output:
 
 1. Default operator prompt (operator.md) + a simple status message
 2. Default advisor prompt (quant.md) + a minimal PerformanceSummary
@@ -15,8 +24,12 @@ might coax structured output:
 4. WORKAROUND A: same as 1+2+3 with Ollama's ``format=json`` constraint
 5. WORKAROUND B: same as 1+2+3 with a reasoning-first preamble
    ("Think first, then output ONLY the final JSON in a code block")
+6. WORKAROUND C: stripped prompt + ``format=json`` (most-constrained)
+7. WORKAROUND D: trivial "hello" control -- shows the model's
+   training-default conversation style (math-textbook for small
+   reasoning models; normal greeting for general-purpose ones)
 
-Run with: ``python tools/diagnose_phi4_mini_reasoning.py``
+Run with: ``python tools/diagnose_reasoning_model.py [--model TAG]``
 
 Prints to stdout in plain text. No DB writes, no scoring, no
 parsing -- just shows what the model actually emits.
@@ -24,6 +37,7 @@ parsing -- just shows what the model actually emits.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 from pathlib import Path
@@ -33,9 +47,9 @@ import httpx
 
 from wobblebot.config.prompts import load_prompt
 
-MODEL = "phi4-mini-reasoning:3.8b-fp16"
+DEFAULT_MODEL = "phi4-mini-reasoning:3.8b-fp16"
 BASE_URL = "http://localhost:11434"
-TIMEOUT_SECONDS = 300.0
+TIMEOUT_SECONDS = 600.0
 TEMPERATURE = 0.5
 NUM_PREDICT = 1024
 
@@ -84,12 +98,13 @@ def subdivider(title: str) -> None:
 async def call_chat(
     *,
     client: httpx.AsyncClient,
+    model: str,
     system_prompt: str,
     user_message: str,
     format_json: bool = False,
 ) -> str:
     payload: dict[str, Any] = {
-        "model": MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -109,13 +124,14 @@ async def call_chat(
 async def call_generate(
     *,
     client: httpx.AsyncClient,
+    model: str,
     system_prompt: str,
     user_message: str,
     format_json: bool = False,
 ) -> str:
     full_prompt = f"{system_prompt}\n\n{user_message}"
     payload: dict[str, Any] = {
-        "model": MODEL,
+        "model": model,
         "prompt": full_prompt,
         "stream": False,
         "options": {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT},
@@ -131,7 +147,15 @@ async def call_generate(
 async def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-    print(f"Diagnosing model: {MODEL}")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Ollama model tag to diagnose (default: {DEFAULT_MODEL})",
+    )
+    args = parser.parse_args()
+    model = args.model
+    print(f"Diagnosing model: {model}")
     print(f"Endpoint: {BASE_URL}")
     print(f"Temperature: {TEMPERATURE}, num_predict: {NUM_PREDICT}")
 
@@ -151,6 +175,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt=operator_prompt,
                 user_message=OPERATOR_USER_MESSAGE,
             )
@@ -165,6 +190,7 @@ async def main() -> int:
         try:
             out = await call_generate(
                 client=client,
+                model=model,
                 system_prompt=quant_prompt,
                 user_message=ADVISOR_USER_MESSAGE,
             )
@@ -179,6 +205,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt=STRIPPED_PROMPT,
                 user_message=OPERATOR_USER_MESSAGE,
             )
@@ -193,6 +220,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt=operator_prompt,
                 user_message=OPERATOR_USER_MESSAGE,
                 format_json=True,
@@ -209,6 +237,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt=preamble_prompt,
                 user_message=OPERATOR_USER_MESSAGE,
             )
@@ -223,6 +252,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt=STRIPPED_PROMPT,
                 user_message=OPERATOR_USER_MESSAGE,
                 format_json=True,
@@ -238,6 +268,7 @@ async def main() -> int:
         try:
             out = await call_chat(
                 client=client,
+                model=model,
                 system_prompt="You are a helpful assistant.",
                 user_message="hello",
             )

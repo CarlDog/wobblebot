@@ -1171,27 +1171,49 @@ the math-specialist rejection scope note in
 `docs/reference/operator-llm-models.md` enumerates the same
 candidate-role list with implementation specifics per role.
 
-### Compact prompt variants for small reasoning models
+### Reasoning-model support: compact prompts + `format=json` opt-in
 
-**What:** design slim (<300-char) `operator.md` + `quant.md`
-variants that small reasoning-tuned models can actually follow,
-unlocking sub-4B models for operators with weaker hardware. The
-current operator.md is 8706 chars; quant.md is 1288 chars. Both
-saturate the attention budget of 3.8B-class reasoning models,
-which fall back to their training-default output style (math-
-textbook reasoning with `\boxed{}` answers) when overwhelmed.
+**What:** add first-class support for reasoning-tuned models in
+the operator + advisor roles. Two changes:
+
+1. Slim (<300-char) `operator.md` + `quant.md` variants for
+   small reasoning models (3.8B-class) that saturate on long
+   prompts.
+2. Per-role / per-model `force_json_output` config flag that
+   passes Ollama's `format=json` constraint, suppressing the
+   chain-of-thought entirely for reasoning-tuned models so the
+   `num_predict` budget reaches the JSON emission.
 
 **Why high value:** the 2026-05-25 direct-probe diagnostic
-(`tools/diagnose_phi4_mini_reasoning.py`) proved
-`phi4-mini-reasoning:3.8b-fp16` IS capable of producing correct
-routing JSON — just not against the full operator.md. With a
-stripped 175-char system prompt + Ollama's `format=json`
-constraint, the same model that scored 0/14 on the full battery
-produced **exactly correct JSON in 46 chars with zero math-
-mode preamble**. The "hard-block as incompatible" verdict was
-prompt-design failure, not model-fundamental.
+(`tools/diagnose_reasoning_model.py`) ran against both
+`phi4-mini-reasoning:3.8b-fp16` (the small one) AND
+`phi4-reasoning:14b-plus-q8_0` (the large one) and found
+**two distinct, fixable failure modes** — both currently
+mis-attributed to fundamental incompatibility:
 
-**Evidence from the diagnostic (raw outputs in script header):**
+- **Small reasoning models** fail by *prompt-length saturation*:
+  the model can't hold the 8706-char operator.md prompt in its
+  3.8B attention budget and falls back to training-default
+  math-textbook output. Fix: compact prompt (<300 chars). Same
+  model scored 0/14 on the full battery but produced exactly
+  correct JSON in 46 chars under a 175-char stripped prompt +
+  `format=json`.
+- **Large reasoning models** fail by *unbounded chain-of-thought*:
+  the model handles long prompts fine and engages thoughtfully
+  with the task, but burns the probe's `num_predict=1024`
+  budget on its `<think>` block before emitting JSON. Fix:
+  `format=json` (suppresses `<think>` entirely on this family).
+  `phi4-reasoning:14b-plus` produces 4741 chars of legitimate
+  advisor-task analysis under the standard prompt; under
+  `format=json` the same prompt yields <100 chars of pure JSON.
+
+The "hard-block as incompatible" verdict for both variants was
+prompt+probe-config failure, not model-fundamental.
+
+**Evidence from the diagnostic (raw outputs reproducible via
+`python tools/diagnose_reasoning_model.py --model <tag>`):**
+
+For `phi4-mini-reasoning:3.8b-fp16`:
 
 | System prompt | Length | Output |
 |---|---|---|
@@ -1199,30 +1221,49 @@ prompt-design failure, not model-fundamental.
 | stripped routing | 175 chars | Correct JSON in markdown code block, with brief reasoning |
 | stripped + `format=json` | 175 chars | `{"kind": "query", "query": {"kind": "status"}}` — 46 chars, no preamble |
 
+For `phi4-reasoning:14b-plus-q8_0`:
+
+| System prompt | Length | Output |
+|---|---|---|
+| operator.md (full) | 8706 chars | Correct JSON in 58 chars with code-block formatting |
+| quant.md (full) + PerformanceSummary | 1288 chars | 4741 chars of THOUGHTFUL advisor-task analysis — hits num_predict=1024 cap before JSON |
+| operator.md + `format=json` | 8706 chars | `{"kind": "query", "query": {"kind": "status"}}` — 46 chars, no `<think>` preamble |
+| stripped + `format=json` | 175 chars | Same 46-char output as above — identical to the small variant |
+| control "hello" | n/a | `Hello! How can I help you today?` — normal greeting, NOT `\boxed{Hello}` |
+
 **Implementation:**
 
 1. **New prompt files** `config/prompts/operator-compact.md` +
    `quant-compact.md`. Under 300 chars each. Schema lists trimmed
    to the most-common-N kinds with a "If unrecognized, output
    `{"kind": "unparseable"}`" footer rather than enumerating
-   every variant.
-2. **Per-model prompt selection** in `AssistantLLMConfig` /
-   `AdvisorConfig`: add `prompt_variant: Literal["standard",
-   "compact"] = "standard"`. Adapter picks the file based on
-   the config value.
-3. **`format=json` opt-in knob** for adapters: small models
-   benefit dramatically from Ollama's format constraint, larger
-   ones don't need it. Add `force_json_output: bool = False`
-   to both configs.
-4. **Re-sweep small reasoning models** under the compact prompt:
-   `phi4-mini-reasoning:3.8b`, plus any other reasoning-tuned
-   sub-4B candidates (e.g., qwen2.5:1.5b-instruct's reasoning
-   tags if Ollama ships them). Compare scores to the standard-
-   prompt scores currently in `operator-llm-models.md` +
-   `advisor-llm-models.md`.
-5. **Remove the model from `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`**
-   if it scores acceptably under the compact prompt. The
-   blocklist is prompt-scoped, not model-scoped, going forward.
+   every variant. **Primary fix for sub-4B reasoning models.**
+2. **`force_json_output: bool = False` config flag** in
+   `AssistantLLMConfig` / `AdvisorConfig` (and the matching
+   adapter wiring) that passes Ollama's `format=json` constraint.
+   **Primary fix for 14B+ reasoning models** — suppresses the
+   `<think>` block so the `num_predict` budget reaches the JSON.
+   Both small AND large reasoning models benefit from this knob
+   regardless of prompt length.
+3. **Per-model prompt selection** in the same configs:
+   `prompt_variant: Literal["standard", "compact"] = "standard"`.
+   Adapter picks the file based on the config value. Independent
+   of the `format=json` flag — operators choose which
+   combination suits their model.
+4. **Re-sweep candidates** under each variant:
+   - `phi4-mini-reasoning:3.8b` under compact + `format=json`
+   - `phi4-reasoning:14b-plus` under standard + `format=json`
+     (likely sufficient — the 14B variant doesn't need a
+     compact prompt, just the JSON constraint)
+   - `deepseek-r1:14b-qwen-distill` under standard + `format=json`
+     (likely cuts the 611s wall-clock back to standard-model
+     latency)
+   Compare scores to the existing standard-prompt scores in
+   `operator-llm-models.md` + `advisor-llm-models.md`.
+5. **Remove models from `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`**
+   that score acceptably under their respective variants. The
+   blocklist becomes prompt+probe-config-scoped, not
+   model-scoped, going forward.
 
 **Why deferred:** v1.0 ships with phi4:14b as the operator-
 assistant default and works perfectly. Compact prompts are a

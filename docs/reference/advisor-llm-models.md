@@ -409,7 +409,7 @@ general-purpose benchmarks — the advisor role apparently
 exercises a different skill profile than those benchmarks
 measure.)
 
-### Reasoning-tuned models can't complete the battery quickly
+### Reasoning-tuned models can't complete the battery quickly (the diagnostic later proved the cause is probe budget, not model)
 
 Two reasoning-tuned models in the NVMe sweep showed atypical
 behavior at the probe's default per-call timeout:
@@ -419,23 +419,40 @@ behavior at the probe's default per-call timeout:
 | `phi4-reasoning:14b-plus-q8_0` | **TIMED OUT** | — |
 | `deepseek-r1:14b-qwen-distill-q8_0` | 10/18 | **611s** (10× the median 7B time) |
 
-Reasoning-tuned models emit long internal-reasoning chains
-before the final JSON answer; the probe's per-fixture timeout
-isn't generous enough for `phi4-reasoning` to finish at all,
-and `deepseek-r1` only barely completed in 611 seconds.
+**2026-05-25 follow-up diagnostic (`tools/diagnose_reasoning_model.py`)
+proved the "TIMEOUT" for phi4-reasoning:14b-plus is a probe
+artifact, not a model incapability.** Running the model with the
+full `quant.md` prompt + a fresh PerformanceSummary, it produces
+4741 chars of legitimate, thoughtful analysis of WobbleBot's
+actual data — but the probe's `num_predict=1024` cap chops the
+output before it reaches the JSON emission. With Ollama's
+`format=json` constraint enabled, the same model emits
+schema-conforming output in <100 chars with zero `<think>`
+preamble (the `format=json` flag suppresses the chain-of-thought
+entirely on this family).
 
-**Implication for production use:** even when reasoning models
-DO produce schema-valid output, their latency would dominate
-`cli/advise`'s per-tick budget. Operators running advisor cycles
-at the default `schedules.advise` cadence (typically every 15
-min) would see each tick consumed by the LLM call itself.
-Reasoning-tuned models are not viable for live advisor runs
-without an asynchronous architecture change OR a 10× timeout
-budget. **Queued for v1.1 follow-up**: timeout knob for the
-advisor sweep so reasoning models can be measured for *quality*
-even if their *latency* disqualifies them operationally. Same
-v1.1 entry that re-tests `phi4-mini-reasoning` with a
-math-specialist-tuned prompt.
+The pattern likely holds for `deepseek-r1:14b-qwen-distill` too
+— the 611s runtime is unbounded reasoning burning the timeout
+budget, not the model being intrinsically slow at the task.
+
+**Two distinct failure modes** identified across reasoning-tuned
+candidates, each with a different fix:
+
+| Variant | Failure mode | Fix |
+|---|---|---|
+| **Small (3.8B-class)** like `phi4-mini-reasoning:3.8b` | Long system prompts saturate the model's attention budget; falls back to training-default output (math-textbook for math-tuned variants) | Compact prompt (<300 chars) + `format=json` |
+| **Large (14B+)** like `phi4-reasoning:14b-plus`, `deepseek-r1:14b-qwen-distill` | Unbounded chain-of-thought consumes the probe's `num_predict` budget before JSON emission | `format=json` (suppresses `<think>`) OR raise `num_predict` past 4000 |
+
+**Implication for production use:** the original "reasoning
+latency disqualifies these models for live advisor runs"
+verdict needs revision. With `format=json` the chain-of-thought
+is gone and the model's wall-clock latency drops to roughly the
+same envelope as non-reasoning models of similar size. **Queued
+for v1.1 follow-up (merged into the prompt-redesign entry):**
+re-sweep phi4-reasoning + deepseek-r1 with `format=json`
+enabled to establish their real quality scores. The "no
+schema-conforming output without big probe budget" claim should
+be retested before being relied on.
 
 ### nemotron3:33b is the only "calibrated" model in the sweep
 
@@ -514,9 +531,12 @@ Phase 3.4a MoE `quant` expert seat.
   `format=json`). Recoverable for the advisor role via prompt
   redesign — see v1.1 follow-up "Compact prompt variants for
   small reasoning models".
-- `phi4-reasoning:14b-plus-q8_0` — schema-following plausible but
-  too slow to complete the probe battery; even successful runs
-  would dominate live advisor-tick latency.
+- `phi4-reasoning:14b-plus-q8_0` — **PENDING RE-TEST.** Original
+  TIMEOUT verdict was an unbounded-chain-of-thought + small
+  num_predict probe artifact, not a model failure. 2026-05-25
+  diagnostic confirmed the model produces thoughtful analysis
+  of real WobbleBot data; needs re-sweep with `format=json`
+  or extended num_predict to establish quality score.
 - Sub-1B models (`smollm2:360m`, `tinyllama`, `orca-mini`) — below
   the schema-following capacity threshold.
 

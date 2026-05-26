@@ -133,7 +133,7 @@ differ in surprising ways.
 |---|---|---|---|
 | `phi4:14b-q8_0` | **14/14** | 9/18 (1 WR) | Perfect router; mediocre advisor with one wrong-direction call. The operator's currently-deployed choice — fine for routing, NOT a top advisor pick. |
 | `mistral-nemo:12b-instruct-2407-q8_0` | **14/14** | 8/18 (1 WR, 3 OVER) | Perfect router; weak advisor with three magnitude overshoots. Role-specialized to routing. |
-| `phi4-reasoning:14b-plus-q8_0` | **14/14** (6.2s) | **TIMED OUT** | Perfect, fast router; can't complete the advisor probe within timeout. Reasoning-tuned models burn their latency budget on internal chain-of-thought; tolerable for short routing prompts, fatal for longer-context advisor calls. |
+| `phi4-reasoning:14b-plus-q8_0` | **14/14** (6.2s) | TIMED OUT (probe artifact — **re-test pending**) | Perfect router. The advisor TIMEOUT was diagnosed 2026-05-25 (`tools/diagnose_reasoning_model.py`) as unbounded chain-of-thought hitting the probe's `num_predict=1024` cap before JSON emission — NOT a model incapability. Same model + `format=json` emits clean JSON in <100 chars with zero `<think>` preamble. Needs an advisor re-sweep with `format=json` to establish its real quality score. |
 | `granite4.1:30b-q5_K_M` | **14/14** | **5/18, 3 WR** | **Perfect router; wrong-direction-outlier advisor.** The most striking cross-role split in the data — same model, perfect at intent classification, actively recommends the OPPOSITE direction on half the advisor fixtures. Strong evidence that intent-classification skill and numerical-reasoning skill are independent. |
 | `qwq:32b-q8_0` | 13/14 | 11/18 | Strong router; ties the "always slight widen" advisor lazy-baseline. |
 | `nemotron3:33b` | 13/14 | 10/18 (4 ADJ, 0 WR) | Strong router; "calibrated" advisor (hold-biased, never wrong-direction). Distinctive — the only model with both decent routing AND zero wrong-direction advisor calls. |
@@ -148,13 +148,19 @@ differ in surprising ways.
    advisor quality (numerical reasoning over engineering metrics).
    `granite4.1:30b` is the smoking gun: 14/14 routing, 5/18 with
    3 wrong-direction calls on advisor.
-2. **Reasoning-tuned models hit a latency wall on advisor before
-   routing.** `phi4-reasoning:14b-plus` answers operator messages
-   in 6.2s but times out on a 6-fixture advisor battery. The
-   advisor prompt injects a longer `PerformanceSummary` JSON
-   context that pushes the model into longer chain-of-thought
-   episodes. Tolerable latency in one role does NOT imply
-   tolerable latency in another.
+2. **Reasoning-tuned models hit a probe-budget wall, not a
+   model wall, on advisor.** `phi4-reasoning:14b-plus` answers
+   operator messages in 6.2s but appears to time out on a
+   6-fixture advisor battery. The 2026-05-25 diagnostic
+   (`tools/diagnose_reasoning_model.py`) proved this is unbounded
+   chain-of-thought consuming the probe's `num_predict=1024`
+   budget — NOT a model incapability. With Ollama's `format=json`
+   constraint, the model suppresses its `<think>` block and
+   emits schema-valid JSON in well under 100 characters. The
+   original "tolerable latency in one role doesn't imply
+   tolerable latency in another" observation still holds, but
+   the fix is `format=json` enablement per role, not blocklisting
+   the model.
 3. **Don't dual-role from this matrix without checking both.**
    Operators tempted to repurpose their working operator-assistant
    model as the advisor (or vice versa) should verify against
