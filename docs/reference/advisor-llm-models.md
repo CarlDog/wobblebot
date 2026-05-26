@@ -12,6 +12,92 @@ scenario — only direction + magnitude bands).
 Driven by `tools/probe_advisor.py` + `tools/pull_and_probe_advisors.py`
 on **2026-05-25** against `config/prompts/quant.md`.
 
+## ⚠️ Methodology caveat — read this before interpreting any score
+
+The "expected direction" per fixture is **one maintainer's
+informed-but-fallible judgment**, not ground truth. The probe
+measures agreement with that single evaluator's reasoning. Three
+specific consequences follow:
+
+### The maintainer is the baseline
+
+Every fixture's expected direction (`tighten`/`hold`/`widen`) was
+declared by the same person who designed the scenarios, the
+scoring weights, and the magnitude bounds. A model that scores
+WRONG against my answer key may be reasoning *better* than I am —
+especially in ambiguous regimes. The probe is a measure of
+**agreement with one biased rubric**, not objective recommendation
+quality.
+
+### The 11/18 cluster ties an "always slight widen" baseline
+
+A constant-output strategy that emits `spacing_percentage = 1.1`
+(+10% widening) for every scenario scores exactly **11/18**
+against the 2026-05-25 fixture set:
+
+| Fixture | Expected | "Always +10% widen" verdict | Pts |
+|---|---|---|---|
+| quiet_market | tighten | WRONG | 0 |
+| healthy_churn | hold | ADJACENT | 1 |
+| whipsaw | widen | OK | 3 |
+| trending_up | hold | ADJACENT | 1 |
+| trending_down | widen | OK | 3 |
+| post_cap_trip | widen | OK | 3 |
+| **Total** | | | **11/18** |
+
+The 21+ models hitting exactly 11/18 in the results table below
+**tie this lazy baseline** and may not represent meaningful
+reasoning — they could be emitting the same fixed widen across
+all fixtures and happening to score well by accident of the
+fixture distribution (3 WIDEN, 2 HOLD, 1 TIGHTEN — biased toward
+widen-expected). Distinguishing "real reasoning that lands on
+widen" from "lazy widen that lands on the right answer
+accidentally" requires the v1.1 redesigned probe (multi-shot at
+T=0.5, more balanced fixture distribution, internal-coherence
+scoring) or the v1.1 backtester (objective evaluation against
+historical outcomes).
+
+### What this probe IS good for
+
+- **Schema-validity filtering** (objective): models that score
+  0/18 with non-zero ERR counts genuinely can't follow the
+  `advisor_recommendation_v1` schema. That part doesn't depend
+  on the maintainer's answer key.
+- **Strong differentiators** (probably real): scores materially
+  above the 11/18 lazy-baseline (12/18+, especially with low
+  WRONG counts) DO indicate the model is doing something
+  different from the lazy strategy. `llama3.1:8b` at 14/18 with
+  0 WRONG and `wizard-math:13b` at 13/18 are the clearest cases
+  of real reasoning signal.
+- **Wrong-direction outliers**: scores below the lazy baseline
+  (5/18 with 3+ WRONG, like nous-hermes2 and openchat) ARE
+  recommending the OPPOSITE of the maintainer's calls — that's
+  objective behavior worth flagging, even if "opposite" doesn't
+  prove "incorrect".
+
+### What this probe is NOT good for
+
+- Benchmark-grade evaluation of advisor quality.
+- Claiming "Model X is objectively better at the advisor role
+  than Model Y" without backtester corroboration.
+- Replacing the operator's currently-deployed advisor (phi4)
+  with a sweep winner (llama3.1:8b) based on this data alone.
+
+The v1.1 backtester (planned, see `docs/release/v1.1/adaptive-grid.md`)
+will provide the objective evaluation. Until it lands, treat
+sweep rankings as **directional first-pass signal** — useful for
+deciding which models earn the cost of a backtester run.
+
+### Redesign queued for v1.1
+
+The methodology fixes — balanced fixture distribution, multi-shot
+at the operator's T=0.5, confidence-calibration scoring,
+internal-coherence scoring, magnitude bounds matched to
+`auto_apply.*` config — are documented as a follow-up in
+`docs/release/v1.1/adaptive-grid.md` (Advisor probe v2). The
+current data should be reinterpreted once that redesigned probe
+ships.
+
 ## Battery
 
 Six canned `PerformanceSummary` fixtures spanning the realistic
