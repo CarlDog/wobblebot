@@ -106,21 +106,26 @@ PULLED_TODAY_ADVISOR: set[str] = {
 
 PULLED_RECENT: set[str] = PULLED_YESTERDAY_ASSISTANT | PULLED_TODAY_LOWEND | PULLED_TODAY_ADVISOR
 
-# Top performers per sweep — explicit keeps.
+# Top performers per sweep — explicit keeps. STRICT criteria after the
+# 2026-05-25 follow-up cull: 12+/14 on operator-assistant only, AND no
+# better quant alternative, AND not a redundant generation. Math
+# specialists stay because the advisor role has fewer top-tier options.
 KEEP_TOP: set[str] = {
     # Advisor sweep top tier
-    "llama3.1:8b-instruct-q8_0",  # 14/18 winner
-    "wizard-math:13b",  # 13/18 math specialist
-    "mathstral:7b",  # 12/18, zero wrong direction; q4 baseline
-    # Operator-assistant sweep top tier (q8 from 2026-05-24)
+    "llama3.1:8b-instruct-q8_0",  # 14/18 advisor winner
+    "wizard-math:13b",  # 13/18 math specialist runner-up
+    "mathstral:7b",  # 12/18, zero wrong-direction; safest math specialist
+    # Operator-assistant sweep top tier (12+/14 q8 from 2026-05-24)
     "granite3-dense:8b-instruct-q8_0",  # 13/14 winner
-    "qwen2.5:3b-instruct-q8_0",  # 12/14
+    "qwen2.5:3b-instruct-q8_0",  # 12/14, paired with q4 tier pick
     "qwen2.5:7b-instruct-q8_0",  # 12/14
-    "qwen2:7b-instruct-q8_0",  # 12/14
-    "solar:10.7b-instruct-v1-q8_0",  # 12/14
+    "qwen2:7b-instruct-q8_0",  # 12/14, qwen2 generation reference
+    "solar:10.7b-instruct-v1-q8_0",  # 12/14, max-quality
     "starling-lm:7b",  # 12/14
     "zephyr:7b",  # 12/14
-    # falcon3:3b — new operator-assistant low-end winner (13/15, 0 errors)
+    "neural-chat:7b",  # 12/14 (1 err) — borderline; kept as 7b chat reference
+    "llama3:8b-instruct-q8_0",  # 12/14
+    # falcon3:3b — operator-assistant low-end winner (13/15, 0 errors)
     "falcon3:3b-instruct-q8_0",
 }
 
@@ -144,7 +149,9 @@ KEEP_USER_PIN: set[str] = {
 # (regardless of provenance, it had to score badly in the role it was
 # tested for). Source: 2026-05-24/25 sweep summaries.
 UNSUITABLE: set[str] = {
-    # Operator-assistant sweep failures (≤ 5/14)
+    # ===== Round 1 (2026-05-25 first cull) — already removed ===== #
+    # Kept here for documentation; classify() short-circuits because
+    # they're no longer in the installed list.
     "tinyllama:1.1b-chat-v1-q8_0",  # 1/14
     "smollm2:360m-instruct-q8_0",  # 1/14
     "gemma:2b-instruct-q8_0",  # 2/14
@@ -157,19 +164,43 @@ UNSUITABLE: set[str] = {
     "phi:2.7b-chat-v2-q8_0",  # 5/14
     "stablelm2:1.6b-chat-q8_0",  # 4/14
     "dolphin-phi:2.7b",  # 4/14
-    "phi3:3.8b-mini-4k-instruct-q8_0",  # 0/14 — broken on the routing prompt
-    # Yesterday's low-end audit floor
-    "llama3.2:1b-instruct-q4_K_M",  # 1/15 — same broken pattern at q4
-    "granite3-dense:2b-instruct-q4_K_M",  # 9/15 — underperforms qwen2.5:1.5b
-    "gemma2:2b-instruct-q4_K_M",  # 10/15 — marginal
-    "llama3:8b-instruct-q4_K_M",  # 10/15 — q4 hurt this one
-    # Advisor sweep failures (5/18 with 3 WRONG)
-    "nous-hermes2:10.7b",  # was operator-assistant top tier but advisor 5/18
-    "openchat:7b",  # was operator-assistant top tier but advisor 5/18
-    # falcon3 family inversions
-    "falcon3:7b-instruct-q8_0",  # 11/15 with 1 err on assistant; 11/18 advisor; no scaling benefit
-    "falcon3:10b-instruct-q8_0",  # same pattern
-    "falcon3:1b-instruct-q8_0",  # 2/15 assistant + 1/18 advisor with 5 errors
+    "phi3:3.8b-mini-4k-instruct-q8_0",  # 0/14
+    "llama3.2:1b-instruct-q4_K_M",  # 1/15
+    "granite3-dense:2b-instruct-q4_K_M",  # 9/15
+    "gemma2:2b-instruct-q4_K_M",  # 10/15
+    "llama3:8b-instruct-q4_K_M",  # 10/15
+    "nous-hermes2:10.7b",  # advisor 5/18 with 3 WRONG
+    "openchat:7b",  # advisor 5/18 with 3 WRONG
+    "falcon3:7b-instruct-q8_0",  # no scaling vs 3b
+    "falcon3:10b-instruct-q8_0",  # no scaling vs 3b
+    "falcon3:1b-instruct-q8_0",  # 5 advisor errors
+    # ===== Round 2 (2026-05-25 deeper cull) ===== #
+    # Mid-tier clutter (8-11/14 operator-assistant + 8-11/18 advisor)
+    # with no compelling differentiator vs the kept top performers.
+    "llama2:13b-chat-q8_0",  # 10/14, 11/18 — legacy gen, no advantage
+    "deepseek-llm:7b-chat-q8_0",  # 5/14 (4 err), 9/18 — broken on routing
+    "internlm2:7b-chat-v2.5-q8_0",  # 10/14, 11/18 — no advantage over qwen2:7b
+    "yi:9b-chat-v1.5-q8_0",  # 11/14, 10/18 — no advantage
+    "yi:6b-chat-q8_0",  # 9/14 (3 err), 8/18 — error-prone
+    "gemma:7b-instruct-v1.1-q8_0",  # 8/14, 11/18 — legacy gemma; gemma2 exists
+    "gemma2:9b-instruct-q8_0",  # 9/14, 11/18 (1 err) — no advantage
+    "stablelm-zephyr:3b",  # 8/14, 11/18 — mid-tier with no niche
+    "smollm2:1.7b-instruct-q8_0",  # 7/14 (1 err), 11/18 — small + error-prone
+    "llama2:7b-chat-q8_0",  # 6/14 (2 err), 3/18 (1 err) — legacy + broken
+    "nemotron-mini:4b-instruct-q8_0",  # 10/14 (3 err), 8/18 (1 err)
+    "nemotron-mini:4b-instruct-q4_K_M",  # 12/15 (1 err) — middling, no tier need
+    "phi3.5:3.8b-mini-instruct-q8_0",  # 11/14, 11/18 — phi3.5 not a top tier; q4 sufficient if any
+    "phi3.5:3.8b-mini-instruct-q4_K_M",  # 11/15 — marginal, no tier need
+    "llama3.2:3b-instruct-q8_0",  # 11/14, 8/18 — qwen2.5:3b dominates
+    "granite3-dense:2b-instruct-q8_0",  # 9/14, 11/18 — q4 variant covers it
+    "gemma2:2b-instruct-q8_0",  # 10/14 (1 err), 11/18 — q4 variant covers
+    "qwen2.5:1.5b-instruct-q8_0",  # 10/14, 11/18 — q4 tier-pick variant covers
+    "mistral:7b-instruct-v0.3-q4_K_M",  # 12/15 (1 err) — middling; q8 v0.3 is top tier
+    "mistral:7b-instruct-v0.2-q8_0",  # 9/18 — legacy mistral generation
+    "mistral:7b-instruct-v0.3-q8_0",  # 11/14, 8/18 (3 OVERSHOOT) — borderline; not in 12+ band
+    # Redundant quant + tag variants
+    "mathstral:7b-v0.1-q8_0",  # IDENTICAL score to mathstral:7b (q4_K_M); 45% disk saving
+    "wizard-math:7b",  # 11/18 subsumed by wizard-math:13b (13/18)
 }
 
 
