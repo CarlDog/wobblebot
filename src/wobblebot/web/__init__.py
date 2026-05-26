@@ -8,7 +8,7 @@ Entry point: ``wobblebot.web.app.create_app(...)`` returns a FastAPI
 instance the ``cli/web`` daemon hands to uvicorn. Sub-packages:
 
 - :mod:`wobblebot.web.routes` — feature-area APIRouters (auth,
-  cost, status, advisor, harvester, news, audit).
+  cost, status, advisor, harvester, news, history).
 - :mod:`wobblebot.web.middleware` — session, CSRF, rate-limit.
 - :mod:`wobblebot.web.auth` — password hashing + login flow.
 - :mod:`wobblebot.web.dependencies` — FastAPI dependency factories

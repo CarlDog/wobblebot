@@ -3,7 +3,7 @@
 One TestClient that:
 
 1. Logs in.
-2. Visits every page (dashboard / cost / advisor / harvester / news / audit).
+2. Visits every page (dashboard / cost / advisor / harvester / news / history).
 3. Creates a pause command via POST /commands/pause.
 4. Approves it via POST /commands/<id>/confirm.
 5. Confirms the row is now ``approved`` in operator.db — which is
@@ -53,7 +53,7 @@ async def operator_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     await adapter.connect()
     await adapter.create_user(TEST_USERNAME, hash_password(TEST_PASSWORD, cost=10))
     # Pre-seed an LLM cost row + a notification so the cost +
-    # audit pages have something to render.
+    # history pages have something to render.
     await adapter.save_llm_call(
         LLMCallRecord(
             id=uuid4(),
@@ -222,7 +222,7 @@ class TestE2EWalkthrough:
             ("/advisor", "BTC/USD"),
             ("/harvester", "exchange_to_bank"),
             ("/news", "BTC e2e walkthrough headline"),
-            ("/audit", "session started"),
+            ("/history", "session started"),
         ]:
             resp = client.get(path)
             assert resp.status_code == 200, f"{path} returned {resp.status_code}"
@@ -284,8 +284,8 @@ class TestE2EWalkthrough:
         assert row.requesting_user_id == TEST_USERNAME
         assert row.confirming_user_id == TEST_USERNAME
 
-        # 9. The same row should now appear on /audit.
-        resp = client.get("/audit")
+        # 9. The same row should now appear on /history.
+        resp = client.get("/history")
         assert resp.status_code == 200
         assert "approved" in resp.text
         assert "web" in resp.text

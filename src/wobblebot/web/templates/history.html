@@ -1,11 +1,12 @@
-{# Audit log view (Stage 7.4.B). Pending commands + notifications
-   from operator.db. The /audit stub from Stage 7.1.D is replaced. #}
+{# History view (Stage 7.4.B; renamed from /audit on 2026-05-25 to
+   disambiguate from the v1.1 Auditor daemon). Pending commands +
+   notifications from operator.db. #}
 {% extends "layout.html" %}
 
-{% block title %}Audit — WobbleBot{% endblock %}
+{% block title %}History — WobbleBot{% endblock %}
 
 {% block content %}
-<h1>Audit</h1>
+<h1>History</h1>
 
 {% if snapshot.error %}
   <div class="card"><p class="error">{{ snapshot.error }}</p></div>

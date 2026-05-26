@@ -1,4 +1,4 @@
-"""Tests for the /audit view (Stage 7.4.B)."""
+"""Tests for the /history view (Stage 7.4.B; renamed from /audit 2026-05-25)."""
 
 from __future__ import annotations
 
@@ -67,16 +67,16 @@ def _notification(*, level: str = "info", title: str = "test event") -> Notifica
     )
 
 
-class TestAuditRoute:
+class TestHistoryRoute:
     def test_anonymous_redirects(self, storage: SQLiteStorageAdapter) -> None:
         with _build_client(storage) as client:
-            resp = client.get("/audit")
+            resp = client.get("/history")
             assert resp.status_code == 302
 
     def test_empty_renders_placeholders(self, storage: SQLiteStorageAdapter) -> None:
         with _build_client(storage) as client:
             login_as(client)
-            resp = client.get("/audit")
+            resp = client.get("/history")
             assert resp.status_code == 200
             assert "No pending commands" in resp.text
             assert "No notifications" in resp.text
@@ -87,7 +87,7 @@ class TestAuditRoute:
         await storage.save_pending_command(_pending(status="approved"))
         with _build_client(storage) as client:
             login_as(client)
-            resp = client.get("/audit")
+            resp = client.get("/history")
             assert resp.status_code == 200
             assert "discord" in resp.text
             assert "approved" in resp.text
@@ -108,7 +108,7 @@ class TestAuditRoute:
         assert nid1 != nid2
         with _build_client(storage) as client:
             login_as(client)
-            resp = client.get("/audit")
+            resp = client.get("/history")
             assert resp.status_code == 200
             assert "not yet" in resp.text
             assert "forwarded one" in resp.text

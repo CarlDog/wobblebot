@@ -39,7 +39,7 @@ from wobblebot.web.middleware import (
     get_or_create_csrf_token,
 )
 from wobblebot.web.routes import advisor as advisor_routes
-from wobblebot.web.routes import audit as audit_routes
+from wobblebot.web.routes import history as history_routes
 from wobblebot.web.routes import auth as auth_routes
 from wobblebot.web.routes import commands as command_routes
 from wobblebot.web.routes import cost as cost_routes
@@ -272,7 +272,7 @@ def create_app(  # pylint: disable=too-many-arguments
     app.include_router(advisor_routes.router)
     app.include_router(harvester_routes.router)
     app.include_router(news_routes.router)
-    app.include_router(audit_routes.router)
+    app.include_router(history_routes.router)
     app.include_router(health_routes.router)
     app.include_router(settings_routes.router)
     app.include_router(notifications_routes.router)
