@@ -56,7 +56,9 @@ numbers; treat as informational, not a model-speed benchmark.
 | Rank | Model | Score | OK | OVER | ADJ | WR | ERR | Time |
 |---|---|---|---|---|---|---|---|---|
 | **1** | `llama3.1:8b-instruct-q8_0` | **14/18** | 4 | 0 | 2 | 0 | 0 | 150s |
-| **2** | `mathstral:7b` | **12/18** | 3 | 0 | 3 | 0 | 0 | 31s |
+| **2** | `wizard-math:13b` | **13/18** | 4 | 0 | 1 | 1 | 0 | 120s |
+| **3** | `mathstral:7b` (q4_K_M) | **12/18** | 3 | 0 | 3 | 0 | 0 | 31s |
+| **3** | `mathstral:7b-v0.1-q8_0` | **12/18** | 3 | 0 | 3 | 0 | 0 | 141s |
 | 3 | `qwen2:0.5b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 28s |
 | 3 | `smollm2:1.7b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 31s |
 | 3 | `stablelm-zephyr:3b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 35s |
@@ -64,6 +66,10 @@ numbers; treat as informational, not a model-speed benchmark.
 | 3 | `qwen2.5:1.5b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 54s |
 | 3 | `granite3-dense:2b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 58s |
 | 3 | `nous-hermes:7b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 61s |
+| 3 | `wizard-math:7b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 186s |
+| 3 | `falcon3:3b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 108s |
+| 3 | `falcon3:7b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 161s |
+| 3 | `falcon3:10b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 189s |
 | 3 | `gemma:2b-instruct-q8_0` | 11/18 | 2 | 2 | 1 | 1 | 0 | 76s |
 | 3 | `zephyr:7b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 81s |
 | 3 | `qwen2.5:3b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 82s |
@@ -94,6 +100,7 @@ numbers; treat as informational, not a model-speed benchmark.
 | 37 | `phi:2.7b-chat-v2-q8_0` | 4/18 | 1 | 0 | 1 | 1 | 0 | 60s |
 | 38 | `stablelm2:1.6b-chat-q8_0` | 3/18 | 1 | 0 | 0 | 1 | 0 | 50s |
 | 38 | `llama2:7b-chat-q8_0` | 3/18 | 1 | 0 | 0 | 0 | 1 | 136s |
+| 40 | `falcon3:1b-instruct-q8_0` | **1/18** | 0 | 0 | 1 | 0 | 5 | 41s |
 | 40 | `phi4-mini-reasoning:3.8b` | **0/18** | 0 | 0 | 0 | 0 | 1 | 1s |
 | 40 | `smollm2:360m-instruct-q8_0` | **0/18** | 0 | 0 | 0 | 0 | 1 | 14s |
 | 40 | `tinyllama:1.1b-chat-v1-q8_0` | **0/18** | 0 | 0 | 0 | 0 | 1 | 22s |
@@ -121,6 +128,71 @@ Operator currently runs `phi4:14b-q8_0` (10/18); switching to
 model. Caveat: this is one snapshot of one fixture battery; a
 second sweep at different fixture parameters would build
 confidence.
+
+### wizard-math:13b is the strongest math specialist by score
+
+Added 2026-05-25 follow-up sweep after operator caught the tag
+typo (Ollama's library uses `wizard-math`, not `wizardmath`).
+The 13B variant scored **13/18** — second only to llama3.1:8b
+across the entire sweep. 4 OK + 1 ADJACENT + 1 WRONG.
+
+The wizard-math:13b vs mathstral:7b trade-off is real:
+
+| Metric | wizard-math:13b | mathstral:7b |
+|---|---|---|
+| Score | 13/18 | 12/18 |
+| OK count | 4 | 3 |
+| WRONG count | **1** | **0** |
+| Disk (q4_K_M) | ~7-8 GB | 4.1 GB |
+| Disk (q8_0) | ~14 GB | 7.5 GB |
+
+wizard-math:13b has the higher ceiling (one more OK verdict) but
+makes one wrong-direction call. mathstral:7b never goes the
+wrong direction across any tested fixture. For a role that
+drives real-money grid params, the "never wrong direction"
+property may matter more than 1 extra correct verdict —
+especially under model temperature where a wrong call once-per-N
+cycles compounds into bad params.
+
+`wizard-math:7b` scored 11/18 in the same sweep — the 13B variant
+genuinely benefits from scale on this task.
+
+### Mathstral quantization is NOT the limiting factor
+
+The 2026-05-25 follow-up tested both `mathstral:7b` (Ollama's
+default plain-tag, which resolves to q4_K_M at 4.1 GB) AND the
+explicit `mathstral:7b-v0.1-q8_0` (7.5 GB). **Identical scores:**
+
+| Tag | Score | OK | ADJ | WR |
+|---|---|---|---|---|
+| `mathstral:7b` (q4_K_M) | 12/18 | 3 | 3 | 0 |
+| `mathstral:7b-v0.1-q8_0` | 12/18 | 3 | 3 | 0 |
+
+The 3 ADJACENT verdicts are model-capability gaps on this
+prompt, not quant-precision gaps. fp16 (untested) wouldn't help
+either by extrapolation — the reasoning ceiling is saturated at
+q4 already.
+
+**Practical implication:** operators wanting mathstral can use
+the q4_K_M variant at 4.1 GB rather than q8_0 at 7.5 GB without
+quality penalty. ~45% disk savings for the same score.
+
+### falcon3:3b ties top-tier at one-third the size (operator-assistant)
+
+Tested in the 2026-05-25 follow-up. In the advisor sweep,
+`falcon3:3b-instruct-q8_0` scored 11/18 — same cluster as most
+mid-tier candidates. **But in the operator-assistant probe
+(separate sweep, see operator-llm-models.md), falcon3:3b scored
+13/15** — matching granite3-dense:8b's top-tier score at less
+than half the size. Strong scaling story for low-end-hardware
+operator-assistant use.
+
+falcon3:7b and falcon3:10b both scored 11/15 with 1 error in
+the operator-assistant sweep AND 11/18 with 1 WRONG in the
+advisor sweep — no scaling benefit past 3B for either role.
+The 1B variant is below the schema-following threshold (5
+errors out of 6 advisor scenarios; 2/15 routing on the
+operator-assistant probe).
 
 ### Math specialists validate the doc's hypothesis
 

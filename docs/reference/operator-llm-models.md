@@ -102,6 +102,40 @@ prompt iteration.
   makes operator interactions feel sluggish. Acceptable for batch
   use, not chat.
 
+## Falcon3 family (added 2026-05-25 follow-up sweep)
+
+TII's Falcon3 family was missed in the original 2026-05-24 sweep
+because the earlier `falcon` family was documented-rejected as
+older-generation. Falcon3 is a separate, newer line; sweeping it
+2026-05-25 surfaced one strong pick.
+
+| Model | Score | Errors | Time | Notes |
+|---|---|---|---|---|
+| `falcon3:3b-instruct-q8_0` | **13/15** | 0 | 80s | **Surprise: ties top-tier at 3B.** Matches granite3-dense:8b's score at one-third the disk size. Strong candidate for low-end-hardware operator-assistant. |
+| `falcon3:7b-instruct-q8_0` | 11/15 | 1 | 148s | No scaling benefit vs 3b — produced one routing error the 3b didn't. |
+| `falcon3:10b-instruct-q8_0` | 11/15 | 1 | 192s | Same pattern as 7b — no improvement, one error. |
+| `falcon3:1b-instruct-q8_0` | **2/15** | n/a | 56s | Below the routing-schema threshold (same pattern as llama3.2:1b). |
+
+**Why falcon3:3b is unusual:** in the rest of the sweep, scaling
+generally helps until the 7-10B mid-tier where most models plateau
+at 12-13/15. Falcon3 inverts this — the 3B is the family's best
+performer, and the 7B + 10B both regress with one routing error
+each. The Falcon3 instruction-tuning may have been optimized
+specifically for the smaller sizes; or there's a quirk in how the
+larger sizes handle the multi-variant intent schema. Worth noting
+for operators considering the family.
+
+**Recommended pick from Falcon3:** `falcon3:3b-instruct-q8_0` for
+low-end hardware (it's the only Falcon3 worth using); skip the
+larger variants — they're slower without being better.
+
+Updated low-end hardware tier (mid-tier) recommendations: the
+audited q4_K_M sweep below still names `qwen2.5:3b-instruct-q4_K_M`
+as the recommended mid-tier pick (13/15, zero errors, 1.9GB).
+`falcon3:3b-instruct-q8_0` (13/15, zero errors, ~3.2GB) is the
+operator's pick if they have the extra ~1.3GB of RAM available and
+prefer Falcon's tuning style.
+
 ## Low-end hardware recommendations (q4_K_M)
 
 Audit run 2026-05-25 against 12 `q4_K_M` candidates spanning
