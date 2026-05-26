@@ -1171,6 +1171,73 @@ the math-specialist rejection scope note in
 `docs/reference/operator-llm-models.md` enumerates the same
 candidate-role list with implementation specifics per role.
 
+### Compact prompt variants for small reasoning models
+
+**What:** design slim (<300-char) `operator.md` + `quant.md`
+variants that small reasoning-tuned models can actually follow,
+unlocking sub-4B models for operators with weaker hardware. The
+current operator.md is 8706 chars; quant.md is 1288 chars. Both
+saturate the attention budget of 3.8B-class reasoning models,
+which fall back to their training-default output style (math-
+textbook reasoning with `\boxed{}` answers) when overwhelmed.
+
+**Why high value:** the 2026-05-25 direct-probe diagnostic
+(`tools/diagnose_phi4_mini_reasoning.py`) proved
+`phi4-mini-reasoning:3.8b-fp16` IS capable of producing correct
+routing JSON — just not against the full operator.md. With a
+stripped 175-char system prompt + Ollama's `format=json`
+constraint, the same model that scored 0/14 on the full battery
+produced **exactly correct JSON in 46 chars with zero math-
+mode preamble**. The "hard-block as incompatible" verdict was
+prompt-design failure, not model-fundamental.
+
+**Evidence from the diagnostic (raw outputs in script header):**
+
+| System prompt | Length | Output |
+|---|---|---|
+| operator.md (full) | 8706 chars | 3260 chars of irrelevant math problem (Σ divisible by 3 or 5) |
+| stripped routing | 175 chars | Correct JSON in markdown code block, with brief reasoning |
+| stripped + `format=json` | 175 chars | `{"kind": "query", "query": {"kind": "status"}}` — 46 chars, no preamble |
+
+**Implementation:**
+
+1. **New prompt files** `config/prompts/operator-compact.md` +
+   `quant-compact.md`. Under 300 chars each. Schema lists trimmed
+   to the most-common-N kinds with a "If unrecognized, output
+   `{"kind": "unparseable"}`" footer rather than enumerating
+   every variant.
+2. **Per-model prompt selection** in `AssistantLLMConfig` /
+   `AdvisorConfig`: add `prompt_variant: Literal["standard",
+   "compact"] = "standard"`. Adapter picks the file based on
+   the config value.
+3. **`format=json` opt-in knob** for adapters: small models
+   benefit dramatically from Ollama's format constraint, larger
+   ones don't need it. Add `force_json_output: bool = False`
+   to both configs.
+4. **Re-sweep small reasoning models** under the compact prompt:
+   `phi4-mini-reasoning:3.8b`, plus any other reasoning-tuned
+   sub-4B candidates (e.g., qwen2.5:1.5b-instruct's reasoning
+   tags if Ollama ships them). Compare scores to the standard-
+   prompt scores currently in `operator-llm-models.md` +
+   `advisor-llm-models.md`.
+5. **Remove the model from `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`**
+   if it scores acceptably under the compact prompt. The
+   blocklist is prompt-scoped, not model-scoped, going forward.
+
+**Why deferred:** v1.0 ships with phi4:14b as the operator-
+assistant default and works perfectly. Compact prompts are a
+hardware-tier extension (sub-4B operators) rather than a quality
+upgrade for the current tier. Best landed alongside a low-end-
+hardware milestone (e.g., the v1.1 cli/init wizard adding a
+"detect hardware → recommend model + prompt variant" step).
+
+**Trigger:** any operator request for sub-4B hardware support, or
+a contributor with an 8GB-RAM laptop wanting to run WobbleBot
+locally. Cross-reference: the phi4-mini-reasoning entry in
+`docs/reference/operator-llm-models.md` carries the diagnostic
+result; the same model in `advisor-llm-models.md` is queued for
+the same prompt-redesign re-sweep.
+
 ### Foreign-language operator support -- audit + test coverage
 
 **What:** wobblebot is end-to-end English today, with no

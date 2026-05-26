@@ -90,10 +90,21 @@ prompt iteration.
 
 ### Models to avoid
 
-- `phi4-mini-reasoning:3.8b-fp16` — **incompatible**. The 3.8B
-  math-specialist treats every operator message as a math problem
-  and never emits valid JSON. The adapter refuses to construct
-  with this model.
+- `phi4-mini-reasoning:3.8b-fp16` — **incompatible against the
+  current operator.md prompt** (8706 chars). Direct-probe
+  diagnostic on 2026-05-25 (`tools/diagnose_phi4_mini_reasoning.py`)
+  showed the failure is prompt-length saturation at 3.8B params,
+  not a fundamental "math specialist can't do JSON" problem. When
+  the operator.md prompt is replaced with a stripped 175-char
+  routing prompt + Ollama's ``format=json`` constraint, the same
+  model produces exactly correct JSON (`{"kind": "query",
+  "query": {"kind": "status"}}`) in 46 characters with zero
+  reasoning preamble. The 14/14 fail across the operator battery
+  was specifically against the full operator.md prompt — the
+  model is recoverable for the routing role with a compact
+  prompt redesign. Adapter still refuses to construct under the
+  current prompt; see v1.1 entry below for the prompt-redesign
+  follow-up.
 - `llava:13b` — **incompatible**. Vision model, not text-instruct-
   tuned for JSON-schema output. Refused by the adapter.
 - `qwen3.6:35b-a3b-q8_0` — **degraded**. 3/14 silent empty-content
@@ -487,12 +498,15 @@ constructs the operator-assistant role. The advisor adapter
 (`adapters/ollama.py`) and any future math-role adapter live
 on separate paths.
 
-- `phi4-mini-reasoning:3.8b-fp16` — empirically 0/14 on the
-  operator-assistant routing battery. Hard-blocked in
-  `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`. **Untested in the quant
-  role**; the small-model + math-specialization combination
-  could plausibly produce good numerical reasoning even though
-  it can't follow our intent schema.
+- `phi4-mini-reasoning:3.8b-fp16` — 0/14 against the current
+  operator.md prompt, BUT the 2026-05-25 direct-probe diagnostic
+  (`tools/diagnose_phi4_mini_reasoning.py`) confirmed this is
+  prompt-length saturation, not model-fundamental incompatibility.
+  Same model + 175-char stripped prompt + `format=json` →
+  exactly correct routing JSON in 46 chars. Still hard-blocked
+  for the operator role under the current prompt. **Tested at
+  0/18 in the quant role under the same prompt-saturation
+  failure mode** — see advisor-llm-models.md.
 - `mathstral:7b` — Mistral's math-specialized variant.
   Probably exhibits the same operator-assistant pattern but
   untested. **Untested in the quant role.**

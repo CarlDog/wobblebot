@@ -321,12 +321,25 @@ grid-tuning recommendations when the input IS numerical analysis.
 
 `phi4-mini-reasoning:3.8b` scored 0/18 (errored on all 6
 scenarios — exactly the "always emit math prose, never valid
-JSON" failure mode predicted in the operator doc). This was
-expected; the model would need a tuned advisor-specific prompt
-to elicit schema-conforming output. **Queued as a v1.1
-follow-up:** craft a math-specialist-friendly variant of
-`quant.md` and re-sweep `phi4-mini-reasoning` + `mathstral`
-together to see if the prompt change closes the gap.
+JSON" failure mode predicted in the operator doc). **2026-05-25
+update — the rejection was wrong about the cause.** A direct-
+probe diagnostic (`tools/diagnose_phi4_mini_reasoning.py`)
+showed the failure is **prompt-length saturation at 3.8B
+params**, not a math-specialist-can't-do-JSON pathology. Same
+model + stripped 175-char prompt + Ollama `format=json` →
+exactly correct routing JSON in 46 characters. The 8706-char
+operator.md (TEST 1) and 1288-char quant.md (TEST 2) prompts
+both overwhelm the model's attention budget, causing it to
+revert to its training-default output style (math-textbook
+reasoning with `\boxed{}` answers).
+
+The implication is that the advisor's `quant.md` prompt may
+need a compact-variant for small reasoning models — same
+finding as the operator role. **Queued as a v1.1 follow-up
+(merged):** craft an `operator-compact.md` + `quant-compact.md`
+pair (<300 chars each) and re-sweep small reasoning models
+under both. Details in `docs/release/v1.1/operator-ux.md` →
+"Compact prompt variants for small reasoning models".
 
 `wizardmath:7b` and `wizardmath:13b` are **not in Ollama's
 library** under those tags. The pull failed for both with
@@ -495,8 +508,12 @@ Phase 3.4a MoE `quant` expert seat.
 - `granite4.1:30b-q5_K_M` — 5/18, 3 wrong-direction calls. Joins
   the wrong-direction outlier tier despite being a substantially
   larger and more recent model than the other two.
-- `phi4-mini-reasoning:3.8b` — math-mode output, no valid JSON
-  against the current quant prompt.
+- `phi4-mini-reasoning:3.8b` — 0/18 against the current
+  `quant.md`, BUT the failure is prompt-length saturation per
+  the 2026-05-25 diagnostic (works with a stripped prompt +
+  `format=json`). Recoverable for the advisor role via prompt
+  redesign — see v1.1 follow-up "Compact prompt variants for
+  small reasoning models".
 - `phi4-reasoning:14b-plus-q8_0` — schema-following plausible but
   too slow to complete the probe battery; even successful runs
   would dominate live advisor-tick latency.
