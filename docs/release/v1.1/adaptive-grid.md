@@ -73,7 +73,7 @@ error-prone way to re-anchor than the manual sequence.
 
 **Why it mattered:** unblocks Phase-3 advisor metrics on
 recently-added symbols (the 12 observe.symbols added Day 3 only had
-~5 days of history pre-backfill), gives the planned Backtester
+~5 days of history pre-backfill), gives the planned Auditor
 (below) real data to chew on, and lets short outages self-heal on
 restart so the operator doesn't have to remember to backfill after
 every bounce.
@@ -106,8 +106,8 @@ order makes sense.
 
 | Scenario | Driven by | Typical command | Bars | Kraken calls | Wall-clock |
 |---|---|---|---|---|---|
-| **New-symbol catch-up** (operator adds a coin to `observe.symbols`) | Phase 3 advisor metrics; future backtester | `--since <90d-ago> --symbols NEW` | ~130k | ~180 | ~3 min |
-| **Backtester pre-flight** | v1.1 backtester replay | `--since <30-90d-ago>` (all symbols) | ~50-130k each | ~70-180 each | ~2-3 min/symbol |
+| **New-symbol catch-up** (operator adds a coin to `observe.symbols`) | Phase 3 advisor metrics; future auditor | `--since <90d-ago> --symbols NEW` | ~130k | ~180 | ~3 min |
+| **Auditor pre-flight** | v1.1 auditor replay | `--since <30-90d-ago>` (all symbols) | ~50-130k each | ~70-180 each | ~2-3 min/symbol |
 | **Historian boot-up** | v1.1 Historian (months-to-years pattern recognition) | `--since <1y-ago> --interval 1h` (all symbols) | ~8.7k × 12 | ~145 total | ~3 min |
 | **Regime detector calibration** | v1.1 regime classifier | `--since <6mo-ago> --interval 4h` | ~1.1k × 12 | ~24 total | ~30s |
 | **Outage recovery (medium)** | Manual fall-back when auto-gap-fill's 24h cap is exceeded | `--since <when-observe-died>` | varies | varies | varies |
@@ -128,7 +128,7 @@ sized against this scenario.
 | 3 | `--rate-limit-seconds` | Paid Kraken users stuck at conservative free-tier 1/sec | Already a service kwarg; just plumb the CLI flag. Validate non-negative. |
 | 4 | Per-cycle progress on terminal | 37-min seeds look hung; `progress_callback` exists but CLI never wires it | One INFO log per chunk: `"backfill BTC/USD: %d bars so far, cursor at %s, %.1fs elapsed"`. Render every N chunks to keep the log volume sane. |
 | 5 | `--resume` (auto-pickup after error) | `--since <cursor>` must be hand-copied from prior error log | Treat `--resume --symbols A,B` as `--catchup` semantically: each symbol resolves to its own latest `opened_at` in `ohlc_bars` (not `price_snapshots` — which could be from daemon polls and lie about backfill progress). |
-| 6 | `--intervals 1m,1h` | Backtester wants 1m + historian wants 1h → two separate invocations of the same command | Inner loop iterates the intervals list; per-symbol stats reported per-interval. |
+| 6 | `--intervals 1m,1h` | Auditor wants 1m + historian wants 1h → two separate invocations of the same command | Inner loop iterates the intervals list; per-symbol stats reported per-interval. |
 | 7 | Kraken historical-horizon probe | A naive `--since 2020-01-01` silently succeeds with whatever Kraken retains, which can be much shorter than requested for fine intervals | One-line WARN if returned bar count is materially less than `(until - since) / interval`. |
 
 #### Implementation order
@@ -163,7 +163,7 @@ solid. Each item is independently small and ships when an operator
 hits the pain it removes.
 
 **Trigger:** earliest individually justified once a v1.1 consumer
-(backtester / historian / regime detector) begins requiring a
+(auditor / historian / regime detector) begins requiring a
 bulk-seed event. Items 1 + 2 are operator-comfort and could ship
 on any quiet afternoon.
 
@@ -487,51 +487,78 @@ validated consumer.
 since the inputs share the same data path. Earliest meaningful
 v1.1 candidate that directly serves the 90%-success aspiration.
 
-### Backtester / strategy replay tool
+### Auditor / strategy + recommendation evaluation tool
 
-**What:** new ``cli/backtest`` (or ``tools/backtest.py``) that
-takes the current ``settings.yml`` config + a date range + a
-seed balance, walks the operator's historical ``price_snapshots``
-(or Kraken OHLC backfill), and reports: total fills, total fees
-paid, gross P&L, net P&L, max drawdown, cycle completion rate.
-Pure historical replay — no orders placed, no Kraken calls except
-maybe a one-shot OHLC fetch for range fill.
+**Naming note (2026-05-25):** originally called "backtester" in
+the v1.1 plan; renamed to **auditor** because the tool's role is
+broader than performance replay. It evaluates operator config
+choices AND advisor recommendations against historical ground
+truth — both are forms of audit, not just backtest. The auditor
+provides the objective evaluation that the operator-llm-models
+and advisor-llm-models probe data cannot.
+
+**What:** new ``cli/auditor`` that takes the current
+``settings.yml`` config + a date range + a seed balance, walks
+the operator's historical ``price_snapshots`` (or Kraken OHLC
+backfill), and reports: total fills, total fees paid, gross
+P&L, net P&L, max drawdown, cycle completion rate. Also audits
+each `AdvisorSuggestion` against the realized outcomes in its
+post-apply window — closing the "did this model's
+recommendations actually improve things?" loop that the
+probe-based rankings explicitly cannot answer. Pure historical
+replay — no orders placed, no Kraken calls except maybe a
+one-shot OHLC fetch for range fill.
 
 **Why high value:** answers "should I retune?" with data instead
 of intuition. Today the operator's retune decision is gut-based;
-backtester turns it into "if I'd been running this proposed
+the auditor turns it into "if I'd been running this proposed
 config for the last 60 days, my cycle completion rate would have
 been 73% vs the current 68%." Closes the loop between the
 Historian's narrative ("the last 30 days were
 high_volatility_chop") and the operator's actionable choice
-("then I should widen spacing per the backtester showing 1.5%
+("then I should widen spacing per the auditor showing 1.5%
 beats 1.0% in that regime").
+
+**The advisor-evaluation use case (added as the rename
+motivator):** the probe in `tools/probe_advisor.py` measures
+agreement with the maintainer's expected directions, not
+objective correctness (see methodology caveat in
+`docs/reference/advisor-llm-models.md`). The auditor would
+replay each advisor model's actual recommendations against
+realized outcomes — `llama3.1:8b`'s 14/18 probe score either
+holds up (its recommendations actually improved PnL/cycles in
+the audit window) or doesn't (the probe was measuring agreement
+with Claude, not quality). This is the ONLY way to make a
+defensible "swap phi4 → llama3.1:8b" decision.
 
 Distinct from ``cli/shadow``:
 - **cli/shadow** = live Kraken prices + synthetic ledger;
   runs forward in real time. Validates a config under *current*
   market conditions.
-- **cli/backtest** = historical prices + synthetic ledger;
+- **cli/auditor** = historical prices + synthetic ledger;
   runs as fast as possible. Validates a config under *past*
-  market conditions.
+  market conditions AND evaluates past advisor recommendations
+  against realized outcomes.
 
 **Implementation:** reuses ``GridEngine`` + ``MockExchangeAdapter``
 unchanged (they don't know the difference between "current
 price" coming from a live ticker vs a historical snapshot). New
-``BacktestExchangeAdapter`` (subclass of MockExchangeAdapter)
+``AuditorExchangeAdapter`` (subclass of MockExchangeAdapter)
 that walks an iterator of (timestamp, price) tuples instead of
-honoring real-time changes. New ``cli/backtest`` plumbing reads
+honoring real-time changes. New ``cli/auditor`` plumbing reads
 the iterator from ``price_snapshots`` (or fetched OHLC bars).
-Output: a ``backtest_runs`` table for comparing configs over
-time + a Jinja2-rendered report.
+Output: a ``auditor_runs`` table for comparing configs over
+time + a Jinja2-rendered report. Advisor-evaluation mode adds
+a ``model_audits`` table that scores each advisor model's
+historical recommendations against realized post-apply outcomes.
 
 **Why deferred:** feature work. ~~Also needs OHLC+TA in place for
 the gap-fill story~~ — the OHLC backfill substrate shipped
-2026-05-25, so the backtester can now read either live
+2026-05-25, so the auditor can now read either live
 `price_snapshots` OR the synthesized snapshots that backfill
 populates from OHLC bars. The TA-indicator layer on top of
 `ohlc_bars` is still pending (see the entry near the top of this
-file), but the backtester doesn't strictly need it — running
+file), but the auditor doesn't strictly need it — running
 against `price_snapshots` (now historically backfillable) is
 sufficient for the v1.1 first cut.
 

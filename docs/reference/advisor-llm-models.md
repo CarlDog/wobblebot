@@ -54,7 +54,7 @@ widen-expected). Distinguishing "real reasoning that lands on
 widen" from "lazy widen that lands on the right answer
 accidentally" requires the v1.1 redesigned probe (multi-shot at
 T=0.5, more balanced fixture distribution, internal-coherence
-scoring) or the v1.1 backtester (objective evaluation against
+scoring) or the v1.1 **auditor** (objective evaluation against
 historical outcomes).
 
 ### What this probe IS good for
@@ -79,14 +79,14 @@ historical outcomes).
 
 - Benchmark-grade evaluation of advisor quality.
 - Claiming "Model X is objectively better at the advisor role
-  than Model Y" without backtester corroboration.
+  than Model Y" without auditor corroboration.
 - Replacing the operator's currently-deployed advisor (phi4)
   with a sweep winner (llama3.1:8b) based on this data alone.
 
-The v1.1 backtester (planned, see `docs/release/v1.1/adaptive-grid.md`)
+The v1.1 **auditor** (planned, see `docs/release/v1.1/adaptive-grid.md`)
 will provide the objective evaluation. Until it lands, treat
 sweep rankings as **directional first-pass signal** — useful for
-deciding which models earn the cost of a backtester run.
+deciding which models earn the cost of an auditor run.
 
 ### Redesign queued for v1.1
 
