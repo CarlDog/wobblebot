@@ -102,6 +102,60 @@ prompt iteration.
   makes operator interactions feel sluggish. Acceptable for batch
   use, not chat.
 
+**Note on dual-role candidates:** several models in the table
+above (notably `granite4.1:30b-q5_K_M` at 14/14 operator) score
+PERFECTLY here but are wrong-direction outliers on the **advisor
+role** (granite4.1: 5/18 with 3 WR). If you're choosing one model
+to serve BOTH roles, see the "Cross-role contrast (vs advisor
+sweep)" section below.
+
+## Cross-role contrast (vs advisor sweep)
+
+Updated **2026-05-25** after the advisor sweep at
+`docs/reference/advisor-llm-models.md` produced results for 9
+models that ALSO appear in the operator-assistant table above.
+The contrast is informative: **a perfect operator-assistant score
+does NOT imply a competent advisor**, and the failure modes
+differ in surprising ways.
+
+| Model | Operator | Advisor | Cross-role read |
+|---|---|---|---|
+| `phi4:14b-q8_0` | **14/14** | 9/18 (1 WR) | Perfect router; mediocre advisor with one wrong-direction call. The operator's currently-deployed choice — fine for routing, NOT a top advisor pick. |
+| `mistral-nemo:12b-instruct-2407-q8_0` | **14/14** | 8/18 (1 WR, 3 OVER) | Perfect router; weak advisor with three magnitude overshoots. Role-specialized to routing. |
+| `phi4-reasoning:14b-plus-q8_0` | **14/14** (6.2s) | **TIMED OUT** | Perfect, fast router; can't complete the advisor probe within timeout. Reasoning-tuned models burn their latency budget on internal chain-of-thought; tolerable for short routing prompts, fatal for longer-context advisor calls. |
+| `granite4.1:30b-q5_K_M` | **14/14** | **5/18, 3 WR** | **Perfect router; wrong-direction-outlier advisor.** The most striking cross-role split in the data — same model, perfect at intent classification, actively recommends the OPPOSITE direction on half the advisor fixtures. Strong evidence that intent-classification skill and numerical-reasoning skill are independent. |
+| `qwq:32b-q8_0` | 13/14 | 11/18 | Strong router; ties the "always slight widen" advisor lazy-baseline. |
+| `nemotron3:33b` | 13/14 | 10/18 (4 ADJ, 0 WR) | Strong router; "calibrated" advisor (hold-biased, never wrong-direction). Distinctive — the only model with both decent routing AND zero wrong-direction advisor calls. |
+| `deepseek-r1:14b-qwen-distill-q8_0` | 13/14 (44s) | 10/18 (611s) | Functional in both roles but **prohibitively slow in both** — 44s/call for operator routing, 611s/call for advisor. Reasoning-tuned latency dominates regardless of role. |
+| `gemma4:e4b-it-q8_0` | 12/14 | 11/18 | Decent router; ties the advisor lazy-baseline. Unremarkable in both roles. |
+| `qwen3.6:35b-a3b-q8_0` | 11/14 (3 errors) | 8/18 (1 WR, 3 OVER) | **Degraded** in both roles. 3 silent empty-content failures on routing + 3 magnitude overshoots on advisor. The least-recommended model that's still installable. |
+
+### Cross-role takeaways
+
+1. **Roles exercise different skills.** A perfect operator-
+   assistant score (intent classification) gives no signal about
+   advisor quality (numerical reasoning over engineering metrics).
+   `granite4.1:30b` is the smoking gun: 14/14 routing, 5/18 with
+   3 wrong-direction calls on advisor.
+2. **Reasoning-tuned models hit a latency wall on advisor before
+   routing.** `phi4-reasoning:14b-plus` answers operator messages
+   in 6.2s but times out on a 6-fixture advisor battery. The
+   advisor prompt injects a longer `PerformanceSummary` JSON
+   context that pushes the model into longer chain-of-thought
+   episodes. Tolerable latency in one role does NOT imply
+   tolerable latency in another.
+3. **Don't dual-role from this matrix without checking both.**
+   Operators tempted to repurpose their working operator-assistant
+   model as the advisor (or vice versa) should verify against
+   the sibling sweep's data first. The matrix above is the
+   shortcut; running both probes against a new candidate is the
+   rigorous path.
+4. **`phi4:14b-q8_0` (currently bundled default) is the right
+   choice for operator-assistant but is a 9/18 advisor.** The
+   v1.1 MoE advisor design (Phase 3.4a) splitting quant / risk
+   / news into separate expert seats is reinforced by this data:
+   the "one model for everything" approach undersells both roles.
+
 ## Falcon3 family (added 2026-05-25 follow-up sweep)
 
 TII's Falcon3 family was missed in the original 2026-05-24 sweep
