@@ -10,7 +10,12 @@ via `/api/chat`), prompt (`config/prompts/quant.md` vs
 scenario — only direction + magnitude bands).
 
 Driven by `tools/probe_advisor.py` + `tools/pull_and_probe_advisors.py`
-on **2026-05-25** against `config/prompts/quant.md`.
+on **2026-05-25** against `config/prompts/quant.md`. Two sweeps
+fed the table: the broad new-pulls sweep ran against the memory-
+card model store; the 9-model pre-existing-models sweep (gemma4 /
+qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
+phi4-reasoning / granite4.1) ran against the NVMe-resident store.
+Elapsed times are therefore not comparable across rows.
 
 ## ⚠️ Methodology caveat — read this before interpreting any score
 
@@ -153,6 +158,8 @@ numbers; treat as informational, not a model-speed benchmark.
 | 3 | `granite3-dense:2b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 58s |
 | 3 | `nous-hermes:7b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 61s |
 | 3 | `wizard-math:7b` | 11/18 | 3 | 0 | 2 | 1 | 0 | 186s |
+| 3 | `gemma4:e4b-it-q8_0` (NVMe) | 11/18 | 3 | 0 | 2 | 1 | 0 | 51s |
+| 3 | `qwq:32b-q8_0` (NVMe) | 11/18 | 3 | 0 | 2 | 1 | 0 | 227s |
 | 3 | `falcon3:3b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 108s |
 | 3 | `falcon3:7b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 161s |
 | 3 | `falcon3:10b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 189s |
@@ -170,19 +177,25 @@ numbers; treat as informational, not a model-speed benchmark.
 | 3 | `llama2:13b-chat-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 238s |
 | 3 | `solar:10.7b-instruct-v1-q8_0` | 11/18 | 3 | 0 | 2 | 1 | 0 | 372s |
 | 3 | `gemma2:9b-instruct-q8_0` | 11/18 | 3 | 0 | 2 | 0 | 1 | 167s |
-| 24 | `yi:9b-chat-v1.5-q8_0` | 10/18 | 2 | 0 | 4 | 0 | 0 | 164s |
-| 25 | `deepseek-llm:7b-chat-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 121s |
-| 25 | `mistral:7b-instruct-v0.2-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 141s |
-| 25 | `granite3-dense:8b-instruct-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 153s |
-| 28 | `yi:6b-chat-q8_0` | 8/18 | 2 | 0 | 2 | 2 | 0 | 129s |
-| 28 | `mistral:7b-instruct-v0.3-q8_0` | 8/18 | 0 | 3 | 2 | 1 | 0 | 142s |
-| 28 | `llama3:8b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 2 | 0 | 155s |
-| 28 | `llama3.2:3b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 1 | 0 | 69s |
-| 28 | `nemotron-mini:4b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 1 | 1 | 97s |
+| 26 | `yi:9b-chat-v1.5-q8_0` | 10/18 | 2 | 0 | 4 | 0 | 0 | 164s |
+| 26 | `nemotron3:33b` (NVMe) | 10/18 | 2 | 0 | 4 | 0 | 0 | 56s |
+| 26 | `deepseek-r1:14b-qwen-distill-q8_0` (NVMe) | 10/18 | 2 | 1 | 2 | 0 | 1 | 611s |
+| 29 | `deepseek-llm:7b-chat-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 121s |
+| 29 | `mistral:7b-instruct-v0.2-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 141s |
+| 29 | `granite3-dense:8b-instruct-q8_0` | 9/18 | 1 | 2 | 2 | 1 | 0 | 153s |
+| 29 | `phi4:14b-q8_0` (NVMe; **operator's currently-deployed**) | 9/18 | 1 | 2 | 2 | 1 | 0 | 175s |
+| 33 | `yi:6b-chat-q8_0` | 8/18 | 2 | 0 | 2 | 2 | 0 | 129s |
+| 33 | `mistral:7b-instruct-v0.3-q8_0` | 8/18 | 0 | 3 | 2 | 1 | 0 | 142s |
+| 33 | `llama3:8b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 2 | 0 | 155s |
+| 33 | `llama3.2:3b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 1 | 0 | 69s |
+| 33 | `nemotron-mini:4b-instruct-q8_0` | 8/18 | 2 | 0 | 2 | 1 | 1 | 97s |
+| 33 | `qwen3.6:35b-a3b-q8_0` (NVMe) | 8/18 | 0 | 3 | 2 | 1 | 0 | 81s |
+| 33 | `mistral-nemo:12b-instruct-2407-q8_0` (NVMe) | 8/18 | 0 | 3 | 2 | 1 | 0 | 128s |
 | 33 | `qwen2.5:0.5b-instruct-q8_0` | 7/18 | 2 | 0 | 1 | 0 | 1 | 29s |
 | 33 | `dolphin-phi:2.7b` | 7/18 | 2 | 0 | 1 | 0 | 1 | 39s |
-| 35 | `openchat:7b` | 5/18 | 1 | 0 | 2 | 3 | 0 | 82s |
-| 35 | `nous-hermes2:10.7b` | 5/18 | 1 | 0 | 2 | 3 | 0 | 121s |
+| 42 | `openchat:7b` | 5/18 | 1 | 0 | 2 | 3 | 0 | 82s |
+| 42 | `nous-hermes2:10.7b` | 5/18 | 1 | 0 | 2 | 3 | 0 | 121s |
+| 42 | `granite4.1:30b-q5_K_M` (NVMe) | **5/18** | 1 | 0 | 2 | 3 | 0 | 287s |
 | 37 | `phi:2.7b-chat-v2-q8_0` | 4/18 | 1 | 0 | 1 | 1 | 0 | 60s |
 | 38 | `stablelm2:1.6b-chat-q8_0` | 3/18 | 1 | 0 | 0 | 1 | 0 | 50s |
 | 38 | `llama2:7b-chat-q8_0` | 3/18 | 1 | 0 | 0 | 0 | 1 | 136s |
@@ -191,12 +204,17 @@ numbers; treat as informational, not a model-speed benchmark.
 | 40 | `smollm2:360m-instruct-q8_0` | **0/18** | 0 | 0 | 0 | 0 | 1 | 14s |
 | 40 | `tinyllama:1.1b-chat-v1-q8_0` | **0/18** | 0 | 0 | 0 | 0 | 1 | 22s |
 | 40 | `orca-mini:3b` | **0/18** | 0 | 0 | 0 | 0 | 1 | 41s |
+| TIMEOUT | `phi4-reasoning:14b-plus-q8_0` (NVMe) | — | — | — | — | — | — | timed out |
 
 For reference, the **operator's currently-deployed model**
-`phi4:14b-q8_0` (not re-tested in this sweep; smoke-tested
-earlier the same day): 10/18 (2 OK / 1 OVERSHOOT / 2 ADJACENT / 1
-WRONG / 0 ERR). Sits between the 11/18 cluster and the 9-8/18
-tier.
+`phi4:14b-q8_0` scored **9/18** in the NVMe pre-existing-models
+sweep (1 OK / 2 OVERSHOOT / 2 ADJACENT / 1 WRONG / 0 ERR). Sits
+just below the 11/18 lazy-baseline cluster — directionally
+correct in 5/6 fixtures but with two magnitude overshoots and
+one wrong-direction call. (An earlier same-day smoke test had
+suggested 10/18; the multi-shot rerun in the formal sweep
+landed slightly lower, likely T=0.5 stochastic variance — see
+methodology caveat.)
 
 ## Findings
 
@@ -361,6 +379,70 @@ reasoning skills; a `quant` expert needs little else. Picking
 the right model per role matters more than picking one model
 for everything.
 
+### granite4.1:30b is a wrong-direction outlier (real signal)
+
+`granite4.1:30b-q5_K_M` scored **5/18 with 3 WRONG** — same
+disqualifying pattern as `nous-hermes2:10.7b` and `openchat:7b`,
+the existing wrong-direction outliers from the broad sweep.
+Even under the methodology caveat above, scoring below the
+"always slight widen" lazy baseline with 3+ WRONG calls is
+**objective behavior**: the model is recommending the OPPOSITE
+direction from the maintainer's calls on half the fixtures,
+regardless of whether the maintainer's calls are themselves
+optimal. **Disqualifying for advisor-role consideration**, same
+as the other wrong-direction outliers. (granite4.1 is also
+notable as a fresh 2025-era model with strong scores on
+general-purpose benchmarks — the advisor role apparently
+exercises a different skill profile than those benchmarks
+measure.)
+
+### Reasoning-tuned models can't complete the battery quickly
+
+Two reasoning-tuned models in the NVMe sweep showed atypical
+behavior at the probe's default per-call timeout:
+
+| Model | Result | Time |
+|---|---|---|
+| `phi4-reasoning:14b-plus-q8_0` | **TIMED OUT** | — |
+| `deepseek-r1:14b-qwen-distill-q8_0` | 10/18 | **611s** (10× the median 7B time) |
+
+Reasoning-tuned models emit long internal-reasoning chains
+before the final JSON answer; the probe's per-fixture timeout
+isn't generous enough for `phi4-reasoning` to finish at all,
+and `deepseek-r1` only barely completed in 611 seconds.
+
+**Implication for production use:** even when reasoning models
+DO produce schema-valid output, their latency would dominate
+`cli/advise`'s per-tick budget. Operators running advisor cycles
+at the default `schedules.advise` cadence (typically every 15
+min) would see each tick consumed by the LLM call itself.
+Reasoning-tuned models are not viable for live advisor runs
+without an asynchronous architecture change OR a 10× timeout
+budget. **Queued for v1.1 follow-up**: timeout knob for the
+advisor sweep so reasoning models can be measured for *quality*
+even if their *latency* disqualifies them operationally. Same
+v1.1 entry that re-tests `phi4-mini-reasoning` with a
+math-specialist-tuned prompt.
+
+### nemotron3:33b is the only "calibrated" model in the sweep
+
+`nemotron3:33b` (NVMe) scored 10/18 with a **distinctive verdict
+profile: 2 OK / 0 OVERSHOOT / 4 ADJACENT / 0 WRONG / 0 ERR**.
+Out of all 50+ models tested, only `yi:9b-chat-v1.5-q8_0` and
+`nemotron3:33b` share this signature: zero wrong-direction
+calls AND zero magnitude overshoots, with multiple ADJACENT
+verdicts indicating a `hold`-biased reasoning posture — the
+model tends to recommend `hold` when the maintainer expected
+`tighten`/`widen` (one step off, not opposite).
+
+This is a *conservative* failure mode rather than a *reactive*
+one. For a role that drives real-money grid params, "hesitant
+to change anything" is arguably safer than "confidently wrong"
+even when the raw score is lower than the 11/18 cluster. Worth
+considering for the v1.1 MoE `risk` expert seat (Phase 3.4a),
+where the risk-counterpart-to-quant role explicitly rewards
+conservatism.
+
 ### Pull failures + "tag does not exist"
 
 | Tag | Status |
@@ -410,8 +492,14 @@ Phase 3.4a MoE `quant` expert seat.
   at intent classification (operator-assistant), poor at advisor
   numerical reasoning.
 - `openchat:7b` — same pattern.
+- `granite4.1:30b-q5_K_M` — 5/18, 3 wrong-direction calls. Joins
+  the wrong-direction outlier tier despite being a substantially
+  larger and more recent model than the other two.
 - `phi4-mini-reasoning:3.8b` — math-mode output, no valid JSON
   against the current quant prompt.
+- `phi4-reasoning:14b-plus-q8_0` — schema-following plausible but
+  too slow to complete the probe battery; even successful runs
+  would dominate live advisor-tick latency.
 - Sub-1B models (`smollm2:360m`, `tinyllama`, `orca-mini`) — below
   the schema-following capacity threshold.
 
@@ -432,6 +520,13 @@ Phase 3.4a MoE `quant` expert seat.
    discriminate finely. Adding regime variants (e.g. low-vol
    uptrend, high-vol uptrend, choppy + drawdown, etc.) would
    widen the differentiation surface.
+4. **Configurable per-fixture timeout** for reasoning-tuned
+   models. The current probe budget caused `phi4-reasoning:14b-plus`
+   to TIMEOUT entirely and `deepseek-r1:14b-qwen-distill` to take
+   611s (10× the median 7B time). A `--per-fixture-timeout-seconds`
+   knob would let the operator separate "model emits invalid
+   output" from "model is just slow," producing fairer quality
+   data even where latency rules a model out operationally.
 
 ## How to add a new model to this list
 
