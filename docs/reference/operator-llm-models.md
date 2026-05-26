@@ -90,21 +90,27 @@ prompt iteration.
 
 ### Models to avoid
 
-- `phi4-mini-reasoning:3.8b-fp16` — **incompatible against the
-  current operator.md prompt** (8706 chars). Direct-probe
-  diagnostic on 2026-05-25 (`tools/diagnose_phi4_mini_reasoning.py`)
-  showed the failure is prompt-length saturation at 3.8B params,
-  not a fundamental "math specialist can't do JSON" problem. When
-  the operator.md prompt is replaced with a stripped 175-char
-  routing prompt + Ollama's ``format=json`` constraint, the same
-  model produces exactly correct JSON (`{"kind": "query",
-  "query": {"kind": "status"}}`) in 46 characters with zero
-  reasoning preamble. The 14/14 fail across the operator battery
-  was specifically against the full operator.md prompt — the
-  model is recoverable for the routing role with a compact
-  prompt redesign. Adapter still refuses to construct under the
-  current prompt; see v1.1 entry below for the prompt-redesign
-  follow-up.
+- `phi4-mini-reasoning:3.8b-fp16` — **incompatible across both
+  the current operator.md AND the first-pass compact-prompt
+  draft.** Two failure modes documented (2026-05-25):
+  - Standard `operator.md` (8706 chars): model invents math
+    problems, never engages with the routing task. Prompt-length
+    saturation kicks in.
+  - Compact `operator-compact.md` (1364 chars) + `--force-json`:
+    model emits CONTEXTUALLY RELATED JSON for each input — but
+    treats inputs as data requests, not routing tasks. Example:
+    `"what's the weather"` → `{"weather":"sunny","temperature":75}`
+    instead of `{"kind":"conversational",...}`. 0/29 schema fails.
+  The compact prompt suppressed the math-mode default but did
+  NOT successfully convey "you are a router, not an answerer."
+  Recovery requires a stronger router-focused prompt with explicit
+  few-shot examples — queued as a v1.1 second-pass redesign. The
+  isolated 175-char stripped-prompt diagnostic worked for ONE
+  fixture (showing the model CAN produce routing JSON given the
+  right framing), but scaling that framing to cover the full
+  routing surface is non-trivial. Adapter still refuses to
+  construct unless `--bypass-suitability-check` is passed (probe
+  tooling only).
 - `llava:13b` — **incompatible**. Vision model, not text-instruct-
   tuned for JSON-schema output. Refused by the adapter.
 - `qwen3.6:35b-a3b-q8_0` — **degraded**. 3/14 silent empty-content
@@ -133,11 +139,11 @@ differ in surprising ways.
 |---|---|---|---|
 | `phi4:14b-q8_0` | **14/14** | 9/18 (1 WR) | Perfect router; mediocre advisor with one wrong-direction call. The operator's currently-deployed choice — fine for routing, NOT a top advisor pick. |
 | `mistral-nemo:12b-instruct-2407-q8_0` | **14/14** | 8/18 (1 WR, 3 OVER) | Perfect router; weak advisor with three magnitude overshoots. Role-specialized to routing. |
-| `phi4-reasoning:14b-plus-q8_0` | **14/14** (6.2s) | TIMED OUT (probe artifact — **re-test pending**) | Perfect router. The advisor TIMEOUT was diagnosed 2026-05-25 (`tools/diagnose_reasoning_model.py`) as unbounded chain-of-thought hitting the probe's `num_predict=1024` cap before JSON emission — NOT a model incapability. Same model + `format=json` emits clean JSON in <100 chars with zero `<think>` preamble. Needs an advisor re-sweep with `format=json` to establish its real quality score. |
+| `phi4-reasoning:14b-plus-q8_0` | **14/14** (6.2s) | 11/18 under `--force-json` (re-tested 2026-05-25) | Perfect router. Advisor re-sweep landed in the lazy-baseline cluster (`spacing=1.2` for every fixture); not the differentiated reasoning we hoped for, but a real score now that the TIMEOUT artifact is fixed. |
 | `granite4.1:30b-q5_K_M` | **14/14** | **5/18, 3 WR** | **Perfect router; wrong-direction-outlier advisor.** The most striking cross-role split in the data — same model, perfect at intent classification, actively recommends the OPPOSITE direction on half the advisor fixtures. Strong evidence that intent-classification skill and numerical-reasoning skill are independent. |
 | `qwq:32b-q8_0` | 13/14 | 11/18 | Strong router; ties the "always slight widen" advisor lazy-baseline. |
 | `nemotron3:33b` | 13/14 | 10/18 (4 ADJ, 0 WR) | Strong router; "calibrated" advisor (hold-biased, never wrong-direction). Distinctive — the only model with both decent routing AND zero wrong-direction advisor calls. |
-| `deepseek-r1:14b-qwen-distill-q8_0` | 13/14 (44s) | 10/18 (611s) | Functional in both roles but **prohibitively slow in both** — 44s/call for operator routing, 611s/call for advisor. Reasoning-tuned latency dominates regardless of role. |
+| `deepseek-r1:14b-qwen-distill-q8_0` | 13/14 (44s) baseline; **29/29 parse + 1 routing miss at 25s/call under `--force-json` (re-tested 2026-05-25)** | 10/18 baseline; **0/18 under `--force-json`** (degenerates) | Critical asymmetry: `--force-json` IMPROVES operator role (44s → 25s, no quality loss) but BREAKS advisor role (degenerates to `{}` on `/api/generate`). Keep force_json OFF for advisor on this model. |
 | `gemma4:e4b-it-q8_0` | 12/14 | 11/18 | Decent router; ties the advisor lazy-baseline. Unremarkable in both roles. |
 | `qwen3.6:35b-a3b-q8_0` | 11/14 (3 errors) | 8/18 (1 WR, 3 OVER) | **Degraded** in both roles. 3 silent empty-content failures on routing + 3 magnitude overshoots on advisor. The least-recommended model that's still installable. |
 

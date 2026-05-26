@@ -1231,39 +1231,68 @@ For `phi4-reasoning:14b-plus-q8_0`:
 | stripped + `format=json` | 175 chars | Same 46-char output as above — identical to the small variant |
 | control "hello" | n/a | `Hello! How can I help you today?` — normal greeting, NOT `\boxed{Hello}` |
 
-**Implementation:**
+**Implementation (revised post-2026-05-25 sweep):**
 
-1. **New prompt files** `config/prompts/operator-compact.md` +
-   `quant-compact.md`. Under 300 chars each. Schema lists trimmed
-   to the most-common-N kinds with a "If unrecognized, output
-   `{"kind": "unparseable"}`" footer rather than enumerating
-   every variant. **Primary fix for sub-4B reasoning models.**
-2. **`force_json_output: bool = False` config flag** in
-   `AssistantLLMConfig` / `AdvisorConfig` (and the matching
-   adapter wiring) that passes Ollama's `format=json` constraint.
-   **Primary fix for 14B+ reasoning models** — suppresses the
-   `<think>` block so the `num_predict` budget reaches the JSON.
-   Both small AND large reasoning models benefit from this knob
-   regardless of prompt length.
-3. **Per-model prompt selection** in the same configs:
-   `prompt_variant: Literal["standard", "compact"] = "standard"`.
-   Adapter picks the file based on the config value. Independent
-   of the `format=json` flag — operators choose which
-   combination suits their model.
-4. **Re-sweep candidates** under each variant:
-   - `phi4-mini-reasoning:3.8b` under compact + `format=json`
-   - `phi4-reasoning:14b-plus` under standard + `format=json`
-     (likely sufficient — the 14B variant doesn't need a
-     compact prompt, just the JSON constraint)
-   - `deepseek-r1:14b-qwen-distill` under standard + `format=json`
-     (likely cuts the 611s wall-clock back to standard-model
-     latency)
-   Compare scores to the existing standard-prompt scores in
-   `operator-llm-models.md` + `advisor-llm-models.md`.
-5. **Remove models from `KNOWN_INCOMPATIBLE_FOR_ASSISTANT`**
-   that score acceptably under their respective variants. The
-   blocklist becomes prompt+probe-config-scoped, not
-   model-scoped, going forward.
+The first-pass sweep against phi4-mini-reasoning, phi4-reasoning:14b-plus,
+and deepseek-r1:14b-qwen-distill (see
+`data/reasoning_sweep_results/SUMMARY.md`) revealed three constraints
+the implementation must respect:
+
+1. **`force_json_output` must be per-model + per-role, NOT global.**
+   `force_json` IMPROVES deepseek-r1 on `/api/chat` (operator role:
+   44s → 25s/call, full routing fidelity) but BREAKS deepseek-r1
+   on `/api/generate` (advisor role: 0/18 with `{}` degenerate
+   output). The legacy "thinking models degenerate to `{}`"
+   heuristic was correct for deepseek-r1 on advisor but
+   over-broad. Operator opts in per `(model, role)` combination.
+
+2. **The first-pass compact prompts are STRICTLY WORSE than the
+   originals.** Both need redesign:
+   - `quant-compact.md` (692 chars): made phi4-mini-reasoning
+     over-widen to `spacing=2.0` (OVERSHOOT). Dropping the
+     "argue from numbers, not sentiment" constraint removed
+     the magnitude anchor.
+   - `operator-compact.md` (1364 chars): suppressed the math-mode
+     default but caused phi4-mini-reasoning to treat inputs as
+     data requests, not routing tasks. Failure mode shifted but
+     accuracy stayed at 0/29.
+
+3. **Reasoning models that work on advisor cluster at the
+   lazy-baseline 11/18.** Both phi4-mini-reasoning and
+   phi4-reasoning:14b-plus emitted `spacing=1.2` for every fixture
+   under `--force-json`. They produce schema-valid output but no
+   differentiated reasoning. The fix unlocks "model isn't
+   broken" but not "model is better than the existing 21-model
+   lazy cluster."
+
+**Revised slice plan:**
+
+- **Slice 2 (done; needs revision):** compact prompt drafts —
+  first pass shipped but both strictly worse than originals.
+  Second pass must (a) keep magnitude-anchoring in quant; (b)
+  add explicit "router not answerer" framing + few-shot
+  examples in operator.
+- **Slice 3 (queued):** per-model + per-role `force_json_output`
+  config field. AssistantLLMConfig + AdvisorConfig each gain a
+  bool. Adapter wires it. Settings.example.yml defaults to
+  False with comments documenting per-model recommendations
+  (e.g., "force_json_output: true is recommended for
+  deepseek-r1 in operator role only").
+- **Slice 4 (queued):** if a future compact-prompt iteration
+  produces acceptable scores for phi4-mini-reasoning OR another
+  sub-4B model, remove that model from
+  `KNOWN_INCOMPATIBLE_FOR_ASSISTANT` and document the
+  prompt+config combination needed.
+
+**Per-model recommendation matrix from the 2026-05-25 sweep:**
+
+| Model | Operator | Advisor |
+|---|---|---|
+| `phi4:14b-q8_0` (current default) | standard (no force_json) | standard (no force_json) |
+| `mistral-nemo:12b-instruct-2407-q8_0` | standard | standard |
+| `phi4-reasoning:14b-plus-q8_0` | standard (works without force_json) | **`force_json=True`** (fixes TIMEOUT) |
+| `deepseek-r1:14b-qwen-distill-q8_0` | **`force_json=True`** (44s → 25s) | standard (force_json BREAKS this combo) |
+| `phi4-mini-reasoning:3.8b-fp16` | **still blocked** (needs second-pass compact prompt) | `force_json=True` (lazy-baseline 11/18) |
 
 **Why deferred:** v1.0 ships with phi4:14b as the operator-
 assistant default and works perfectly. Compact prompts are a

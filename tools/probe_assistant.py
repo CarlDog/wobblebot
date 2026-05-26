@@ -128,12 +128,13 @@ def format_intent(intent) -> str:  # type: ignore[no-untyped-def]  # pylint: dis
     return str(kind)
 
 
-async def main_async(  # pylint: disable=too-many-locals,too-many-arguments
+async def main_async(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     messages: list[str],
     include_multi_turn: bool,
     model_override: str | None,
     prompt_file_override: str | None,
     force_json: bool,
+    bypass_suitability_check: bool,
 ) -> int:
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
     operator_cfg = config.operator
@@ -165,6 +166,7 @@ async def main_async(  # pylint: disable=too-many-locals,too-many-arguments
         max_tokens=operator_cfg.assistant.max_tokens,
         timeout_seconds=180.0,
         force_json=force_json,
+        bypass_suitability_check=bypass_suitability_check,
     )
     snapshot = make_snapshot()
 
@@ -298,6 +300,16 @@ def main() -> int:
             "whether a candidate's blocked classification is still valid."
         ),
     )
+    parser.add_argument(
+        "--bypass-suitability-check",
+        action="store_true",
+        help=(
+            "Skip the KNOWN_INCOMPATIBLE_FOR_ASSISTANT hard-block at "
+            "adapter construction. Required to evaluate models on that "
+            "list under the new compact-prompt + force_json fixes. The "
+            "blocklist remains in effect for production cli/operator."
+        ),
+    )
     args = parser.parse_args()
 
     if args.messages:
@@ -312,6 +324,7 @@ def main() -> int:
             args.model,
             args.prompt_file,
             args.force_json,
+            args.bypass_suitability_check,
         )
     )
 

@@ -321,25 +321,28 @@ grid-tuning recommendations when the input IS numerical analysis.
 
 `phi4-mini-reasoning:3.8b` scored 0/18 (errored on all 6
 scenarios — exactly the "always emit math prose, never valid
-JSON" failure mode predicted in the operator doc). **2026-05-25
-update — the rejection was wrong about the cause.** A direct-
-probe diagnostic (`tools/diagnose_phi4_mini_reasoning.py`)
-showed the failure is **prompt-length saturation at 3.8B
-params**, not a math-specialist-can't-do-JSON pathology. Same
-model + stripped 175-char prompt + Ollama `format=json` →
-exactly correct routing JSON in 46 characters. The 8706-char
-operator.md (TEST 1) and 1288-char quant.md (TEST 2) prompts
-both overwhelm the model's attention budget, causing it to
-revert to its training-default output style (math-textbook
-reasoning with `\boxed{}` answers).
+JSON" failure mode predicted in the operator doc).
 
-The implication is that the advisor's `quant.md` prompt may
-need a compact-variant for small reasoning models — same
-finding as the operator role. **Queued as a v1.1 follow-up
-(merged):** craft an `operator-compact.md` + `quant-compact.md`
-pair (<300 chars each) and re-sweep small reasoning models
-under both. Details in `docs/release/v1.1/operator-ux.md` →
-"Compact prompt variants for small reasoning models".
+**2026-05-25 sweep results:**
+
+| Config | Score | Notes |
+|---|---|---|
+| Baseline (quant.md, no force_json) | 0/18 | Math-mode reasoning, no JSON |
+| `--force-json` (quant.md, 1288 chars) | **11/18** | Lazy baseline — emits `spacing=1.2` for every fixture |
+| `--force-json --prompt-file quant-compact.md` | 8/18 | WORSE — emits `spacing=2.0` (OVERSHOOT) for 4 of 6 fixtures |
+
+The `--force-json` fix recovers the model to lazy-baseline level.
+**The compact `quant-compact.md` draft is strictly worse** —
+dropping the "argue from numbers, not sentiment" constraint let
+the model over-widen to spacing=2.0 (+100%) which exceeds the
+±25% magnitude band → OVERSHOOT verdicts (2 pts each instead of
+OK's 3). Magnitude-anchoring constraints must be preserved in
+any compact-prompt redesign.
+
+Standard `quant.md` at 1288 chars is short enough for the 3.8B
+model's attention budget when `format=json` constrains output;
+the "prompt-length saturation" theory applies primarily to the
+8706-char `operator.md`, not to advisor prompts.
 
 `wizardmath:7b` and `wizardmath:13b` are **not in Ollama's
 library** under those tags. The pull failed for both with
@@ -419,21 +422,31 @@ behavior at the probe's default per-call timeout:
 | `phi4-reasoning:14b-plus-q8_0` | **TIMED OUT** | — |
 | `deepseek-r1:14b-qwen-distill-q8_0` | 10/18 | **611s** (10× the median 7B time) |
 
-**2026-05-25 follow-up diagnostic (`tools/diagnose_reasoning_model.py`)
-proved the "TIMEOUT" for phi4-reasoning:14b-plus is a probe
-artifact, not a model incapability.** Running the model with the
-full `quant.md` prompt + a fresh PerformanceSummary, it produces
-4741 chars of legitimate, thoughtful analysis of WobbleBot's
-actual data — but the probe's `num_predict=1024` cap chops the
-output before it reaches the JSON emission. With Ollama's
-`format=json` constraint enabled, the same model emits
-schema-conforming output in <100 chars with zero `<think>`
-preamble (the `format=json` flag suppresses the chain-of-thought
-entirely on this family).
+**2026-05-25 sweep results (`tools/sweep_reasoning_fixes.py`):**
 
-The pattern likely holds for `deepseek-r1:14b-qwen-distill` too
-— the 611s runtime is unbounded reasoning burning the timeout
-budget, not the model being intrinsically slow at the task.
+| Model | Config | Score | Elapsed |
+|---|---|---|---|
+| `phi4-reasoning:14b-plus-q8_0` | `--force-json` | **11/18** | 131s |
+| `deepseek-r1:14b-qwen-distill-q8_0` | `--force-json` | **0/18 (6 ERR)** | 35s |
+
+**phi4-reasoning:14b-plus:** the "TIMEOUT" was a probe artifact.
+Under `--force-json`, the model emits clean JSON in <100 chars
+with zero `<think>` preamble. Lands in the 11/18 lazy-baseline
+cluster — same caveat as the 21 other models there.
+
+**deepseek-r1:14b-qwen-distill: surprise — `--force-json` BREAKS
+this model on the advisor's `/api/generate` endpoint.** All 6
+fixtures errored with empty `{}` dicts or fabricated non-schema
+JSON (e.g. `{"command":"cancel open orders"...}`). The original
+"thinking models degenerate to `{}` under `format=json`" heuristic
+in the adapter was CORRECT for this model on this endpoint. The
+free-text extraction path is still the right one for deepseek-r1
+on advisor.
+
+Asymmetry: the same `--force-json` flag on `/api/chat` (operator
+role) works fine for deepseek-r1 (full routing fidelity at 25s/call
+vs 44s baseline). `format=json` constraint apparently behaves
+differently across Ollama's two endpoints for this model family.
 
 **Two distinct failure modes** identified across reasoning-tuned
 candidates, each with a different fix:
@@ -531,12 +544,14 @@ Phase 3.4a MoE `quant` expert seat.
   `format=json`). Recoverable for the advisor role via prompt
   redesign — see v1.1 follow-up "Compact prompt variants for
   small reasoning models".
-- `phi4-reasoning:14b-plus-q8_0` — **PENDING RE-TEST.** Original
-  TIMEOUT verdict was an unbounded-chain-of-thought + small
-  num_predict probe artifact, not a model failure. 2026-05-25
-  diagnostic confirmed the model produces thoughtful analysis
-  of real WobbleBot data; needs re-sweep with `format=json`
-  or extended num_predict to establish quality score.
+- `phi4-reasoning:14b-plus-q8_0` — **RE-TESTED 2026-05-25**:
+  scored **11/18 under `--force-json` against quant.md**, ties
+  the lazy-baseline cluster. The TIMEOUT verdict was a probe
+  artifact (unbounded `<think>` block consuming `num_predict`).
+  Same caveat as the 21-model 11/18 cluster — the score is
+  indistinguishable from "always slight widen" lazy strategy.
+  Viable for the advisor role only if the operator accepts
+  lazy-baseline scoring.
 - Sub-1B models (`smollm2:360m`, `tinyllama`, `orca-mini`) — below
   the schema-following capacity threshold.
 

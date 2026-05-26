@@ -179,13 +179,21 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
         force_json: bool = False,
+        bypass_suitability_check: bool = False,
     ) -> None:
         if prompt.metadata.role != "operator":
             raise AssistantError(
                 f"OllamaAssistantAdapter requires an operator-role prompt; "
                 f"got role={prompt.metadata.role!r}"
             )
-        check_model_suitability(model)
+        # Diagnostic escape hatch (2026-05-25): bypass the blocklist for
+        # ``probe_assistant.py`` re-evaluation. The blocklist is currently
+        # MODEL-scoped but the 2026-05-25 diagnostic showed it should be
+        # PROMPT+CONFIG-scoped -- phi4-mini-reasoning is "incompatible
+        # with the standard operator.md prompt" but recoverable with a
+        # compact prompt + format=json. Production code never sets this.
+        if not bypass_suitability_check:
+            check_model_suitability(model)
         self._model = model
         self._prompt = prompt
         self._base_url = base_url.rstrip("/")
