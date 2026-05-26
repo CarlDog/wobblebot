@@ -261,7 +261,11 @@ def _score_row(
     return (0, "WRONG")
 
 
-async def main_async(model_override: str | None) -> int:  # pylint: disable=too-many-locals
+async def main_async(  # pylint: disable=too-many-locals
+    model_override: str | None,
+    prompt_file_override: str | None,
+    force_json: bool,
+) -> int:
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
     advisor_cfg = config.advisor
     if advisor_cfg is None:
@@ -275,7 +279,7 @@ async def main_async(model_override: str | None) -> int:  # pylint: disable=too-
         )
         return 2
 
-    prompt_path = advisor_cfg.prompt_file or "config/prompts/quant.md"
+    prompt_path = prompt_file_override or advisor_cfg.prompt_file or "config/prompts/quant.md"
     prompt = load_prompt(Path(prompt_path))
     model = model_override or advisor_cfg.model
     if model is None:
@@ -283,6 +287,9 @@ async def main_async(model_override: str | None) -> int:  # pylint: disable=too-
         return 2
 
     print(f"# probe model: {model}")
+    print(f"# prompt file: {prompt_path} ({len(prompt.body)} chars)")
+    if force_json:
+        print("# force_json: ON (overrides is_thinking_model heuristic)")
     inference = advisor_cfg.inference_params
     adapter = OllamaAdapter(
         model=model,
@@ -295,6 +302,7 @@ async def main_async(model_override: str | None) -> int:  # pylint: disable=too-
         temperature=float(inference.temperature),
         max_tokens=inference.max_tokens,
         timeout_seconds=180.0,
+        force_json=force_json,
     )
 
     total_score = 0
@@ -346,8 +354,30 @@ def main() -> int:
             "without editing settings.yml. Default: use the configured model."
         ),
     )
+    parser.add_argument(
+        "--prompt-file",
+        type=str,
+        default=None,
+        help=(
+            "Override the system prompt path (default: advisor.prompt_file "
+            "from settings, else config/prompts/quant.md). Used to evaluate "
+            "compact prompt variants against small reasoning models."
+        ),
+    )
+    parser.add_argument(
+        "--force-json",
+        action="store_true",
+        help=(
+            "Force Ollama 'format=json' even for thinking-model name "
+            "patterns. The 2026-05-25 diagnostic showed newer reasoning "
+            "models (phi4-reasoning) emit clean JSON under format=json "
+            "rather than the assumed empty-{}. Use this flag to evaluate "
+            "whether a candidate's TIMEOUT/slow-result is a probe-budget "
+            "artifact rather than a model incapability."
+        ),
+    )
     args = parser.parse_args()
-    return asyncio.run(main_async(args.model))
+    return asyncio.run(main_async(args.model, args.prompt_file, args.force_json))
 
 
 if __name__ == "__main__":

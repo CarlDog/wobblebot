@@ -160,6 +160,7 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         max_tokens: int = 512,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
+        force_json: bool = False,
     ) -> None:
         self._model = model
         self._prompt = prompt
@@ -169,6 +170,14 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         self._max_tokens = max_tokens
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        # Diagnostic escape hatch (2026-05-25): when True, force
+        # ``format=json`` even for thinking-model name patterns. The
+        # default-False preserves existing production behavior. Used by
+        # ``tools/probe_advisor.py --force-json`` to evaluate whether
+        # newer reasoning-tuned models actually need the free-text
+        # extraction path. See ``docs/release/v1.1/operator-ux.md`` →
+        # "Reasoning-model support" for the planned config wiring.
+        self._force_json = force_json
 
     async def aclose(self) -> None:
         """Release the underlying httpx client if the adapter owns it."""
@@ -194,7 +203,10 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         )
         if extra_context:
             user_message = f"{user_message}\n\n{extra_context}"
-        thinking_mode = is_thinking_model(self._model)
+        # When force_json overrides the heuristic, downstream parsing must
+        # ALSO treat the response as direct-JSON (format=json suppresses
+        # the <think> block, so the free-text extraction path is wrong).
+        thinking_mode = is_thinking_model(self._model) and not self._force_json
         payload: dict[str, Any] = {
             "model": self._model,
             "prompt": f"{self._prompt.body}\n\n{user_message}",
@@ -208,8 +220,11 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         # which forces the response body to be a parseable JSON value.
         # Thinking models (R1, o1-style) emit a reasoning preamble first,
         # so we drop the constraint and extract the trailing JSON from
-        # free text instead — see ``extract_last_json_object``.
-        if not thinking_mode:
+        # free text instead — see ``extract_last_json_object``. The
+        # 2026-05-25 diagnostic showed newer reasoning models (phi4-
+        # reasoning) actually emit clean JSON under format=json, so the
+        # probe ``--force-json`` flag bypasses this heuristic.
+        if self._force_json or not thinking_mode:
             payload["format"] = "json"
 
         try:

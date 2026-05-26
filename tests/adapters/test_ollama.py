@@ -582,6 +582,87 @@ class TestThinkingModelGetRecommendation:
 
 
 @pytest.mark.asyncio
+class TestForceJsonOverride:
+    """The diagnostic escape hatch (2026-05-25) -- force_json=True must
+    bypass the is_thinking_model heuristic so the probe tools can
+    re-evaluate whether a candidate's thinking-name pattern actually
+    necessitates the free-text extraction path."""
+
+    async def test_force_json_on_thinking_model_sends_format_json(self) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json=_ollama_response(
+                    {
+                        "role": "quant",
+                        "recommendations": {"spacing_percentage": 1.0},
+                        "rationale": "force_json bypass works",
+                        "confidence": "low",
+                    }
+                ),
+            )
+
+        adapter = OllamaAdapter(
+            model="deepseek-r1:14b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            force_json=True,
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+
+        body = captured["body"]
+        assert isinstance(body, dict)
+        assert body["format"] == "json", (
+            "force_json=True must override is_thinking_model and add format=json"
+        )
+        # And the response is parsed directly, not via the free-text extractor.
+        assert rec.recommendations == {"spacing_percentage": 1.0}
+
+    async def test_force_json_default_preserves_thinking_behavior(self) -> None:
+        """Regression guard: force_json=False (default) keeps the existing
+        thinking-model path -- the production cli/advise path must not
+        change behavior."""
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json=_ollama_response(
+                    "<think>thinking</think>\n"
+                    + json.dumps(
+                        {
+                            "role": "quant",
+                            "recommendations": {},
+                            "rationale": "ok",
+                            "confidence": "low",
+                        }
+                    )
+                ),
+            )
+
+        adapter = OllamaAdapter(
+            model="deepseek-r1:14b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+
+        body = captured["body"]
+        assert isinstance(body, dict)
+        assert "format" not in body, "default force_json=False must keep existing behavior"
+
+
+@pytest.mark.asyncio
 class TestSplitResponseEnvelope:
     """Newer Ollama versions emit `{response, thinking}` as separate envelope
     fields. Some models (qwen3 / nemotron3) put the actual JSON answer into

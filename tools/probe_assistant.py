@@ -128,8 +128,12 @@ def format_intent(intent) -> str:  # type: ignore[no-untyped-def]  # pylint: dis
     return str(kind)
 
 
-async def main_async(  # pylint: disable=too-many-locals
-    messages: list[str], include_multi_turn: bool, model_override: str | None
+async def main_async(  # pylint: disable=too-many-locals,too-many-arguments
+    messages: list[str],
+    include_multi_turn: bool,
+    model_override: str | None,
+    prompt_file_override: str | None,
+    force_json: bool,
 ) -> int:
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
     operator_cfg = config.operator
@@ -144,9 +148,15 @@ async def main_async(  # pylint: disable=too-many-locals
         )
         return 2
 
-    prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
+    prompt_path = Path(prompt_file_override) if prompt_file_override else Path(
+        operator_cfg.assistant.prompt_file
+    )
+    prompt = load_prompt(prompt_path)
     model = model_override or operator_cfg.assistant.model
     print(f"# probe model: {model}")
+    print(f"# prompt file: {prompt_path} ({len(prompt.body)} chars)")
+    if force_json:
+        print("# force_json: ON (overrides is_thinking_model heuristic)")
     adapter = OllamaAssistantAdapter(
         model=model,
         prompt=prompt,
@@ -154,6 +164,7 @@ async def main_async(  # pylint: disable=too-many-locals
         temperature=operator_cfg.assistant.temperature,
         max_tokens=operator_cfg.assistant.max_tokens,
         timeout_seconds=180.0,
+        force_json=force_json,
     )
     snapshot = make_snapshot()
 
@@ -264,6 +275,29 @@ def main() -> int:
             "restarting cli/operator. Default: use the configured model."
         ),
     )
+    parser.add_argument(
+        "--prompt-file",
+        type=str,
+        default=None,
+        help=(
+            "Override the system prompt path (default: "
+            "operator.assistant.prompt_file from settings). Used to "
+            "evaluate compact prompt variants against small reasoning "
+            "models. The file must still have role=operator in its YAML "
+            "frontmatter."
+        ),
+    )
+    parser.add_argument(
+        "--force-json",
+        action="store_true",
+        help=(
+            "Force Ollama 'format=json' even for thinking-model name "
+            "patterns. The 2026-05-25 diagnostic showed newer reasoning "
+            "models (phi4-reasoning) emit clean JSON under format=json "
+            "rather than the assumed empty-{}. Use this flag to evaluate "
+            "whether a candidate's blocked classification is still valid."
+        ),
+    )
     args = parser.parse_args()
 
     if args.messages:
@@ -271,7 +305,15 @@ def main() -> int:
     else:
         messages = [m for _, m in DEFAULT_BATTERY]
 
-    return asyncio.run(main_async(messages, not args.skip_multi_turn, args.model))
+    return asyncio.run(
+        main_async(
+            messages,
+            not args.skip_multi_turn,
+            args.model,
+            args.prompt_file,
+            args.force_json,
+        )
+    )
 
 
 if __name__ == "__main__":

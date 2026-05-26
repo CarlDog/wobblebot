@@ -178,6 +178,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         max_tokens: int = 512,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
+        force_json: bool = False,
     ) -> None:
         if prompt.metadata.role != "operator":
             raise AssistantError(
@@ -189,6 +190,14 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         self._prompt = prompt
         self._base_url = base_url.rstrip("/")
         self._temperature = temperature
+        # Diagnostic escape hatch (2026-05-25): when True, force
+        # ``format=json`` even for thinking-model name patterns. The
+        # default-False preserves existing production behavior. Used by
+        # ``tools/probe_assistant.py --force-json`` to evaluate whether
+        # newer reasoning-tuned models actually need the free-text
+        # extraction path. See ``docs/release/v1.1/operator-ux.md`` →
+        # "Reasoning-model support" for the planned config wiring.
+        self._force_json = force_json
         # Raise max_tokens to the thinking-model floor if needed. Lower
         # configured values for reasoning models result in truncated
         # thinking blocks with no JSON answer at all.
@@ -261,7 +270,10 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 failures raise only after the retry also returns empty.
         """
         messages = self._build_messages(context)
-        thinking_mode = is_thinking_model(self._model)
+        # When force_json overrides the heuristic, downstream parsing must
+        # ALSO treat the response as direct-JSON (format=json suppresses
+        # the <think> block, so the free-text extraction path is wrong).
+        thinking_mode = is_thinking_model(self._model) and not self._force_json
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
@@ -271,7 +283,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 "num_predict": self._max_tokens,
             },
         }
-        if not thinking_mode:
+        if self._force_json or not thinking_mode:
             payload["format"] = "json"
 
         inner = await self._request_with_retry(payload, thinking_mode=thinking_mode)
@@ -435,8 +447,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 # diagnosing a new model can see WHY no JSON was found
                 # without re-running probes.
                 _LOGGER.debug(
-                    "no JSON object in thinking-mode output for model %r;"
-                    " first 2000 chars: %s",
+                    "no JSON object in thinking-mode output for model %r; first 2000 chars: %s",
                     self._model,
                     combined[:2000],
                 )

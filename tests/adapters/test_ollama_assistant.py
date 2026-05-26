@@ -461,6 +461,71 @@ class TestThinkingMode:
         # Thinking models drop the format=json constraint
         assert "format" not in body
 
+    async def test_force_json_on_thinking_model_sends_format_json(self) -> None:
+        """The 2026-05-25 escape hatch: force_json=True overrides
+        is_thinking_model so probe tools can re-evaluate whether a
+        candidate's thinking-name pattern is still load-bearing."""
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json=_chat_envelope(
+                    json.dumps(
+                        {
+                            "kind": "command",
+                            "command": {"kind": "pause", "symbol": "BTC/USD"},
+                        }
+                    )
+                ),
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        adapter = OllamaAssistantAdapter(
+            model="deepseek-r1:14b",
+            prompt=_operator_prompt(),
+            client=client,
+            force_json=True,
+        )
+        try:
+            intent = await adapter.parse_intent(_context())
+        finally:
+            await adapter.aclose()
+
+        assert isinstance(intent, IntentCommand)
+        body = captured["body"]
+        assert isinstance(body, dict)
+        assert body["format"] == "json", (
+            "force_json=True must override is_thinking_model and add format=json"
+        )
+
+    async def test_force_json_default_preserves_thinking_behavior(self) -> None:
+        """Regression guard: default force_json=False keeps the
+        thinking-model free-text extraction path. The production
+        cli/operator path must not change behavior."""
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            reply = "<think>thinking</think>\n" + json.dumps(
+                {
+                    "kind": "command",
+                    "command": {"kind": "pause", "symbol": "BTC/USD"},
+                }
+            )
+            return httpx.Response(200, json=_chat_envelope(reply))
+
+        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:14b")
+        try:
+            await adapter.parse_intent(_context())
+        finally:
+            await adapter.aclose()
+
+        body = captured["body"]
+        assert isinstance(body, dict)
+        assert "format" not in body, "default force_json=False must keep existing behavior"
+
     async def test_split_response_envelope(self) -> None:
         # Some Ollama versions surface the answer in 'thinking' with
         # empty message.content even for non-R1 models. Adapter combines
