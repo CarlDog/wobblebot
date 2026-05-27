@@ -210,9 +210,8 @@ The compose bind-mounts three host paths into every container:
 
 | Host path     | Container path    | Notes                                      |
 | ------------- | ----------------- | ------------------------------------------ |
-| `../data`     | `/app/data`       | SQLite DBs + archive/backups (RW)          |
+| `../data`     | `/app/data`       | SQLite DBs + archive/backups + `data/logs/<service>.log` for all daemons (RW) |
 | `../config`   | `/app/config`     | settings.yml + prompt files (RW for `cli/apply`) |
-| `../logs`     | `/app/logs`       | Rotated log files (RW)                     |
 
 The SQLite databases live on the host and survive container rebuilds.
 Operator-side backups (Synology Hyper Backup, rsync, etc.) only need
