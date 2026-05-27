@@ -55,8 +55,10 @@ sweep-*.json
 # CI / GitHub artifacts
 .github/
 
-# Docker context itself (avoid recursion if compose is run from project root)
-docker/
+# NOTE: docker/ is NOT excluded — the Dockerfile needs to COPY
+# docker/entrypoint.sh into the image. Excluding the directory
+# also drops the entrypoint from the build context. The Dockerfile
+# itself is loaded via `-f` and doesn't pollute the context anyway.
 
 # Editor / OS noise
 *.log
