@@ -986,20 +986,113 @@ to make: where Ollama lives (on the same host as wobblebot vs a
 separate one), since that drives the host's CPU/memory sizing
 requirement more than anything else.
 
-### cli/init setup wizard
+### Friend-deployment onboarding — guided setup (dummy-proof scope)
 
-**What:** interactive ``cli/init`` that walks a new user through
-.env setup, key creation reminders, settings.yml copy from
-example, and a first cli/preflight invocation.
+**What:** lower the bar for a non-WobbleBot-developer to set up
+their own self-hosted instance with their own Kraken keys (NOT a
+hosted-as-service path — see the standing rule on declining
+Kraken upsell + hosted-SaaS nudges). The friend-deployment
+scenario surfaced 2026-05-26 (soak Day 9) when the operator's
+colleague expressed interest in trying WobbleBot.
 
-**Why deferred:** solo project today; no contributors. The
-phase-end-audit rule explicitly cautions against speculative
-contributor-facing tooling. Adds maintenance surface for zero
-current users.
+The original framing of this entry (`cli/init setup wizard`)
+underestimated the scope. The friend doesn't just need WobbleBot
+configured — they need a **prerequisite stack** that the operator
+already has on their machine and forgets exists:
 
-**Trigger:** when external contributors actually materialize OR
-when the operator deploys WobbleBot on a fresh machine (Pi /
-Synology / VPS) for the first time and notices the bar to entry.
+1. **Python 3.13+** with pip + venv
+2. **LLM backend** — either:
+   - **Local Ollama**: install Ollama, pull a recommended model
+     (3-10GB), have ≥8GB RAM (16GB recommended), ideally a GPU
+     for tolerable latency. See `docs/reference/operator-llm-models.md`
+     for the recommended picks per hardware tier.
+   - **Cloud LLM**: account with Anthropic / OpenAI / Google,
+     billing set up, API key minted, cost-cap configured per
+     `services/llm_cost_gate.py` semantics.
+3. **Kraken account** with three keys per ADR-003 separation
+   (read-only / trade / harvester), each with the right scope
+   checkboxes set + optional IP restriction
+4. **Discord bot** (optional but operator-default): bot token,
+   server invitation, channel + user allowlists
+5. **WobbleBot itself**: clone, install, `.env`, `settings.yml`,
+   web session secret, run `cli/preflight`, run the daemons
+6. **Docker** (optional, deployment-topology-dependent): WobbleBot
+   v1.0 ships as bare Python daemons; the `docker/` directory is
+   a Phase-2-placeholder that never landed. A friend deploying
+   via Synology Container Manager / Portainer / Docker Desktop
+   needs container orchestration the project doesn't ship yet.
+
+**"Dummy proof" is the real ask** — and dummy-proofing #1-#6
+above is several discrete projects:
+
+- A `cli/init` wizard handles #3-#5 cleanly (interactive prompts,
+  Kraken read-only verification, `.env` writes, preflight
+  invocation). Pure Python, no new runtime deps. **Realistic v1.1
+  candidate.**
+- A self-contained executable (PyInstaller / Nuitka) helps with
+  #1 only. Doesn't help with #2 (Ollama install / cloud-LLM
+  signup), #3 (Kraken key minting on Kraken's UI), #4 (Discord
+  bot creation on discord.com), or #6 (Docker setup). The binary
+  shaves "install Python + pip install" off the prereq stack but
+  leaves the four other prereqs un-shaved.
+- Ollama + cloud LLM + Docker prereqs are inherently outside
+  WobbleBot's reach. The wizard can DETECT their presence and
+  guide the friend to install/configure them, but cannot install
+  them ITSELF without elevating to a platform-specific installer
+  (MSI on Windows, .pkg on macOS, .deb/.rpm on Linux). That's an
+  order of magnitude more packaging work than a Python wizard.
+
+**Realistic scope tiers (pick where to stop):**
+
+| Tier | What it covers | Effort | Trigger to pick up |
+|---|---|---|---|
+| **0. Friend-instance runbook** | Markdown checklist the operator hands to the friend (or walks through together). No code change. | 1-2 hours | Available NOW for the colleague's soak-end deployment |
+| **1. `cli/init` wizard** | #3 + #4 + #5 (WobbleBot config, Kraken key wiring, Discord setup, preflight). Prereqs #1, #2, #6 still manual but documented. | 2-4 days | Friend-instance runbook validated against ≥1 real deployment; friction points catalogued |
+| **2. Wizard + Ollama detection/install guidance** | Tier 1 + interactive "do you have Ollama? want to install it? here's the platform-specific command" branch. Wizard SHELLS OUT to Ollama CLI but doesn't bundle Ollama. | +1-2 days on top of Tier 1 | Operator decides Ollama-on-friend-machine is the typical path (vs cloud-only for most friends) |
+| **3. Cloud-LLM signup walkthrough** | Tier 1 + cloud-only branch that prompts for provider choice, API key, and writes the cost-cap defaults. Cheaper for friends without GPU hardware. | +1 day on top of Tier 1 | Operator decides cloud-LLM is the default friend path (likely true — most friends don't have $1500+ GPUs) |
+| **4. Self-contained binary** | Tier 1-3 packaged via PyInstaller per platform. Friend downloads ONE file, runs it, gets dropped into the wizard. Still requires Ollama / cloud-LLM / Docker / Kraken external setup. | +2-3 days plus CI build infrastructure | Tier 1-3 has been used by ≥2 real friend deployments and operator decides "Python prereq is the actual bar to entry" |
+| **5. Platform installer (MSI / .pkg / .deb)** | Tier 4 + an OS-level installer that ALSO offers to install Ollama / Docker / Python. Full dummy-proof. | Weeks. New maintenance class (per-OS installer testing matrix). | Probably never for solo project; full-product framing |
+
+**Recommended path:** ship Tier 0 first (now-ish, post-tag), let
+the friend's actual deployment validate which prereqs were the
+real friction points, then decide Tier 1-4 based on data. **DO
+NOT design for Tier 5 ambitions on Tier 0 data.**
+
+**Important framing for the operator:** the friend handing off
+their Kraken key to a binary you built (Tier 4+) creates a
+**trust event** that didn't exist when both of you ran the same
+source they could read. The bundled binary should ship with the
+source hash + a "you can also install from source if you don't
+want to run a binary I built" link in the wizard's intro screen.
+Standard crypto-tool hygiene; matters in this domain because the
+binary gets read+write access to their trading account.
+
+**Why deferred:** Tier 0 is reasonable to ship post-v1.0 tag.
+Tiers 1-4 wait for soak-end + the colleague's actual deployment
+experience. Tier 5 isn't on the roadmap.
+
+**Pairs with:**
+
+- The companion `docs/deploy/friend-instance.md` runbook (Tier 0
+  above — operator-facing checklist for "I'm helping a friend
+  set this up on their machine"). Strongest precondition for
+  any wizard work.
+- The "Multi-operator web auth" entry (also in this file) — if
+  a friend's deployment ever grows into a second person on the
+  same hardware, the single-operator boundary in ADR-017 lifts
+  at that layer.
+- The standing rule against hosted-SaaS-with-fee-model — the
+  wizard + runbook is the self-host alternative that satisfies
+  the "I want to share WobbleBot" impulse without inheriting
+  the SaaS regulatory load.
+- `docs/reference/operator-llm-models.md` — per-hardware-tier
+  model recommendations. The wizard's Ollama branch consults
+  this for its model-pick prompt.
+
+**Trigger:** operator's colleague's interest moves from "would
+try it" to "let's set up a date" — at which point Tier 0 is
+the right answer. Anything beyond Tier 0 needs the data Tier 0
+generates first.
 
 ### Session cookie keyed by user.id, not username
 
