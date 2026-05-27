@@ -5,33 +5,54 @@
 # Each service overrides `command:` to pick its entry point and
 # inherits the rest via YAML anchor.
 #
+# Designed for Portainer-managed deployment: secrets and tunables
+# come from Portainer stack-level env (per the global
+# `~/.claude/rules/docker-deployments.md` three-config-stores rule).
+# `${VAR}` references below are substituted at deploy time from
+# Portainer's stored env, not from any .env file in the repo.
+#
 # cli/shadow (paper trading) is intentionally omitted from the
 # default set — operators add it back as a separate service if
 # they want continued shadow runs on the NAS.
 #
 # One-shot CLIs (preflight, apply, recalibrate, status, sandbox)
 # are invoked via `docker compose run --rm tools python -m
-# wobblebot.cli.<entry>` against the `tools` service below.
-#
-# Run from this directory:
-#   docker compose config    # validate
-#   docker compose up -d     # start daemons
-#   docker compose logs -f operator
-#   docker compose down
+# wobblebot.cli.<entry>` against the `tools` service (Compose
+# profile = tools, so it doesn't start with `docker compose up`).
 
 x-wobblebot-defaults: &wobblebot-defaults
-  image: wobblebot:dev
-  # Operator's secrets + tunables live in `.env` at the repo
-  # root. The schema-drift tests verify that operator `.env`
-  # files stay in sync with `.env.example`.
-  env_file:
-    - ../.env
+  # Pulled from GitHub Container Registry — the `Publish Docker
+  # image to GHCR` workflow rebuilds + pushes on every main commit
+  # touching the runtime surface (src/, config/, tools/,
+  # docker/Dockerfile, pyproject.toml). Pin to :sha-<short> for a
+  # frozen soak; :latest follows main.
+  image: ghcr.io/carldog/wobblebot:latest
   environment:
-    # The cli/advise advisor (single-mode) reads its Ollama
-    # endpoint from this env var (operator.assistant uses
-    # base_url in the cpu-only profile YAML instead). Both end
-    # up pointing at the NAS host's Ollama via the
-    # host.docker.internal:host-gateway entry below.
+    # ---- Kraken keys (per ADR-003 key separation) --------------
+    # Read-only: cli/status, cli/observe, cli/shadow, cli/web,
+    #            cli/operator (BalanceEx for the StatusQuery path)
+    KRAKEN_API_KEY: ${KRAKEN_API_KEY}
+    KRAKEN_API_SECRET: ${KRAKEN_API_SECRET}
+    # Trade: cli/preflight, cli/live
+    KRAKEN_TRADE_API_KEY: ${KRAKEN_TRADE_API_KEY}
+    KRAKEN_TRADE_API_SECRET: ${KRAKEN_TRADE_API_SECRET}
+    # Harvester (Withdraw scope ON; trade key Withdraw OFF): cli/harvest
+    KRAKEN_HARVESTER_API_KEY: ${KRAKEN_HARVESTER_API_KEY}
+    KRAKEN_HARVESTER_API_SECRET: ${KRAKEN_HARVESTER_API_SECRET}
+    # ---- Cloud LLM keys (optional; cpu-only profile uses Ollama) -
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    # ---- News ingestion (CryptoCompare) ------------------------
+    CRYPTOCOMPARE_API_KEY: ${CRYPTOCOMPARE_API_KEY:-}
+    # ---- Discord (cli/operator) --------------------------------
+    DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+    # ---- Web UI session cookie signing key (cli/web) -----------
+    WOBBLEBOT_WEB_SESSION_SECRET: ${WOBBLEBOT_WEB_SESSION_SECRET}
+    # ---- NAS-specific Ollama routing (static, not a secret) ----
+    # cli/advise reads OLLAMA_BASE_URL from env. The host-gateway
+    # entry in extra_hosts below makes host.docker.internal:11434
+    # resolve to the NAS's host-networked Ollama container.
     OLLAMA_BASE_URL: http://host.docker.internal:11434
   volumes:
     # SQLite DBs persist across container rebuilds.
