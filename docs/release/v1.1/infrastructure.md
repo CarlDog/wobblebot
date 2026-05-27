@@ -23,15 +23,43 @@ fallback.
 
 ### CI / GitHub Actions
 
-**What:** workflows for `make check` (test + lint + format), maybe
+**Partial — shipped 2026-05-27:** `.github/workflows/docker-publish.yml`
+builds and pushes the runtime image to `ghcr.io/carldog/wobblebot`
+on every main commit touching the runtime surface. Three tags per
+build (`:main`, `:latest`, `:sha-<short>`).
+
+**Still deferred:** workflows for `make check` (test + lint + format),
 build-and-publish if the project ever distributes wheels.
 
 **Why deferred:** single-operator project; `make check` locally is
-sufficient. Stage 8.3 decision 8 also explicitly rejected CI perf
-regression checks (CI runner variance makes them untrustworthy).
+sufficient for the test+lint loop. Stage 8.3 decision 8 also
+explicitly rejected CI perf regression checks (CI runner variance
+makes them untrustworthy).
 
 **Trigger:** the project gains contributors who can't run the
 local pre-commit hooks.
+
+### Multi-arch GHCR image builds
+
+**What:** extend `docker-publish.yml` to build `linux/amd64` +
+`linux/arm64` (or wider) via `docker/build-push-action`'s
+`platforms:` parameter and qemu/buildx for cross-compile. Today
+the workflow only produces amd64 (sufficient for the operator's
+Ryzen V1780B NAS).
+
+**Why deferred:** the operator's only deployment target is amd64.
+Multi-arch only matters if a contributor / friend-deployment
+target lands on ARM (Raspberry Pi, Apple Silicon Mac, ARM-based
+Synology like DS220+/DS920+).
+
+**Trigger:** any non-amd64 deployment target (a friend wants to
+try WobbleBot on an M-series Mac, an ARM NAS, etc.). Pair with
+the friend-deployment v1.1 entry in `operator-ux.md`.
+
+**Implementation note:** multi-arch builds add ~5-10 minutes to CI
+runtime per architecture. Consider gating the arm64 build behind
+a tag/release-only trigger rather than every main push, to keep
+the dev-loop fast.
 
 ### Test count growth
 
