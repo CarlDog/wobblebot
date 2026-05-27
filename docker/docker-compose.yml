@@ -64,12 +64,15 @@ x-wobblebot-defaults: &wobblebot-defaults
     OLLAMA_BASE_URL: http://host.docker.internal:11434
   volumes:
     # Host paths default to the NAS layout under /volume1/docker/wobblebot.
-    # Override via HOST_DATA_DIR / HOST_CONFIG_DIR / HOST_LOGS_DIR env
-    # for local development (e.g. HOST_DATA_DIR=../data when running
-    # docker-compose from inside the repo clone).
+    # Override via HOST_DATA_DIR / HOST_CONFIG_DIR for local development
+    # (e.g. HOST_DATA_DIR=../data when running docker-compose from
+    # inside the repo clone).
+    #
+    # NB: every daemon's log_file_path defaults to data/logs/X.log
+    # (relative to /app), so log files land under /app/data/logs/
+    # inside the data mount — there's no separate /app/logs mount.
     - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
     - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
-    - ${HOST_LOGS_DIR:-/volume1/docker/wobblebot/logs}:/app/logs
   extra_hosts:
     # Containers reach host-resident Ollama via
     # `http://host.docker.internal:11434`. Per the global
