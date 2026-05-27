@@ -4,6 +4,70 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### High-frequency grid on high-volatility pairs
+
+**What:** evaluate whether tight-spacing grid runs on memecoin /
+small-cap pairs (DOGE/USD, PEPE/USD, SHIB/USD, BONK/USD) can
+complete cycles on minute-scale timeframes — vs the current
+BTC/USD configuration that lands ~5 cycles per WEEK.
+
+**Conceivable in principle:** memecoins on Kraken regularly
+oscillate 0.5-2% within 5-minute windows, which would let a grid
+with ~0.7% spacing fill BUY/SELL pairs on the same timescale. The
+engine already supports per-coin grid configs (`grid.coins.{...}`
+in settings.example.yml).
+
+**The fee math is tight:** Kraken charges 0.40% taker / 0.26%
+maker. Each cycle eats 2 × fee. Spacing must be > 2 × maker
+(~0.52%) just to break even on a maker-maker cycle; > 2 × taker
+(~0.80%) on a marketable-marketable cycle. The config-validator
+shipped in `8c1acfa` (Day 3) hard-rejects spacing ≤ 2 × maker
+for exactly this reason. So the viable spacing band is narrow
+(~0.6-1.0%) and assumes maker-side fills.
+
+**Risks worth naming before any experiment:**
+
+1. **Memecoin crashes don't bounce.** A grid keeps DCA-buying as
+   price falls until the session-loss cap trips. The risk profile
+   is meaningfully different from BTC — PEPE-style 30-50% one-day
+   drawdowns are rare but real.
+2. **Slippage and bid-ask spread.** Memecoins have wider posted
+   spreads than BTC. A 0.7% grid spacing might be eaten by a
+   0.3% bid-ask spread plus 0.2% slippage on small caps.
+3. **Tax events scale linearly.** 100 cycles/day per asset =
+   ~36,500 taxable events/year. Tools like Koinly charge per
+   transaction at that volume; the operator's accounting setup
+   isn't built for high-frequency yet.
+4. **Adjacent to the operator-experience standing rule.** Memecoin
+   trading is spot-only (not margin), so the explicit gate
+   doesn't formally apply — but the spirit of the rule ("don't
+   trade what you don't understand") does. Memecoin behavior is
+   meaningfully different from BTC even on the same engine.
+
+**Proposed experiment design (low blast radius):**
+
+- Pair: `DOGE/USD` (safest of the high-vol options — deepest
+  liquidity, most retail volume, longest track record on Kraken)
+- Order size: $5 (matches the operator's BTC starter run)
+- Spacing: 0.7% (above the 2 × maker validator floor)
+- Levels: 2 above + 2 below ($20 total exposure)
+- Runtime cap: 1 hour
+- Session loss cap: $1.00 (tight; memecoins move fast)
+
+After the 1-hour session, measure: cycles completed, gross spread
+captured, net PnL after fees. If the math works, expand cautiously.
+
+**Why deferred:** not a v1.0 blocker; conceptually adjacent to but
+distinct from the multi-asset expansion entry below. v1.0 ships
+BTC grid as the validated configuration. Logging here so the
+"could we cycle every few minutes?" question doesn't get
+re-asked from scratch later.
+
+**Trigger:** operator wants to expand instrument coverage AND has
+the tax / accounting pipeline ready for high cycle volume (Koinly
+or similar at the transaction tier needed). Pair with the
+multi-asset expansion entry below.
+
 ### Multi-asset / multi-exchange expansion
 
 **What:** broaden wobblebot beyond Kraken-spot-crypto to additional
