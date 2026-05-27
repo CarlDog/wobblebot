@@ -39,6 +39,44 @@ makes them untrustworthy).
 **Trigger:** the project gains contributors who can't run the
 local pre-commit hooks.
 
+### portainer-mcp: expose AutoUpdate flags on stack creation
+
+**What:** `portainer_create_git_stack` doesn't accept any of the
+AutoUpdate-related parameters (`auto_update_interval`,
+`auto_update_force_pull_image`, etc.) that the Portainer Web UI
+exposes via "Enable automatic updates" + "Re-pull image" toggles.
+Stacks created via the MCP are deployed WITHOUT AutoUpdate.
+
+**Why this matters:** the operator's other MCP stacks
+(plex-mcp / downloader-mcp / botify-mcp / etc.) all use AutoUpdate
+with `ForcePullImage: true` because the operator turned that on
+in the UI when first creating each stack. That flag is what
+makes Docker reliably re-pull mutable tags (`:latest`, `:main`)
+— without it, Docker's "skip pull if tagged locally" optimization
+silently keeps stale images cached even when explicit pull_image
+flags are passed at redeploy time. Observed 2026-05-27 when the
+wobblebot stack kept running an f58bb6c image despite three
+newer builds available on GHCR.
+
+**Workaround in use:** the wobblebot compose templates the image
+tag via `${IMAGE_TAG:-main}`. Operator pins to an immutable
+`:sha-<short>` in Portainer stack env when needed. Crude but
+works. Alternative: operator turns on AutoUpdate via the
+Portainer UI after MCP-deploy (which is what was done for
+wobblebot on 2026-05-27).
+
+**Proposed fix:** extend the portainer-mcp tool schema to accept
+the AutoUpdate fields. Pass-through to Portainer's existing
+stack-create endpoint which already supports them.
+
+**Trigger:** any future MCP-driven stack deployment where the
+operator wants the same continuous-update semantics they get from
+the UI toggle.
+
+**Where to land:** in the portainer-mcp project itself (separate
+repo), not wobblebot — but logged here because it's the gap that
+made wobblebot deployment day 1 noisier than it needed to be.
+
 ### Tighten schema-drift coverage for canonical profiles
 
 **What:** the existing `tests/config/test_schema_drift.py` skips the
