@@ -138,7 +138,11 @@ services:
     container_name: wobblebot-web
     command: python -m wobblebot.cli.web serve --bind-host 0.0.0.0 --bind-port 8000 --profile cpu-only
     ports:
-      - "127.0.0.1:8000:8000"
+      # Host port 8000 is already in use on the NAS (likely DSM Web
+      # Station / FreshRSS stack). Bind 28080 on the host instead;
+      # DSM reverse proxy for wobblebot.carldog-nas must target
+      # http://localhost:28080 (NOT :8000) to match.
+      - "127.0.0.1:28080:8000"
 
   # ------------------------------------------------------------------
   # Background maintenance (VACUUM + prune + backup). No money
