@@ -55,14 +55,13 @@ x-wobblebot-defaults: &wobblebot-defaults
     # resolve to the NAS's host-networked Ollama container.
     OLLAMA_BASE_URL: http://host.docker.internal:11434
   volumes:
-    # SQLite DBs persist across container rebuilds.
-    - ../data:/app/data
-    # Settings + prompts mounted RW so cli/apply --commit can
-    # rewrite settings.yml through ruamel.yaml.
-    - ../config:/app/config
-    # Log files (cli/maintenance writes rotated logs here when
-    # `maintenance.log_path` is set).
-    - ../logs:/app/logs
+    # Host paths default to the NAS layout under /volume1/docker/wobblebot.
+    # Override via HOST_DATA_DIR / HOST_CONFIG_DIR / HOST_LOGS_DIR env
+    # for local development (e.g. HOST_DATA_DIR=../data when running
+    # docker-compose from inside the repo clone).
+    - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
+    - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
+    - ${HOST_LOGS_DIR:-/volume1/docker/wobblebot/logs}:/app/logs
   extra_hosts:
     # Containers reach host-resident Ollama via
     # `http://host.docker.internal:11434`. Per the global
