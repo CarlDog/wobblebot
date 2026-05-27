@@ -93,6 +93,13 @@ where = ["src"]
 include = ["wobblebot*"]
 namespaces = false
 
+# Ship cli/web's static assets + Jinja2 templates inside the wheel.
+# Without this, `pip wheel .` only includes .py files and cli/web
+# crashes at startup with "Directory 'static' does not exist".
+# Discovered 2026-05-27 during NAS Docker deployment.
+[tool.setuptools.package-data]
+"wobblebot.web" = ["static/*", "templates/*"]
+
 [tool.black]
 line-length = 100
 target-version = ["py313"]
