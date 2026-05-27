@@ -36,6 +36,13 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Opt into Node.js 24 ahead of GitHub's forced transition on
+  # 2026-06-02. The actions/checkout@v4 + docker/* actions used
+  # below already ship Node.js 24-compatible code paths; this
+  # exercises them now so any incompatibility surfaces here
+  # rather than as a surprise CI failure on the deadline.
+  # Remove this line after 2026-06-02 (it becomes the default).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-and-push:
