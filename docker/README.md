@@ -94,6 +94,7 @@ at deploy time:
 
 | Variable                       | Required for                  | Notes |
 | ------------------------------ | ----------------------------- | ----- |
+| `IMAGE_TAG`                    | all services                  | Image tag to deploy. Pin to `sha-<short>` (e.g. `sha-de318e2`) for guaranteed pulls — `:latest` / `:main` are mutable and Docker often skips re-pulling them. Defaults to `main` if unset. |
 | `KRAKEN_READER_API_KEY`               | observe, status, web          | Read-only key |
 | `KRAKEN_READER_API_SECRET`            |                               |       |
 | `KRAKEN_TRADER_API_KEY`         | live, preflight               | Trade scope; Withdraw OFF |

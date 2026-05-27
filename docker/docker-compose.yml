@@ -24,9 +24,17 @@ x-wobblebot-defaults: &wobblebot-defaults
   # Pulled from GitHub Container Registry — the `Publish Docker
   # image to GHCR` workflow rebuilds + pushes on every main commit
   # touching the runtime surface (src/, config/, tools/,
-  # docker/Dockerfile, pyproject.toml). Pin to :sha-<short> for a
-  # frozen soak; :latest follows main.
-  image: ghcr.io/carldog/wobblebot:latest
+  # docker/Dockerfile, pyproject.toml).
+  #
+  # IMAGE_TAG is operator-controlled via Portainer stack env. Pin to
+  # an immutable `:sha-<short>` (e.g. sha-de318e2) so Portainer's
+  # redeploy forces a real pull — `:latest` / `:main` are mutable
+  # tags and Docker's pull-image flag is unreliable against them
+  # (it skips pull when a local cache exists, even when explicitly
+  # asked to pull). Bumping IMAGE_TAG to a new SHA is the canonical
+  # "deploy a new build" action: change the env in Portainer →
+  # save → stack auto-redeploys → guaranteed fresh pull.
+  image: ghcr.io/carldog/wobblebot:${IMAGE_TAG:-main}
   environment:
     # ---- Kraken keys (per ADR-003 key separation) --------------
     # Read-only: cli/status, cli/observe, cli/shadow, cli/web,
