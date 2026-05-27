@@ -1088,7 +1088,7 @@ Preserves the harvester `min<topup<surplus` ordering invariant since
 scaling by a positive ratio preserves ordering. 22 new unit tests.
 
 **7.6.B — `cli/recalibrate` dry-run + commit.** Default reads live
-Kraken USD balance via the read-only `KRAKEN_API_KEY` (same path
+Kraken USD balance via the read-only `KRAKEN_READER_API_KEY` (same path
 `cli/status` uses); `--current-balance` overrides for what-if analysis
 without hitting the API. Dry-run prints a per-knob delta table;
 `--commit` rewrites `settings.yml` via the new
@@ -2482,7 +2482,7 @@ Phase 4's third slice. Every non-None proposal from `cli/harvest` now persists t
 
 ### Stage 4.2 — cli/harvest Read-Only Balance Monitor (2026-05-15)
 
-Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what *would* be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
+Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what *would* be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_READER_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
 
 - **`HarvestConfig`** (per-CLI section): `log_format` only for now. Future stages may grow more knobs.
 - **`schedules.harvest`**: new entry in the unified schedules block; defaults to `1h` in the example yml.
@@ -2739,7 +2739,7 @@ operator-facing config story.
   warn); `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` promotes warnings to
   hard failures for CI.
 - **Slice 7.** `docker/env.example` moved to repo-root `.env.example`
-  and refreshed for Phase 2.3 reality (`KRAKEN_TRADE_API_KEY`,
+  and refreshed for Phase 2.3 reality (`KRAKEN_TRADER_API_KEY`,
   cloud-LLM keys, harvester key for Phase 4).
 - **Slice 8.** Docs + memory close.
 

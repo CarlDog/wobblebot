@@ -6,8 +6,8 @@ WobbleBot is a self-hosted micro-trading system that holds Kraken API
 credentials and executes real trades against the operator's account.
 The two highest-impact failure modes are:
 
-1. **Credential compromise** — a leaked `KRAKEN_API_KEY` or
-   `KRAKEN_TRADE_API_KEY` lets an attacker read balances or place
+1. **Credential compromise** — a leaked `KRAKEN_READER_API_KEY` or
+   `KRAKEN_TRADER_API_KEY` lets an attacker read balances or place
    orders on the operator's behalf. Mitigations: separate read-only
    and trade keys (per ADR-003), withdraw scope OFF on the trade key
    (the future Phase 4 Harvester key gets that scope alone), gitleaks

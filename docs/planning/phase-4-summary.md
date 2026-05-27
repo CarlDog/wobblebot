@@ -135,7 +135,7 @@ the CLAUDE.md "operator handoff" section; the gist:
 ## Hard constraints honored across the phase
 
 - **ADR-003 honored**: the Harvester is the SOLE module with
-  withdrawal authority. The trade key (`KRAKEN_TRADE_API_KEY`)
+  withdrawal authority. The trade key (`KRAKEN_TRADER_API_KEY`)
   has Trade scope but not Withdraw; the Harvester key
   (`KRAKEN_HARVESTER_API_KEY`) has Withdraw + Query Funds but
   not Create/Modify/Cancel orders. `KrakenConfig.from_env`'s

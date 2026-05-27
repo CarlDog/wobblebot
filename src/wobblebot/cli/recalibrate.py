@@ -8,7 +8,7 @@ Operator usage::
     python -m wobblebot.cli.recalibrate --target-balance 10 --config /path/to/custom.yml
 
 **Default current balance comes from a live Kraken read** via the
-read-only ``KRAKEN_API_KEY`` (same path ``cli/status`` uses). Operators
+read-only ``KRAKEN_READER_API_KEY`` (same path ``cli/status`` uses). Operators
 can override via ``--current-balance`` for what-if analysis without
 hitting the API — useful when designing a scale-down before the
 balance has actually moved.

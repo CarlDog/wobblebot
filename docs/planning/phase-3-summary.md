@@ -226,7 +226,7 @@ inputs:
    executes" property is enforced; Phase 4 extends the principle to
    "Harvester never trades."
 2. **The dual-key separation already on the books.** Read-only key
-   (`KRAKEN_API_KEY`) and trading key (`KRAKEN_TRADE_API_KEY`) are
+   (`KRAKEN_READER_API_KEY`) and trading key (`KRAKEN_TRADER_API_KEY`) are
    side-by-side in `.env`; Phase 4 adds a third key with Withdraw
    scope (`KRAKEN_HARVESTER_API_KEY`) that the trading key MUST NOT
    have.

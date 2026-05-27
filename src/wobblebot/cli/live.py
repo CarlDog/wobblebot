@@ -29,8 +29,8 @@ On shutdown (any reason): every open order for every configured
 symbol is cancelled in the ``finally`` block. Exit codes: 0 clean
 (signal/runtime), 1 loss-cap tripped, 2 missing credentials.
 
-Loads trade credentials from ``KRAKEN_TRADE_API_KEY`` /
-``KRAKEN_TRADE_API_SECRET``.
+Loads trade credentials from ``KRAKEN_TRADER_API_KEY`` /
+``KRAKEN_TRADER_API_SECRET``.
 """
 
 from __future__ import annotations
@@ -584,8 +584,8 @@ async def _main_async(config: WobbleBotConfig) -> int:
 
     try:
         kraken_config = KrakenConfig.from_env(
-            key_var="KRAKEN_TRADE_API_KEY",
-            secret_var="KRAKEN_TRADE_API_SECRET",
+            key_var="KRAKEN_TRADER_API_KEY",
+            secret_var="KRAKEN_TRADER_API_SECRET",
         )
     except ValueError as exc:
         _LOGGER.error("missing trade credentials", extra={"error": str(exc)})

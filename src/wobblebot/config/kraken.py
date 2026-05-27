@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 
 _DEFAULT_BASE_URL = "https://api.kraken.com"
 _DEFAULT_TIMEOUT = 10.0
-_KEY_ENV = "KRAKEN_API_KEY"
-_SECRET_ENV = "KRAKEN_API_SECRET"
+_KEY_ENV = "KRAKEN_READER_API_KEY"
+_SECRET_ENV = "KRAKEN_READER_API_SECRET"
 _BASE_URL_ENV = "KRAKEN_BASE_URL"
 
 
@@ -50,7 +50,7 @@ class KrakenConfig(BaseModel):
     ) -> KrakenConfig:
         """Load credentials from environment variables.
 
-        Default vars: ``KRAKEN_API_KEY``, ``KRAKEN_API_SECRET``,
+        Default vars: ``KRAKEN_READER_API_KEY``, ``KRAKEN_READER_API_SECRET``,
         ``KRAKEN_BASE_URL``. Per ADR-003-style separation, callers can
         load a *different* key (e.g. the Stage 2.3 trading key) by
         passing alternate var names — this lets the project keep
@@ -59,9 +59,9 @@ class KrakenConfig(BaseModel):
 
         Args:
             key_var: Env var holding the public API key. Default
-                ``KRAKEN_API_KEY``.
+                ``KRAKEN_READER_API_KEY``.
             secret_var: Env var holding the base64-encoded API secret.
-                Default ``KRAKEN_API_SECRET``.
+                Default ``KRAKEN_READER_API_SECRET``.
             base_url_var: Env var holding the API base URL. Default
                 ``KRAKEN_BASE_URL`` (falls back to the public Kraken
                 endpoint when unset).

@@ -164,7 +164,7 @@ Runs a paper buy-dip / sell-rebound cycle through the mock exchange and SQLite �
 
 ### From dry-run to live trading
 
-See **[Operator handoff](CLAUDE.md#operator-handoff-from-dry-run-to-live-trading)** in `CLAUDE.md`. Short version: mint a separate Kraken trade key (Withdraw OFF), set it in `.env` as `KRAKEN_TRADE_API_KEY`, run `cli/preflight` to verify Kraken accepts your config, then `cli/live` for the operational loop. The first session is the highest-risk session — watch it.
+See **[Operator handoff](CLAUDE.md#operator-handoff-from-dry-run-to-live-trading)** in `CLAUDE.md`. Short version: mint a separate Kraken trade key (Withdraw OFF), set it in `.env` as `KRAKEN_TRADER_API_KEY`, run `cli/preflight` to verify Kraken accepts your config, then `cli/live` for the operational loop. The first session is the highest-risk session — watch it.
 
 ---
 

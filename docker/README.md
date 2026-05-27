@@ -94,10 +94,10 @@ at deploy time:
 
 | Variable                       | Required for                  | Notes |
 | ------------------------------ | ----------------------------- | ----- |
-| `KRAKEN_API_KEY`               | observe, status, web          | Read-only key |
-| `KRAKEN_API_SECRET`            |                               |       |
-| `KRAKEN_TRADE_API_KEY`         | live, preflight               | Trade scope; Withdraw OFF |
-| `KRAKEN_TRADE_API_SECRET`      |                               |       |
+| `KRAKEN_READER_API_KEY`               | observe, status, web          | Read-only key |
+| `KRAKEN_READER_API_SECRET`            |                               |       |
+| `KRAKEN_TRADER_API_KEY`         | live, preflight               | Trade scope; Withdraw OFF |
+| `KRAKEN_TRADER_API_SECRET`      |                               |       |
 | `KRAKEN_HARVESTER_API_KEY`     | harvest                       | Withdraw scope ON (ADR-003) |
 | `KRAKEN_HARVESTER_API_SECRET`  |                               |       |
 | `DISCORD_BOT_TOKEN`            | operator                      |       |

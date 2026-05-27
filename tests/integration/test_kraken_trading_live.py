@@ -20,8 +20,8 @@ money**:
   return whatever's actually in the account (possibly empty), which we
   only assert is structurally correct.
 
-**Auth.** Credentials come from ``KRAKEN_TRADE_API_KEY`` /
-``KRAKEN_TRADE_API_SECRET`` (loaded from ``.env`` by ``conftest.py``).
+**Auth.** Credentials come from ``KRAKEN_TRADER_API_KEY`` /
+``KRAKEN_TRADER_API_SECRET`` (loaded from ``.env`` by ``conftest.py``).
 The whole module is skipped when either is unset — so this file is
 safe to commit even on machines without trade credentials.
 
@@ -54,8 +54,8 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.asyncio,
     pytest.mark.skipif(
-        not (os.environ.get("KRAKEN_TRADE_API_KEY") and os.environ.get("KRAKEN_TRADE_API_SECRET")),
-        reason="KRAKEN_TRADE_API_KEY / KRAKEN_TRADE_API_SECRET unset; live trade test skipped",
+        not (os.environ.get("KRAKEN_TRADER_API_KEY") and os.environ.get("KRAKEN_TRADER_API_SECRET")),
+        reason="KRAKEN_TRADER_API_KEY / KRAKEN_TRADER_API_SECRET unset; live trade test skipped",
     ),
 ]
 
@@ -67,8 +67,8 @@ BTC_USD = Symbol(base="BTC", quote="USD")
 async def trade_adapter():
     """Build an adapter from the trade-key env vars and clean up after."""
     config = KrakenConfig.from_env(
-        key_var="KRAKEN_TRADE_API_KEY",
-        secret_var="KRAKEN_TRADE_API_SECRET",
+        key_var="KRAKEN_TRADER_API_KEY",
+        secret_var="KRAKEN_TRADER_API_SECRET",
     )
     a = KrakenAdapter(config=config)
     try:
@@ -81,8 +81,8 @@ async def trade_adapter():
 async def dry_run_adapter():
     """Adapter wired in dry_run mode — every place_order adds validate=true."""
     config = KrakenConfig.from_env(
-        key_var="KRAKEN_TRADE_API_KEY",
-        secret_var="KRAKEN_TRADE_API_SECRET",
+        key_var="KRAKEN_TRADER_API_KEY",
+        secret_var="KRAKEN_TRADER_API_SECRET",
     )
     a = KrakenAdapter(config=config, dry_run=True)
     try:
@@ -241,8 +241,8 @@ class TestAddOrderDryRun:
         pair lookup against our AssetPairs cache catches it client-side
         before the AddOrder request is even built."""
         config = KrakenConfig.from_env(
-            key_var="KRAKEN_TRADE_API_KEY",
-            secret_var="KRAKEN_TRADE_API_SECRET",
+            key_var="KRAKEN_TRADER_API_KEY",
+            secret_var="KRAKEN_TRADER_API_SECRET",
         )
         adapter = KrakenAdapter(config=config, dry_run=True)
         try:
