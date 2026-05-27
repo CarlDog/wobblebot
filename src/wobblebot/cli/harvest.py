@@ -12,7 +12,7 @@ operator's ``HarvesterConfig`` thresholds, and logs what *would* be
 proposed. **No transfers, no DB writes** (the transfer-proposals
 table is Stage 4.3's job once proposals become operator-reviewable).
 
-Uses the existing read-only ``KRAKEN_API_KEY`` — the Harvester key
+Uses the existing read-only ``KRAKEN_READER_API_KEY`` — the Harvester key
 with Withdraw scope isn't needed until Stage 4.4.
 
 Per ADR-003 + ADR-012, the operator-in-the-loop posture applies:
@@ -547,7 +547,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
         return 2
 
     # Stage 4.4: load the Harvester key (Withdraw + Query Funds scopes).
-    # Per ADR-003 this MUST be a different key from KRAKEN_TRADE_API_KEY —
+    # Per ADR-003 this MUST be a different key from KRAKEN_TRADER_API_KEY —
     # operator-side discipline; we trust the .env config here.
     try:
         kraken = KrakenConfig.from_env(

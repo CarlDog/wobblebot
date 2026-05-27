@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Operator handoff: from dry-run to live trading
 
 1. **Mint a Kraken trading key**, separate from the read-only key (per ADR-003-style separation). Permissions: Query Funds + Query open & closed orders & trades + Create & modify orders + Cancel & close orders. **Withdraw must stay off** — that scope is exclusive to the future Phase 4 Harvester key. Recommended: enable IP address restriction.
-2. **Stash credentials in `.env`** as `KRAKEN_TRADE_API_KEY` / `KRAKEN_TRADE_API_SECRET` (separate from the existing `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` so the read-only key can keep being used for `cli/status`).
+2. **Stash credentials in `.env`** as `KRAKEN_TRADER_API_KEY` / `KRAKEN_TRADER_API_SECRET` (separate from the existing `KRAKEN_READER_API_KEY` / `KRAKEN_READER_API_SECRET` so the read-only key can keep being used for `cli/status`).
 3. **Run `cli/preflight`** — confirm Kraken accepts the grid config without spending anything. Exit 0 means every layout order would be accepted by Kraken's matching engine.
 4. **Run `cli/live`** with eyes on the Kraken Pro Orders + Trade History tab. Defaults: $10 per order, 1% spacing, 3 above + 3 below = $60 total exposure, $5 max session loss, 60 minute max runtime, 5s tick. The first session is the highest-risk session — watch it.
 
@@ -52,7 +52,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Stage 4.1 closed 2026-05-15.** First Phase 4 slice; pure-domain (zero new real-money risk). `HarvesterConfig` schema with four thresholds (min/topup/surplus/day-cap), `enabled: bool = False` mirroring the auto-apply gate posture, model validator enforcing `min < topup < surplus`. `services/harvester.propose_transfer()` pure function carves four bands: deficit (no proposal), top-up band (bank→exchange to midpoint), hold band (no proposal), surplus (exchange→bank to midpoint). Day-cap shrinks/refuses proposals.
 
-**Stage 4.2 closed 2026-05-15.** `cli/harvest` daemon polls Kraken USD balance on `schedules.harvest`, runs `propose_transfer()`, logs "HYPOTHETICAL proposal (no money moved)" lines. No transfers, no DB writes; uses the read-only `KRAKEN_API_KEY`.
+**Stage 4.2 closed 2026-05-15.** `cli/harvest` daemon polls Kraken USD balance on `schedules.harvest`, runs `propose_transfer()`, logs "HYPOTHETICAL proposal (no money moved)" lines. No transfers, no DB writes; uses the read-only `KRAKEN_READER_API_KEY`.
 
 **Stage 4.3 closed 2026-05-15.** Every non-None proposal now persists to a new `transfer_proposals` SQLite table for operator review.
 

@@ -273,7 +273,7 @@ Concurrently, ADR-007 introduced the Mixture-of-Experts advisor with provider-pl
 
 7. **Schema-drift detection lives in tests.** `tests/config/test_schema_drift.py` checks that, IF the operator's local `settings.yml` exists, its key set + ordering matches `settings.example.yml`. Same for `.env` vs `.env.example`. **Initial strictness: medium** (keys + ordering, not comment parity); a `--strict` flag in the test enables full structural comparison and is available to flip if drift starts wandering. Comment parity is on the operator (and me) per the standing rule in feedback memory.
 
-8. **`docker/env.example` → repo root `.env.example`.** More conventional location, easier for new contributors to find, single source of truth. Refresh content to match Phase 2.3 reality (`KRAKEN_TRADE_API_KEY`, drop stale `LLM_PROVIDER` / `OPENAI_API_KEY` placeholders).
+8. **`docker/env.example` → repo root `.env.example`.** More conventional location, easier for new contributors to find, single source of truth. Refresh content to match Phase 2.3 reality (`KRAKEN_TRADER_API_KEY`, drop stale `LLM_PROVIDER` / `OPENAI_API_KEY` placeholders).
 
 **Alternatives Considered:**
 - **(YAML sections) Shared "runtime" + per-CLI overrides instead of one section per CLI.** Rejected: less operator-readable. When an operator opens settings.yml looking for cli/live's tick rate, they want to find it in one place, not "well, the default tick rate is in `runtime`, but `live` overrides it sometimes."
@@ -587,7 +587,7 @@ The shape of this decision matters because the wrong answer has compounding impl
    - **cli/advise**: logs structured (`logger.error` with `extra={"provider", "model", "role", "error_kind"}`) and skips the tick. The next scheduled cycle tries again — most provider outages resolve in minutes.
    - **cli/news (when Phase 6 wires cloud news fetch)**: same skip-and-log pattern.
    In all cases the engine (cli/live, cli/harvest) keeps running. Advisory output is best-effort per ADR-002.
-6. **Per-provider auth lives in env, not config.** Each provider's API key gets its own env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) following the existing `KRAKEN_API_KEY` / `KRAKEN_TRADE_API_KEY` / `DISCORD_BOT_TOKEN` convention. `.env.example` carries the placeholder names; operators copy to `.env` with real values. Adapter constructors fail fast (clear error, exit code 2) if the configured provider's key is missing — same posture as `cli/status` for missing Kraken creds.
+6. **Per-provider auth lives in env, not config.** Each provider's API key gets its own env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) following the existing `KRAKEN_READER_API_KEY` / `KRAKEN_TRADER_API_KEY` / `DISCORD_BOT_TOKEN` convention. `.env.example` carries the placeholder names; operators copy to `.env` with real values. Adapter constructors fail fast (clear error, exit code 2) if the configured provider's key is missing — same posture as `cli/status` for missing Kraken creds.
 7. **Retry config knobs (small, defaulted)**:
    - `LLMRetryConfig.max_retries` (default 3)
    - `LLMRetryConfig.initial_backoff_seconds` (default 1.0)

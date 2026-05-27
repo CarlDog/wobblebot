@@ -34,8 +34,8 @@ fill at the bid. Verifies the sell trade. Expected loss: spread + 2x
 - Always-on cleanup: any order still open at script exit is cancelled
   in the ``finally`` block.
 
-Loads credentials from ``KRAKEN_TRADE_API_KEY`` /
-``KRAKEN_TRADE_API_SECRET`` (the operator's separate trade key, not
+Loads credentials from ``KRAKEN_TRADER_API_KEY`` /
+``KRAKEN_TRADER_API_SECRET`` (the operator's separate trade key, not
 the read-only key).
 
 Logs every step in JSON to stderr AND appends to
@@ -487,8 +487,8 @@ async def _run(
 
     try:
         config = KrakenConfig.from_env(
-            key_var="KRAKEN_TRADE_API_KEY",
-            secret_var="KRAKEN_TRADE_API_SECRET",
+            key_var="KRAKEN_TRADER_API_KEY",
+            secret_var="KRAKEN_TRADER_API_SECRET",
         )
     except ValueError as exc:
         logger.error("missing trade credentials", extra={"error": str(exc)})

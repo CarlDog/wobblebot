@@ -398,7 +398,7 @@ class HarvestConfig(BaseModel):
     ``transfer_proposals`` regardless of ``HarvesterConfig.enabled``
     (that flag gates execution in 4.4+, not the forensic record).
 
-    Uses the read-only ``KRAKEN_API_KEY`` through 4.3; the Harvester
+    Uses the read-only ``KRAKEN_READER_API_KEY`` through 4.3; the Harvester
     key with Withdraw scope isn't needed until 4.4.
 
     The ``today_total_withdrawn_usd`` parameter that feeds the

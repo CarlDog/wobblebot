@@ -51,7 +51,7 @@ class HarvesterConfig(BaseModel):
       variables hold the Harvester Kraken key (Withdraw scope). The
       defaults assume the operator followed the .env.example
       convention. Per ADR-003 these MUST be different from the trade
-      key — if the operator points them at ``KRAKEN_TRADE_API_KEY``,
+      key — if the operator points them at ``KRAKEN_TRADER_API_KEY``,
       they've defeated the safety design.
     - ``withdrawal_destinations``: asset → Kraken Pro destination
       label mapping. Operator pre-registers labels in Kraken Pro's

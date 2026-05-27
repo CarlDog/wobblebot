@@ -31,8 +31,8 @@ A typical WobbleBot repository contains:
 
    - Clone the repo onto your local machine or NAS.
    - Copy `.env.example` (repo root) to `.env` and fill in:
-     - `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` (read‑only key — used by `cli/status`, `cli/observe`, `cli/shadow`).
-     - `KRAKEN_TRADE_API_KEY` / `KRAKEN_TRADE_API_SECRET` (Trade scope, no Withdraw — used by `cli/preflight` and `cli/live`).
+     - `KRAKEN_READER_API_KEY` / `KRAKEN_READER_API_SECRET` (read‑only key — used by `cli/status`, `cli/observe`, `cli/shadow`).
+     - `KRAKEN_TRADER_API_KEY` / `KRAKEN_TRADER_API_SECRET` (Trade scope, no Withdraw — used by `cli/preflight` and `cli/live`).
      - `KRAKEN_HARVESTER_API_KEY` / `KRAKEN_HARVESTER_API_SECRET` only when Phase 4 ships (the Harvester is the sole module with Withdraw scope per ADR-003).
      - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY` only when your `advisor.experts:` block in `settings.yml` references the matching cloud provider (Phase 3+).
    - Adjust `config/settings.yml` for your coins, grid settings, safety caps, and enabled modules.

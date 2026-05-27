@@ -7,8 +7,8 @@ Hits real Kraken endpoints with real credentials. Proves that:
 - The BalanceEx ``hold_trade`` field name our parser assumes is correct
   on the live API (this is the riskiest unverified claim from slice 1).
 
-**Auth.** Credentials come from ``KRAKEN_API_KEY`` and
-``KRAKEN_API_SECRET`` (loaded from ``.env`` by ``conftest.py``). If
+**Auth.** Credentials come from ``KRAKEN_READER_API_KEY`` and
+``KRAKEN_READER_API_SECRET`` (loaded from ``.env`` by ``conftest.py``). If
 either is unset, the entire module is skipped — so this file is safe
 to commit alongside the unit suite.
 
@@ -39,8 +39,8 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.asyncio,
     pytest.mark.skipif(
-        not (os.environ.get("KRAKEN_API_KEY") and os.environ.get("KRAKEN_API_SECRET")),
-        reason="KRAKEN_API_KEY / KRAKEN_API_SECRET unset; live test skipped",
+        not (os.environ.get("KRAKEN_READER_API_KEY") and os.environ.get("KRAKEN_READER_API_SECRET")),
+        reason="KRAKEN_READER_API_KEY / KRAKEN_READER_API_SECRET unset; live test skipped",
     ),
 ]
 

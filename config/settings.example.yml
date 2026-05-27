@@ -28,8 +28,8 @@ application:
 # ============================================================================
 # Exchange connection (Kraken)
 # ============================================================================
-# API credentials NEVER live here — they're in .env as KRAKEN_API_KEY
-# (read-only) and KRAKEN_TRADE_API_KEY (Trade scope, no Withdraw).
+# API credentials NEVER live here — they're in .env as KRAKEN_READER_API_KEY
+# (read-only) and KRAKEN_TRADER_API_KEY (Trade scope, no Withdraw).
 # This block holds connection-level tunables only.
 exchange:
   name: "kraken"
@@ -234,7 +234,7 @@ preflight:
 # Per-CLI: status (cli/status)
 # ============================================================================
 # Read-only one-shot Kraken fetch: current price + account balances.
-# No engine, no orders. Uses KRAKEN_API_KEY (read-only key).
+# No engine, no orders. Uses KRAKEN_READER_API_KEY (read-only key).
 status:
   symbol: BTC/USD
   log_format: plain

@@ -6,7 +6,7 @@ Run as a module::
     python -m wobblebot.cli.status --symbol ETH/USD
     python -m wobblebot.cli.status --config /path/to/custom-settings.yml
 
-**Read-only.** Loads ``KRAKEN_API_KEY`` (the read-only key, not the
+**Read-only.** Loads ``KRAKEN_READER_API_KEY`` (the read-only key, not the
 trade key), builds a ``KrakenAdapter`` + ``DataCollector``, and
 prints:
 

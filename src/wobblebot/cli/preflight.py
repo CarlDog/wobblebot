@@ -27,8 +27,8 @@ caps (matched to the layout's expected exposure) regardless of the
 ``safety:`` block, since its job is to verify Kraken validation
 passes not to enforce trading caps.
 
-Loads credentials from ``KRAKEN_TRADE_API_KEY`` /
-``KRAKEN_TRADE_API_SECRET`` (separate from the read-only key per
+Loads credentials from ``KRAKEN_TRADER_API_KEY`` /
+``KRAKEN_TRADER_API_SECRET`` (separate from the read-only key per
 ADR-003-style separation).
 """
 
@@ -108,13 +108,13 @@ async def _run(config: WobbleBotConfig) -> int:
 
     try:
         kraken_config = KrakenConfig.from_env(
-            key_var="KRAKEN_TRADE_API_KEY",
-            secret_var="KRAKEN_TRADE_API_SECRET",
+            key_var="KRAKEN_TRADER_API_KEY",
+            secret_var="KRAKEN_TRADER_API_SECRET",
         )
     except ValueError as exc:
         _LOGGER.error(
             "missing trade credentials",
-            extra={"error": str(exc), "expected": "KRAKEN_TRADE_API_KEY/KRAKEN_TRADE_API_SECRET"},
+            extra={"error": str(exc), "expected": "KRAKEN_TRADER_API_KEY/KRAKEN_TRADER_API_SECRET"},
         )
         return 2
 

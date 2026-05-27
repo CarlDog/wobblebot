@@ -6,7 +6,7 @@ Run as a module::
     python -m wobblebot.cli.observe --profile conservative
     python -m wobblebot.cli.observe --symbols BTC/USD,ETH/USD
 
-**Read-only.** Uses ``KRAKEN_API_KEY`` (not the trade key). Polls
+**Read-only.** Uses ``KRAKEN_READER_API_KEY`` (not the trade key). Polls
 public Ticker per symbol on the price interval and persists each
 observation. Optionally polls private BalanceEx on a slower cadence.
 Per ADR-008, this is the data-collection half of Stage 3.0.

@@ -43,7 +43,7 @@ cannot contaminate live trading state or vice versa).
 operator's real Kraken balances (per ADR-008): muscle-memory guard
 against confusing shadow state with live state.
 
-Loads credentials from ``KRAKEN_API_KEY`` / ``KRAKEN_API_SECRET``
+Loads credentials from ``KRAKEN_READER_API_KEY`` / ``KRAKEN_READER_API_SECRET``
 (read-only — the shadow needs Kraken only for price discovery, never
 for placement).
 """
@@ -373,7 +373,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
         return 2
 
     try:
-        kraken_config = KrakenConfig.from_env()  # default vars: KRAKEN_API_KEY (read-only)
+        kraken_config = KrakenConfig.from_env()  # default vars: KRAKEN_READER_API_KEY (read-only)
     except ValueError as exc:
         _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
         return 2

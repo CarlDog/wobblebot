@@ -94,10 +94,10 @@ pipeline without needing changes to the layers below it.
 
 1. **Ensure two Kraken keys exist** (per ADR-003-style separation):
    - Read-only key: `Query Funds` + `Query open & closed orders & trades`.
-     Stored as `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` in `.env`.
+     Stored as `KRAKEN_READER_API_KEY` / `KRAKEN_READER_API_SECRET` in `.env`.
    - Trade key: above scopes + `Create & modify orders` + `Cancel & close
      orders`. **No `Withdraw`.** IP-restricted is recommended. Stored as
-     `KRAKEN_TRADE_API_KEY` / `KRAKEN_TRADE_API_SECRET` in `.env`.
+     `KRAKEN_TRADER_API_KEY` / `KRAKEN_TRADER_API_SECRET` in `.env`.
 2. **Sanity check the read path:** `python -m wobblebot.cli.status`. Should
    print live BTC/USD price + your balances. Read-only — moves nothing.
 3. **Validate the grid config:** `python -m wobblebot.cli.preflight
