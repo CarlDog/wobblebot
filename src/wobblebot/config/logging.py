@@ -69,6 +69,37 @@ _PLAIN_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _ROTATING_HANDLER_NAME = "wobblebot.rotating-file"
 
 
+class PlainExtraFormatter(logging.Formatter):
+    """Plain-text formatter that appends the ``error`` extra field.
+
+    Background: WobbleBot's structured-logging convention is
+    ``_LOGGER.error("X failed", extra={"error": str(exc)})``. The
+    stock ``logging.Formatter`` only consumes ``%(...)s`` placeholders
+    in the format string and ignores everything in ``extra``. That
+    silently swallows the exception detail under plain format — only
+    JSON-format consumers see the full diagnostic.
+
+    This subclass surfaces ``record.error`` inline so docker logs +
+    plain-format file logs get the same insight as JSON consumers.
+    Only the ``error`` key is promoted — other ``extra`` fields
+    (``symbol``, ``order_id``, etc.) stay structured-only to avoid
+    cluttering normal INFO-level output.
+
+    Idempotent: if a callsite already inlined ``: <error_text>`` in
+    the message string (e.g. via ``%s`` interpolation), this skips
+    the append to avoid double-printing. Discovered 2026-05-27 when
+    Discord assistant errors logged only "assistant parse failed"
+    with the underlying ``AssistantError`` detail buried in ``extra``.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        error = getattr(record, "error", None)
+        if error and f": {error}" not in base and f"({error})" not in base:
+            base = f"{base} (error: {error})"
+        return base
+
+
 def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     level: str | None = None,
     log_format: LogFormat | None = None,
@@ -114,7 +145,7 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
     if resolved_format == "json":
         formatter = JsonFormatter()
     else:
-        formatter = logging.Formatter(_PLAIN_FORMAT)
+        formatter = PlainExtraFormatter(_PLAIN_FORMAT)
 
     handler = logging.StreamHandler(resolved_stream)
     handler.setFormatter(formatter)

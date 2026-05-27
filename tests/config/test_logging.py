@@ -66,6 +66,72 @@ class TestPlainFormat:
         assert "filtered out" not in output
         assert "kept" in output
 
+    def test_plain_format_appends_error_extra(self):
+        """`extra={'error': str(exc)}` surfaces in plain output.
+
+        Without this, the 90+ structured-error log sites across the
+        daemons would silently drop the exception detail when the
+        operator runs with the default plain log format.
+        """
+        buf = io.StringIO()
+        configure_logging(level="ERROR", log_format="plain", stream=buf)
+        logger = logging.getLogger("wobblebot.test")
+        logger.error("assistant parse failed", extra={"error": "OllamaJsonExtractError: bad JSON"})
+
+        output = buf.getvalue().strip()
+        assert "assistant parse failed" in output
+        assert "OllamaJsonExtractError: bad JSON" in output
+
+    def test_plain_format_skips_append_when_error_already_in_message(self):
+        """Avoid double-printing when the call site already inlines it.
+
+        Some sites format the exception into the message string via
+        ``%s`` (the canonical pattern post-2026-05-27). The formatter
+        must not add the redundant `(error: ...)` suffix in that case.
+        """
+        buf = io.StringIO()
+        configure_logging(level="ERROR", log_format="plain", stream=buf)
+        logger = logging.getLogger("wobblebot.test")
+        logger.error(
+            "assistant parse failed: %s",
+            "OllamaJsonExtractError: bad JSON",
+            extra={"error": "OllamaJsonExtractError: bad JSON"},
+        )
+
+        output = buf.getvalue().strip()
+        # Error string appears exactly once.
+        assert output.count("OllamaJsonExtractError: bad JSON") == 1
+
+    def test_plain_format_does_not_append_non_error_extras(self):
+        """`symbol`, `order_id`, etc. stay structured-only.
+
+        The plain-format append is targeted to `error` specifically so
+        normal INFO logs don't become noisy with every structured field
+        the call site attached.
+        """
+        buf = io.StringIO()
+        configure_logging(level="INFO", log_format="plain", stream=buf)
+        logger = logging.getLogger("wobblebot.test")
+        logger.info(
+            "trade recorded",
+            extra={"order_id": "ORD-123", "symbol": "BTC/USD"},
+        )
+
+        output = buf.getvalue().strip()
+        assert "ORD-123" not in output
+        assert "BTC/USD" not in output
+
+    def test_plain_format_handles_missing_error_extra(self):
+        """Records without `error` in extra produce no append."""
+        buf = io.StringIO()
+        configure_logging(level="INFO", log_format="plain", stream=buf)
+        logger = logging.getLogger("wobblebot.test")
+        logger.info("plain log line")
+
+        output = buf.getvalue().strip()
+        assert output.endswith("plain log line")
+        assert "(error:" not in output
+
 
 class TestJsonFormat:
     def test_json_format_emits_one_object_per_record(self):
