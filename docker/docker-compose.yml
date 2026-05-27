@@ -26,6 +26,13 @@ x-wobblebot-defaults: &wobblebot-defaults
   # files stay in sync with `.env.example`.
   env_file:
     - ../.env
+  environment:
+    # The cli/advise advisor (single-mode) reads its Ollama
+    # endpoint from this env var (operator.assistant uses
+    # base_url in the cpu-only profile YAML instead). Both end
+    # up pointing at the NAS host's Ollama via the
+    # host.docker.internal:host-gateway entry below.
+    OLLAMA_BASE_URL: http://host.docker.internal:11434
   volumes:
     # SQLite DBs persist across container rebuilds.
     - ../data:/app/data

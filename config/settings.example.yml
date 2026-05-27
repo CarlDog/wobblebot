@@ -889,3 +889,45 @@ profiles:
           inference_params:
             temperature: 0.6
             max_tokens: 512
+
+  # CPU-only NAS Docker deployment profile (feature/docker-support).
+  #
+  # Optimized for the operator's Synology DS1823xs+ inference host:
+  # Ryzen V1780B 4C/8T @ 3.35 GHz, 64 GB RAM, no GPU, no AVX-512.
+  # Model selections follow the global rule at
+  # `~/.claude/rules/nas-ollama-optimization.md` — q4_K_M over q8 for
+  # ≥7B models because the speed gain (~25-30%) beats the marginal
+  # quality loss on CPU. See also `docker/README.md`.
+  #
+  # Per-role measured tok/sec on this hardware (2026-05-27 hot cache):
+  #   - operator (qwen2.5:3b-q4_K_M):  12.69 → ~2-8s per response
+  #   - advisor  (llama3.1:8b-q4_K_M):  5.63 → ~35s per 200-tok JSON
+  #
+  # `base_url: http://host.docker.internal:11434` resolves inside
+  # any container that has `extra_hosts: "host.docker.internal:host-gateway"`
+  # set in docker-compose.yml (per the global docker-deployments.md
+  # rule). The advisor reads OLLAMA_BASE_URL from the environment;
+  # docker-compose.yml sets that env var alongside this profile.
+  #
+  # Advisor type is `single` rather than `moe` because MoE on CPU
+  # multiplies latency by N experts + arbitrator. One ~35s call per
+  # advisor tick beats 4 × ~35s with no GPU to parallelize them.
+  cpu-only:
+    operator:
+      assistant:
+        provider: ollama
+        model: qwen2.5:3b-instruct-q4_K_M
+        prompt_file: config/prompts/operator.md
+        base_url: http://host.docker.internal:11434
+        temperature: 0.3
+        max_tokens: 512
+        timeout_seconds: 60.0
+    advisor:
+      type: single
+      provider: ollama
+      model: llama3.1:8b-instruct-q4_K_M
+      prompt_file: "config/prompts/quant.md"
+      inference_params:
+        temperature: 0.5
+        max_tokens: 512
+        timeout_seconds: 120
