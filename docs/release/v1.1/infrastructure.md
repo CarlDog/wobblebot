@@ -39,6 +39,42 @@ makes them untrustworthy).
 **Trigger:** the project gains contributors who can't run the
 local pre-commit hooks.
 
+### Tighten schema-drift coverage for canonical profiles
+
+**What:** the existing `tests/config/test_schema_drift.py` skips the
+`profiles.*` subtree entirely (intentional — operators define
+custom profiles). But canonical example-shipped profiles like
+`conservative`, `aggressive`, `cloud-only-moe`, `cpu-only` are
+invisible to the check too. Operators who copied `settings.yml`
+from an older `settings.example.yml` silently lose access to
+profiles added after the copy date, and the failure only surfaces
+at daemon startup with a "profile not found" error.
+
+**Proposed fix (three pieces):**
+1. Track canonical profile names somewhere — either a top-level
+   `_CANONICAL_PROFILES` set in the test, or a marker comment in
+   the example file. Assert each canonical name exists as a key
+   under `profiles:` in operator's `settings.yml`. Custom names
+   (anything not on the canonical list) stay exempt.
+2. Wire the drift tests into `.githooks/pre-commit` (or add a
+   `pytest tests/config/test_schema_drift.py --no-cov -q` step to
+   `make check` and call that from the hook). Today the hook only
+   runs gitleaks + PII + author-identity — drift detection is
+   manual-only.
+3. Daemon-side: when `--profile X` is missing, replace the bare
+   `"Profile X not found in config; available: [...]"` error with
+   a hint pointing to `config/settings.example.yml` and suggesting
+   the operator may need to copy the missing block.
+
+**Why deferred:** discovered 2026-05-27 during NAS Docker
+deployment. Not a v1.0 blocker — manual `diff` + paste works.
+Becomes more important when more operators run on more hosts
+(see friend-deployment in operator-ux.md).
+
+**Trigger:** any deployment where settings.yml on the host
+filesystem predates a profile addition. Friend-deployment makes
+this multiplicative.
+
 ### Multi-arch GHCR image builds
 
 **What:** extend `docker-publish.yml` to build `linux/amd64` +
