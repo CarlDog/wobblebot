@@ -1,0 +1,139 @@
+# WobbleBot Docker Compose — NAS / Synology deployment.
+#
+# Brings up 8 long-running daemons (live, observe, news, advise,
+# harvest, operator, web, maintenance) using a single image.
+# Each service overrides `command:` to pick its entry point and
+# inherits the rest via YAML anchor.
+#
+# cli/shadow (paper trading) is intentionally omitted from the
+# default set — operators add it back as a separate service if
+# they want continued shadow runs on the NAS.
+#
+# One-shot CLIs (preflight, apply, recalibrate, status, sandbox)
+# are invoked via `docker compose run --rm tools python -m
+# wobblebot.cli.<entry>` against the `tools` service below.
+#
+# Run from this directory:
+#   docker compose config    # validate
+#   docker compose up -d     # start daemons
+#   docker compose logs -f operator
+#   docker compose down
+
+x-wobblebot-defaults: &wobblebot-defaults
+  image: wobblebot:dev
+  # Operator's secrets + tunables live in `.env` at the repo
+  # root. The schema-drift tests verify that operator `.env`
+  # files stay in sync with `.env.example`.
+  env_file:
+    - ../.env
+  volumes:
+    # SQLite DBs persist across container rebuilds.
+    - ../data:/app/data
+    # Settings + prompts mounted RW so cli/apply --commit can
+    # rewrite settings.yml through ruamel.yaml.
+    - ../config:/app/config
+    # Log files (cli/maintenance writes rotated logs here when
+    # `maintenance.log_path` is set).
+    - ../logs:/app/logs
+  extra_hosts:
+    # Containers reach host-resident Ollama via
+    # `http://host.docker.internal:11434`. Per the global
+    # docker-deployments.md rule, baked into compose so it's
+    # harmless when unused and load-bearing when needed.
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+services:
+
+  # ------------------------------------------------------------------
+  # Real-money trading. NO auto-restart — a loss-cap trip (exit 1)
+  # means stop, by design. Operator decides whether to resume.
+  # ------------------------------------------------------------------
+  live:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-live
+    command: python -m wobblebot.cli.live --profile cpu-only
+    restart: "no"
+
+  # ------------------------------------------------------------------
+  # Read-only price + balance collection. Safe to auto-restart.
+  # ------------------------------------------------------------------
+  observe:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-observe
+    command: python -m wobblebot.cli.observe --profile cpu-only
+
+  # ------------------------------------------------------------------
+  # News ingestion (CryptoCompare + RSS). Safe to auto-restart.
+  # ------------------------------------------------------------------
+  news:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-news
+    command: python -m wobblebot.cli.news --profile cpu-only
+
+  # ------------------------------------------------------------------
+  # Advisor (LLM-driven). Advisory only per ADR-002; no money risk.
+  # ------------------------------------------------------------------
+  advise:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-advise
+    command: python -m wobblebot.cli.advise --profile cpu-only
+
+  # ------------------------------------------------------------------
+  # Treasury monitor. Touches money (cli/harvest --execute path),
+  # so NO auto-restart — failures need operator attention.
+  # ------------------------------------------------------------------
+  harvest:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-harvest
+    command: python -m wobblebot.cli.harvest --profile cpu-only
+    restart: "no"
+
+  # ------------------------------------------------------------------
+  # Discord operator interface. No money risk (ADR-002 firewall:
+  # commands route through pending_commands → cli/live's approved
+  # poll). Safe to auto-restart.
+  # ------------------------------------------------------------------
+  operator:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-operator
+    command: python -m wobblebot.cli.operator --profile cpu-only
+
+  # ------------------------------------------------------------------
+  # FastAPI dashboard. Binds inside the container; DSM reverse
+  # proxy fronts the LAN with the wobblebot.carldog-nas hostname.
+  # Port published only to the loopback so the NAS doesn't expose
+  # the dashboard directly to the LAN — the proxy is the only
+  # external entry point. Per ADR-016.
+  # ------------------------------------------------------------------
+  web:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-web
+    command: python -m wobblebot.cli.web serve --bind-host 0.0.0.0 --bind-port 8000 --profile cpu-only
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # ------------------------------------------------------------------
+  # Background maintenance (VACUUM + prune + backup). No money
+  # risk; safe to auto-restart.
+  # ------------------------------------------------------------------
+  maintenance:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-maintenance
+    command: python -m wobblebot.cli.maintenance --profile cpu-only
+
+  # ------------------------------------------------------------------
+  # One-shot CLI dispatcher. No default command; no auto-restart.
+  # Operator invokes via:
+  #   docker compose run --rm tools python -m wobblebot.cli.preflight
+  #   docker compose run --rm tools python -m wobblebot.cli.recalibrate --target-balance 100
+  #   docker compose run --rm tools python -m wobblebot.cli.apply --commit
+  #   docker compose run --rm tools python -m wobblebot.cli.status
+  # ------------------------------------------------------------------
+  tools:
+    <<: *wobblebot-defaults
+    container_name: wobblebot-tools
+    command: ["python", "-c", "import sys; sys.stderr.write('use: docker compose run --rm tools <command>\\n'); sys.exit(2)"]
+    restart: "no"
+    profiles:
+      - tools
