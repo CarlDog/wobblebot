@@ -528,8 +528,15 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     try:
         intent = await assistant.parse_intent(context)
     except AssistantError as exc:
+        # Embed the error text in the message itself — plain-format logs
+        # drop the `extra` dict, which silently swallows the underlying
+        # AssistantError detail (network failure / JSON extract error /
+        # schema validation). Keep the structured fields for JSON-format
+        # consumers.
         _LOGGER.error(
-            "assistant parse failed",
+            "assistant parse failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"channel_id": message.channel_id, "error": str(exc)},
         )
         await _safe_send_message(
