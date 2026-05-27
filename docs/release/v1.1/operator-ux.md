@@ -4,6 +4,53 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### Web UI first-run admin user wizard
+
+**What:** when `operator.db` has zero rows in the `users` table,
+the login page redirects to a `/setup` route that shows a
+"create first admin" form (username + password + confirm).
+After successful submission, a bcrypt-hashed row is written and
+the `/setup` route is permanently guarded (any subsequent GET
+redirects to `/auth/login`).
+
+**Why:** today the operator must SSH to the host and run
+`docker exec -it wobblebot-web python -m wobblebot.cli.web
+create-user` interactively. Easy to forget (just happened
+2026-05-27 during NAS Docker deploy: stack came up, dashboard
+load showed login page, no user existed). For friend-deployment
+this is a hard blocker — friends don't have SSH access.
+
+**Alternatives considered + rejected:**
+- **Auto-create with random password logged once.** Random
+  password landing in container logs is a credential-leak
+  surface; depends on operator catching it before log rotation
+  / aggregation. Standard practice has moved away from this.
+- **Env-var driven** (e.g. `WOBBLEBOT_ADMIN_USERNAME` +
+  `WOBBLEBOT_ADMIN_PASSWORD_HASH` in Portainer stack env).
+  Acceptable but adds a second credential surface to manage
+  alongside `WOBBLEBOT_WEB_SESSION_SECRET`. Plaintext password
+  variant is an outright leak surface.
+
+**Implementation sketch:**
+- New `/setup` route in `wobblebot.web.app` (no auth required;
+  serves the create-form GET and processes the POST).
+- New `wobblebot.web.middleware` gate: if `users` count == 0,
+  any request that's not to `/setup` or `/static/*` 302s to
+  `/setup`. After count >= 1, `/setup` itself 302s to
+  `/auth/login`.
+- Re-use `wobblebot.cli.web.create-user`'s bcrypt logic in the
+  POST handler so there's one place that computes the hash.
+- Tests: existing `tests/web/test_auth_routes.py` pattern;
+  new `tests/web/test_setup_route.py` for the guard semantics.
+
+**Why deferred:** v1.0 ships with operator-only deployment;
+single SSH'd `create-user` invocation per fresh install is the
+acceptable manual step. Becomes pressing when friend-deployment
+lands and friends need a no-SSH onboarding path.
+
+**Trigger:** friend-deployment (Tier 1 onwards in the entry
+below). Pair the two.
+
 ### Multi-coin defaults in `cli/recalibrate`
 
 **What:** `cli/recalibrate --target-balance N` currently scales
