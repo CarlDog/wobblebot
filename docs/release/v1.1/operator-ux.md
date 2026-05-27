@@ -1046,12 +1046,30 @@ above is several discrete projects:
 
 | Tier | What it covers | Effort | Trigger to pick up |
 |---|---|---|---|
-| **0. Friend-instance runbook** | Markdown checklist the operator hands to the friend (or walks through together). No code change. | 1-2 hours | Available NOW for the colleague's soak-end deployment |
-| **1. `cli/init` wizard** | #3 + #4 + #5 (WobbleBot config, Kraken key wiring, Discord setup, preflight). Prereqs #1, #2, #6 still manual but documented. | 2-4 days | Friend-instance runbook validated against ≥1 real deployment; friction points catalogued |
-| **2. Wizard + Ollama detection/install guidance** | Tier 1 + interactive "do you have Ollama? want to install it? here's the platform-specific command" branch. Wizard SHELLS OUT to Ollama CLI but doesn't bundle Ollama. | +1-2 days on top of Tier 1 | Operator decides Ollama-on-friend-machine is the typical path (vs cloud-only for most friends) |
+| **0. Friend-instance runbook** | Markdown checklist the operator hands to the friend (or walks through together). No code change. Discord, Ollama, Docker setup all documented manually. | 1-2 hours | Available NOW for the colleague's soak-end deployment |
+| **1. `cli/init` wizard** | #3 + #4 + #5 (WobbleBot config, Kraken key wiring, Discord-bot guided web flow, preflight). Prereqs #1, #2, #6 still manual but documented. | 2-4 days | Friend-instance runbook validated against ≥1 real deployment; friction points catalogued |
+| **2. Wizard + Ollama detection/install guidance** | Tier 1 + interactive "do you have Ollama? here's the platform-specific install command" branch. Wizard SHELLS OUT to Ollama CLI but doesn't bundle Ollama yet. | +1-2 days on top of Tier 1 | Operator decides Ollama-on-friend-machine is the typical path (vs cloud-only) |
 | **3. Cloud-LLM signup walkthrough** | Tier 1 + cloud-only branch that prompts for provider choice, API key, and writes the cost-cap defaults. Cheaper for friends without GPU hardware. | +1 day on top of Tier 1 | Operator decides cloud-LLM is the default friend path (likely true — most friends don't have $1500+ GPUs) |
-| **4. Self-contained binary** | Tier 1-3 packaged via PyInstaller per platform. Friend downloads ONE file, runs it, gets dropped into the wizard. Still requires Ollama / cloud-LLM / Docker / Kraken external setup. | +2-3 days plus CI build infrastructure | Tier 1-3 has been used by ≥2 real friend deployments and operator decides "Python prereq is the actual bar to entry" |
-| **5. Platform installer (MSI / .pkg / .deb)** | Tier 4 + an OS-level installer that ALSO offers to install Ollama / Docker / Python. Full dummy-proof. | Weeks. New maintenance class (per-OS installer testing matrix). | Probably never for solo project; full-product framing |
+| **4. Self-contained binary + Ollama bundled** | Tier 1-3 packaged via PyInstaller per platform, **with Ollama redistributable bundled alongside** (Ollama is MIT-licensed; ~500MB-1GB added to installer size). Friend downloads ONE file, runs it, gets WobbleBot + Ollama runtime extracted. Models still pulled at first run by Ollama (separate ~3-10GB download). Kraken keys + Discord bot still external. | +3-5 days plus CI build infrastructure + Ollama version-pin maintenance | Tier 1-3 has been used by ≥2 real friend deployments and operator decides "the runtime install steps are the actual bar to entry" |
+| **5. Platform installer (MSI / .pkg / .deb) — only AFTER WobbleBot ships Docker support** | Tier 4 + OS-level installer that ALSO offers Docker Desktop install (detect → open download URL; **NOT bundle** — Docker Desktop is closed-source with periodically-changing commercial license terms). Linux variant uses distro Docker Engine packages. **Prerequisite:** WobbleBot must ship its own Dockerfile + compose first (currently a Phase-2 placeholder in `docker/` with no content). | Weeks. New maintenance class (per-OS installer testing matrix + Docker Desktop license tracking). | Almost never for solo project. WobbleBot's own Docker support landing first is itself a v1.1 candidate (see `engine.md`-adjacent or this entry's sequel). |
+
+**Per-tool bundling reality (clarified 2026-05-26):**
+
+- **Ollama: bundleable.** MIT-licensed, redistributable, ~500MB-1GB
+  runtime. Models still pull at first run. Lands at Tier 4.
+- **Discord: NEVER bundleable.** No installer to ship — the friend
+  has to log into discord.com/developers/applications in their
+  browser, create an app, mint a bot token, configure OAuth2 invite
+  URL. The wizard can open the right URL with side-panel
+  instructions but can't automate the manual web flow. Every tier
+  treats Discord as guided-but-manual.
+- **Docker: premature and complicated.** WobbleBot v1.0 doesn't
+  ship Dockerfile + compose — the `docker/` directory is an empty
+  Phase-2 placeholder. Bundling Docker before WobbleBot uses
+  Docker is solving a problem that doesn't exist yet. When it
+  becomes relevant: Docker Desktop's commercial license terms have
+  shifted twice since 2020, making bundle compliance fragile.
+  Detect-and-link is the practical pattern, not bundle.
 
 **Recommended path:** ship Tier 0 first (now-ish, post-tag), let
 the friend's actual deployment validate which prereqs were the
