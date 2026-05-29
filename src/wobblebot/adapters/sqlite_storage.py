@@ -1462,13 +1462,11 @@ async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
     row_count = int(row[0]) if row else 0
 
     if row_count > 0:
-        async with conn.execute(
-            """
+        async with conn.execute("""
             SELECT COUNT(*) - COUNT(DISTINCT
                 symbol_base || '|' || symbol_quote || '|' || observed_at)
             FROM price_snapshots
-            """
-        ) as cursor:
+            """) as cursor:
             row = await cursor.fetchone()
         duplicate_count = int(row[0]) if row else 0
 
@@ -1481,15 +1479,13 @@ async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
                     "total_rows": row_count,
                 },
             )
-            await conn.execute(
-                """
+            await conn.execute("""
                 DELETE FROM price_snapshots
                 WHERE snapshot_id NOT IN (
                     SELECT MIN(snapshot_id) FROM price_snapshots
                     GROUP BY symbol_base, symbol_quote, observed_at
                 )
-                """
-            )
+                """)
 
     # Create the index unconditionally; IF NOT EXISTS handles re-runs.
     # Runs against deduplicated data so the constraint applies cleanly

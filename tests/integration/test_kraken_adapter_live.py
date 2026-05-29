@@ -39,7 +39,9 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.asyncio,
     pytest.mark.skipif(
-        not (os.environ.get("KRAKEN_READER_API_KEY") and os.environ.get("KRAKEN_READER_API_SECRET")),
+        not (
+            os.environ.get("KRAKEN_READER_API_KEY") and os.environ.get("KRAKEN_READER_API_SECRET")
+        ),
         reason="KRAKEN_READER_API_KEY / KRAKEN_READER_API_SECRET unset; live test skipped",
     ),
 ]

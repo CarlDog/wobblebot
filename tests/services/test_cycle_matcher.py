@@ -311,9 +311,7 @@ class TestTodayRealizedPnl:
         # UTC behavior: cycle is "yesterday" → 0
         assert today_realized_pnl(cycles, now=now) == Decimal("0")
         # America/Chicago behavior: cycle IS today → 0.0508
-        assert today_realized_pnl(
-            cycles, now=now, tz_name="America/Chicago"
-        ) == Decimal("0.0508")
+        assert today_realized_pnl(cycles, now=now, tz_name="America/Chicago") == Decimal("0.0508")
 
     def test_unknown_tz_falls_back_to_utc(self) -> None:
         """An invalid IANA name must NOT raise — settings page
@@ -334,6 +332,4 @@ class TestTodayRealizedPnl:
         ]
         # Both fire today UTC, so a bogus tz that falls back to UTC
         # still sees them as today.
-        assert today_realized_pnl(
-            cycles, now=now, tz_name="Not/A_Real_Zone"
-        ) == Decimal("0.10")
+        assert today_realized_pnl(cycles, now=now, tz_name="Not/A_Real_Zone") == Decimal("0.10")
