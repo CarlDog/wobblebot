@@ -340,7 +340,13 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             response.raise_for_status()
             envelope: dict[str, Any] = response.json()
         except httpx.HTTPError as exc:
-            raise AssistantError(f"Ollama chat request failed: {exc}") from exc
+            # Include the exception type: a bare ReadTimeout/ConnectTimeout
+            # often has an empty str(), leaving an uninformative
+            # "Ollama chat request failed: ". The type name disambiguates
+            # timeout vs transport (mirrors the advisor adapter).
+            raise AssistantError(
+                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         return self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
 
     async def summarize(
