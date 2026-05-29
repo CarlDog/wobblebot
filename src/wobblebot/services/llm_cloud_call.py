@@ -56,7 +56,7 @@ from wobblebot.services.llm_cost_gate import (
     SessionCostTracker,
     check_budget,
 )
-from wobblebot.services.llm_pricing import cost_for
+from wobblebot.services.llm_pricing import PricingLookupError, cost_for
 from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
 
 _LOGGER = logging.getLogger("wobblebot.services.llm_cloud_call")
@@ -371,7 +371,7 @@ async def wrap_provider_errors(
     provider_name: str,
     error_cls: type[Exception],
 ) -> AsyncIterator[None]:
-    """Translate ``httpx.HTTPStatusError`` / ``httpx.HTTPError`` to a port error.
+    """Translate provider transport + pricing-lookup failures to a port error.
 
     Every cloud-LLM adapter used to repeat the same 5-line pair of
     except clauses around its ``execute_cloud_call`` site. Audit
@@ -379,6 +379,17 @@ async def wrap_provider_errors(
     adapter classes). Centralizing here means a new provider adapter
     author can't forget either clause — they'd both stay missing
     until a test caught the leak.
+
+    ``PricingLookupError`` is translated alongside the httpx errors so
+    that a misconfigured / unpriced model is, from the caller's view,
+    just another "the LLM cannot be called" condition. Without this the
+    advise daemon crash-looped: a stale image missing an ``o3`` price
+    entry raised ``PricingLookupError`` past the domain-error boundary,
+    so neither ``_run_cycle`` (which catches ``AdvisorError``) nor the
+    ``cascade`` heuristic fallback caught it. Compute the estimate
+    *inside* this context manager (not before it) so the translation
+    actually fires. The "fail loudly" intent (llm_pricing docstring) is
+    preserved by the loud logs each consumer emits on the domain error.
 
     Args:
         provider_name: Display name for the error message (e.g.
@@ -394,6 +405,8 @@ async def wrap_provider_errors(
         raise error_cls(f"{provider_name} request failed: HTTP {exc.response.status_code}") from exc
     except httpx.HTTPError as exc:
         raise error_cls(f"{provider_name} transport error: {exc}") from exc
+    except PricingLookupError as exc:
+        raise error_cls(f"{provider_name} pricing unavailable: {exc}") from exc
 
 
 async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many-positional-arguments

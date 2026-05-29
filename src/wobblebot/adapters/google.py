@@ -275,12 +275,6 @@ class GoogleAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
             )
 
         full_prompt = f"{self._prompt.body}\n\n{user_message}"
-        estimate = estimate_cost_ceiling(
-            provider="google",
-            model=self._model,
-            prompt_text=full_prompt,
-            max_tokens=self._max_tokens,
-        )
         ctx = CloudCallContext(
             storage=self._storage,
             session_tracker=self._session_tracker,
@@ -290,7 +284,15 @@ class GoogleAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
             provider="google",
             model=self._model,
         )
+        # estimate_cost_ceiling runs INSIDE the wrap so a PricingLookupError
+        # (unpriced model) surfaces as AdvisorError, not a daemon crash.
         async with wrap_provider_errors("Google", AdvisorError):
+            estimate = estimate_cost_ceiling(
+                provider="google",
+                model=self._model,
+                prompt_text=full_prompt,
+                max_tokens=self._max_tokens,
+            )
             envelope = await execute_cloud_call(
                 ctx=ctx,
                 estimated_cost_usd=estimate,
