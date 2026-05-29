@@ -501,6 +501,24 @@ class TestAdvisorFailures:
         with pytest.raises(AdvisorError, match="empty"):
             await adapter.get_recommendation(_summary())
 
+    async def test_unpriced_model_wraps_as_advisor_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # An unpriced model must surface as AdvisorError, not a raw
+        # PricingLookupError. The latter leaked past _run_cycle's
+        # AdvisorError handler and crash-looped the advise daemon (a
+        # stale image missing an o3 price entry). The estimate now runs
+        # inside wrap_provider_errors, so the lookup miss is translated
+        # before it escapes — and the HTTP call never fires.
+        def handler(_r: httpx.Request) -> httpx.Response:  # pragma: no cover
+            raise AssertionError("HTTP call must not fire when pricing lookup fails")
+
+        adapter = _build_advisor(
+            httpx.MockTransport(handler), storage, model="gpt-nonexistent-unpriced"
+        )
+        with pytest.raises(AdvisorError, match="pricing unavailable"):
+            await adapter.get_recommendation(_summary())
+
 
 # --------------------------------------------------------------------- #
 # Assistant                                                             #
