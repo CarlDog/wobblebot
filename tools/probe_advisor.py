@@ -451,41 +451,45 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     json_output: bool,
 ) -> int:
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
+    # advisor_cfg may be None / moe / cloud — this probe ALWAYS uses
+    # Ollama via --base-url + --model, so the configured advisor type
+    # and provider are irrelevant. We only read it for sensible defaults
+    # (prompt path, model, inference params) and fall back when absent.
     advisor_cfg = config.advisor
-    if advisor_cfg is None:
-        print("error: settings.yml is missing the advisor block", file=sys.stderr)
-        return 2
-    if advisor_cfg.provider != "ollama":
+
+    prompt_path = (
+        prompt_file_override
+        or (advisor_cfg.prompt_file if advisor_cfg else None)
+        or "config/prompts/quant.md"
+    )
+    prompt = load_prompt(Path(prompt_path))
+    model = model_override or (advisor_cfg.model if advisor_cfg else None)
+    if model is None:
         print(
-            f"warning: advisor.provider is {advisor_cfg.provider!r}; "
-            "this probe only knows how to construct the Ollama adapter.",
+            "error: no model to probe — pass --model (the configured advisor has no "
+            "single Ollama model to fall back to)",
             file=sys.stderr,
         )
         return 2
-
-    prompt_path = prompt_file_override or advisor_cfg.prompt_file or "config/prompts/quant.md"
-    prompt = load_prompt(Path(prompt_path))
-    model = model_override or advisor_cfg.model
-    if model is None:
-        print("error: advisor.model is unset", file=sys.stderr)
-        return 2
+    # AdvisorConfig stores temperature as Decimal for YAML roundtrip
+    # precision; OllamaAdapter feeds it into the httpx JSON payload which
+    # rejects Decimal, so coerce to float. Defaults match the advisor's
+    # configured values for a single-Ollama setup.
+    inference = getattr(advisor_cfg, "inference_params", None) if advisor_cfg else None
+    temperature = float(inference.temperature) if inference else 0.5
+    max_tokens = inference.max_tokens if inference else 512
 
     print(f"# probe model: {model}")
     print(f"# base url:    {base_url}  (timeout {timeout_seconds:.0f}s)")
     print(f"# prompt file: {prompt_path} ({len(prompt.body)} chars)")
     if force_json:
         print("# force_json: ON (overrides is_thinking_model heuristic)")
-    inference = advisor_cfg.inference_params
     adapter = OllamaAdapter(
         model=model,
         prompt=prompt,
         base_url=base_url,
-        # AdvisorConfig stores temperature as Decimal for YAML
-        # roundtrip-precision; OllamaAdapter passes the value into the
-        # httpx JSON payload which rejects Decimal. Coerce to float here
-        # so the probe doesn't crash on the first call.
-        temperature=float(inference.temperature),
-        max_tokens=inference.max_tokens,
+        temperature=temperature,
+        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         force_json=force_json,
     )

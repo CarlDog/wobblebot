@@ -134,6 +134,27 @@ def _too_big_for_nas(tag: str) -> bool:
     return any(m in low for m in _TOO_BIG_MARKERS)
 
 
+def _probe_interpreter_ready() -> bool:
+    """Can the interpreter that will run the probe subprocess import wobblebot?
+
+    The probe is launched with ``sys.executable``; if the sweep is started
+    with a non-project Python (no editable ``wobblebot`` install — e.g. a
+    bare ``python`` instead of ``.venv\\Scripts\\python.exe``), every probe
+    dies on ``import wobblebot``. Check once up front and fail fast with
+    guidance, rather than pulling 45 models and failing every probe.
+    """
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", "import wobblebot"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return r.returncode == 0
+
+
 def _list_remote(client: httpx.Client, base_url: str) -> set[str]:
     """Return the set of model tags already present on the target."""
     try:
@@ -389,6 +410,17 @@ def main(argv: list[str] | None = None) -> None:
 
     args = _parse_args(argv)
     models = _select_models(args)
+
+    if not _probe_interpreter_ready():
+        print(
+            f"error: this interpreter ({sys.executable}) cannot import 'wobblebot', "
+            "which the probe subprocess requires. Run the sweep with the project venv:\n"
+            "    .venv\\Scripts\\python.exe tools/pull_and_probe_advisors.py ...",
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.exit(2)
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Resume: keep prior rows (keyed by model) and skip anything already
