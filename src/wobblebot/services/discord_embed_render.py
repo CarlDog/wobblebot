@@ -63,9 +63,9 @@ def format_signed_usd(value: float, *, decimals: int = 2) -> str:
     return f"${0:,.{decimals}f}"
 
 
-def render_query_embed(
+def render_query_embed(  # pylint: disable=too-many-return-statements
     result: QueryResult,
-) -> dict[str, Any]:  # pylint: disable=too-many-return-statements
+) -> dict[str, Any]:
     """Convert any ``QueryResult`` variant to ``send_embed`` kwargs.
 
     Dispatches on the discriminated union; each per-variant helper
