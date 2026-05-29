@@ -75,6 +75,9 @@ class LLMPricePoint(BaseModel):
 # they re-verify. The freshness test fails the CI suite when any entry
 # is >180 days behind today.
 _VERIFIED_2026_01 = date(2026, 1, 15)
+# Newer-model sweep verification (2026-05-29): current flagships + tiers
+# pulled from each provider's official pricing page (see per-entry URLs).
+_VERIFIED_2026_05 = date(2026, 5, 29)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -90,13 +93,48 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         reasoning_per_million_usd=None,
         verified_date=_VERIFIED_2026_01,
     ),
+    # Opus tier dropped to $5/$25 (verified 2026-05-29 against
+    # https://platform.claude.com/docs/en/about-claude/pricing) — the
+    # prior $15/$75 was stale. Extended-thinking tokens bill at output rate.
+    ("anthropic", "claude-opus-4-8"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-opus-4-8",
+        input_per_million_usd=Decimal("5.00"),
+        output_per_million_usd=Decimal("25.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
     ("anthropic", "claude-opus-4-7"): LLMPricePoint(
         provider="anthropic",
         model="claude-opus-4-7",
-        input_per_million_usd=Decimal("15.00"),
-        output_per_million_usd=Decimal("75.00"),
+        input_per_million_usd=Decimal("5.00"),
+        output_per_million_usd=Decimal("25.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("anthropic", "claude-opus-4-6"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-opus-4-6",
+        input_per_million_usd=Decimal("5.00"),
+        output_per_million_usd=Decimal("25.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("anthropic", "claude-haiku-4-5-20251001"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-haiku-4-5-20251001",
+        input_per_million_usd=Decimal("1.00"),
+        output_per_million_usd=Decimal("5.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("anthropic", "claude-haiku-4-5"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-haiku-4-5",
+        input_per_million_usd=Decimal("1.00"),
+        output_per_million_usd=Decimal("5.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
     ),
     # --- OpenAI ---
     # https://openai.com/api/pricing — chat models + o-series reasoning.
@@ -133,6 +171,49 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         reasoning_per_million_usd=None,
         verified_date=_VERIFIED_2026_01,
     ),
+    # 2026-05-29 verified against developers.openai.com/api/docs/models/*.
+    # gpt-5 family + o-series are reasoning models; reasoning tokens bill at
+    # the output rate (None falls back to output per this module's convention).
+    ("openai", "gpt-5.5"): LLMPricePoint(
+        provider="openai",
+        model="gpt-5.5",
+        input_per_million_usd=Decimal("5.00"),
+        output_per_million_usd=Decimal("30.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("openai", "gpt-5.5-pro"): LLMPricePoint(
+        provider="openai",
+        model="gpt-5.5-pro",
+        input_per_million_usd=Decimal("30.00"),
+        output_per_million_usd=Decimal("180.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("openai", "gpt-5-mini"): LLMPricePoint(
+        provider="openai",
+        model="gpt-5-mini",
+        input_per_million_usd=Decimal("0.25"),
+        output_per_million_usd=Decimal("2.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("openai", "o3"): LLMPricePoint(
+        provider="openai",
+        model="o3",
+        input_per_million_usd=Decimal("2.00"),
+        output_per_million_usd=Decimal("8.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("openai", "o4-mini"): LLMPricePoint(
+        provider="openai",
+        model="o4-mini",
+        input_per_million_usd=Decimal("1.10"),
+        output_per_million_usd=Decimal("4.40"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
     # --- Google ---
     # https://ai.google.dev/pricing — Gemini 2.5 family. Gemini Flash
     # in thinking mode bills thoughts at a higher rate than regular
@@ -153,6 +234,34 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         output_per_million_usd=Decimal("2.50"),
         reasoning_per_million_usd=Decimal("3.50"),
         verified_date=_VERIFIED_2026_01,
+    ),
+    # Gemini 3.x (verified 2026-05-29 against ai.google.dev/gemini-api/docs/
+    # pricing). Unlike 2.5-flash, gen-3 bills thinking tokens at the OUTPUT
+    # rate (no separate thoughts rate) -> None. Pro rates are the <=200k
+    # small-prompt tier (>200k is higher; our prompts are ~1k tokens).
+    ("google", "gemini-3.1-pro-preview"): LLMPricePoint(
+        provider="google",
+        model="gemini-3.1-pro-preview",
+        input_per_million_usd=Decimal("2.00"),
+        output_per_million_usd=Decimal("12.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("google", "gemini-3-pro-preview"): LLMPricePoint(
+        provider="google",
+        model="gemini-3-pro-preview",
+        input_per_million_usd=Decimal("2.00"),
+        output_per_million_usd=Decimal("12.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
+    ),
+    ("google", "gemini-3.5-flash"): LLMPricePoint(
+        provider="google",
+        model="gemini-3.5-flash",
+        input_per_million_usd=Decimal("1.50"),
+        output_per_million_usd=Decimal("9.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_05,
     ),
 }
 

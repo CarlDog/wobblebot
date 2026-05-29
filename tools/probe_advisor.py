@@ -79,20 +79,31 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
+from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
+from wobblebot.adapters.google import GoogleAdvisorAdapter
 from wobblebot.adapters.ollama import OllamaAdapter
+from wobblebot.adapters.openai import OpenAIAdvisorAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
+from wobblebot.cli._common import load_operator_env
 from wobblebot.config.prompts import load_prompt
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.ports.advisor import (
+    AdvisorPort,
     AdvisorRecommendation,
     CurrentGridParams,
     PerformanceSummary,
 )
 from wobblebot.ports.exceptions import AdvisorError
+from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+from wobblebot.services.llm_retry import LLMRetryConfig
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 180.0
@@ -357,6 +368,142 @@ FIXTURES: tuple[Fixture, ...] = (
 )
 
 
+# Held-out battery (validated by a 5-agent blind adjudication 2026-05-29,
+# 0 dropped, all matching the maintainer's hypothesis). Four are
+# DISCRIMINATORS — scenarios where the naive vol->spacing rule (which
+# the reason-first prompt states) gives the WRONG answer and a good
+# advisor must OVERRIDE it. A model that merely applies the handed rule
+# scores 0 on those four; only genuine judgment gets them right. The
+# other four are controls (naive == correct). This is the test of
+# reasoning-vs-rule-following — it is NOT used to pick the production
+# model, only to interpret whether the core-battery lift is real.
+HELDOUT_FIXTURES: tuple[Fixture, ...] = (
+    # --- controls (naive rule == correct) ---
+    Fixture(  # directional: price ran away, 0 cycles — spacing can't fix it
+        "heldout_directional_downtrend",
+        "hold",
+        1.30,
+        _summary(
+            current_spacing=1.30,
+            volatility=0.005,
+            max_drawdown=-0.060,
+            win_rate=0.0,
+            flatness=0.40,
+            cycle_count=0,
+            active_orders=4,
+            latest_price=71000.0,
+        ),
+    ),
+    Fixture(
+        "heldout_clear_widen",
+        "widen",
+        2.00,
+        _summary(
+            current_spacing=0.60,
+            volatility=0.010,
+            max_drawdown=-0.030,
+            win_rate=0.30,
+            flatness=0.30,
+            cycle_count=4,
+            active_orders=5,
+        ),
+    ),
+    Fixture(
+        "heldout_matched_whipsaw",
+        "hold",
+        2.60,
+        _summary(
+            current_spacing=2.60,
+            volatility=0.013,
+            max_drawdown=-0.012,
+            win_rate=0.68,
+            flatness=0.32,
+            cycle_count=6,
+            active_orders=5,
+        ),
+    ),
+    Fixture(
+        "heldout_matched",
+        "hold",
+        1.25,
+        _summary(
+            current_spacing=1.25,
+            volatility=0.004,
+            max_drawdown=-0.008,
+            win_rate=0.75,
+            flatness=0.55,
+            cycle_count=6,
+            active_orders=6,
+        ),
+    ),
+    # --- DISCRIMINATORS (naive rule != correct; needs judgment to override) ---
+    Fixture(  # fee floor: dead-calm + too-wide => naive TIGHTEN, but at the floor => HOLD
+        "heldout_fee_floor",
+        "hold",
+        0.55,
+        _summary(
+            current_spacing=0.55,
+            volatility=0.0006,
+            max_drawdown=-0.002,
+            win_rate=0.40,
+            flatness=0.96,
+            cycle_count=1,
+            active_orders=8,
+        ),
+    ),
+    Fixture(  # working great: tight-for-vol => naive WIDEN, but printing fills => HOLD
+        "heldout_working_well",
+        "hold",
+        1.00,
+        _summary(
+            current_spacing=1.00,
+            volatility=0.007,
+            max_drawdown=-0.004,
+            win_rate=0.92,
+            flatness=0.42,
+            cycle_count=14,
+            active_orders=8,
+            latest_price=80000.0,
+        ),
+    ),
+    Fixture(  # drawdown overrides calm: calm => naive TIGHTEN, but -8.5% dd => WIDEN
+        "heldout_drawdown_overrides_calm",
+        "widen",
+        1.50,
+        _summary(
+            current_spacing=0.90,
+            volatility=0.0015,
+            max_drawdown=-0.085,
+            win_rate=0.45,
+            flatness=0.85,
+            cycle_count=2,
+            active_orders=6,
+            latest_price=76000.0,
+        ),
+    ),
+    Fixture(  # scalping: tight-for-vol => naive WIDEN, but 16 cycles @ 0.90 win => HOLD
+        "heldout_tight_but_scalping",
+        "hold",
+        0.70,
+        _summary(
+            current_spacing=0.70,
+            volatility=0.009,
+            max_drawdown=-0.005,
+            win_rate=0.90,
+            flatness=0.42,
+            cycle_count=16,
+            active_orders=8,
+            latest_price=80500.0,
+        ),
+    ),
+)
+
+FIXTURE_SETS: dict[str, tuple[Fixture, ...]] = {
+    "core": FIXTURES,
+    "heldout": HELDOUT_FIXTURES,
+}
+
+
 def _classify_direction(
     rec: AdvisorRecommendation,
     current: CurrentGridParams,
@@ -441,6 +588,68 @@ def _score_row(expected: str, actual: str, magnitude_ok: bool) -> tuple[int, str
 _MAX_PER_FIXTURE = 3
 _VERDICT_KEYS = ("OK", "OVERSHOOT", "OVERTRADE", "MISS", "WRONG", "ERROR")
 
+_CLOUD_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+}
+_CLOUD_COST_DB = "data/probe_llm_cost.db"
+
+
+def _build_cloud_advisor(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    *,
+    provider: str,
+    model: str,
+    prompt: object,
+    temperature: float,
+    max_tokens: int,
+    timeout_seconds: float,
+    storage: SQLiteStorageAdapter,
+    session_cap: float,
+    daily_cap: float,
+) -> AdvisorPort:
+    """Construct a cloud AdvisorPort under ADR-014 cost-gate enforcement.
+
+    Mirrors ``tools/run_cloud_check.py``'s construction (api key from env,
+    a directly-built LLMCostConfig — no settings.yml ``llm:`` block
+    needed) so the probe can sweep cloud providers on the same fixtures
+    + scoring as the Ollama path. Costs are written to an ISOLATED
+    ``data/probe_llm_cost.db`` so probe spend doesn't pollute the real
+    operator ledger; the daily cap is checked against that db.
+    """
+    key_var = _CLOUD_KEY_ENV[provider]
+    api_key = os.environ.get(key_var)
+    if not api_key:
+        raise AdvisorError(f"{key_var} missing from environment (.env / shell)")
+    cost_config = LLMCostConfig(
+        max_spend_per_day_usd=Decimal(str(daily_cap)),
+        max_spend_per_session_usd=Decimal(str(session_cap)),
+        enforce=True,
+    )
+    common: dict[str, object] = {
+        "model": model,
+        "prompt": prompt,
+        "role": "quant",
+        "api_key": api_key,
+        "storage": storage,
+        "session_tracker": SessionCostTracker(),
+        "cost_config": cost_config,
+        "retry_config": LLMRetryConfig(max_retries=2, initial_backoff_seconds=1.0),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "timeout_seconds": timeout_seconds,
+    }
+    if provider == "anthropic":
+        return AnthropicAdvisorAdapter(**common)  # type: ignore[arg-type]
+    if provider == "openai":
+        return OpenAIAdvisorAdapter(
+            organization=os.environ.get("OPENAI_ORGANIZATION") or None,
+            **common,  # type: ignore[arg-type]
+        )
+    if provider == "google":
+        return GoogleAdvisorAdapter(**common)  # type: ignore[arg-type]
+    raise AdvisorError(f"unknown cloud provider {provider!r}")
+
 
 async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     model_override: str | None,
@@ -449,7 +658,14 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     base_url: str,
     timeout_seconds: float,
     json_output: bool,
+    temperature_override: float | None = None,
+    fixture_set: str = "core",
+    provider: str = "ollama",
+    session_cap: float = 2.0,
+    daily_cap: float = 5.0,
+    max_tokens_override: int | None = None,
 ) -> int:
+    fixtures = FIXTURE_SETS[fixture_set]
     config = load_resolved_config(config_path=None, profile_name=None, cli_overrides={})
     # advisor_cfg may be None / moe / cloud — this probe ALWAYS uses
     # Ollama via --base-url + --model, so the configured advisor type
@@ -476,26 +692,58 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     # rejects Decimal, so coerce to float. Defaults match the advisor's
     # configured values for a single-Ollama setup.
     inference = getattr(advisor_cfg, "inference_params", None) if advisor_cfg else None
-    temperature = float(inference.temperature) if inference else 0.5
-    max_tokens = inference.max_tokens if inference else 512
+    if temperature_override is not None:
+        temperature = temperature_override
+    else:
+        temperature = float(inference.temperature) if inference else 0.5
+    if max_tokens_override is not None:
+        max_tokens = max_tokens_override
+    else:
+        max_tokens = inference.max_tokens if inference else 512
 
     print(f"# probe model: {model}")
-    print(f"# base url:    {base_url}  (timeout {timeout_seconds:.0f}s)")
+    if provider == "ollama":
+        print(f"# provider:    ollama @ {base_url}  (timeout {timeout_seconds:.0f}s)")
+    else:
+        print(
+            f"# provider:    {provider} (cloud; ADR-014 gate session ${session_cap}/day ${daily_cap}; "
+            f"temp {temperature})"
+        )
+    print(f"# fixture set: {fixture_set} ({len(fixtures)} fixtures)")
     print(f"# prompt file: {prompt_path} ({len(prompt.body)} chars)")
     if force_json:
         print("# force_json: ON (overrides is_thinking_model heuristic)")
-    adapter = OllamaAdapter(
-        model=model,
-        prompt=prompt,
-        base_url=base_url,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout_seconds=timeout_seconds,
-        force_json=force_json,
-    )
+
+    storage: SQLiteStorageAdapter | None = None
+    adapter: AdvisorPort
+    if provider == "ollama":
+        adapter = OllamaAdapter(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            force_json=force_json,
+        )
+    else:
+        Path(_CLOUD_COST_DB).parent.mkdir(parents=True, exist_ok=True)
+        storage = SQLiteStorageAdapter(_CLOUD_COST_DB)
+        await storage.connect()
+        adapter = _build_cloud_advisor(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+            storage=storage,
+            session_cap=session_cap,
+            daily_cap=daily_cap,
+        )
 
     total_score = 0
-    max_score = _MAX_PER_FIXTURE * len(FIXTURES)
+    max_score = _MAX_PER_FIXTURE * len(fixtures)
     error_count = 0
     verdict_counts = dict.fromkeys(_VERDICT_KEYS, 0)
     call_times: list[float] = []
@@ -503,7 +751,7 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     rows: list[tuple[str, str, str, str, str, float, float]] = []
 
     try:
-        for fx in FIXTURES:
+        for fx in fixtures:
             t0 = time.monotonic()
             try:
                 rec = await adapter.get_recommendation(fx.summary)
@@ -516,7 +764,7 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
                 rows.append(
                     (fx.name, fx.expected, actual, verdict, spacing_str, fx.ideal_spacing, elapsed)
                 )
-            except AdvisorError as exc:
+            except (AdvisorError, LLMCostCapExceeded) as exc:
                 elapsed = time.monotonic() - t0
                 error_count += 1
                 verdict = "ERROR"
@@ -531,7 +779,11 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
                 f"spacing:{rows[-1][4]:8s} ({elapsed:.1f}s)"
             )
     finally:
-        await adapter.aclose()
+        aclose = getattr(adapter, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        if storage is not None:
+            await storage.close()
 
     max_call = max(call_times) if call_times else 0.0
     mean_call = sum(call_times) / len(call_times) if call_times else 0.0
@@ -579,6 +831,7 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
 
 
 def main() -> int:
+    load_operator_env()  # populate cloud API keys from .env (no-op if absent)
     parser = argparse.ArgumentParser(
         prog="tools.probe_advisor",
         description=__doc__,
@@ -604,13 +857,35 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--provider",
+        choices=("ollama", "anthropic", "openai", "google"),
+        default="ollama",
+        help=(
+            "Where to run the model. 'ollama' (default) uses --base-url; the "
+            "cloud providers SPEND REAL MONEY via their API (key from .env) "
+            "under the ADR-014 cost gate, writing to an isolated probe cost db."
+        ),
+    )
+    parser.add_argument(
+        "--session-cap",
+        type=float,
+        default=2.0,
+        help="USD per-process cost cap for cloud providers (ADR-014). Default $2.",
+    )
+    parser.add_argument(
+        "--daily-cap",
+        type=float,
+        default=5.0,
+        help="USD daily cost cap across cloud probe runs (ADR-014). Default $5.",
+    )
+    parser.add_argument(
         "--base-url",
         type=str,
         default=_DEFAULT_BASE_URL,
         help=(
-            "Ollama server base URL. Point at the host where the model "
-            "actually runs (e.g. http://carldog-nas:11434 for the NAS "
-            f"CPU-only deployment). Default: {_DEFAULT_BASE_URL}."
+            "Ollama server base URL (only used when --provider ollama). Point at "
+            "the host where the model runs (e.g. http://carldog-nas:11434 for the "
+            f"NAS). Default: {_DEFAULT_BASE_URL}."
         ),
     )
     parser.add_argument(
@@ -635,6 +910,37 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--fixture-set",
+        choices=tuple(FIXTURE_SETS),
+        default="core",
+        help=(
+            "Which scenario battery to run. 'core' (default) is the 12-fixture "
+            "ranking battery; 'heldout' is the conflicting-signal battery that "
+            "tests reasoning vs rule-following (a rule-follower fails its 4 "
+            "discriminator fixtures)."
+        ),
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help=(
+            "Override sampling temperature (e.g. 0 for a deterministic, noise-free "
+            "A/B prompt comparison). Default: the configured advisor temperature, "
+            "else 0.5."
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Override the completion-token cap. Raise it (e.g. 4000) for reasoning "
+            "models (o-series / gpt-5 / thinking) whose hidden reasoning tokens "
+            "share the cap and would otherwise starve the answer. Default: config / 512."
+        ),
+    )
+    parser.add_argument(
         "--json",
         dest="json_output",
         action="store_true",
@@ -653,6 +959,12 @@ def main() -> int:
             args.base_url,
             args.timeout_seconds,
             args.json_output,
+            args.temperature,
+            args.fixture_set,
+            args.provider,
+            args.session_cap,
+            args.daily_cap,
+            args.max_tokens,
         )
     )
 
