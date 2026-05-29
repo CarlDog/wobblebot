@@ -9,9 +9,10 @@ completion date. Do NOT duplicate project status here (per the documentation-dis
 rule); this section is a pointer, not a changelog.
 
 - **Current:** Phase 8 (Hardening & v1.0 Release). Phases 1–7 + Stages 8.0–8.3 closed;
-  **Stage 8.4.E v1.0 soak in progress.** The gating soak runs on the NAS Docker
-  deployment, restarting ~2026-06-01 post-move. Phase 9 (Kraken Securities equities) is
-  committed to start after the v1.0 tag.
+  **Stage 8.4.E v1.0 soak in progress**, with Stage 8.5 (advisor heuristic+LLM cascade)
+  landed as a pre-soak value-add (closed 2026-05-29). The gating soak runs on the NAS
+  Docker deployment, restarting ~2026-06-01 post-move. Phase 9 (Kraken Securities
+  equities) is committed to start after the v1.0 tag.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..7}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
@@ -30,7 +31,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Fifteen surfaces (thirteen `cli/` + two `tools/`). One-line index; full behavior in each
+Seventeen surfaces (fifteen `cli/` + two `tools/`). One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
@@ -38,6 +39,8 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.preflight` — one engine step via Kraken `validate=true` (nothing placed). **Run before every live session.**
 - `cli.live` — **real-money** multi-asset grid trading. `--symbols` comma-list; hard caps; clean SIGINT cancels every open order. Exit codes: 0 clean / 1 loss-cap / 2 missing creds.
 - `cli.observe` — read-only price/balance data collection.
+- `cli.lurker` — one-line alias of `cli.observe` today (own `__main__`); reserved to grow advisor commentary on pure observation later.
+- `cli.news` — long-running news poller (RSS + CryptoCompare); persists `news_items` with `(source, external_id)` dedup; feeds the advisor.
 - `cli.shadow` — same engine, `ShadowExchangeAdapter` (live prices, synthetic ledger). Backtest sandbox.
 - `cli.advise` — MoE advisor daemon; writes suggestions, **never executes** (ADR-002).
 - `cli.apply` — operator-gated auto-tune. Dry-run default; `--commit` rewrites `settings.yml`. Default-off gate; news-role never auto-applies.
@@ -195,8 +198,8 @@ to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
 
-- **All 10 CLIs handle deprived envs cleanly.** Cycle each CLI
-  through: no `.env`, no `config/settings.yml`, no `config/`
+- **All 15 `cli/` entry points handle deprived envs cleanly.** Cycle
+  each CLI through: no `.env`, no `config/settings.yml`, no `config/`
   directory at all, missing per-CLI section, empty credentials,
   bad `--config` path, bad `--profile` name. Expected: clean exit
   codes (2 for missing creds / config / section), no raw
@@ -204,7 +207,9 @@ to every project. The wobblebot-specific items below extend it:
   for the original 7 (sandbox / status / preflight / live /
   observe / shadow / first_real_trade); cli/apply added at Stage
   3.4b, cli/harvest at Stage 4.2, cli/operator at Stage 5.6 each
-  carried their own deprived-env coverage in their slice work.
+  carried their own deprived-env coverage in their slice work;
+  cli/web, cli/recalibrate, cli/maintenance — plus the pre-existing
+  cli/news + cli/lurker (observe alias) — round out the 15.
   When new entry points ship, add them to this walkthrough.
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
@@ -224,7 +229,7 @@ to every project. The wobblebot-specific items below extend it:
   added during the phase get a one-line mention.
 - **Real-money cost ledger updated.** If any live-money operations
   ran, the running total in the "Project Status" section reflects
-  reality (currently $0.08).
+  reality (currently $0.085018).
 
 ### Quarterly (wobblebot extras)
 

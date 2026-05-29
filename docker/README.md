@@ -122,7 +122,8 @@ docker logs wobblebot-web --tail 50           # check uvicorn bind
 ```
 
 Then open `https://wobblebot.carldog-nas` (DSM reverse proxy fronts
-`127.0.0.1:8000` on the NAS). Seed the first web user with:
+`127.0.0.1:28080` on the NAS — host 8000 is already taken, so compose
+publishes the web UI on 28080). Seed the first web user with:
 
 ```bash
 docker exec -it wobblebot-tools python -m wobblebot.cli.web create-user

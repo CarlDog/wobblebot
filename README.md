@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-1907%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
+[![Tests](https://img.shields.io/badge/tests-2225%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
 > **⚠ Disclaimer.** WobbleBot is a personal hobby project. It places real
@@ -68,20 +68,22 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Stage 8.2** — Background Maintenance Worker (`cli/maintenance`; VACUUM + prune + backup) | ✅ closed 2026-05-18 |
 | **Stage 8.3** — Performance & Resource Tuning (SQLite pragmas + index audit + profile harness) | ✅ closed 2026-05-18 |
 | **Stage 8.4** — Phase 8 / v1.0 Release Check | in progress 2026-05-18 |
+| **Stage 8.5** — Advisor Engine: Heuristic + LLM Cascade (pre-soak value-add) | ✅ closed 2026-05-29 |
 
-**Health:** 1907 unit tests pass by default; 29 integration tests opt-in. mypy clean (110 src files), black/isort clean, pylint **10.00/10**.
+**Health:** 2225 unit tests pass by default; 29 integration tests opt-in. mypy clean (116 src files), black/isort clean, pylint **10.00/10**.
 
 ---
 
 ## Operator Entry Points
 
-Fifteen entry points cover the full operational surface (fourteen `cli/` daemons + `tools/run_cloud_check.py` counted as the twelfth per Phase 6's close prose). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Seventeen entry points cover the full operational surface (fifteen `cli/` modules + two `tools/` one-shots). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
 | `python -m wobblebot.cli.sandbox` | 1 | ❌ | Mock-only paper buy-dip / sell-rebound cycle through `MockExchangeAdapter` + SQLite. |
 | `python -m wobblebot.cli.status` | 2.1 | ❌ | Live Kraken read check — fetches current price + account balances. Read-only API key. |
-| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots. Read-only API key. (`cli/lurker` is a one-line alias today; Stage 3.4-ish, lurker grows advisor commentary on top.) |
+| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots. Read-only API key. |
+| `python -m wobblebot.cli.lurker` | 3.0 | ❌ | One-line alias of `cli/observe` today (own `__main__`); reserved to grow advisor commentary on top of pure observation later. |
 | `python -m wobblebot.cli.shadow` | 3.0 | ❌ | Same engine as `cli/live` against a synthetic balance ledger with live Kraken prices. Honest maker/taker fee modeling. |
 | `python -m wobblebot.cli.preflight` | 2.3 | ❌ | Diagnostic: runs ONE engine step against live Kraken with `validate=true`. Verifies Kraken accepts the config without spending. **Run this before every live session.** |
 | `python -m wobblebot.cli.live` | 2.3+2.4 | **✅ REAL MONEY** | Multi-asset operational loop. Hard caps: max session loss, max runtime, per-coin / total / daily-spend exposure. Clean SIGINT cancels all open orders. |
@@ -94,7 +96,7 @@ Fifteen entry points cover the full operational surface (fourteen `cli/` daemons
 | `python -m wobblebot.cli.recalibrate` | 7.6 | ❌ (config writes) | Scales every USD-denominated knob in `settings.yml` proportionally to a new `--target-balance`. Reads live Kraken USD balance via the read-only key by default; `--current-balance X` overrides for what-if analysis. `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving, atomic). Spacing %, level counts, max_loss_percentage, shadow:* are policy invariants and stay constant. |
 | `python -m wobblebot.cli.maintenance` | 8.2 | ❌ | Background maintenance daemon. Three concurrent scheduled tasks via `asyncio.gather` over `run_poll_loop`: VACUUM (default 7d cadence) → `services.maintenance.vacuum_database`; prune+archive (1d) → archive-then-delete `price_snapshots` to CSV; backup (1d) → SQLite online `.backup` API to `data/backups/`. Opt-in log rotation via `TimedRotatingFileHandler` ALONGSIDE stderr. |
 | `python tools/first_real_trade.py` | 2.3 | **✅ REAL MONEY** | One-shot diagnostic: marketable round-trip with hard caps. Used 2026-05-15 against the operator's account; total cost $0.08. |
-| `python tools/run_cloud_check.py` | 6.5 | **✅ REAL MONEY** (tiny) | One-shot cloud-LLM smoke test (`--provider anthropic|openai|google` / `--role` / `--model`). Counted as the 12th entry point per Phase 6's close prose; lives under `tools/` (diagnostic, not daemon). |
+| `python tools/run_cloud_check.py` | 6.5 | **✅ REAL MONEY** (tiny) | One-shot cloud-LLM smoke test (`--provider anthropic|openai|google` / `--role` / `--model`). Lives under `tools/` (diagnostic, not daemon). |
 
 **Inspection tools** (read-only, safe against live DBs while their CLIs run):
 
