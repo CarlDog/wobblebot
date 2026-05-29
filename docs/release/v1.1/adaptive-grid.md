@@ -26,6 +26,34 @@ a single operator command.
 extended periods and the operator wanting a faster, less
 error-prone way to re-anchor than the manual sequence.
 
+### Heuristic experts for the other advisor roles (risk / news / arbitrator)
+
+**What:** extend the Stage 8.5 heuristic+LLM cascade beyond the quant
+role — deterministic `HeuristicAdvisorAdapter`-style experts for risk
+and/or news, usable as MoE experts so a Mixture-of-Experts advisor
+could run partly (or fully) without an LLM. The arbitrator already has
+deterministic options (the `voting` / `weighted_confidence` aggregators).
+
+**Why deferred (2026-05-29):** no current consumer and weak fits.
+- The production advisor is `type: single` + the quant cascade (the
+  `cpu-only` profile); the MoE is *not* the production path, so role
+  heuristics would feed something nobody runs (YAGNI).
+- A **risk** heuristic would overlap the quant heuristic's guards
+  (defensive-drawdown, fee-floor *are* risk logic) and the engine's
+  hard caps — redundant, and in a MoE it would correlate with quant,
+  defeating the diversity the MoE exists for.
+- A **news** heuristic fundamentally resists determinism: its value is
+  semantic (what a headline *means*), and thresholding `sentiment_score`
+  discards that. News is where an LLM earns its keep, or the expert is
+  skipped. (ADR-007: news-derived recommendations never auto-apply.)
+- Each role would need its own spec schema + guard logic (not a reuse of
+  the quant `HeuristicSpec`) — real work for no current payoff.
+
+**Trigger:** the MoE becoming a production path, OR an operator wanting
+a fully-offline, zero-cloud deterministic MoE (e.g. an air-gapped or
+cost-zero deployment where even the cascade's cloud o3 escalation is
+unacceptable). The quant cascade is the template to follow when it lands.
+
 ### cli/observe --backfill + auto gap-fill — ✅ shipped in v1.1 (2026-05-25)
 
 **Status:** ✅ Shipped in five commits 2026-05-25 (`d0f2992`,
