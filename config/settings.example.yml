@@ -785,7 +785,7 @@ profiles:
   aggressive:
     grid:
       default:
-        spacing_percentage: 0.5
+        spacing_percentage: 0.6        # must clear the 0.52% fee floor (2x maker fee)
         levels_above: 5
         levels_below: 5
         order_size_usd: 20.0
@@ -802,14 +802,13 @@ profiles:
         BTC: 1
         ETH: 5
 
-  # Mixture-of-experts advisor (Stage 3.4a).
-  #
-  # As of Stage 3.4a only the Ollama provider is wired up — cloud
-  # adapters (anthropic / openai / google) raise at advisor-construction
-  # time. The default `moe-advisor` profile below is therefore an
-  # all-Ollama lineup that runs as-shipped. The `cloud-mix` and
-  # `cloud-only-moe` profiles further down show the shape that will
-  # work once those adapters land in a later stage.
+  # Mixture-of-experts advisor (Stage 3.4a). All four providers are
+  # wired up — Ollama since Stage 3.4a; anthropic / openai / google
+  # since Phase 6 (cloud providers need the `llm:` cost-gate block
+  # above + the provider's API key in the env). The default
+  # `moe-advisor` profile below is an all-Ollama lineup that runs
+  # as-shipped; the `cloud-only-moe` profile further down shows an
+  # all-cloud lineup.
   #
   # Adjust the model tags to match what `ollama list` shows on your
   # machine. The aggregator choices are `voting` (per-key majority),
@@ -860,9 +859,11 @@ profiles:
             max_tokens: 2048               # R1 needs room for <think> + JSON
             timeout_seconds: 180
 
-  # Cloud-only MoE: every expert is a cloud LLM. Will land once the
-  # AnthropicAdapter / OpenAIAdapter / GoogleAdapter ship — currently
-  # raises at advisor-construction time with "provider not implemented".
+  # Cloud-only MoE: every expert is a cloud LLM (anthropic / openai /
+  # google — all shipped in Phase 6). Requires the `llm:` cost-gate
+  # block above + each provider's API key in the env (ANTHROPIC_API_KEY
+  # / OPENAI_API_KEY / GOOGLE_API_KEY). Model tags below are
+  # illustrative — refresh them to current models before use.
   cloud-only-moe:
     advisor:
       type: moe
