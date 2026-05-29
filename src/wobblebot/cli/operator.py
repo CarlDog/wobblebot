@@ -1379,7 +1379,7 @@ def main() -> int:
             cli_overrides=_build_overrides(args),
         )
     except (FileNotFoundError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        sys.stderr.write(f"error: {exc}\n")
         return 2
     log_format = config.operator.log_format if config.operator is not None else "plain"
     log_file_path = config.operator.log_file_path if config.operator is not None else None

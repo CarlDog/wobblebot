@@ -19,6 +19,7 @@ UTC datetimes to the operator's preferred zone purely for display.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from zoneinfo import available_timezones
 
@@ -36,6 +37,8 @@ from wobblebot.web.dependencies import get_operator_storage, get_templates
 from wobblebot.web.middleware import require_csrf_token
 
 router = APIRouter(tags=["settings"])
+
+_LOGGER = logging.getLogger("wobblebot.web.routes.settings")
 
 # Sensible default set of timezones surfaced in the dropdown. The
 # operator can type any IANA string into the custom field if they
@@ -129,7 +132,15 @@ async def save_settings(
     )
     try:
         await storage.update_user_preferences(new_prefs)
-    except StorageError:
+    except StorageError as exc:
+        _LOGGER.warning(
+            "failed to persist user preferences",
+            extra={
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "user_id": user.id,
+            },
+        )
         return RedirectResponse(
             url="/settings?save=error",
             status_code=status.HTTP_303_SEE_OTHER,

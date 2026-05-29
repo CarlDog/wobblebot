@@ -171,8 +171,12 @@ def create_app(  # pylint: disable=too-many-arguments
     app = FastAPI(
         title="WobbleBot Dashboard",
         version="0.7.1",
-        # Docs are operator-only; safe to expose since the app is
-        # auth-gated. Disable in production if the operator prefers.
+        # NOTE: Swagger UI (/docs) + /openapi.json are served by FastAPI
+        # itself and do NOT pass through the per-route require_user auth —
+        # an unauthenticated client that can reach the app can read the
+        # route topology + schema. Exposure is limited to the loopback
+        # bind (127.0.0.1) behind the operator's reverse proxy (ADR-016);
+        # set docs_url=None to disable entirely if you'd rather not expose it.
         docs_url="/docs",
         redoc_url=None,
     )
