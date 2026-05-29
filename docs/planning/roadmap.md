@@ -189,6 +189,25 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
 
    **Numbers.** 2225 unit tests pass (was 2121 at the Day-11 close; + heuristic-spec, heuristic-adapter, cascade-adapter, engine-dispatch, and cost-cap coverage). mypy clean (116 src files). pylint **10.00/10**. black + isort clean on touched files. **Stage 8.5 real-money cost: $0.00** (the investigation's cloud probe calls were already in the ledger). Running project real-money cost stays at **$0.085018**.
 
+   **Post-build backtest (2026-05-29) — the vol→spacing premise is NOT validated.**
+   A historical backtest over Kraken 1m BTC (2013–2025) found the heuristic's core
+   premise doesn't hold: realized BTC vol sits below the shipped curve's floor (it
+   flat-clamps to 0.65% in every regime), and even a recalibrated curve is beaten by
+   a fixed ~1.5% spacing everywhere — **trend, not volatility, is the signal that
+   matters**, and the long-biased grid bleeds in sustained downtrends regardless of
+   spacing. Parking-when-offside beats re-anchoring (vindicates ADR-006); a naive
+   trend-pause filter doesn't help (pausing ≠ defending). **The cascade architecture
+   + LLM are NOT rejected — only the vol-curve-as-P&L-driver.** Soak is unaffected
+   (advisor is advisory-only). Full record + reproducible tooling:
+   `docs/reference/grid-backtest-findings-2026-05-29.md` (`tools/heuristic_backtest.py`
+   + `tools/grid_backtest.py`). **Actionable:** consider widening the live grid toward
+   ~1.5%; pivot the advisor to trend/regime→posture (operator-confirmed, reasoning
+   shown); graduated auto-apply (bounded knobs auto, de-risk-to-cash escalates).
+   **Scope caveat: BTC-only — generalization untested.** A grid is a chop strategy
+   and BTC is comparatively trendy, so these findings may not hold for choppier
+   alts; a multi-coin sweep (the dump has every pair) is the next validation, and
+   no new algorithm has been built yet — this is diagnosis, not a replacement.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
