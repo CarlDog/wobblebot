@@ -36,6 +36,16 @@ AggregatorStrategy = Literal["voting", "weighted_confidence", "arbitrator"]
 
 AdvisorType = Literal["single", "moe"]
 
+# Which decision engine drives the advisor (Stage 8.5):
+# - ``llm``      — the LLM advisor (single or MoE), per ``type``. Pre-8.5
+#                  behaviour; the default so existing configs are unchanged.
+# - ``heuristic``— the deterministic ``HeuristicAdvisorAdapter`` only. $0,
+#                  offline-safe; the LLM target fields are ignored.
+# - ``cascade``  — heuristic first; escalate to the LLM only on an
+#                  ambiguous (non-clear) call; fall back to the heuristic on
+#                  LLM failure / cost-cap. Recommended for cloud-LLM setups.
+AdvisorEngine = Literal["heuristic", "llm", "cascade"]
+
 
 class InferenceParams(BaseModel):
     """Per-expert / per-arbitrator LLM inference knobs.
@@ -142,6 +152,17 @@ class AdvisorConfig(BaseModel):
 
     type: AdvisorType = "single"
 
+    # Decision engine (Stage 8.5). Defaults to ``llm`` so pre-8.5
+    # configs behave exactly as before. ``cascade`` / ``heuristic``
+    # require ``heuristic_file`` (validated below).
+    engine: AdvisorEngine = "llm"
+
+    # Path to the heuristic spec (curve + guard thresholds + toggles),
+    # loaded at advisor-construction time like the prompt files.
+    # Required when ``engine`` is ``heuristic`` or ``cascade``; ignored
+    # for ``engine: llm``. See ``config/heuristic/quant.yml``.
+    heuristic_file: str | None = Field(default=None, min_length=1)
+
     # Single-mode LLM target. Required when type=single; ignored
     # when type=moe. Mirrors the ExpertConfig fields so the operator
     # can lift-and-shift between modes without re-learning the
@@ -161,7 +182,26 @@ class AdvisorConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode_constraints(self) -> AdvisorConfig:
-        """Enforce ADR-007 + ADR-009 advisor invariants."""
+        """Enforce ADR-007 + ADR-009 + Stage 8.5 advisor invariants.
+
+        The LLM-target checks (``type``-based) run only when the engine
+        actually builds an LLM (``llm`` / ``cascade``); a pure
+        ``heuristic`` engine ignores the provider/model/experts fields.
+        ``cascade`` / ``heuristic`` additionally require ``heuristic_file``.
+        """
+        needs_llm = self.engine in ("llm", "cascade")
+        needs_heuristic = self.engine in ("heuristic", "cascade")
+
+        if needs_heuristic and self.heuristic_file is None:
+            raise ValueError(
+                f"advisor.engine={self.engine!r} requires `heuristic_file` "
+                "(path to the heuristic spec, e.g. config/heuristic/quant.yml)"
+            )
+
+        if not needs_llm:
+            # Pure heuristic engine — the LLM target fields are unused.
+            return self
+
         if self.type == "moe":
             if len(self.experts) < 3:
                 raise ValueError(
@@ -204,6 +244,7 @@ class AdvisorConfig(BaseModel):
 
 __all__ = [
     "AdvisorConfig",
+    "AdvisorEngine",
     "AdvisorType",
     "AggregatorStrategy",
     "ArbitratorConfig",

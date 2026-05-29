@@ -1,0 +1,90 @@
+# Heuristic advisor spec — the deterministic half of the Stage 8.5
+# heuristic+LLM cascade. Referenced from settings.yml via
+# `advisor.heuristic_file`. Committed default; edit freely (operators
+# own this file the same way they own config/prompts/*.md). A daemon
+# restart picks up changes — cli/advise reads this once at startup.
+#
+# WHAT THIS CONTROLS: how the deterministic advisor turns a metrics
+# window (volatility, win rate, cycle count, drawdown, current spacing)
+# into a WIDEN / HOLD / TIGHTEN call WITHOUT calling an LLM. In
+# `engine: cascade`, the LLM (o3) is only consulted when this heuristic
+# reports an ambiguous (non-clear) match — so most ticks cost $0.
+#
+# The guard ALGORITHM and priority order live in code
+# (adapters/heuristic_advisor.py); this file only tunes the numbers.
+# Adding a brand-new guard is a code change with a fixture-battery test.
+
+# ---------------------------------------------------------------------------
+# Ideal grid spacing (%) as a function of realized per-tick volatility.
+# THE load-bearing judgment: a grid wants spacing wide enough that
+# round-trips clear ~2x the 0.26% maker fee and capture the typical
+# swing, tight enough to fill often. Linear interpolation between
+# points; flat-clamped below the first / above the last. Operator-
+# reviewed + blind-adjudicated (12/12) 2026-05-29. See
+# docs/reference/advisor-llm-models.md.
+# ---------------------------------------------------------------------------
+curve:
+  - {vol: 0.0008, spacing: 0.65}   # dead quiet
+  - {vol: 0.002,  spacing: 0.90}   # calm
+  - {vol: 0.003,  spacing: 1.05}   # calm+
+  - {vol: 0.004,  spacing: 1.25}   # moderate
+  - {vol: 0.006,  spacing: 1.60}   # moderate+
+  - {vol: 0.008,  spacing: 1.90}   # active
+  - {vol: 0.012,  spacing: 2.50}   # whipsaw
+  - {vol: 0.014,  spacing: 2.70}   # extreme whipsaw
+
+# Never recommend spacing below 2x the 0.26% maker fee — a tighter grid
+# can't clear fees on a round-trip. Clamps every target to >= this.
+fee_floor: 0.52
+
+# Within +/-15% of the vol-ideal, HOLD: re-placing a whole grid for a
+# small tweak churns fees for nothing. Wide enough that no real action
+# fixture (all >=30% off ideal) is swallowed.
+hold_deadband: 0.15
+
+# ---------------------------------------------------------------------------
+# Override guards — each can FLIP the first-order vol/spacing call.
+# Checked in priority order: directional_runaway -> defensive_drawdown
+# -> dont_fix_working -> fee_floor_calm -> first-order. Set `enabled:
+# false` on any guard to remove it from the chain.
+# ---------------------------------------------------------------------------
+guards:
+  # Price ran away (0 completed cycles) with a drawdown at least this
+  # deep -> HOLD (re-anchoring is the fix, not a spacing change).
+  directional_runaway:
+    enabled: true
+    threshold: -0.05
+
+  # Sharp drawdown (this deep) while still cycling -> WIDEN for capital
+  # preservation, target = current * widen_factor (never below the
+  # vol-ideal). Overrides a calm-market tighten instinct.
+  defensive_drawdown:
+    enabled: true
+    threshold: -0.05
+    widen_factor: 1.5
+
+  # Demonstrably working (win AND cycles high, drawdown shallow) ->
+  # HOLD even if vol/spacing look mismatched. Don't disrupt fills.
+  dont_fix_working:
+    enabled: true
+    win_rate_min: 0.85
+    cycles_min: 8
+    drawdown_max: -0.02
+
+  # Spacing already near the fee floor in a dead-calm market -> HOLD
+  # (can't profitably tighten further; a tiny widen just churns).
+  fee_floor_calm:
+    enabled: true
+    calm_vol: 0.001
+    near_floor_spacing: 0.68
+
+# ---------------------------------------------------------------------------
+# Cascade escalation (only consulted in `engine: cascade`). The
+# heuristic defers a first-order call to the LLM when the gap from the
+# vol-ideal sits in an ambiguous band around the hold deadband, or when
+# the metrics window is too thin to trust the volatility estimate.
+# ---------------------------------------------------------------------------
+escalation:
+  enabled: true
+  margin: 0.5         # ambiguous band = hold_deadband * (1 +/- margin) = [0.075, 0.225]
+  min_snapshots: 30   # first-order calls from fewer snapshots -> low confidence -> escalate

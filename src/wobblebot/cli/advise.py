@@ -41,7 +41,9 @@ from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
+from wobblebot.adapters.cascading_advisor import CascadingAdvisorAdapter
 from wobblebot.adapters.google import GoogleAdvisorAdapter
+from wobblebot.adapters.heuristic_advisor import HeuristicAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.openai import OpenAIAdvisorAdapter
@@ -63,11 +65,13 @@ from wobblebot.config.advisor import (
     ExpertConfig,
     InferenceParams,
 )
+from wobblebot.config.heuristic import load_heuristic_spec
 from wobblebot.config.llm import LLMConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import load_prompt
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -260,13 +264,12 @@ def _build_arbitrator_entry(
     return MoEExpertEntry(name="arbitrator", role="arbitrator", advisor=adapter)
 
 
-def _build_advisor(
+def _build_llm_advisor(
     advisor: AdvisorConfig,
-    model_name_out: list[str],
     *,
-    cloud_wiring: _CloudWiring | None = None,
-) -> AdvisorPort:
-    """Construct the configured AdvisorPort.
+    cloud_wiring: _CloudWiring | None,
+) -> tuple[AdvisorPort, str]:
+    """Construct the LLM advisor (single or MoE) + its operator-facing label.
 
     Dispatches on ``advisor.type``:
     - ``single``: one provider adapter (Stage 3.2 single-LLM path,
@@ -277,11 +280,6 @@ def _build_advisor(
     ``cloud_wiring`` is required when any expert/arbitrator/single
     provider is non-Ollama (``anthropic`` etc.); ``_build_advisor_adapter``
     raises ``ValueError`` if a cloud provider is configured without it.
-
-    The resolved model name is pushed into ``model_name_out[0]`` so the
-    caller can persist it in ``AdvisorSuggestion.model_name``. For MoE
-    the name is a compact summary of the lineup (the per-expert audit
-    trail lives in ``AdvisorRecommendation.expert_opinions``).
     """
     if advisor.type == "single":
         assert advisor.provider is not None  # validator enforces for type=single
@@ -295,8 +293,7 @@ def _build_advisor(
             role="single",
             cloud_wiring=cloud_wiring,
         )
-        model_name_out.append(advisor.model)
-        return adapter
+        return adapter, advisor.model
 
     # type=moe
     expert_entries = [_build_expert_entry(e, cloud_wiring) for e in advisor.experts]
@@ -309,8 +306,51 @@ def _build_advisor(
         aggregator=advisor.aggregator,
         arbitrator=arbitrator_entry,
     )
-    model_name_out.append(_moe_model_label(advisor))
-    return moe
+    return moe, _moe_model_label(advisor)
+
+
+def _build_advisor(
+    advisor: AdvisorConfig,
+    model_name_out: list[str],
+    *,
+    cloud_wiring: _CloudWiring | None = None,
+) -> AdvisorPort:
+    """Construct the configured AdvisorPort, dispatching on ``advisor.engine``.
+
+    - ``llm`` (default): the bare LLM advisor (single / MoE) — identical
+      to the pre-8.5 path.
+    - ``heuristic``: the bare deterministic ``HeuristicAdvisorAdapter``;
+      no LLM is built (Stage 8.5).
+    - ``cascade``: a ``CascadingAdvisorAdapter`` wrapping the heuristic +
+      the LLM advisor — heuristic-first, escalate ambiguous calls to the
+      LLM, fall back to the heuristic on LLM failure.
+
+    The resolved model name is pushed into ``model_name_out[0]`` so the
+    caller can persist it in ``AdvisorSuggestion.model_name``: the LLM
+    label for ``llm``; ``heuristic[<file>]`` for ``heuristic``; and
+    ``cascade[heuristic+<llm label>]`` for ``cascade`` (so the suggestions
+    table records which engine produced each tick).
+    """
+    heuristic: HeuristicAdvisorAdapter | None = None
+    if advisor.engine in ("heuristic", "cascade"):
+        assert advisor.heuristic_file is not None  # validator enforces
+        spec = load_heuristic_spec(Path(advisor.heuristic_file))
+        heuristic = HeuristicAdvisorAdapter(spec=spec)
+
+    if advisor.engine == "heuristic":
+        assert heuristic is not None
+        model_name_out.append(f"heuristic[{advisor.heuristic_file}]")
+        return heuristic
+
+    llm, llm_label = _build_llm_advisor(advisor, cloud_wiring=cloud_wiring)
+    if advisor.engine == "llm":
+        model_name_out.append(llm_label)
+        return llm
+
+    # engine == "cascade"
+    assert heuristic is not None
+    model_name_out.append(f"cascade[heuristic+{llm_label}]")
+    return CascadingAdvisorAdapter(heuristic=heuristic, llm=llm)
 
 
 def _moe_model_label(advisor: AdvisorConfig) -> str:
@@ -370,6 +410,21 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         _LOGGER.error(
             "advisor call failed",
             extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return False
+    except LLMCostCapExceeded as exc:
+        # ADR-014: a tripped cost cap is not a daemon-fatal error — skip
+        # the tick and keep polling (the cap resets on the sliding
+        # window / next session). The `cascade` engine catches this
+        # internally and falls back to the heuristic; this guard covers
+        # the `engine: llm` cloud path, which has no fallback.
+        _LOGGER.warning(
+            "advisor call skipped — LLM cost cap reached",
+            extra={
+                "error": str(exc),
+                "cap_kind": exc.cap_kind,
+                "cap_value_usd": str(exc.cap_value_usd),
+            },
         )
         return False
 

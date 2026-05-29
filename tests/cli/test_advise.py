@@ -9,6 +9,8 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from wobblebot.adapters.cascading_advisor import CascadingAdvisorAdapter
+from wobblebot.adapters.heuristic_advisor import HeuristicAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter
 from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -25,6 +27,7 @@ from wobblebot.config.advisor import (
     ExpertConfig,
     InferenceParams,
 )
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -188,6 +191,46 @@ class TestRunCycleFaultIsolation:
 
         assert ok is False
         # No suggestion written on advisor failure.
+        assert await storage.get_advisor_suggestions() == []
+
+    async def test_cost_cap_trip_returns_false_not_crash(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """ADR-014: a tripped LLM cost cap is a domain exception (not an
+        AdvisorError) that the cloud adapters let bubble. _run_cycle must
+        catch it and skip the tick — pre-8.5 it only caught AdvisorError,
+        so the `engine: llm` cloud path would have crashed the daemon."""
+        await _seed_prices(storage)
+
+        class _CapAdvisor(AdvisorPort):
+            async def get_recommendation(
+                self, summary: PerformanceSummary
+            ) -> AdvisorRecommendation:
+                del summary
+                raise LLMCostCapExceeded(
+                    cap_kind="daily",
+                    cap_value_usd=Decimal("1.00"),
+                    daily_spent_usd=Decimal("1.03"),
+                    session_spent_usd=Decimal("0.20"),
+                )
+
+            async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
+                return True
+
+        ok = await _run_cycle(
+            _CapAdvisor(),
+            SummaryBuilder(storage),
+            storage,
+            symbol=BTC_USD,
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grid=_default_grid(),
+            model_name="o3",
+        )
+
+        assert ok is False
         assert await storage.get_advisor_suggestions() == []
 
     async def test_empty_observe_db_still_runs(self, storage: SQLiteStorageAdapter) -> None:
@@ -424,6 +467,63 @@ class TestBuildAdvisorDispatch:
         )
         label = _moe_model_label(config)
         assert label == "moe[weighted_confidence:quant:m1/risk:m2/news:m3]"
+
+
+class TestEngineDispatch:
+    """Stage 8.5: ``advisor.engine`` picks heuristic / llm / cascade."""
+
+    _HEURISTIC_FILE = "config/heuristic/quant.yml"
+
+    def test_heuristic_engine_returns_bare_heuristic(self) -> None:
+        config = AdvisorConfig(engine="heuristic", heuristic_file=self._HEURISTIC_FILE)
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, HeuristicAdvisorAdapter)
+        assert out == [f"heuristic[{self._HEURISTIC_FILE}]"]
+
+    def test_llm_engine_returns_bare_llm_adapter(self) -> None:
+        # engine=llm is the default; an Ollama single advisor comes back bare.
+        config = AdvisorConfig(
+            engine="llm",
+            type="single",
+            provider="ollama",
+            model="phi4:14b",
+            prompt_file="config/prompts/quant.md",
+        )
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, OllamaAdapter)
+        assert out == ["phi4:14b"]
+
+    def test_cascade_engine_wraps_heuristic_plus_llm(self) -> None:
+        config = AdvisorConfig(
+            engine="cascade",
+            heuristic_file=self._HEURISTIC_FILE,
+            type="single",
+            provider="ollama",
+            model="phi4:14b",
+            prompt_file="config/prompts/quant.md",
+        )
+        out: list[str] = []
+        advisor = _build_advisor(config, out)
+        assert isinstance(advisor, CascadingAdvisorAdapter)
+        assert out == ["cascade[heuristic+phi4:14b]"]
+
+    def test_cascade_without_heuristic_file_rejected_at_config(self) -> None:
+        with pytest.raises(ValueError, match="requires `heuristic_file`"):
+            AdvisorConfig(
+                engine="cascade",
+                type="single",
+                provider="ollama",
+                model="phi4:14b",
+                prompt_file="config/prompts/quant.md",
+            )
+
+    def test_heuristic_engine_ignores_missing_llm_target(self) -> None:
+        # engine=heuristic doesn't need provider/model/prompt_file even
+        # though type defaults to "single".
+        config = AdvisorConfig(engine="heuristic", heuristic_file=self._HEURISTIC_FILE)
+        assert config.provider is None and config.model is None
 
 
 @pytest.mark.asyncio
