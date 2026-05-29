@@ -154,6 +154,35 @@ Each coin's flattest 90-day window (net drift ~0%, intra-range 44–65%), swept 
    holds. The curve was calibrated to the wrong band and used in the wrong role —
    not fundamentally wrong.
 
+### 8. Downtrend defense — de-risk-to-CASH works (where pause didn't)
+The §5 pause filter held the bleeding inventory and didn't help. A **sell-to-cash**
+defense (on the same confirmed-downtrend signal: cancel all + market-sell inventory
+to USD at the taker fee, re-enter on recovery) is a different story. none vs pause
+vs cash at 1.5%:
+
+| Regime | none | pause | cash |
+|---|---|---|---|
+| BTC 2021 bull (+117%) | +31% | +25% | **+3%** |
+| BTC 2022 bear (−47%) | −36% | −31% | **−2.6%** |
+| BTC 2025 down (−22%) | −14% | −17% | **−1.7%** |
+| DOGE 2025 crash (−63%) | −83% | −70% | **−49%** |
+
+**Cash de-risk turns the crash regimes from disasters into near-break-even** (2022
+−36%→−2.6%; 2025 −14%→−1.7%) by actually going to cash instead of holding through
+the drop. This **revises §6 / the old "downtrend bleed is unfixable" line — it IS
+fixable.** The premium: in the 2021 bull it gave up nearly all the upside
+(+31%→+3%) — the naive 3-day/−5% signal false-triggered on pullbacks (21.5% of the
+time), sold dips, rebought higher. So cash de-risk converts "full downside / partial
+upside" into "**capped downside / capped upside**" — classic insurance.
+
+**Implication:** the defense *mechanism* works; the binding constraint is the trend
+*signal* (real downtrend vs pullback — inherently probabilistic). So it must be
+**operator-confirmed, not auto-fired** (auto-firing surrenders bull upside on every
+pullback) — exactly the graduated-auto-apply + projected-loss-banner design — and
+the signal should be **per-symbol** (DOGE's extreme vol limited the naive trigger;
+its re-entries whipsawed within the crash). Better / per-symbol / LLM-grade trend
+detection is the lever that makes cash de-risk strictly better.
+
 ## Conclusions + recommendations
 
 1. **Live config — the grid is far too tight.** Chop-window optima are **3–5%**,
@@ -171,9 +200,12 @@ Each coin's flattest 90-day window (net drift ~0%, intra-range 44–65%), swept 
 3. **Auto-apply (graduated gate):** bounded knobs (spacing within
    `max_*_change_percentage`) can auto-apply; high-stakes / ambiguous calls
    (de-risk-to-cash) escalate to the operator. See [[project_advisor_philosophy]].
-4. **The real risk is the long-bias downtrend bleed.** No spacing / re-anchor /
-   pause knob fixes it; defending it (de-risk-to-cash) is a careful, human-confirmed
-   decision worth its own study.
+4. **The long-bias downtrend bleed IS fixable — by de-risking to cash** (§8):
+   crashes go from −36% / −83% to −2.6% / −49%. But it's *insurance* — it costs
+   upside on false-positive triggers in bulls (+31%→+3%), and the binding constraint
+   is the *trend signal* (probabilistic). So it must be **operator-confirmed**
+   (informed by the projected-loss banner), **per-symbol-tuned**, NOT auto-fired —
+   the advisor's highest-value job.
 
 ## Caveats
 

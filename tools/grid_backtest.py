@@ -109,6 +109,7 @@ class _Sim:  # pylint: disable=too-many-instance-attributes
     reanchor_margin: Decimal  # re-anchor when price is this many spacings beyond an edge
     free_usd: Decimal = _ZERO
     free_btc: Decimal = _ZERO
+    taker_fee: Decimal = _ZERO  # used only by the cash de-risk market sell
     anchor: Decimal = _ZERO
     open_orders: list[_Order] = field(default_factory=list)
     buy_fills: int = 0
@@ -144,6 +145,19 @@ class _Sim:  # pylint: disable=too-many-instance-attributes
             else:
                 self.free_btc += o.amount  # refund BTC reservation
         self.open_orders.clear()
+
+    def _derisk_to_cash(self, price: Decimal) -> None:
+        """Defensive de-risk: cancel all, then market-SELL all BTC inventory to
+        USD at the current price (taker fee). Caps downside but realizes the
+        position — the opposite of pause-and-hold."""
+        self._cancel_all()  # refunds reservations; all BTC now sits in free_btc
+        if self.free_btc > _ZERO:
+            proceeds = self.free_btc * price
+            fee = proceeds * self.taker_fee
+            self.fees_paid += fee
+            self.free_usd += proceeds - fee
+            self.sell_fills += 1
+            self.free_btc = _ZERO
 
     def _lay_grid(self, anchor: Decimal) -> None:
         self.anchor = anchor
@@ -242,7 +256,8 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
     order_size_usd: Decimal,
     maker_fee: Decimal,
     reanchor_margin: Decimal,
-    trend_filter: bool = False,
+    defense: str = "none",
+    taker_fee: Decimal = Decimal("0.0040"),
     trend_window_bars: int = 4320,
     trend_down_frac: Decimal = Decimal("0.05"),
     trend_check_bars: int = 360,
@@ -250,13 +265,15 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
     """Run one fixed-spacing grid over the bars. Seed two-sided (USD for buys,
     BTC for sells) with 2x buffer so initial reservations never fail.
 
-    When ``trend_filter`` is set, the grid STANDS DOWN (cancels all orders +
-    holds inventory, no trading) once trailing drift over ``trend_window_bars``
-    falls below ``-trend_down_frac`` (a confirmed downtrend), and RESUMES
-    (re-lays at the current price) once drift turns positive again — re-checked
-    every ``trend_check_bars``. This models the "don't average down into a
-    crash" guardrail; it deliberately rides out whipsaws (hysteresis: enter on
-    confirmed down, exit only on positive drift)."""
+    ``defense`` selects the downtrend guardrail (re-checked every
+    ``trend_check_bars``; triggers when trailing drift over ``trend_window_bars``
+    falls below ``-trend_down_frac``; resumes/re-lays once drift turns positive —
+    hysteresis rides out whipsaws):
+    - ``none``  — no defense (plain grid).
+    - ``pause`` — cancel all + HOLD inventory, no trading (still MtM-bleeds).
+    - ``cash``  — cancel all + market-SELL inventory to USD (``taker_fee``),
+      capping downside but realizing the position and risking a buy-back-higher
+      whipsaw if the signal was a false positive."""
     closes = [b[3] for b in bars]
     anchor = bars[0][0]  # first bar's open
     sim = _Sim(
@@ -266,6 +283,7 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
         order_size_usd=order_size_usd,
         maker_fee=maker_fee,
         reanchor_margin=reanchor_margin,
+        taker_fee=taker_fee,
         free_usd=order_size_usd * Decimal(levels_below) * Decimal("2"),
         free_btc=(order_size_usd * Decimal(levels_above) * Decimal("2")) / anchor,
     )
@@ -274,11 +292,14 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
     defensive = False
     stand_down_bars = 0
     for i, (_open, high, low, close) in enumerate(bars):
-        if trend_filter and i >= trend_window_bars and i % trend_check_bars == 0:
+        if defense != "none" and i >= trend_window_bars and i % trend_check_bars == 0:
             ref = closes[i - trend_window_bars]
             drift = (close - ref) / ref if ref else _ZERO
             if not defensive and drift < -trend_down_frac:
-                sim._cancel_all()  # pylint: disable=protected-access
+                if defense == "cash":
+                    sim._derisk_to_cash(close)  # pylint: disable=protected-access
+                else:
+                    sim._cancel_all()  # pylint: disable=protected-access
                 defensive = True
             elif defensive and drift > _ZERO:
                 defensive = False
@@ -316,8 +337,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--maker-fee", type=Decimal, default=Decimal("0.0026"))
     p.add_argument("--reanchor-margin", type=Decimal, default=Decimal("1.0"))
     p.add_argument(
-        "--trend-filter", action="store_true", help="stand down on a confirmed downtrend"
+        "--defense",
+        choices=("none", "pause", "cash"),
+        default="none",
+        help="downtrend defense: none / pause+hold / sell-to-cash",
     )
+    p.add_argument("--taker-fee", type=Decimal, default=Decimal("0.0040"), help="cash de-risk fee")
     p.add_argument("--trend-window-hours", type=float, default=72.0, help="trailing drift window")
     p.add_argument(
         "--trend-down-pct", type=Decimal, default=Decimal("5.0"), help="stand-down drift"
@@ -356,9 +381,10 @@ def main() -> int:
     twin = int(args.trend_window_hours * 60)
     tchk = max(1, int(args.trend_check_hours * 60))
     tdown = args.trend_down_pct / Decimal("100")
-    if args.trend_filter:
+    if args.defense != "none":
+        verb = "SELL TO CASH" if args.defense == "cash" else "PAUSE + HOLD"
         print(
-            f"# trend:       STAND DOWN when {args.trend_window_hours:.0f}h drift < "
+            f"# defense:     {verb} when {args.trend_window_hours:.0f}h drift < "
             f"-{args.trend_down_pct}% (check every {args.trend_check_hours:.0f}h); resume on +drift"
         )
     print()
@@ -378,7 +404,8 @@ def main() -> int:
             order_size_usd=args.order_size,
             maker_fee=args.maker_fee,
             reanchor_margin=args.reanchor_margin,
-            trend_filter=args.trend_filter,
+            defense=args.defense,
+            taker_fee=args.taker_fee,
             trend_window_bars=twin,
             trend_down_frac=tdown,
             trend_check_bars=tchk,
