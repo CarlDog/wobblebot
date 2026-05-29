@@ -10,6 +10,40 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.5 (2026-05-29) — Advisor heuristic+LLM cascade (pre-soak)
+
+A pre-soak value-add so the v1.0 gating soak runs on the real advisor.
+An investigation settled "would an LLM advisor help?" empirically: no
+local CPU model reasons well enough for the advisor role (best 16/36 on
+the 12-fixture battery; a constant scores ~19/36), but a frontier
+reasoning model + a complete prompt is genuinely good (`o3` and
+`claude-opus-4-8` each 4/4 on the held-out conflict discriminators). The
+operator chose `o3`, then refined to a heuristic+LLM cascade. Design +
+as-built: `docs/planning/stage-8.5-advisor-cascade-design.md`.
+
+- **Operator-tunable heuristic spec** — `config/heuristic.py`
+  (`HeuristicSpec` + `load_heuristic_spec`) + committed default
+  `config/heuristic/quant.yml`. The ideal-spacing-vs-volatility curve,
+  fee floor, hold deadband, and four guards (with per-guard on/off
+  toggles) are operator-editable DATA; the guard algorithm + priority
+  order stay in code. Same ownership model as the prompt files.
+- **`HeuristicAdvisorAdapter`** (`adapters/heuristic_advisor.py`) — a
+  deterministic, $0 advisor. Loaded from the shipped spec it reproduces
+  both probe batteries (core 36/36, held-out 24/24) and exposes a
+  `clear_match` escalation signal.
+- **`CascadingAdvisorAdapter`** (`adapters/cascading_advisor.py`) —
+  heuristic-first; escalate ambiguous calls to the LLM; fall back to the
+  heuristic on LLM failure / cost-cap (so the advisor never stalls).
+- **`advisor.engine`** (`heuristic | llm | cascade`, default `llm` for
+  back-compat) + **`advisor.heuristic_file`**, wired through
+  `cli/advise`. The `cpu-only` profile now runs `cascade` + cloud `o3`.
+- **Fixed a pre-existing daemon-crash bug:** `cli/advise` caught only
+  `AdvisorError`, so a tripped `LLMCostCapExceeded` (a domain exception
+  the cloud adapters bubble raw) would have crashed the `engine: llm`
+  cloud path. Now caught + skips the tick.
+
+2225 unit tests pass; mypy clean; pylint 10.00/10.
+
 ### Soak Day 11 events (2026-05-29) — NAS advisor model-sweep tooling
 
 Built tooling to pick the advisor-role model empirically — the inverse

@@ -375,10 +375,22 @@ advise:
 advisor:
   type: single                        # Stage 3.2 default. Flip to `moe` via profile.
 
+  # Decision engine (Stage 8.5):
+  #   llm       — the LLM advisor (single / MoE), per `type`. The default;
+  #               pre-8.5 behaviour, no heuristic_file needed.
+  #   heuristic — the deterministic HeuristicAdvisorAdapter only ($0, no
+  #               LLM). The LLM-target fields below are ignored.
+  #   cascade   — heuristic first; escalate to the LLM only on an ambiguous
+  #               call; fall back to the heuristic on LLM failure / cost
+  #               cap. Recommended for cloud-LLM setups (most ticks cost $0).
+  # `heuristic` and `cascade` require `heuristic_file`.
+  engine: llm
+  # heuristic_file: "config/heuristic/quant.yml"   # curve + guard thresholds + toggles
+
   # Cadence lives in the `schedules:` block at the bottom of this file
   # (key: `advise`), alongside every other periodic-task interval.
 
-  # Single-mode LLM target. Required when type=single.
+  # Single-mode LLM target. Required when type=single (and engine is llm/cascade).
   provider: ollama                    # ollama | anthropic | openai | google
   model: deepseek-r1:7b
   prompt_file: "config/prompts/quant.md"
@@ -903,15 +915,13 @@ profiles:
   #   - operator (qwen2.5:1.5b-q4_K_M): 16-tier; 3-16s per intent parse
   #     depending on system cache contention. See sweep results at
   #     docs/reference/sweep-2026-05-27-nas-operator-models.md.
-  #   - advisor  (llama3.1:8b-q4_K_M):  3.89 tok/sec cold / 5.63 hot.
-  #     quant.md caps the rationale at ≤2 sentences so output lands
-  #     ~150-200 tokens → ~40-60s even on a cold load. timeout_seconds
-  #     is 180 (not 120) for cold-load + serial-Ollama-contention
-  #     margin: NUM_PARALLEL=1 means a long advisor call also blocks
-  #     the interactive operator (Discord) intent-parse behind it, so
-  #     keeping the advisor call short matters beyond just this daemon.
-  #     (2026-05-28: 512-token output at 120s timeout failed 100% of
-  #     advise ticks — every call ran to the 120s wall. See git log.)
+  #   - advisor  (Stage 8.5 cascade): the deterministic heuristic decides
+  #     most ticks locally for $0; only ambiguous calls escalate to cloud
+  #     o3. The 2026-05-29 sweep found NO local CPU model reasons well
+  #     enough for the advisor role (best 16/36; a constant scores ~19/36),
+  #     so the prior local llama3.1:8b advisor was retired here. The
+  #     advisor is a latency-tolerant daemon, so an occasional cloud call
+  #     is fine; the operator-assistant stays local (interactive).
   #
   # Operator model selected after a 16-model + 8-model NAS sweep
   # 2026-05-27/28: qwen2.5:1.5b was the only candidate with 8/8 pass
@@ -927,9 +937,11 @@ profiles:
   # rule). The advisor reads OLLAMA_BASE_URL from the environment;
   # docker-compose.yml sets that env var alongside this profile.
   #
-  # Advisor type is `single` rather than `moe` because MoE on CPU
-  # multiplies latency by N experts + arbitrator. One ~40-60s call per
-  # advisor tick beats 4 × that with no GPU to parallelize them.
+  # The advisor's LLM escalation target is a single cloud reasoning model
+  # (o3), not a local MoE: MoE on CPU multiplies latency by N experts and
+  # no local model cleared the bar anyway. The cascade keeps cost low by
+  # calling o3 only on the hard cases; the heuristic handles the rest.
+  # Requires the top-level `llm:` block + OPENAI_API_KEY in the env.
   cpu-only:
     operator:
       assistant:
@@ -941,16 +953,18 @@ profiles:
         max_tokens: 512
         timeout_seconds: 60.0
     advisor:
+      engine: cascade
+      heuristic_file: "config/heuristic/quant.yml"
+      # Escalation target for ambiguous ticks (and the fallback's "what
+      # the LLM would have said" — never reached when the heuristic is
+      # confident, which is most ticks).
       type: single
-      provider: ollama
-      model: llama3.1:8b-instruct-q4_K_M
+      provider: openai
+      model: o3
       prompt_file: "config/prompts/quant.md"
       inference_params:
-        temperature: 0.5
-        # 512 is a ceiling, not a target — quant.md caps the rationale
-        # so the model stops well short of it (a hard cut here would
-        # risk truncating the JSON mid-object → parse error).
-        max_tokens: 512
-        # 180s covers a cold 8B load (~12s) + generation with margin.
-        # Was 120s; that busted on every cold tick (see comment above).
-        timeout_seconds: 180
+        temperature: 1.0       # o3 is a reasoning model — it ignores low temps
+        # 4000 covers o3's hidden reasoning tokens + the JSON answer
+        # (reasoning shares the completion budget).
+        max_tokens: 4000
+        timeout_seconds: 120
