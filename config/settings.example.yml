@@ -903,7 +903,15 @@ profiles:
   #   - operator (qwen2.5:1.5b-q4_K_M): 16-tier; 3-16s per intent parse
   #     depending on system cache contention. See sweep results at
   #     docs/reference/sweep-2026-05-27-nas-operator-models.md.
-  #   - advisor  (llama3.1:8b-q4_K_M):  5.63 tok/sec → ~35s per 200-tok JSON
+  #   - advisor  (llama3.1:8b-q4_K_M):  3.89 tok/sec cold / 5.63 hot.
+  #     quant.md caps the rationale at ≤2 sentences so output lands
+  #     ~150-200 tokens → ~40-60s even on a cold load. timeout_seconds
+  #     is 180 (not 120) for cold-load + serial-Ollama-contention
+  #     margin: NUM_PARALLEL=1 means a long advisor call also blocks
+  #     the interactive operator (Discord) intent-parse behind it, so
+  #     keeping the advisor call short matters beyond just this daemon.
+  #     (2026-05-28: 512-token output at 120s timeout failed 100% of
+  #     advise ticks — every call ran to the 120s wall. See git log.)
   #
   # Operator model selected after a 16-model + 8-model NAS sweep
   # 2026-05-27/28: qwen2.5:1.5b was the only candidate with 8/8 pass
@@ -920,8 +928,8 @@ profiles:
   # docker-compose.yml sets that env var alongside this profile.
   #
   # Advisor type is `single` rather than `moe` because MoE on CPU
-  # multiplies latency by N experts + arbitrator. One ~35s call per
-  # advisor tick beats 4 × ~35s with no GPU to parallelize them.
+  # multiplies latency by N experts + arbitrator. One ~40-60s call per
+  # advisor tick beats 4 × that with no GPU to parallelize them.
   cpu-only:
     operator:
       assistant:
@@ -939,5 +947,10 @@ profiles:
       prompt_file: "config/prompts/quant.md"
       inference_params:
         temperature: 0.5
+        # 512 is a ceiling, not a target — quant.md caps the rationale
+        # so the model stops well short of it (a hard cut here would
+        # risk truncating the JSON mid-object → parse error).
         max_tokens: 512
-        timeout_seconds: 120
+        # 180s covers a cold 8B load (~12s) + generation with margin.
+        # Was 120s; that busted on every cold tick (see comment above).
+        timeout_seconds: 180
