@@ -391,6 +391,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Ignore any existing summary.json and start a fresh sweep (default: resume).",
     )
+    parser.add_argument(
+        "--results-dir",
+        default=str(RESULTS_DIR),
+        help=(
+            "Directory for summary.json + per-model .txt. Use a separate dir to run an "
+            "isolated experiment (e.g. a desktop quant comparison against --base-url "
+            f"http://localhost:11434) without clobbering another sweep. Default: {RESULTS_DIR}."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -410,6 +419,9 @@ def main(argv: list[str] | None = None) -> None:
 
     args = _parse_args(argv)
     models = _select_models(args)
+
+    global RESULTS_DIR
+    RESULTS_DIR = Path(args.results_dir)
 
     if not _probe_interpreter_ready():
         print(
