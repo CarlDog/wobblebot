@@ -900,8 +900,18 @@ profiles:
   # quality loss on CPU. See also `docker/README.md`.
   #
   # Per-role measured tok/sec on this hardware (2026-05-27 hot cache):
-  #   - operator (qwen2.5:3b-q4_K_M):  12.69 → ~2-8s per response
-  #   - advisor  (llama3.1:8b-q4_K_M):  5.63 → ~35s per 200-tok JSON
+  #   - operator (qwen2.5:1.5b-q4_K_M): 16-tier; 3-16s per intent parse
+  #     depending on system cache contention. See sweep results at
+  #     docs/reference/sweep-2026-05-27-nas-operator-models.md.
+  #   - advisor  (llama3.1:8b-q4_K_M):  5.63 tok/sec → ~35s per 200-tok JSON
+  #
+  # Operator model selected after a 16-model + 8-model NAS sweep
+  # 2026-05-27/28: qwen2.5:1.5b was the only candidate with 8/8 pass
+  # rate AND no first-message timeout. 3B/7B models hit a 120s
+  # cache-warm tax on the first call after a fresh model load — fatal
+  # for interactive Discord. qwen2.5:1.5b is small enough to fully
+  # cache-warm during the warmup() call, so every real message lands
+  # on hot cache.
   #
   # `base_url: http://host.docker.internal:11434` resolves inside
   # any container that has `extra_hosts: "host.docker.internal:host-gateway"`
@@ -916,7 +926,7 @@ profiles:
     operator:
       assistant:
         provider: ollama
-        model: qwen2.5:3b-instruct-q4_K_M
+        model: qwen2.5:1.5b-instruct-q4_K_M
         prompt_file: config/prompts/operator.md
         base_url: http://host.docker.internal:11434
         temperature: 0.3
