@@ -349,3 +349,87 @@ to the compatibility matrix; v1.1 automates the detection step.
 the operator didn't know about within a week of release.
 Operator-flagged on 2026-05-24 ("we should create a github
 workflow to flag us when there are new llm models out there").
+
+**Broadened 2026-05-29 — this is also the provider RE-VERIFICATION home,
+not just new-model discovery** (consolidated from a near-duplicate that
+was briefly logged in `external-triggers.md`). Same watcher machinery,
+three signals:
+
+1. **Pricing.** Already backstopped: every `LLMPricePoint` carries a
+   `verified_date` and `tests/services/test_llm_pricing_freshness.py`
+   fails CI when any entry is >180 days stale. The watcher could
+   additionally diff live provider pricing and flag drift sooner than
+   180 days (prices change often).
+2. **Deprecation of models we depend on** (not just new arrivals) is the
+   higher-stakes signal — since the 2026-05-29 crash-loop fix a
+   retired/unpriced model degrades gracefully (→ `AdvisorError` →
+   heuristic fallback), but the operator should still be told.
+3. **API-shape drift** — request/response schema changes;
+   `tests/integration/test_cloud_llm_live.py` is the detection analog of
+   the Kraken integration tests.
+
+**Detection vs remediation:** detection automates cleanly (poll + diff +
+open issue / alert). **Remediation stays human** — auto-rewriting the
+pricing table from a vendor page would defeat ADR-014's cost gate (a
+wrong low price lets calls past the budget guard). Cadence home: the new
+"cloud LLM pricing + model re-verification" item in CLAUDE.md's
+phase-end-audit *quarterly* checklist, with the 180-day freshness test
+as the automated backstop.
+
+### Audit: hardcoded facts that should be data / DB-driven
+
+**What:** a systematic v1.1 sweep of facts hardcoded in *code* that are
+actually *mutable* (drift on a cadence we don't fully control), to decide
+each one's right home. Operator-raised 2026-05-29 ("how many facts do we
+depend on that are hardcoded, in fact mutable, and should be
+database-driven?"). **Excludes operator configs** (already in
+`settings.yml` / `config/heuristic/*.yml` / prompts).
+
+**The four-homes test** (apply per fact):
+
+1. **Code constant** — part of our design/logic, OR we *want* the change
+   gated by PR + CI + review.
+2. **Config file** — operator-tunable, restart to apply (the excluded
+   category).
+3. **DB table** — needs runtime mutation (no restart) and/or history /
+   audit of what the value was *when*.
+4. **Live-fetch + cache** — the vendor exposes it via API; solves
+   *staleness*, which a DB table does not.
+
+**Two principles from the 2026-05-29 discussion:**
+
+- **DB is not the default answer.** For *vendor* facts the real problem
+  is staleness, which **live-fetch + cache** solves (we already do this
+  for Kraken pair metadata via `/AssetPairs`). DB only buys
+  runtime-mutability + audit; moving a fact to DB to "fix" drift just
+  relocates the stale value.
+- **Safety carve-out.** Safety-critical facts (LLM pricing → ADR-014
+  cost gate; Kraken fees → loss caps + spacing validator) stay
+  **code-resident on purpose** — the PR + CI + freshness-test path is the
+  control. DB-driving them lets a bad value silently weaken a safety gate.
+  If ever DB-backed, only behind the same validation + freshness +
+  human-review gate (at which point DB buys little over code + review).
+
+**Known candidates (from memory; the sweep confirms + completes the count):**
+
+- LLM pricing `_PRICING` — keep **code** (safety) + better drift detection
+  (see the LLM-provider-drift-watcher entry above).
+- Kraken fee 0.40% / 0.26% — keep **code/config** (safety).
+- Model compatibility lists (`KNOWN_INCOMPATIBLE` / `KNOWN_DEGRADED`) —
+  **the prime DB/config candidate**: drifts with the ecosystem + our
+  probing (verdicts have been *reversed*), not safety-critical.
+- `is_thinking_model` name patterns — config candidate.
+- Kraken asset aliases (BTC→XBT), provider base URLs / API paths — code
+  (stable; vendor changes rare).
+- *Already in their right home:* Kraken pair metadata (live-fetch+cache),
+  heuristic curve + thresholds (`quant.yml` config, Stage 8.5).
+
+**Why deferred:** architectural audit, zero v1.0 impact. Run it at v1.1
+start, *before* deciding any storage-tier migrations.
+
+**Trigger:** v1.1 work begins.
+
+**Cross-references:** the LLM-provider-drift-watcher entry above (the
+pricing/model detection half), `config/heuristic/quant.yml` (a fact
+already externalized), and the Kraken pair-metadata live-fetch (the
+gold-standard pattern for a vendor fact).

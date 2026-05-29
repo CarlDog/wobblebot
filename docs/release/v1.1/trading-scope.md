@@ -109,6 +109,66 @@ in the engine and wants to allocate to additional instruments.
 Soak observation that grids profit from chop = obvious extension
 to additional choppy instruments wherever available.
 
+### Configurable quote currency (non-USD: EUR / GBP / ...)
+
+**What:** let an operator run wobblebot denominated in a fiat other
+than USD (EUR, GBP, etc.) — a `quote_currency` setting plus a
+settings-page selector. Surfaced 2026-05-29 when the operator noticed
+Kraken's downloadable history splits by quote (XBTUSD vs XBTEUR);
+relevant to the OSS audience (non-US deployers), not the operator's
+own US-denominated use.
+
+**Most of this already works** — the architecture is quote-agnostic by
+construction:
+
+- `Symbol` carries `quote` as a free field (its own docstring lists
+  "USD, USDT"); `Symbol(base="BTC", quote="EUR")` is representable
+  today.
+- `KrakenAdapter` builds the pair from base+quote, so `XBTEUR` would
+  resolve without code change.
+- The metrics the advisor/heuristic read (`compute_volatility`,
+  `compute_max_drawdown`, flatness) are *fractional* — currency-blind.
+- The fee floor (2 × maker ≈ 0.52% spacing) is percentage-based —
+  currency-blind.
+
+**The actual work is naming + display + an audit, not a rearchitecture:**
+
+1. **Rename / re-document the `*_usd` knobs.** `order_size_usd`,
+   `max_per_coin_exposure_usd`, `max_total_exposure_usd`,
+   `max_daily_spend_usd` are really *quote-denominated* — they'd
+   function for EUR as-is, but the names lie. Either rename to
+   `*_quote` or document that the number is in the configured quote.
+2. **Display layer.** `cli/status` + the web status/cost cards
+   hardcode `$` / "USD" labels; render the quote symbol instead.
+3. **`quote_currency` setting** (default `USD`) + settings-page
+   selector; thread into the display layer.
+4. **Leave genuinely-USD things alone.** LLM cost tracking
+   (`llm_pricing` / `llm_cost`) is USD because *provider billing* is
+   USD regardless of the trading pair — NOT a quote-currency concern.
+   The harvester→bank withdrawal is a separate currency question (what
+   your bank takes).
+
+**Scope guard:** one quote currency *per deployment* (default USD), not
+mixed quotes within one bot. Mixing USD + EUR pairs would fragment the
+balance view, the portfolio-value rollup, and the harvester threshold —
+that complexity isn't worth it. Single quote per deployment is the
+80/20.
+
+**Why deferred:** v1.0 is USD-only by scope choice, and the operator's
+own use is US-denominated, so there's no self-need — this is purely an
+OSS-friendliness feature for non-US deployers. Pairs naturally with the
+friend-deployment onboarding thread in `operator-ux.md`.
+
+**Trigger:** a non-US user actually wants to deploy in EUR/GBP, OR the
+friend-deployment onboarding work picks it up (a quote selector is a
+natural wizard step). **Effort: small** — a config field, a display-
+layer pass, and a one-time audit of the `*_usd` names.
+
+**Cross-references:** orthogonal to the **Multi-asset / multi-exchange
+expansion** entry above (that adds *base* instruments/venues; this
+changes the *quote* denomination) and to friend-deployment onboarding
+in `operator-ux.md`.
+
 ### Kraken Securities equities support (Phase 9 committed track)
 
 **Status:** Operator-committed 2026-05-20. Will be Phase 9

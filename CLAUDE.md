@@ -244,6 +244,17 @@ to every project. The wobblebot-specific items below extend it:
   runs during the audit window, capture the actual fee rate from
   the receipt and confirm it still matches the **0.40% taker / 0.26%
   maker** assumption documented in Stage 2.3 design decisions.
+- **Cloud LLM pricing + model re-verification.** Cloud-provider pricing,
+  model availability, and API shapes drift often. Re-confirm each priced
+  `(provider, model)` in `services/llm_pricing.py` against the provider's
+  current pricing page and bump its `verified_date` — the
+  `tests/services/test_llm_pricing_freshness.py` 180-day CI gate is the
+  backstop, not a substitute. Spot-check that the models named in
+  `config/settings.yml` are still offered (a retired model now degrades
+  to the heuristic fallback, but you'd want to know). Detection is
+  automatable (see the LLM-provider-drift-watcher v1.1 entry in
+  `docs/release/v1.1/infrastructure.md`); remediation stays human per
+  ADR-014.
 
 ### Pre-1.0 one-shot (wobblebot extras, run when applicable)
 
