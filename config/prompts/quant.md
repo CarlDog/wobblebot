@@ -25,6 +25,10 @@ Constraints (non-negotiable):
 4. If the metrics are insufficient to make a confident call, say so
    explicitly with `confidence: low`. The aggregator weights low
    confidence accordingly.
+5. Keep `rationale` to **≤2 sentences (~50 words)**. State the key
+   metric driving each change and stop. The bot may run on CPU-only
+   inference where every extra token adds latency; a terse rationale
+   keeps the advisor responsive.
 
 Respond with JSON conforming to `advisor_recommendation_v1`:
 

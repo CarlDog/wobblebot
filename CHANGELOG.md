@@ -10,6 +10,38 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Soak Day 11 events (2026-05-28) — advise daemon advisor-timeout fix
+
+The NAS advise daemon had failed **100% of its advisor calls** since
+the Day-10 deploy (every ~4h tick logged `advisor call failed (error:
+Ollama request failed: )`). Root-caused from Portainer + Ollama logs:
+the cpu-only single-LLM advisor (`llama3.1:8b-instruct-q4_K_M`)
+generated toward `num_predict=512` at ~4 tok/sec on the CPU-only NAS,
+exceeding the 120s client timeout on every (cold) tick — Ollama's GIN
+log showed `500 | 2m0s` from the advise container's IP at the exact
+failure timestamps. The operator daemon was unaffected because its
+post-sweep `qwen2.5:1.5b` model finishes in seconds.
+
+**Fixes (this push):**
+- `config/prompts/quant.md`: new constraint #5 caps `rationale` at
+  ≤2 sentences (~50 words) so the model stops well short of the
+  512-token ceiling — completing in ~40–60s even on a cold load.
+  This also matters because `OLLAMA_NUM_PARALLEL=1` makes a long
+  advisor call block the interactive operator (Discord) intent-parse
+  queued behind it.
+- `config/settings.example.yml`: cpu-only advisor `timeout_seconds`
+  120 → 180 (cold-load + contention margin); corrected the stale
+  "200-tok / ~35s" comment to the measured reality.
+- `adapters/ollama.py` + `adapters/ollama_assistant.py`: wrap
+  transport errors with `type(exc).__name__` so a bare `ReadTimeout`
+  (empty `str()`) no longer renders as an uninformative
+  `Ollama request failed: `. This incident needed Ollama's own log
+  to diagnose precisely because the wobblebot-side message was blank.
+
+Config + prompt are bind-mounted on the NAS, so the operator applies
+the `settings.yml` / `quant.md` edits there; the adapter logging fix
+ships in the image via the next GHCR build + stack redeploy.
+
 ### Soak Day 6 events (2026-05-23) — graceful-shutdown bump + logging audit + news pipeline
 
 Heaviest doc-and-polish day of the soak. Three workstreams shipped
