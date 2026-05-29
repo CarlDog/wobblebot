@@ -10,6 +10,38 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Soak Day 11 events (2026-05-29) — NAS advisor model-sweep tooling
+
+Built tooling to pick the advisor-role model empirically — the inverse
+of the operator-role sweep: for a 4-hourly advisory daemon, accuracy +
+schema-fidelity matter and latency doesn't. Rather than swap to a
+guessed model, measure.
+
+- `tools/probe_advisor.py` rebuilt around a **12-fixture battery**
+  (balanced 4 widen / 4 hold / 4 tighten) with a no-partial-credit
+  rubric (max 36). Current spacing is decoupled from direction via
+  overlap fixtures, so a constant or do-nothing answer scores ~chance
+  (33%) while a genuine reasoner clears ~75%. New `--base-url` /
+  `--timeout-seconds` / `--json` flags + per-call latency capture so
+  the production timeout can be sized to the winner.
+- `tools/pull_and_probe_advisors.py` retargeted at a remote (NAS)
+  Ollama over HTTP (`/api/pull` streaming, `/api/tags`, `/api/delete`)
+  — no local `ollama` CLI dependency. Adds `--tier1` (accuracy-leaders
+  fast pass), `--no-pull`, `--rm-after` (disk-bounding), atomic
+  resumable `summary.json`, and a 30B+ size gate.
+- `tests/tools/test_probe_advisor_scoring.py` (new, 10 cases) locks the
+  rubric invariants: oracle 36/36, always-hold = chance, constant
+  ceiling, no direction/magnitude dead zones.
+
+Validated by **two multi-agent verification workflows**: 5-agent blind
+fixture adjudication (**12/12 unanimous both rounds**) + adversarial
+code review. Round 1 caught 4 real defects — including a high-severity
+bug that laundered a truncated model pull into a fake "0/36, OK" row
+that would have polluted the ranking. Round 2 confirmed the fixes and
+caught a low-severity non-atomic-write issue (now fixed). The advisor
+sweep itself runs next (operator-paced; `operator`/`advise` paused
+during the run).
+
 ### Soak Day 11 events (2026-05-28) — advise daemon advisor-timeout fix
 
 The NAS advise daemon had failed **100% of its advisor calls** since
