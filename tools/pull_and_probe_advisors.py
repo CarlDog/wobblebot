@@ -224,7 +224,9 @@ def _delete_remote(client: httpx.Client, base_url: str, model: str) -> None:
             continue
 
 
-def run_probe(model: str, base_url: str, timeout_seconds: float) -> dict:
+def run_probe(
+    model: str, base_url: str, timeout_seconds: float, prompt_file: str | None = None
+) -> dict:
     """Run probe_advisor.py against the model on the target; parse JSON_RESULT."""
     print(f"  probing {model}...", flush=True)
     t0 = time.monotonic()
@@ -243,6 +245,8 @@ def run_probe(model: str, base_url: str, timeout_seconds: float) -> dict:
         str(timeout_seconds),
         "--json",
     ]
+    if prompt_file:
+        cmd += ["--prompt-file", prompt_file]
     try:
         r = subprocess.run(
             cmd,
@@ -392,6 +396,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ignore any existing summary.json and start a fresh sweep (default: resume).",
     )
     parser.add_argument(
+        "--prompt-file",
+        default=None,
+        help=(
+            "System-prompt path passed through to every probe (e.g. "
+            "config/prompts/quant-cot.md to sweep the reason-first variant). "
+            "Default: the probe's own default (config/prompts/quant.md)."
+        ),
+    )
+    parser.add_argument(
         "--results-dir",
         default=str(RESULTS_DIR),
         help=(
@@ -475,7 +488,7 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 print("  (already present)" if not args.no_pull else "  (pull skipped)", flush=True)
 
-            result = run_probe(model, args.base_url, args.timeout_seconds)
+            result = run_probe(model, args.base_url, args.timeout_seconds, args.prompt_file)
             if args.rm_after:
                 _delete_remote(client, args.base_url, model)
                 present.discard(model)
