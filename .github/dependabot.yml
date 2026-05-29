@@ -1,15 +1,20 @@
 # Dependabot configuration — https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 #
-# Watches dependency manifests and opens PRs when updates are available.
-# Pip ecosystem reads pyproject.toml + .[dev] extras.
+# Watches dependency manifests and opens PRs when updates are available,
+# across all three of this repo's dependency surfaces:
+#   - pip            → pyproject.toml + .[dev] extras (runtime + dev deps)
+#   - github-actions → action versions in .github/workflows/
+#   - docker         → the base image in docker/Dockerfile
 #
 # Cadence is weekly to keep PR noise manageable for a hobby project.
 # Security updates land regardless of schedule (Dependabot's separate
-# security-alerts pipeline). open-pull-requests-limit caps how many
-# upgrade PRs can be in flight per ecosystem at once.
+# security-alerts pipeline — enable "Dependabot security updates" in the
+# repo's Settings → Code security for auto-PRs on vulnerable deps).
+# open-pull-requests-limit caps how many upgrade PRs can be in flight per
+# ecosystem at once.
 #
-# Commit message prefix matches the convention already used in this
-# repo (lowercase verb-of-action: deps, fix, refactor, etc.).
+# Commit message prefix matches the convention already used in this repo
+# (lowercase verb-of-action: deps, fix, refactor, etc.).
 
 version: 2
 updates:
@@ -35,3 +40,43 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # GitHub Actions (.github/workflows/*) — keeps action pins current and
+  # catches supply-chain advisories. Relevant now that the repo is public.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # Action bumps are frequent and low-risk; group the routine ones.
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker base image (docker/Dockerfile — python:3.13-slim). Base-image
+  # bumps are infrequent and worth individual review, so no grouping.
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
