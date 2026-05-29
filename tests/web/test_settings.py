@@ -26,6 +26,7 @@ from wobblebot.web.auth import hash_password
 
 pytestmark = pytest.mark.unit
 
+
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")

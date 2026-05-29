@@ -496,9 +496,9 @@ class TestThinkingMode:
         assert isinstance(intent, IntentCommand)
         body = captured["body"]
         assert isinstance(body, dict)
-        assert body["format"] == "json", (
-            "force_json=True must override is_thinking_model and add format=json"
-        )
+        assert (
+            body["format"] == "json"
+        ), "force_json=True must override is_thinking_model and add format=json"
 
     async def test_force_json_default_preserves_thinking_behavior(self) -> None:
         """Regression guard: default force_json=False keeps the

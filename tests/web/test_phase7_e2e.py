@@ -30,6 +30,7 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.llm_cost import LLMCallRecord
@@ -38,7 +39,6 @@ from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.ports.harvester import TransferProposal
 from wobblebot.ports.notifier import Notification
-from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 

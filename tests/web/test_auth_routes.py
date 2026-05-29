@@ -15,10 +15,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
+from tests.web._helpers import CSRF_RE, TEST_PASSWORD, TEST_USERNAME
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.web.app import create_app
-from tests.web._helpers import CSRF_RE, TEST_PASSWORD, TEST_USERNAME
 from wobblebot.web.auth import hash_password
 from wobblebot.web.middleware import get_or_create_csrf_token
 

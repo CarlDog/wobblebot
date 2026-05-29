@@ -618,9 +618,9 @@ class TestForceJsonOverride:
 
         body = captured["body"]
         assert isinstance(body, dict)
-        assert body["format"] == "json", (
-            "force_json=True must override is_thinking_model and add format=json"
-        )
+        assert (
+            body["format"] == "json"
+        ), "force_json=True must override is_thinking_model and add format=json"
         # And the response is parsed directly, not via the free-text extractor.
         assert rec.recommendations == {"spacing_percentage": 1.0}
 

@@ -76,6 +76,4 @@ def login_as(
             "csrf_token": token,
         },
     )
-    assert resp.status_code == 302, (
-        f"login expected 302 redirect; got {resp.status_code}"
-    )
+    assert resp.status_code == 302, f"login expected 302 redirect; got {resp.status_code}"

@@ -39,12 +39,12 @@ from wobblebot.web.middleware import (
     get_or_create_csrf_token,
 )
 from wobblebot.web.routes import advisor as advisor_routes
-from wobblebot.web.routes import history as history_routes
 from wobblebot.web.routes import auth as auth_routes
 from wobblebot.web.routes import commands as command_routes
 from wobblebot.web.routes import cost as cost_routes
 from wobblebot.web.routes import harvester as harvester_routes
 from wobblebot.web.routes import health as health_routes
+from wobblebot.web.routes import history as history_routes
 from wobblebot.web.routes import news as news_routes
 from wobblebot.web.routes import notifications as notifications_routes
 from wobblebot.web.routes import pages as page_routes

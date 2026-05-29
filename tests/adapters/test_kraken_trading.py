@@ -869,16 +869,12 @@ class TestPartitionKnownSymbols:
         # cache prevents a second fetch.
         try:
             # First call populates the cache.
-            await adapter.partition_known_symbols(
-                [Symbol(base="BTC", quote="USD")] * 5
-            )
+            await adapter.partition_known_symbols([Symbol(base="BTC", quote="USD")] * 5)
             # Capture state: cache is now populated.
             assert adapter._pair_metadata is not None  # noqa: SLF001
             cache_size_before = len(adapter._pair_metadata)  # noqa: SLF001
             # Second call should NOT trigger another /AssetPairs hit.
-            await adapter.partition_known_symbols(
-                [Symbol(base="BTC", quote="USD")] * 10
-            )
+            await adapter.partition_known_symbols([Symbol(base="BTC", quote="USD")] * 10)
             # Cache identity unchanged.
             assert len(adapter._pair_metadata) == cache_size_before  # noqa: SLF001
         finally:
