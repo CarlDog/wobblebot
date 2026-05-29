@@ -17,6 +17,49 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT)
+
+The 6-fixture battery used by the 2026-05-25 sweep below was
+**superseded** on 2026-05-29, ahead of the CPU-only NAS advisor
+sweep. The originals were gameable — a constant "+10% widen" scored
+the documented "11/18 lazy baseline" by accident of fixture
+distribution. The current battery (`tools/probe_advisor.py`):
+
+- **12 fixtures, balanced 4 widen / 4 hold / 4 tighten.** Current
+  spacing is decoupled from direction — each direction spans the full
+  spacing range, with overlap fixtures (widen at high spacing, tighten
+  at low) so a model must read volatility *relative to* the current
+  grid. Correct direction = `sign(ideal(vol) - current)`; the
+  ideal-vs-vol curve lives in the probe's module docstring.
+- **No-partial-credit rubric** (max 36): OK=3 (right direction +
+  magnitude within ±30% of ideal), OVERSHOOT=2 (right direction, wrong
+  size), MISS / OVERTRADE / WRONG / ERROR = 0. Failing to act and
+  needless action both score 0, which closes the always-hold loophole
+  (now 33% = chance) the old ADJACENT=1 rubric left open.
+- **Inherent constant ceiling ~52%** (19/36 — a constant near median
+  spacing). Can't be driven lower without penalizing real reasoners or
+  reintroducing dead zones, so the SCORE ranks reasoners (~75%+) above
+  constants, but the per-fixture **verdict profile** is the real
+  discriminator: a reasoner spreads OK across all three directions
+  with ~zero WRONG; a constant clusters OK on one direction with WRONG
+  on the opposite. **Always inspect the top model's profile, not just
+  the headline score.** If no candidate clears ~60%, no NAS-viable
+  model reasons well for this task — itself a useful result.
+
+**Ground truth is no longer one maintainer's call.** The 12 fixtures'
+expected directions were independently re-derived by two separate
+5-agent blind adjudications (anonymized metrics, no answer key, no
+ideal curve) — **12/12 unanimous both times**. The caveat below still
+applies to the *magnitude* targets (the ideal-vs-vol curve is
+judgment), but the *direction* labels are now strongly corroborated.
+Two adversarial code-review workflows over the tooling caught and
+fixed 6 defects total (one high-severity: a truncated model pull was
+being laundered into a fake 0/36 result).
+
+The 2026-05-25 results table below is retained for history; its scores
+are **not comparable** to the 12-fixture battery (different fixtures,
+different rubric, different max).
+
 ## ⚠️ Methodology caveat — read this before interpreting any score
 
 The "expected direction" per fixture is **one maintainer's
