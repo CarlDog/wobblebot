@@ -105,15 +105,69 @@ choppy decline. Real defense = **de-risk to cash**, which trades downtrend
 protection for false-positive whipsaw risk — the high-stakes, ambiguous call that
 belongs to the operator (informed by projected loss), not an auto-trigger.
 
+### 6. Multi-coin generalization (2024 up year + 2025 down year)
+The findings are NOT BTC-specific. Best-spacing (2.0% — the widest in this sweep)
+net P&L across the 5 most-popular coins:
+
+| Coin | 2024 (up) | 2025 (down) | underlying 2024 / 2025 |
+|---|---|---|---|
+| BTC | +22% | +7% | +121% / −5% |
+| ETH | +10% | −35% | +46% / −11% |
+| SOL | +45% | −34% | +85% / −34% |
+| XRP | +37% | −29% | ~+100% / ~flat→down |
+| DOGE | +15% | −80% | ~+300% / −63% |
+
+Wider-beats-tighter and long-bias-bleeds-in-downtrends hold across *every* coin both
+years (0.65% catastrophic everywhere). The grid is a **direction-follower scaled by
+volatility**: up year → positive on all; down year → negative on all; high-vol alts
+swing biggest both ways. BTC was the most robust (only coin positive both years — it
+fell least in 2025). Caveat: the grid captured only a fraction of the bull moves and
+on most alts lost *more* than buy-and-hold in the crash (exposure isn't
+apples-to-apples — the grid is ~half cash — but directionally: limited upside,
+full-or-worse downside on *trending* assets).
+
+### 7. Chop windows + wide spacing — per-symbol spacing, and a REVISED vol-curve verdict
+Each coin's flattest 90-day window (net drift ~0%, intra-range 44–65%), swept to 5%:
+
+| Coin | chop window | best spacing | best net |
+|---|---|---|---|
+| BTC | 2020 COVID-V | 5.0% | −1.6% |
+| ETH | 2016 sideways | 4.0% | +8.3% |
+| SOL | 2025 H2 | 3.0% | +12.4% |
+| XRP | 2024–25 | 3.0% | +19.3% |
+| DOGE | 2024 | 3.0% | +28.1% |
+
+1. **The grid IS profitable in range-bound conditions** — alts net +8% to +28% at
+   the right spacing, and the high-vol alts (DOGE, XRP, SOL) harvest the MOST. The
+   "choppy alts shine" hypothesis, rejected on the 2025 crash year (§6), is
+   **resurrected for genuine chop** — that rejection was confounded by 2025 being a
+   *down* year, not a *flat* one. (BTC's lone loser is its window — a violent COVID
+   V, not gentle sideways.)
+2. **Optimal spacing diverges by asset/regime and is WIDER than the 2% cap — 3% to
+   5%.** Validates **per-symbol spacing** (operator-raised 2026-05-29): the right
+   spacing scales with the asset's current volatility. **The live grid (1%) and the
+   heuristic's 0.65% floor are both far too tight.**
+3. **REVISION to Finding 1 — the vol→spacing relationship is NOT dead.** It was
+   *mis-calibrated* (band 0.65–2.70% too tight; real optima 3–5%) and *mis-applied*
+   (as a fast per-tick time-series tuner). Reconceived as **per-symbol / per-regime
+   base-spacing calibration** ("more volatile asset → wider grid"), the relationship
+   holds. The curve was calibrated to the wrong band and used in the wrong role —
+   not fundamentally wrong.
+
 ## Conclusions + recommendations
 
-1. **Live config:** consider widening the grid from 1% toward **~1.5%**; keep
-   **park-when-offside** (don't auto-re-anchor — it's already the ADR-006 default).
-2. **Advisor:** the **vol→spacing premise is not validated**. Pivot toward
-   **trend/regime → suggested posture** (defensive in downtrends, let-it-ride in
-   ranges/uptrends), **operator-confirmed, reasoning shown**. The cascade
-   *architecture* (cheap-first → escalate → fallback) and the LLM's broader
-   reasoning are NOT rejected — only the vol-curve-as-P&L-driver.
+1. **Live config — the grid is far too tight.** Chop-window optima are **3–5%**,
+   scaling with each asset's volatility; the live 1% (and the heuristic's 0.65%
+   floor) leave the edge on the table and bleed fees/whipsaw. **Widen substantially
+   and per-symbol** (high-vol alts wider than BTC). Keep park-when-offside (don't
+   auto-re-anchor — already the ADR-006 default).
+2. **Advisor — two levers, two roles.** *Volatility* sets the right **spacing**
+   (per-symbol / per-regime base-spacing calibration — the vol→spacing relationship
+   *correctly applied*, NOT a fast per-tick tuner); *trend/regime* determines
+   **win-vs-lose** (the defense question). Pivot the *dynamic* advisor to
+   trend/regime → posture (defensive in downtrends, harvest in chop/up),
+   operator-confirmed + reasoning shown; use vol→spacing for per-symbol calibration.
+   The cascade architecture + the LLM's broader reasoning are NOT rejected.
 3. **Auto-apply (graduated gate):** bounded knobs (spacing within
    `max_*_change_percentage`) can auto-apply; high-stakes / ambiguous calls
    (de-risk-to-cash) escalate to the operator. See [[project_advisor_philosophy]].
@@ -123,18 +177,17 @@ belongs to the operator (informed by projected loss), not an auto-trigger.
 
 ## Caveats
 
-**SCOPE: BTC/XBT ONLY — generalization is untested and the conclusions may not
-hold for other assets.** A grid is fundamentally a *chop / mean-reversion*
-strategy, and BTC is comparatively *trendy* — so BTC may be near the worst case
-for it. The headline findings here ("trend dominates," "long-bias bleeds in
-downtrends," "the vol curve is dead") could be BTC-specific: a range-bound choppy
-alt might be where the grid — and even a (re-anchored) vol→spacing heuristic, if
-that asset's vol lands in the curve's domain — actually shines; memecoins'
-catastrophic crashes could make the bleed worse. **None of this is validated on a
-second asset.** The dump has every Kraken pair; a multi-coin sweep is the next
-step before treating any of this as a strategy-wide truth or building a new
-algorithm. **No new algorithm or heuristic has been built** — this is diagnosis +
-one failed prototype (the trend-pause filter), not a replacement.
+**SCOPE: validated across 5 coins (BTC/ETH/SOL/XRP/DOGE) and chop + up + down
+regimes (§6–7) — but with limits.** n=1 chop window per coin; BTC's chop window
+was a violent COVID V (not pure sideways); only two full trending years (2024/2025);
+and the adversarial **flip-the-script** pass (per
+[[feedback_flip_the_script_adversarial_reeval]]) is still pending. Several early
+conclusions were **revised** by the multi-coin + chop data: "choppy alts shine"
+(rejected on the 2025 crash year, resurrected for genuine chop) and "the vol curve
+is dead" (revised — it was mis-calibrated + mis-applied, not fundamentally wrong).
+Treat the directional findings as strong but not yet gospel. **No new algorithm or
+heuristic has been built** — this is diagnosis + one failed prototype (the
+trend-pause filter), not a replacement.
 
 This is also a **model**, not the production engine — it reuses `domain.grid`
 geometry + reproduces the validated cycle economics, but assumes: maker-only fills,

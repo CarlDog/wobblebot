@@ -203,10 +203,15 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
    + `tools/grid_backtest.py`). **Actionable:** consider widening the live grid toward
    ~1.5%; pivot the advisor to trend/regime→posture (operator-confirmed, reasoning
    shown); graduated auto-apply (bounded knobs auto, de-risk-to-cash escalates).
-   **Scope caveat: BTC-only — generalization untested.** A grid is a chop strategy
-   and BTC is comparatively trendy, so these findings may not hold for choppier
-   alts; a multi-coin sweep (the dump has every pair) is the next validation, and
-   no new algorithm has been built yet — this is diagnosis, not a replacement.
+   **Update (multi-coin + chop tested — 5 coins, 2024/2025 + per-coin chop windows):**
+   the findings generalize, and two were REVISED. "Choppy alts shine" holds in
+   *genuine* chop (alts +8% to +28%; the 2025 rejection was a crash-year confound),
+   and the vol→spacing relationship is **mis-calibrated + mis-applied, not dead** —
+   chop-window optima are 3–5% and diverge by asset, so the live 1% grid is far too
+   tight and **per-symbol spacing is validated**. Two-lever model: vol→spacing sets
+   the per-symbol/per-regime *spacing* (calibration), trend/regime sets *win-vs-lose*
+   (defense). Still pending: more windows + the adversarial flip-the-script pass. No
+   new algorithm built yet — diagnosis, not a replacement.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
