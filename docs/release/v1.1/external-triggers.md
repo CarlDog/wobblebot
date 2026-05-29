@@ -41,6 +41,11 @@ is the canonical detection event.
 shows a different fee rate than the documented 0.40% taker / 0.26%
 maker assumption.
 
+*Note: cloud-LLM provider pricing / model / API-surface re-verification
+was consolidated into the **LLM provider drift watcher** entry in
+`infrastructure.md` (2026-05-29) — it shares that entry's watcher
+machinery rather than standing alone here.*
+
 ### OpenClaw integration — wobblebot as a callable tool
 
 **What:** investigate (and possibly implement) integration

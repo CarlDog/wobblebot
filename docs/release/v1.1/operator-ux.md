@@ -403,6 +403,30 @@ soak runbook. v1.1 closes the loop with two button additions:
    `_load_reanchor_recommendations` filters out symbols with an
    unexpired snooze entry. Snooze survives daemon bounces.
 
+**Banner content — surface the decision economics, incl. projected loss
+(operator note 2026-05-29).** Beyond the misalignment facts, the banner
+should show the *projected loss of re-anchoring* so the operator weighs
+acting vs. waiting. This is the human-in-the-loop instrument for the
+"re-anchor stays operator-confirmed" posture (the fee-asymmetry concern
+from the 2026-05-29 strategy discussion: a re-anchor realizes a cost
+*now*; waiting may recover it). Target banner format:
+
+> ⚠ Consider re-anchoring BTC/USD. Current price $73523.70 is 2.7
+> spacings from the nearest open order; grid anchored at $74769.80,
+> oldest order 1h 29m old. Re-anchoring would reposition the ladder to
+> catch the current band.
+
+…**plus a projected-loss line.** Open design question — what "projected
+loss" should mean: the realized/paper loss on the inventory the
+re-anchor would strand (BTC bought near the old anchor whose counter-SELLs
+sit above market and would be abandoned), **plus** the fee cost to cancel
++ rebuild the ladder, weighed against the opportunity cost of leaving
+capital parked offside. Computable from open orders + fill history +
+current price. Decide whether to show realized-if-sold, paper-loss-on-
+stranded-inventory, fee-only, or all three. This is the surface that
+makes "operator confirms re-anchor" an *informed* decision rather than a
+blind button-press.
+
 **Auto-cancellation policy — explicitly rejected.** Two technical
 paths considered and rejected as banner-replacement during soak
 Day 4 design discussion:
