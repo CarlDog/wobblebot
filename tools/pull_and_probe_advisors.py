@@ -399,8 +399,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--prompt-file",
         default=None,
         help=(
-            "System-prompt path passed through to every probe (e.g. "
-            "config/prompts/quant-cot.md to sweep the reason-first variant). "
+            "System-prompt path passed through to every probe, to A/B a "
+            "prompt variant against the battery. "
             "Default: the probe's own default (config/prompts/quant.md)."
         ),
     )
