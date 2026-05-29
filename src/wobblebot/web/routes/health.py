@@ -30,6 +30,7 @@ for v1.1.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -59,6 +60,8 @@ from wobblebot.web.dependencies import (
 )
 
 router = APIRouter(tags=["health"])
+
+_LOGGER = logging.getLogger("wobblebot.web.routes.health")
 
 
 class OverallStatus(StrEnum):
@@ -164,7 +167,15 @@ async def health_overall_json(
     """
     try:
         snapshot = await load_health_snapshot(request, config)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Collapse to green so a transient hiccup doesn't make the nav dot
+        # lie — but LOG it (this was silently swallowed): a *persistent*
+        # warning here is a real, non-transient bug to investigate. The
+        # /health page itself, not this cosmetic badge, is the source of truth.
+        _LOGGER.warning(
+            "health overall.json probe failed; reporting green",
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
         return JSONResponse({"overall": "green"})
     return JSONResponse({"overall": snapshot.overall.value})
 
