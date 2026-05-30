@@ -45,7 +45,13 @@ exchange:
 # under `coins:` shadow `default:` for that coin only.
 grid:
   default:
-    spacing_percentage: 1.0   # delta between adjacent levels, % of reference price
+    # Widened 2026-05-30 from 1.0% -> 3.0% (Stage 8.6). The grid backtest
+    # found 1% spacing catastrophic in trends and ~3% the least-bad — its
+    # value is downtrend SURVIVAL, not higher profit (per-cycle yield is
+    # ~flat across spacings; wider just bleeds less when wrong). BTC is the
+    # only live symbol and reads this default. Full rationale:
+    # docs/reference/grid-strategy-research-synthesis-2026-05-30.md.
+    spacing_percentage: 3.0   # delta between adjacent levels, % of reference price
     levels_above: 3           # SELL levels above the anchor
     levels_below: 3           # BUY levels below the anchor
     order_size_usd: 10.0      # USD budget per order; per-pair quantization happens at submit
