@@ -65,6 +65,19 @@ guards:
 
   # Demonstrably working (win AND cycles high, drawdown shallow) ->
   # HOLD even if vol/spacing look mismatched. Don't disrupt fills.
+  #
+  # DORMANT AT WIDE (~3%) SPACING — left enabled on purpose (Stage 8.6,
+  # Slice B). A 3% grid completes only ~0.2-0.4 round-trips/day (measured
+  # on 2013-2025 BTC), so cycles_min: 8 is unreachable in any lookback
+  # short enough for the volatility estimate to stay current. Widening the
+  # window to chase it would make the -5% drawdown guards fire on ordinary
+  # daily noise (a 24h window dips >=5% ~13% of the time vs ~2% at 6h), so
+  # we deliberately keep metrics_lookback_hours at 6h. At wide spacing the
+  # anti-churn job this guard was built for is done instead by the resting
+  # curve + hold_deadband. Kept enabled (not deleted) because the MoE world
+  # will propose fast/tight grids every ~4h and may run several at once; a
+  # grid tight enough to clear 8 cycles in the window re-arms this guard
+  # automatically — no code change needed.
   dont_fix_working:
     enabled: true
     win_rate_min: 0.85

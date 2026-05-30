@@ -28,10 +28,16 @@ the soak so the advisor stops fighting the grid. This is the supported, low-risk
    vol actually lives so its resting recommendation tracks ~3% instead of the 0.65% floor —
    i.e. the advisor stops recommending the worst setting. Validate against
    `tools/heuristic_backtest.py` before committing. This is DATA-only (operator-tunable file).
-3. **Fix the lookback coupling:** at 3% spacing a 6h metrics window completes ~0 cycles, which
-   silently breaks the cycle-based guards (`dont_fix_working` needs ≥8 cycles;
-   `directional_runaway` fires on 0 cycles). Widen `metrics_lookback_hours` and/or re-size the
-   guard thresholds to a 3% cadence; validate against the heuristic backtest.
+3. **Fix the lookback coupling — RESOLVED 2026-05-30 (measurement reversed the plan).** The
+   original plan was to *widen* `metrics_lookback_hours` so the cycle-based guards see enough
+   round-trips. Measurement on 2013–2025 BTC refuted that (see "Slice B finding" below): a 3%
+   grid completes only ~0.2–0.4 cycles/day, so `dont_fix_working`'s `cycles_min: 8` is
+   unreachable in any window short enough for the vol estimate to stay current — and widening
+   the window makes the −5% drawdown guards fire on ordinary daily noise (24h windows dip ≥5%
+   ~13% of the time vs ~2% at 6h). Resolution: **keep `metrics_lookback_hours: 6`**, leave
+   `dont_fix_working` enabled but documented-dormant at wide spacing (anti-churn comes from the
+   recalibrated curve + hold_deadband in Slice A; the guard auto-re-arms for the MoE world's
+   fast/tight grids). Net config change is a `quant.yml` comment only.
 
 The advisor stays **advisory-only** (ADR-002); `auto_apply` stays default-off; only bounded
 spacing is ever auto-applicable.
@@ -56,9 +62,32 @@ spacing is ever auto-applicable.
 ## Slice plan (rescoped)
 
 - **A — curve recalibration** (`quant.yml` DATA edit) + validate vs `heuristic_backtest.py`.
-- **B — lookback + guard-threshold fix** + tests.
-- **C — grid widen** (`settings*.yml` in sync) + schema-drift green.
+- **B — lookback finding + dormancy doc** ✅ 2026-05-30. Measurement reversed the plan: do NOT
+  widen the window; keep `metrics_lookback_hours: 6`; document `dont_fix_working` dormant at 3%
+  (comment-only). Numbers in the "Slice B finding" section below.
+- **C — grid widen** (`settings*.yml` in sync) + schema-drift green. ✅ 2026-05-30 (`a1b39c4`).
 - **D — ADR-019 + roadmap/CHANGELOG/CLAUDE.md receipt + operator NAS deploy instructions.**
+
+## Slice B finding — cycle cadence vs drawdown coupling (2026-05-30)
+
+Measured with a throwaway probe over the local Kraken BTC 1m dump (2013–2025), using the
+production grid geometry (`grid_backtest.run_sim`, 3+3 levels, $10/order, 0.26% maker) and the
+production drawdown math (`services.metrics.compute_max_drawdown`):
+
+- **Cycle cadence (completed round-trips):** at 3% spacing the grid completes ~0.2–0.4 cycles
+  **per day** across six 60-day BTC windows (vs ~1.6–3.1/day at 1%). So `cycles_min: 8` needs
+  ~20–40 days of lookback at 3% — unreachable for a vol-current window; even a 48h window
+  averages under one cycle.
+- **Drawdown vs window length (2024 BTC, fraction of windows whose worst dip ≥5%):** 6h → 1.7%,
+  12h → 4.8%, 24h → 12.8%, 48h → 28.2%. Max-drawdown only grows with window length, so widening
+  the lookback to chase cycles would make the −5% guards (`directional_runaway`,
+  `defensive_drawdown`) fire on routine daily noise.
+
+**Conclusion:** the two guard families want opposite window lengths; no single window serves
+both. The cycle guard is a fast-1%-grid artifact that doesn't transfer to a slow 3% grid by
+tuning. Resolution = Option A (keep 6h; document `dont_fix_working` dormant; leave it enabled so
+it re-arms for the MoE world's tighter grids). The probe was throwaway (gitignored); its numbers
+are preserved here so the research isn't lost.
 
 (The original A–F regime-classifier/port/prompt slices are parked with the track.)
 
