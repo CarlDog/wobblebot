@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from statistics import median
 
 from wobblebot.domain.grid import (
     compute_grid_levels,
@@ -110,6 +111,10 @@ class _Sim:  # pylint: disable=too-many-instance-attributes
     free_usd: Decimal = _ZERO
     free_btc: Decimal = _ZERO
     taker_fee: Decimal = _ZERO  # used only by the cash de-risk market sell
+    slippage_bps: Decimal = (
+        _ZERO  # per-fill friction (spread / adverse selection / imperfect fills)
+    )
+    derisk_slippage_bps: Decimal = _ZERO  # EXTRA slippage on the cash de-risk market sell
     anchor: Decimal = _ZERO
     open_orders: list[_Order] = field(default_factory=list)
     buy_fills: int = 0
@@ -153,9 +158,9 @@ class _Sim:  # pylint: disable=too-many-instance-attributes
         self._cancel_all()  # refunds reservations; all BTC now sits in free_btc
         if self.free_btc > _ZERO:
             proceeds = self.free_btc * price
-            fee = proceeds * self.taker_fee
-            self.fees_paid += fee
-            self.free_usd += proceeds - fee
+            cost = proceeds * (self.taker_fee + self.derisk_slippage_bps / Decimal("10000"))
+            self.fees_paid += cost
+            self.free_usd += proceeds - cost
             self.sell_fills += 1
             self.free_btc = _ZERO
 
@@ -190,15 +195,16 @@ class _Sim:  # pylint: disable=too-many-instance-attributes
                 continue
             self.open_orders.remove(o)
             notional = o.price * o.amount
-            fee = notional * self.maker_fee
-            self.fees_paid += fee
+            # maker fee + per-fill slippage friction (both as a fraction of notional)
+            cost = notional * (self.maker_fee + self.slippage_bps / Decimal("10000"))
+            self.fees_paid += cost
             if o.side is OrderSide.BUY:
                 self.buy_fills += 1
                 self.free_btc += o.amount  # USD was reserved at placement; now hold BTC
-                self.free_usd -= fee
+                self.free_usd -= cost
             else:
                 self.sell_fills += 1
-                self.free_usd += notional - fee  # BTC was reserved; now hold USD
+                self.free_usd += notional - cost  # BTC was reserved; now hold USD
             counter = next_counter_action(o.side, o.price, spacing)
             self._place(counter.side, counter.price, o.amount, is_counter=True)
 
@@ -258,6 +264,8 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
     reanchor_margin: Decimal,
     defense: str = "none",
     taker_fee: Decimal = Decimal("0.0040"),
+    slippage_bps: Decimal = Decimal("0"),
+    derisk_slippage_bps: Decimal = Decimal("0"),
     trend_window_bars: int = 4320,
     trend_down_frac: Decimal = Decimal("0.05"),
     trend_check_bars: int = 360,
@@ -284,6 +292,8 @@ def run_sim(  # pylint: disable=too-many-arguments,too-many-locals
         maker_fee=maker_fee,
         reanchor_margin=reanchor_margin,
         taker_fee=taker_fee,
+        slippage_bps=slippage_bps,
+        derisk_slippage_bps=derisk_slippage_bps,
         free_usd=order_size_usd * Decimal(levels_below) * Decimal("2"),
         free_btc=(order_size_usd * Decimal(levels_above) * Decimal("2")) / anchor,
     )
@@ -343,11 +353,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="downtrend defense: none / pause+hold / sell-to-cash",
     )
     p.add_argument("--taker-fee", type=Decimal, default=Decimal("0.0040"), help="cash de-risk fee")
+    p.add_argument(
+        "--slippage-bps", type=Decimal, default=Decimal("0"), help="per-fill friction (bps)"
+    )
+    p.add_argument(
+        "--derisk-slippage-bps", type=Decimal, default=Decimal("0"), help="extra bps on cash sell"
+    )
     p.add_argument("--trend-window-hours", type=float, default=72.0, help="trailing drift window")
     p.add_argument(
         "--trend-down-pct", type=Decimal, default=Decimal("5.0"), help="stand-down drift"
     )
     p.add_argument("--trend-check-hours", type=float, default=6.0, help="re-evaluate cadence")
+    p.add_argument(
+        "--rolling-days",
+        type=int,
+        default=0,
+        help="if >0: rolling grid-vs-hold generality test (window length in days)",
+    )
+    p.add_argument("--rolling-step-days", type=int, default=30, help="rolling window step (days)")
+    p.add_argument(
+        "--chop-pct",
+        type=Decimal,
+        default=Decimal("10"),
+        help="|window price move| below this %% = a chop window (else trend)",
+    )
     return p
 
 
@@ -356,6 +385,87 @@ def _iso(value: str | None) -> datetime | None:
         return None
     dt = datetime.fromisoformat(value)
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
+def _sim_window(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    bars: list[tuple[Decimal, Decimal, Decimal, Decimal]],
+    spacing: Decimal,
+    args: argparse.Namespace,
+    twin: int,
+    tdown: Decimal,
+    tchk: int,
+) -> RunResult:
+    """Run one grid sim over ``bars`` with the CLI-derived params (shared by the
+    spacing sweep and the rolling generality test)."""
+    return run_sim(
+        bars,
+        spacing_pct=spacing,
+        levels_above=args.levels_above,
+        levels_below=args.levels_below,
+        order_size_usd=args.order_size,
+        maker_fee=args.maker_fee,
+        reanchor_margin=args.reanchor_margin,
+        defense=args.defense,
+        taker_fee=args.taker_fee,
+        slippage_bps=args.slippage_bps,
+        derisk_slippage_bps=args.derisk_slippage_bps,
+        trend_window_bars=twin,
+        trend_down_frac=tdown,
+        trend_check_bars=tchk,
+    )
+
+
+def run_rolling(  # pylint: disable=too-many-arguments,too-many-locals
+    bars: list[tuple[Decimal, Decimal, Decimal, Decimal]],
+    *,
+    spacing: Decimal,
+    window_bars: int,
+    step_bars: int,
+    chop_frac: Decimal,
+    args: argparse.Namespace,
+    twin: int,
+    tdown: Decimal,
+    tchk: int,
+) -> None:
+    """Roll a fixed-length window across the FULL history; per window, sim the
+    grid and compare its return to a passive 50/50 hold (0.5 x the window's price
+    move). Reports how often the grid beats hold, split by chop vs trend windows
+    (|price move| < chop_frac = chop). The unbiased generality test — no window
+    cherry-picking."""
+    grids: list[float] = []
+    holds: list[float] = []
+    flags: list[tuple[bool, bool]] = []  # (grid_beats_hold, is_chop)
+    for s in range(0, len(bars) - window_bars + 1, step_bars):
+        win = bars[s : s + window_bars]
+        r = _sim_window(win, spacing, args, twin, tdown, tchk)
+        grid_ret = float(r.pnl / r.start_value * Decimal("100")) if r.start_value else 0.0
+        move = win[-1][3] / win[0][0] - Decimal("1")
+        hold_ret = float(move * Decimal("50"))  # 0.5 x price move, as a percent
+        grids.append(grid_ret)
+        holds.append(hold_ret)
+        flags.append((grid_ret > hold_ret, abs(move) < chop_frac))
+    n = len(flags)
+    if not n:
+        print("!! no full windows in range")
+        return
+    beats = sum(1 for b, _ in flags if b)
+    chop = [b for b, c in flags if c]
+    trend = [b for b, c in flags if not c]
+    print(f"windows:                {n}  ({window_bars // 1440}d each, step {step_bars // 1440}d)")
+    print(f"grid beats 50/50-hold:  {beats}/{n}  ({100 * beats / n:.0f}%)")
+    if chop:
+        print(
+            f"  chop  (|move|<{float(chop_frac) * 100:.0f}%):  "
+            f"{sum(chop)}/{len(chop)} ({100 * sum(chop) / len(chop):.0f}%)  "
+            f"[{100 * len(chop) / n:.0f}% of windows]"
+        )
+    if trend:
+        print(
+            f"  trend:                 {sum(trend)}/{len(trend)} "
+            f"({100 * sum(trend) / len(trend):.0f}%)"
+        )
+    print(f"median grid return:     {median(grids):+.1f}%")
+    print(f"median 50/50-hold:      {median(holds):+.1f}%")
 
 
 def main() -> int:
@@ -387,7 +497,34 @@ def main() -> int:
             f"# defense:     {verb} when {args.trend_window_hours:.0f}h drift < "
             f"-{args.trend_down_pct}% (check every {args.trend_check_hours:.0f}h); resume on +drift"
         )
+    if args.slippage_bps or args.derisk_slippage_bps:
+        print(
+            f"# slippage:    per-fill {args.slippage_bps}bps  +  cash-de-risk extra "
+            f"{args.derisk_slippage_bps}bps"
+        )
     print()
+    if args.rolling_days > 0:
+        wbars = args.rolling_days * 1440
+        sbars = max(1, args.rolling_step_days * 1440)
+        if len(bars) <= wbars:
+            print(f"!! rolling window {args.rolling_days}d exceeds the data ({len(bars)} bars)")
+            return 1
+        print(
+            f"# ROLLING grid-vs-hold @ spacing {spacings[0]}%  defense={args.defense}  "
+            f"(generality test — all windows, no cherry-picking)"
+        )
+        run_rolling(
+            bars,
+            spacing=spacings[0],
+            window_bars=wbars,
+            step_bars=sbars,
+            chop_frac=args.chop_pct / Decimal("100"),
+            args=args,
+            twin=twin,
+            tdown=tdown,
+            tchk=tchk,
+        )
+        return 0
     header = (
         f"{'spacing':>8} {'net P&L':>10} {'P&L %':>7} {'cycles':>7} "
         f"{'buy/sell':>10} {'fees':>9} {'reanch':>7} {'down%':>6} {'$/cycle':>9}"
@@ -396,20 +533,7 @@ def main() -> int:
     print("-" * len(header))
     results: list[RunResult] = []
     for sp in spacings:
-        r = run_sim(
-            bars,
-            spacing_pct=sp,
-            levels_above=args.levels_above,
-            levels_below=args.levels_below,
-            order_size_usd=args.order_size,
-            maker_fee=args.maker_fee,
-            reanchor_margin=args.reanchor_margin,
-            defense=args.defense,
-            taker_fee=args.taker_fee,
-            trend_window_bars=twin,
-            trend_down_frac=tdown,
-            trend_check_bars=tchk,
-        )
+        r = _sim_window(bars, sp, args, twin, tdown, tchk)
         results.append(r)
         pnl_pct = (r.pnl / r.start_value * Decimal("100")) if r.start_value else _ZERO
         print(
