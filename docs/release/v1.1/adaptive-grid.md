@@ -18,6 +18,58 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### Import the local Kraken historical dump into the DB (one-time bulk seed)
+
+**What (operator-raised 2026-05-30):** we already have a large local Kraken
+1-minute historical dump on disk — `data/kraken-history/` (BTC/ETH/SOL/XRP/DOGE
++ many other pairs, 2013→2025) plus the `data/kraken-history/2026Q1/` quarterly
+subfolder (2026-01-01→03-31, ~99% coverage). It's been used extensively for the
+grid-strategy backtests (`tools/grid_backtest.py` et al.) but lives ONLY as loose
+CSVs read by those tools — it has never been imported into the project's database
+structure (`ohlc_bars` / `price_snapshots` in observe.db). This entry: a one-time
+bulk-import path so that already-downloaded data is available to every DB consumer
+(advisor metrics, the future Auditor / Historian / regime work) without re-fetching
+from Kraken.
+
+**Why valuable:** the `cli/observe --backfill` feature (shipped 2026-05-25) fetches
+history from Kraken's `/0/public/OHLC` endpoint — rate-limited (~1 call/sec
+free-tier), network-dependent, and bounded by whatever horizon Kraken still retains
+at fine intervals. But we *already have* a far deeper, denser local dump than a live
+backfill could pull (Kraken's OHLC endpoint won't return 2013-era 1m bars). Importing
+the local CSVs is faster, offline, $0, and gives every DB-reading consumer the full
+history for free. The substrate already exists: `OHLCBar` domain model, the
+`ohlc_bars` table with `UNIQUE(symbol, interval_minutes, opened_at)` INSERT-OR-IGNORE
+idempotency, `StoragePort.save_ohlc_bars`, and the dual-write to `price_snapshots`.
+
+**What's missing (small):**
+- A `cli/observe --import-csv PATH [--symbols ...] [--interval N]` mode (or a
+  `tools/import_kraken_history.py` one-shot) that streams the headerless Kraken CSV
+  (`time,open,high,low,close,volume,trades`), maps each row to an `OHLCBar`, and
+  batch-writes via the existing `save_ohlc_bars` + `price_snapshots` path. The
+  loaders in `tools/grid_backtest.py::_load_ohlc` / `heuristic_backtest.py::_load_csv`
+  already parse this exact format — reuse that parsing.
+- Symbol mapping: the CSVs use Kraken asset codes (`XBTUSD`→BTC/USD, `XDGUSD`→DOGE/USD);
+  the importer must translate to the project's `Symbol` form (the KrakenAdapter altname
+  map is the reference).
+- Folder convention: import `data/kraken-history/*.csv` for the main history and the
+  `2026Q1/` (and future `YYYYQN/`) subfolders for quarterly extensions. The quarters
+  seam cleanly onto the main files (zero overlap, verified 2026-05-30), and the
+  `ohlc_bars` UNIQUE constraint makes re-import idempotent, so overlapping runs are safe.
+- Scale note: the full multi-coin 1m dump is millions of rows per coin; import is a
+  one-time minutes-to-low-tens-of-minutes batch job, not a daemon. Disk is cheap
+  (~80 bytes/row). Decide whether to import all pairs or just the live/observe set.
+
+**Why deferred:** v1.0 is feature-frozen; this is an importer feature. Also: nothing
+in v1.0 *consumes* the deep history yet — the DB consumers that would benefit (Auditor,
+Historian, regime detector) are all themselves v1.1+. Import lands naturally alongside
+the first of those.
+
+**Trigger:** whenever a v1.1 DB consumer needs deep history (most likely the Auditor or
+the parked regime/Oracle track), OR opportunistically as a quiet-afternoon one-shot since
+the substrate already exists and the data is already downloaded. Pairs with the
+`cli/observe --backfill` ergonomics entry below (same write path) and the OHLC+TA entry
+(the imported bars are exactly the TA-indicator input).
+
 ### Operator-initiated re-anchor command
 
 **What:** a typed operator command (`re-anchor BTC/USD`) that runs
