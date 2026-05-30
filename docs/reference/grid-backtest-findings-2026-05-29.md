@@ -218,15 +218,131 @@ it needs judgment (a human, or a far smarter regime detector).
 **Sensitivity.** Grid size 5+5 vs 3+3: modestly better (44% vs 38% beats hold, median
 +11.8% vs +10.1%) but same direction. Conclusions are robust to grid size + slippage.
 
+## 10. Adversarial pass (flip-the-script) — TWO independent red-teams
+
+Per the standing flip-the-script practice (after a body of testing is complete, before
+acting on it: run an isolated red-team that tries to BREAK every assumption *without*
+seeing the conclusions, then an unbiased re-synthesis). **Two independent runs**, each a
+panel of 6 blind skeptics (forbidden from reading this doc / memory / the Stage-8.5
+roadmap), each attacking one assumption *empirically* (they re-ran the backtester and
+reached their own numbers): benchmark-fairness, out-of-era, chop-classification,
+model-assumptions, simulator-correctness, risk-adjusted-value. Run 2 added an independent
+arbiter that adjudicated the verdict's claims (C1–C7) against the 6 findings.
+
+**Outcome: the verdict HOLDS (`verdict-mostly-holds-with-revisions`).** Run 1: all 6
+skeptics returned `confirms`. Run 2 arbiter: C1/C4/C7 **confirm**, C2/C5/C6
+**partial-challenge** (correct *direction*, overstated *magnitude/universality*), C3
+**inconclusive** (the 3–5% spacing optimum was not re-derived blind). **5 of 6 skeptic
+biases run AGAINST the grid** — i.e. correcting them *strengthens* the verdict; only one
+(re-anchor-vs-park) runs the other way, and it dissolves on follow-up (below).
+
+**The two deliberate break-paths both FAILED.**
+- *Benchmark denominator.* The 50/50-hold is **fair, even generous** to the grid. Measured:
+  the grid is exactly 50% USD / 50% coin at the anchor ($60/$60), so `0.5×move` is
+  exposure-parity. The 2× idle buffer dilutes `grid_ret`, but the 50/50 benchmark carries
+  the same ~50% idle cash, so the dilution is **symmetric** and the win/loss verdict is
+  invariant to it. The grid still loses to a **capital-matched true-time-average-weight**
+  benchmark in every regime tested (chop −12.5% vs −2.65%; up +7.1% vs +16.0%; down −47.0%
+  vs −21.3%). The standing does not flip under any fairer benchmark.
+- *Risk-adjusted value.* The premise that the grid "caps both tails" is **empirically
+  false**. The long-biased grid has a **larger** max-drawdown than the 50/50 hold in ~71%
+  of windows (median 15.2% vs 12.5%; worst 53.1% vs 24.9% — its worst DD exceeds even a
+  100%-hold), higher monthly vol (13.2% vs 10.8%), and a worse left tail (skew −1.39). It
+  caps only the *upside*. So every risk-adjusted lens makes the grid look **worse**; it
+  loses on Sharpe/Calmar vs an exposure-matched hold in 67–100% of windows. Raw return is
+  an adequate (if anything generous) yardstick.
+
+**Out-of-era — the "one cycle" caveat cut the WRONG way.** The grid loses to a 50/50 hold
+in *every* BTC era tested (run 1: 2013–18 0/12, ETH 2015–18 1/8). Run 2 made it precise:
+beats-hold ranges **19–58% across 8 eras, Pearson r = −0.80 to era trend** (it's a
+low-beta range strategy, so "beats hold" ≈ "the era didn't rise"). **2021–2025 is one of
+the grid's MOST FAVORABLE eras** (42%, ranks 6/8; full-history rate ~29%; grid-hostile
+eras as low as 19%). So the single-cycle study *flatters* the grid — the earlier caveat
+("2021–2025 was trend-heavy, favoring hold → study may be pessimistic") was **backwards**.
+
+**The strongest challenge (re-anchor vs park) — RAISED then RESOLVED.** The arbiter's one
+bias-toward-hold: the rolling test defaults to `--reanchor-margin 1.0` (re-lay on every
+1-spacing breach), but production ADR-006 *parks* (never auto-re-anchors); a skeptic
+measured re-anchor ~$14–15/$120 worse in trends. **Follow-up (run by me, clean):** at the
+headline **3% spacing**, rerunning the BTC 2021–2025 rolling test (180d windows, 60d step)
+at `rm=1.0` vs `rm=1000` (≈ parking) gives the **same overall beats-hold rate — 12/28
+(43%) either way** (median grid +10.9% [rm=1] vs +10.0% [park]; hold +8.0% both; parking
+merely shifts one window from trend into chop: chop 4/5→5/5, trend 8/23→7/23). The
+skeptic's "re-anchor is worse in trends" was measured at *tighter* spacing where re-anchors
+chase a crash down; at the **3% the verdict recommends, re-anchor policy is immaterial to
+the aggregate** and the grid's standing vs hold is unchanged. **So the lone
+bias-toward-hold challenge does not move C1 at the recommended spacing.** (This re-confirms
+§4: at wider spacing the grid is robust to re-anchor policy.)
+
+**Two revisions the red-team forces (direction unchanged):**
+1. **C2 (chop edge) is DOWN-RATED.** The chop axis (`abs(net move) < 10%`) mislabels
+   violent round-trips as "chop" (58/60 chop windows had intra-range > 2× their net move;
+   the COVID window nets +0.9% but crashed −56% intra-window → grid $120→$33). Redefined
+   *path-aware* (net<10% AND intra-range<20%), genuine chop is **n=4 of 308 pooled windows,
+   50% win-rate, −0.9pp median edge — break-even, not winning**, and DOGE has ZERO genuine-
+   chop windows in 6 years. The grid's edge correlates **negatively with movement of every
+   kind** (net −0.97, intra-range −0.94, vol −0.75): it isn't "good in chop," it's
+   "less-bad in chop" (peak ~21% win-rate). This also makes the §7 "chop harvests +8–28%"
+   number an optimistic in-sample (cherry-picked-flattest-window + best-spacing) figure —
+   the blind pooled estimate is break-even. The **ordinal** claim (chop beats trend) is
+   threshold-robust and survives.
+2. **C5/C6 wording NARROWED.** C5: "judgment > naive mechanical auto-de-risk" is
+   defensible, but "*no* trigger setting beats no-defense" was not re-verified blind, so
+   state it as *unproven-to-harmful*, not proven-to-fail. C6: "0.65% (sub-fee-floor) is
+   catastrophic everywhere" is confirmed (a skeptic hit 0 fills / ZeroDivisionError there);
+   the universal "wider beats tighter in *every* regime, monotone" is narrowed to "spacing
+   has a regime-dependent optimum" (the C3 3–5% basis), since wide-enough spacing
+   degenerates toward hold.
+
+**Sim correctness — CLEAN (both runs).** Conservation verified transition-by-transition to
+1e-25; round-trip = $0.04875 (matches the docstring); fees charged once; `grid_ret` and
+`hold_ret` share the same `start_value` denominator; `hold_ret = 0.5×move` provably equals
+a true 50/50-of-start hold. One *cosmetic* defect: `_derisk_to_cash` does `sell_fills += 1`,
+perturbing the reported cycle-count (not P&L) under the opt-in `--defense cash`. The one
+real-but-immaterial accounting note: the hardcoded `0.5×move` benchmark is only exact for
+*symmetric* grids (all published findings use 3/3, so no impact).
+
+**Backtester-improvement candidates surfaced (for `tools/grid_backtest.py`, v1.1, not done
+here):** (a) default `--slippage-bps` to a realistic ~10–15 bps (or require it) — the grid
+loses to hold even at 0 bps, but 0 flatters absolute P&L; (b) retain a sampled equity curve
+in `RunResult` and report **max-drawdown + Calmar/Ulcer** alongside P&L (the tool is
+currently blind to the one axis a grid is marketed on — and adding it strengthens, not
+weakens, the verdict); (c) **silent order-drop** in `_place`/`_lay_grid` on insufficient
+funds (470 buy + 417 sell drops in a 606k-bar 2022 run) understates bear losses — log or
+count them; (d) window by **calendar time**, not bar count — sparse pre-2021 Kraken data
+(27.3% coverage in 2013–18) makes an "N-day" window span up to ~3.6× its calendar length,
+distorting early-era runs (dense 2021–25 is unaffected); (e) add the path-aware chop axis
+and the capital-matched true-weight benchmark.
+
+**Methodology note (credibility-positive).** Both runs' sessions suffered output-channel
+corruption (injected `the the the…` text) and several skeptics initially submitted
+premature/fabricated numbers, then **self-corrected** via byte/line/SHA re-verification and
+CLI cross-checks — the arbiter flagged the disclosure as credibility-positive. My own
+re-anchor follow-up (clean) independently reproduced a 43% beats-hold rate on BTC
+2021–2025 @3% (180d/60d) — in the same 38–48% band the skeptics found for the study era,
+corroborating the headline.
+
 ## Conclusions + recommendations
 
-**Bottom line (after the full Tier 2/3 battery): the grid underperforms a passive
-50/50 hold over realistic, un-cherry-picked conditions** — it beats hold in only
-22–44% of rolling windows, never >50%, on all 5 coins. Its genuine edge is confined
-to *chop* (~10–23% of the time), and the only mechanical "fix" (cash de-risk) doesn't
-beat just-running the grid at any trigger. **The grid is a short-volatility bet whose
-viability hinges on detecting/avoiding regimes — which a mechanical signal can't do.**
-The recommendations below are conditional on that.
+**Bottom line (after the full Tier 2/3 battery AND a two-run adversarial flip-the-script
+pass — §10): the grid underperforms a passive 50/50 hold over realistic, un-cherry-picked
+conditions** — it beats hold in only 22–44% of rolling windows, never >50%, on all 5
+coins. **This is now adversarially confirmed:** two independent blind red-teams + an
+arbiter ruled `verdict-mostly-holds-with-revisions`, with 5 of 6 skeptic biases running
+*against* the grid (so the case is, if anything, understated). The verdict's *direction*
+survived every attack — including the two deliberate break-paths (the benchmark
+denominator is fair-to-generous; risk-adjusted value makes the grid look *worse*, not
+better, because its drawdown exceeds the hold's) and an out-of-era check that showed
+2021–2025 is one of the grid's *most favorable* eras (beats-hold is era-conditional,
+19–58%, r=−0.80 to trend; full-history ~29%). **The grid is a short-volatility bet whose
+viability hinges on avoiding the wrong regimes — and even that only *limits the bleed*; it
+does not turn the grid into a positive-expectancy engine** (the genuine path-aware chop
+bucket is merely *break-even*, n=4 of 308 windows, not the "+8–28% harvest" §7's
+cherry-picked windows suggested). The earlier "edge confined to chop (~10–23%)" should be
+read as **"less-bad in chop, which is rarer than 10–23% once round-trips are excluded"**;
+the de-risk line as **"mechanical auto-de-risk is unproven-to-helpful; judgment is
+preferred"** (the strong "no trigger beats no-defense" was not re-verified blind). The
+recommendations below are conditional on that, and are now adversarially stress-tested.
 
 1. **Live config — the grid is far too tight.** Chop-window optima are **3–5%**,
    scaling with each asset's volatility; the live 1% (and the heuristic's 0.65%
@@ -255,18 +371,25 @@ The recommendations below are conditional on that.
 
 **SCOPE: hardened across 5 coins (BTC/ETH/SOL/XRP/DOGE), a full 2021–2025 cycle,
 37–55 rolling un-cherry-picked windows per coin, realistic slippage,
-signal-robustness, and grid-size sensitivity (§9).** Remaining limits: it's still one
-~4.5-year cycle (2021–2025 was trend-heavy, which favors hold); the model assumes
-maker-fill-on-touch, a seeded two-sided start, and a specific re-anchor mechanic; and
-the adversarial **flip-the-script** pass (per
-[[feedback_flip_the_script_adversarial_reeval]]) is the next step. Several early
-conclusions were **revised** along the way: "choppy alts shine" (rejected on the 2025
-crash year → resurrected for genuine chop); "the vol curve is dead" (revised — wrong
-band/role, not wrong relationship); "cash de-risk works" (revised — works in
-cherry-picked crashes, NOT mechanically over the full window distribution). **No new
-trading algorithm has been built** — this is diagnosis. Directional findings are
-robust (consistent across coins, windows, slippage, grid size); absolute magnitudes
-remain model- and policy-dependent.
+signal-robustness, grid-size sensitivity (§9), AND a two-run adversarial
+flip-the-script pass (§10, per [[feedback_flip_the_script_adversarial_reeval]] — DONE,
+verdict held with revisions).** Remaining limits: it's still one ~4.5-year cycle —
+**but the red-team showed this cuts AGAINST the grid, not for it** (2021–2025 is the
+grid's *most favorable* era of 8 tested; cross-era beats-hold is 19–58%, r=−0.80 to
+trend, full-history ~29%) — so the prior "2021–2025 was trend-heavy, favoring hold"
+caveat was backwards. The model assumes maker-fill-on-touch, a seeded two-sided start,
+and a specific re-anchor mechanic — all verified by the red-team as either neutral or
+*favoring the grid* (so correcting them strengthens the verdict), except the
+re-anchor-vs-park divergence, which dissolves at the headline 3% spacing (§10). Several
+conclusions were **revised** along the way (an argument FOR the flip-the-script
+discipline): "choppy alts shine" (rejected on the 2025 crash year → resurrected for
+genuine chop → **re-downgraded by the red-team to break-even**, §10); "the vol curve is
+dead" (revised — wrong band/role, not wrong relationship); "cash de-risk works"
+(revised — works in cherry-picked crashes, NOT mechanically); "edge confined to chop
+(~10–23%)" (down-rated — genuine path-aware chop is rarer and only break-even, §10).
+**No new trading algorithm has been built** — this is diagnosis. Directional findings
+are robust (consistent across coins, windows, slippage, grid size, AND two blind
+adversarial panels); absolute magnitudes remain model- and policy-dependent.
 
 ## Reproduce
 
