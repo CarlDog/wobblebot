@@ -69,12 +69,15 @@ ADR-006 park-when-offside default is fine).
   **−68%** — better, but still a ~136pt chasm to hold. (This run was confounded — it held policy
   fixed.)
 - *Policy sweep (the de-confounder):* holding the detector fixed and varying the policy map, the
-  best policy (always-grid) reaches **+18.9%** — an ~87pt swing from policy alone, so the policy
-  was the bigger lever. Two hard results: **"go to cash to defend a downtrend" is actively
-  destructive under imperfect detection** (the ranking is monotonic in cash exposure — the oracle
-  cashes surgically 5% of windows; realism cashes at the wrong times, selling low/rebuying high);
-  and **decisively, no detector × policy beats hold or even a static grid** — the best realistic
-  switcher slightly *underperforms* a static wide grid.
+  best policy (hold-on-trend) reaches **+19.8%** — an ~88pt swing from the −68% baseline, so the
+  policy was a big lever. The real driver is **spacing through uptrends, not cash**: every
+  *tight*-gridding policy craters over the +135% bull (static-tight −90.2%, grid-or-cash −87.6%,
+  flat-cash −68.0%) by selling out and rebuying higher, while *hold*/*wide* policies survive
+  (hold-on-trend +19.8%, wide-or-cash +17.7%, static-wide +13.6%) — the "1% is far too tight"
+  finding again. (Counter-example to a cash story: wide-or-cash, which DOES cash on downtrends,
+  *beats* always-grid, which never cashes.) **Decisively, no detector × policy beats hold or even
+  a true parked static grid (+21.3%)** — the best switcher (+19.8%) is just "grid the chop, hold
+  the trends," a partial buy-and-hold that gives up beta vs. simply holding.
 
 **Net:** with heuristic detection, regime-switching does not beat holding. The oracle's edge
 requires near-perfect per-window timing = **LLM-grade judgment** — which is exactly what the

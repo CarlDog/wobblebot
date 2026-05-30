@@ -1,5 +1,19 @@
 # Adaptive grid — making the grid smarter
 
+> **STATUS BANNER (2026-05-30) — partially SUPERSEDED + PARKED by the grid-strategy
+> research arc.** The 2026-05-29/30 backtests closed several ideas in this file:
+> *vol→spacing adaptive tuning* is demoted (real BTC vol sits below the curve floor;
+> trend, not vol, drives win-vs-lose) → it survives only as slow per-symbol base-spacing
+> *calibration*, folded into Stage 8.6 hardening. The *dynamic regime-switching* idea
+> (regime classifier → strategy/posture) was tested across three experiments and does NOT
+> beat buy-and-hold — or even a static grid — with heuristic detection; it is PARKED on the
+> Oracle/MoE research track (NOT deleted; the +164.6% oracle ceiling proves the idea has a
+> real ceiling that needs LLM-grade detection). Read
+> `docs/reference/grid-strategy-research-synthesis-2026-05-30.md` before actioning anything
+> below; entries describing a regime classifier / regime-aware grid modes / confidence-driven
+> extension are part of that parked track. Per-symbol spacing + the graduated auto-apply gate
+> remain valid.*
+
 *Entries here turn the static-grid engine into a regime-aware system: classify the market, evaluate advisor recommendations against outcomes, extend the grid under operator/advisor agreement, replay historical configs. All preserve ADR-002 (LLM advisory only) and ADR-006 (engine parks honestly when offside).*
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
