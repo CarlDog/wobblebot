@@ -183,7 +183,50 @@ the signal should be **per-symbol** (DOGE's extreme vol limited the naive trigge
 its re-entries whipsawed within the crash). Better / per-symbol / LLM-grade trend
 detection is the lever that makes cash de-risk strictly better.
 
+### 9. Robustness battery (Tier 2/3) — slippage, rolling generality, signal-robustness, sensitivity
+Run to harden (or break) the findings before the flip-the-script pass.
+
+**Slippage (realism).** Per-fill friction + extra slippage on the cash market sell.
+Findings SURVIVE + strengthen: tight spacing is punished harder (more fills) so
+"wider beats tighter" reinforces; cash de-risk survives its market-sell slippage
+(BTC 2022 bear −2.6%→−3.6%).
+
+**Rolling generality — the unbiased OOS test.** Roll 180-day windows (step 30d)
+across each coin's full 2021–2025 history (NO window cherry-picking), grid @3% vs a
+passive 50/50 hold, with realistic slippage:
+
+| Coin | grid beats 50/50-hold | in chop | chop share | mechanical cash de-risk (median) |
+|---|---|---|---|---|
+| BTC | 38% | 82% | 20% | −1.7% |
+| ETH | 39% | 50% | 12% | −1.6% |
+| SOL | 22% | 25% | 10% | −4.5% |
+| XRP | 44% | 100% | 23% | 0.0% |
+| DOGE | 32% | 100% | 8% | −7% |
+
+**The grid beats a passive 50/50 hold in only 22–44% of windows — never >50%, on any
+coin.** Its edge is real but confined to chop (50–100% there), which is only 8–23% of
+the time. Median-grid slightly beats median-hold everywhere — the short-volatility
+signature (small frequent edge, fat-tail trend losses, sub-50% win rate). XRP is the
+best grid candidate (most chop, 23%); SOL the worst (trended hard).
+
+**Signal-robustness.** No de-risk trigger (3-day/−5% → 21-day/−20%) makes mechanical
+cash de-risk beat the no-defense grid over rolling windows: loose triggers bleed via
+false positives (median −1.7 to −3.5%), strict ones fire late + rarely (median +5.6%,
+still below the +10.1% no-defense). **De-risk cannot be a mechanical auto-trigger** —
+it needs judgment (a human, or a far smarter regime detector).
+
+**Sensitivity.** Grid size 5+5 vs 3+3: modestly better (44% vs 38% beats hold, median
++11.8% vs +10.1%) but same direction. Conclusions are robust to grid size + slippage.
+
 ## Conclusions + recommendations
+
+**Bottom line (after the full Tier 2/3 battery): the grid underperforms a passive
+50/50 hold over realistic, un-cherry-picked conditions** — it beats hold in only
+22–44% of rolling windows, never >50%, on all 5 coins. Its genuine edge is confined
+to *chop* (~10–23% of the time), and the only mechanical "fix" (cash de-risk) doesn't
+beat just-running the grid at any trigger. **The grid is a short-volatility bet whose
+viability hinges on detecting/avoiding regimes — which a mechanical signal can't do.**
+The recommendations below are conditional on that.
 
 1. **Live config — the grid is far too tight.** Chop-window optima are **3–5%**,
    scaling with each asset's volatility; the live 1% (and the heuristic's 0.65%
@@ -200,34 +243,30 @@ detection is the lever that makes cash de-risk strictly better.
 3. **Auto-apply (graduated gate):** bounded knobs (spacing within
    `max_*_change_percentage`) can auto-apply; high-stakes / ambiguous calls
    (de-risk-to-cash) escalate to the operator. See [[project_advisor_philosophy]].
-4. **The long-bias downtrend bleed IS fixable — by de-risking to cash** (§8):
-   crashes go from −36% / −83% to −2.6% / −49%. But it's *insurance* — it costs
-   upside on false-positive triggers in bulls (+31%→+3%), and the binding constraint
-   is the *trend signal* (probabilistic). So it must be **operator-confirmed**
-   (informed by the projected-loss banner), **per-symbol-tuned**, NOT auto-fired —
-   the advisor's highest-value job.
+4. **Downtrend defense is real but cannot be mechanical** (§8–9). De-risk-to-cash
+   rescued the cherry-picked 2022 crash (−36%→−2.6%), but over rolling windows NO
+   trigger setting beats the no-defense grid (false positives in pullbacks bleed the
+   median). So de-risk must be **operator-confirmed / judgment-based** (informed by
+   the projected-loss banner), **per-symbol**, NOT auto-fired. The long-bias bleed is
+   only fixable by *correctly identifying* a sustained downtrend — the hard,
+   probabilistic part, and the advisor's highest-value job.
 
 ## Caveats
 
-**SCOPE: validated across 5 coins (BTC/ETH/SOL/XRP/DOGE) and chop + up + down
-regimes (§6–7) — but with limits.** n=1 chop window per coin; BTC's chop window
-was a violent COVID V (not pure sideways); only two full trending years (2024/2025);
-and the adversarial **flip-the-script** pass (per
-[[feedback_flip_the_script_adversarial_reeval]]) is still pending. Several early
-conclusions were **revised** by the multi-coin + chop data: "choppy alts shine"
-(rejected on the 2025 crash year, resurrected for genuine chop) and "the vol curve
-is dead" (revised — it was mis-calibrated + mis-applied, not fundamentally wrong).
-Treat the directional findings as strong but not yet gospel. **No new algorithm or
-heuristic has been built** — this is diagnosis + one failed prototype (the
-trend-pause filter), not a replacement.
-
-This is also a **model**, not the production engine — it reuses `domain.grid`
-geometry + reproduces the validated cycle economics, but assumes: maker-only fills,
-no slippage, no partial fills, a seeded two-sided start, a specific re-anchor
-mechanic, and only four regime windows (all BTC). **Directional findings are robust
-within BTC** (consistent across both sweeps and all four BTC regimes); **absolute
-magnitudes are model- and policy-dependent** (the large tight-spacing losses are
-amplified by the mechanical re-anchor rule).
+**SCOPE: hardened across 5 coins (BTC/ETH/SOL/XRP/DOGE), a full 2021–2025 cycle,
+37–55 rolling un-cherry-picked windows per coin, realistic slippage,
+signal-robustness, and grid-size sensitivity (§9).** Remaining limits: it's still one
+~4.5-year cycle (2021–2025 was trend-heavy, which favors hold); the model assumes
+maker-fill-on-touch, a seeded two-sided start, and a specific re-anchor mechanic; and
+the adversarial **flip-the-script** pass (per
+[[feedback_flip_the_script_adversarial_reeval]]) is the next step. Several early
+conclusions were **revised** along the way: "choppy alts shine" (rejected on the 2025
+crash year → resurrected for genuine chop); "the vol curve is dead" (revised — wrong
+band/role, not wrong relationship); "cash de-risk works" (revised — works in
+cherry-picked crashes, NOT mechanically over the full window distribution). **No new
+trading algorithm has been built** — this is diagnosis. Directional findings are
+robust (consistent across coins, windows, slippage, grid size); absolute magnitudes
+remain model- and policy-dependent.
 
 ## Reproduce
 
@@ -237,6 +276,8 @@ CSV=data/kraken-history/XBTUSD_1.csv
 python -m tools.heuristic_backtest --csv $CSV --start 2022-05-01 --end 2022-07-01 --label "2022 bear"
 # Tier 2 (spacing sweep):
 python -m tools.grid_backtest --csv $CSV --start 2022-05-01 --end 2022-07-01 --label "2022 bear"
-# Tier 2 with the stand-down trend filter:
-python -m tools.grid_backtest --csv $CSV --start 2022-05-01 --end 2022-07-01 --trend-filter
+# Downtrend defense (pause / cash) + realistic slippage:
+python -m tools.grid_backtest --csv $CSV --start 2022-05-01 --end 2022-07-01 --defense cash --slippage-bps 5 --derisk-slippage-bps 30
+# Rolling grid-vs-hold generality (ALL windows, no cherry-picking):
+python -m tools.grid_backtest --csv $CSV --start 2021-01-01 --end 2025-12-31 --spacings 3.0 --rolling-days 180
 ```
