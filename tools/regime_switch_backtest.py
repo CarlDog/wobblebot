@@ -46,7 +46,10 @@ from decimal import Decimal
 from pathlib import Path
 from statistics import median
 
-from tools.grid_backtest import _load_ohlc, _Sim, run_sim
+# Sibling-tool reuse: resolves at runtime via `python -m tools.regime_switch_backtest`,
+# but pylint can't see `tools` as a package (no install), so the import-error is a
+# false positive here — same verdict-tested simulator the grid backtest uses.
+from tools.grid_backtest import _load_ohlc, _Sim, run_sim  # pylint: disable=import-error
 
 _ZERO = Decimal("0")
 _Bar = tuple[Decimal, Decimal, Decimal, Decimal]  # (open, high, low, close)
