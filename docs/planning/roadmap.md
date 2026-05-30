@@ -219,7 +219,15 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
    reproduced "wider beats tighter" on all 5 coins and grid<hold. The actionable
    widen + advisor pivot are now **Stage 8.6**.
 
-7. **Stage 8.6 – Advisor Regime Reorientation + Grid Widen** ⏳ (kickoff 2026-05-29,
+7. **Stage 8.6 – Advisor HARDENING + Grid Widen** ⏳ (kickoff 2026-05-29, **RESCOPED
+   2026-05-30** — the regime-switching research arc closed: heuristic regime detection
+   does NOT beat hold, so 8.6 is cut to hardening only [widen grid + recalibrate the curve
+   so the advisor stops recommending the worst setting + fix the lookback]; the regime
+   classifier + posture are PARKED on the Oracle/MoE research track, not deleted. Full
+   account: `docs/reference/grid-strategy-research-synthesis-2026-05-30.md`; rescoped design
+   in `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`. Original kickoff text
+   below is superseded by that rescope.)
+   _(original kickoff, 2026-05-29):_ (kickoff 2026-05-29,
    pre-soak) – Acts on the backtest verdict (Stage 8.5 post-build + flip-the-script):
    widen the live BTC grid off the catastrophic 1% toward ~3% (per-symbol; exposure
    unchanged at $60), and **reorient the advisor from a vol→spacing tuner to a
