@@ -226,13 +226,9 @@ def main() -> int:  # pylint: disable=too-many-locals
     if best.ret_pct > h5050:
         print("=> a realistic policy BEATS 50/50-hold. The policy map WAS the bottleneck.")
     elif best.ret_pct > static:
-        print(
-            "=> best policy beats the static grid but still < hold. Partial: policy helps, not enough."
-        )
+        print("=> best policy beats the static grid but still < hold. Partial: policy helps.")
     else:
-        print(
-            "=> no policy beats the static grid. Neither detection nor policy map rescues switching."
-        )
+        print("=> no policy beats the static grid. Neither detection nor policy map rescues it.")
     return 0
 
 
