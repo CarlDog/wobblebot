@@ -212,6 +212,33 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
    the per-symbol/per-regime *spacing* (calibration), trend/regime sets *win-vs-lose*
    (defense). Still pending: more windows + the adversarial flip-the-script pass. No
    new algorithm built yet — diagnosis, not a replacement.
+   **Flip-the-script DONE (2026-05-29):** two independent blind adversarial red-teams
+   + an arbiter ruled the verdict `verdict-mostly-holds-with-revisions` (5 of 6
+   skeptic biases run *against* the grid; both deliberate break-paths failed; §10 of
+   the findings doc). An out-of-sample 2026 Q1 quarter (broad −21–33% downturn)
+   reproduced "wider beats tighter" on all 5 coins and grid<hold. The actionable
+   widen + advisor pivot are now **Stage 8.6**.
+
+7. **Stage 8.6 – Advisor Regime Reorientation + Grid Widen** ⏳ (kickoff 2026-05-29,
+   pre-soak) – Acts on the backtest verdict (Stage 8.5 post-build + flip-the-script):
+   widen the live BTC grid off the catastrophic 1% toward ~3% (per-symbol; exposure
+   unchanged at $60), and **reorient the advisor from a vol→spacing tuner to a
+   regime reader + guardrail** — because the advisor is currently blind to the
+   variable that decides win-vs-lose (trend/regime is not in `PerformanceSummary`).
+   Two levers: (1) volatility → *base* spacing calibration (recalibrate the curve to
+   real BTC vol so its resting call is ~3%, not the mis-calibrated 0.65% floor);
+   (2) a **first-class regime classifier** (new `compute_regime` metric + `RegimeSignal`
+   domain value object) → a **posture** (harvest / cautious / defensive) + projected
+   downside that is **advisory-only, never auto-applied** (the backtest proved
+   mechanical auto-de-risk fails; only bounded spacing stays auto-applicable, per the
+   ADR-002/007 firewall). Also fixes the lookback coupling (a 6h metrics window
+   completes ~0 cycles at 3%, breaking the cycle-based guards). Lands **before** the
+   ~2026-06-01 gating-soak restart so the month forward-validates both the wider grid
+   and the regime-aware advisor (operator decision 2026-05-29). Introduces **ADR-019**
+   (advisor purpose: regime reader, not vol-tuner — refines ADR-002/007) and
+   **ADR-020** (regime classification as a first-class metric). Full design + slice
+   plan (A–F) + the 2026 Q1 out-of-sample check in
+   `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
