@@ -1248,3 +1248,116 @@ when they disagree, and how each kind of drift is resolved*.
 - ``docs/planning/roadmap.md`` Stage 8.1 entry — the concrete
   shadow-session repro that surfaced the shutdown bug.
 
+## ADR-019 — Advisor Purpose: Regime Reader + Guardrail, Not a Volatility Tuner
+
+**Status:** Accepted
+**Date:** 2026-05-30
+
+**Context:** Stage 8.5 shipped the advisor as a *volatility → spacing* tuner: a
+curve mapping realized per-tick volatility to an "ideal" grid spacing, plus four
+override guards. The premise was "jumpier market → wider grid." After Stage 8.5
+landed, a grid backtest over the local 2013–2025 Kraken 1m history (and a 2026 Q1
+out-of-sample quarter) refuted that premise as the advisor's organizing principle.
+The full account is `docs/reference/grid-strategy-research-synthesis-2026-05-30.md`;
+the load-bearing findings:
+
+1. **Trend, not volatility, decides win-vs-lose.** A grid's profitability over a
+   full cycle is dominated by whether price trends through it (long-bias downtrend
+   bleed is the dominant risk), not by how jumpy it is tick-to-tick. The advisor's
+   curve keyed off the wrong variable.
+2. **No single grid rules them all; every grid fails in some regime.** A static
+   spacing — any spacing — loses to buy-and-hold over full cycles. ~3% is merely the
+   least-bad *static default* (it survives every regime), not "the right spacing."
+3. **A tight grid is not categorically wrong.** A 1% grid *chosen in chop and pulled
+   before the trend resumes* genuinely works — demonstrated live in the two weeks
+   before this ADR, and the regime-switch experiment's perfect-foresight oracle
+   returned +164.6% (the only configuration in the entire backtest program to beat
+   hold) precisely by selecting the regime-appropriate grid and pulling it on time.
+   The losing pattern is a tight grid *held as a default* across a trend, not tight
+   spacing per se.
+4. **Calibration defect made it concrete.** Real BTC per-tick volatility sits ~2×
+   *below* the floor of the shipped curve's domain, so on the now-3% live grid the
+   advisor recommended TIGHTEN to the 0.65% floor on ~98% of windows — i.e. it
+   actively recommended the single worst static setting, nearly every tick.
+
+**Decision:** Ratify the advisor's purpose as a **regime reader + transparent
+guardrail**, not a volatility-to-spacing tuner.
+
+1. **The advisor reads what the market is doing and suggests a proportionate
+   posture, showing its reasoning; the operator owns the call.** Being wrong
+   sometimes is acceptable because it is advisory (ADR-002). This refines — does not
+   replace — ADR-002 (LLM advisory-only) and ADR-007 (news-never-auto-applies).
+2. **Regime-appropriate grid *selection and pulling* is the job of a future
+   regime/Oracle engine, not of a static curve.** "Pick the tight grid in chop, pull
+   it before the trend" requires real regime detection (the research showed heuristic
+   detection is insufficient; it needs LLM-grade judgment). That engine is PARKED, not
+   abandoned — revisit conditions in the synthesis doc §4. Until it exists, the live
+   grid runs a single survival-optimized static default (~3%, ADR-006 park-when-offside
+   unchanged).
+3. **Posture output is advisory-only, never auto-applied — an invariant.** Even when
+   the regime engine lands and emits a posture (harvest / cautious / defensive), that
+   posture can never drive an autonomous money-moving or grid-rebuilding action. The
+   backtest proved mechanical auto-de-risk (e.g. sell-to-cash on a drawdown trigger)
+   is destructive under imperfect detection. Only bounded *spacing* stays
+   auto-applicable, and only through the existing `cli/apply` operator gate
+   (ADR-012) behind the ADR-002/007 firewall.
+4. **The vol→spacing curve is demoted to a coarse static-default calibration, and its
+   rework is deferred.** Recalibrating the curve to "rest at 3%, never tighten" was
+   explicitly *rejected* here: it would bake in the false absolute "tight is always
+   wrong" (decision-point 3 above) — something the regime engine will need to undo the
+   moment it can correctly select a tight grid in chop. So the curve is left as-is for
+   the pre-soak; the proper curve + judgment-battery rework moves onto the Oracle/regime
+   track where it can be built against real detection. During the v1.0 soak the advisor
+   is advisory-only with `auto_apply` off, so the mis-calibrated curve is harmless
+   log-noise, not a live risk.
+
+**Alternatives Considered:**
+- **Recalibrate the curve now to rest at 3% (Stage 8.6 Slice A as originally drafted).**
+  Rejected: (a) it encodes "never recommend below 3%," a false absolute per decision 3;
+  (b) it would invalidate the blessed 20-fixture judgment battery
+  (`tools/probe_advisor.py`, 5-agent-adjudicated 2026-05-29) which all encodes the
+  refuted vol→spacing thesis, forcing a full battery rebuild under pre-soak time
+  pressure; (c) it polishes a model we've already decided to replace. Deferred to the
+  regime track instead.
+- **Build the first-class regime classifier + posture now (the original Stage 8.6
+  centerpiece).** Rejected/parked: heuristic regime detection does not beat hold or even
+  a static grid (synthesis §3); shipping it as a feature isn't justified until there's an
+  appetite to test an LLM-grade detector or capital growth changes the calculus.
+- **Keep treating the advisor as a vol→spacing tuner and just fix the calibration.**
+  Rejected: that doubles down on the variable the backtest showed doesn't decide
+  outcomes.
+
+**Consequences:**
+- **Positive:** The advisor's charter now matches what the evidence supports; future
+  advisor work (the Oracle/MoE regime engine) has a ratified purpose to build toward.
+- **Positive:** No false absolute is baked into shipped config; the path to "tight grid
+  in chop, pulled on time" stays open for the regime engine.
+- **Positive:** Stage 8.6 closes as a small, safe, pre-soak hardening pass (grid widened
+  to a survival default + lookback dormancy documented) without reworking a blessed
+  artifact in a hurry.
+- **Negative:** During the soak the heuristic advisor logs a mis-calibrated "tighten"
+  recommendation on most windows. Acceptable — advisory-only, `auto_apply` off; the
+  operator can also simply not run `cli/advise` during the soak (purely observational).
+- **Negative:** The curve + 20-fixture battery rework is now carried as parked debt on
+  the Oracle track rather than resolved. Tracked in the synthesis doc + the Stage 8.6
+  design doc so it isn't lost.
+
+**ADR-020 (regime classification as a first-class metric) is DEFERRED** — write it only
+if/when the Oracle/MoE regime engine is greenlit (it would record the `RegimeSignal`
+domain model + `compute_regime` metric design). Parked with the research track.
+
+**Compliance:** Refines ADR-002 (advisory-only — unchanged; posture-advisory-only is a
+new sub-rule) and ADR-007 (MoE + news-never-auto-applies — the regime engine, when built,
+is an `AdvisorPort` composition under the same firewall). No conflict with ADR-006
+(park-when-offside, static grid) or ADR-012 (`cli/apply` remains the only config-mutation
+path).
+
+**References:**
+- `docs/reference/grid-strategy-research-synthesis-2026-05-30.md` — the research this ADR ratifies.
+- `docs/planning/stage-8.6-advisor-regime-reorientation-design.md` — the (rescoped) stage that produced it.
+- ADR-002, ADR-007 (the advisory-only invariants ADR-019 refines), ADR-006, ADR-012.
+- Project memory: `project_advisor_philosophy`, `no-false-absolutes-from-backtests`, `project_oracle_naming`.
+
+<!-- ADR-019 is the last in this file; new ADRs append below. -->
+<!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
+

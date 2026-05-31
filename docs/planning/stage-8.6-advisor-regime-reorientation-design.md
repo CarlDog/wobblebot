@@ -53,15 +53,24 @@ spacing is ever auto-applicable.
 
 ## ADRs
 
-- **ADR-019 — Advisor purpose: regime reader + guardrail, not a vol-tuner.** Still worth writing
-  (records the philosophy shift + why vol→spacing was demoted; refines ADR-002/007). The
-  posture-advisory-only invariant lands here as the rule even though posture itself is parked.
-- **ADR-020 (regime as a first-class metric)** — DEFER with the parked track; only write it if/
+- **ADR-019 — Advisor purpose: regime reader + guardrail, not a vol-tuner.** ✅ RATIFIED
+  2026-05-30 (`docs/architecture/decisions.md`). Records the philosophy shift, why vol→spacing
+  was demoted, why the curve recalibration was *deferred* (not done), and the no-false-absolutes
+  framing (a tight grid chosen in chop + pulled works). Posture-advisory-only is the load-bearing
+  new invariant. Refines ADR-002/007.
+- **ADR-020 (regime as a first-class metric)** — DEFERRED with the parked track; write only if/
   when the Oracle/MoE build is greenlit.
 
-## Slice plan (rescoped)
+## Slice plan (rescoped) — STAGE CLOSED ✅ 2026-05-30
 
-- **A — curve recalibration** (`quant.yml` DATA edit) + validate vs `heuristic_backtest.py`.
+- **A — curve recalibration: DEFERRED to the Oracle/regime track** (no code shipped). Two
+  findings collided: (1) changing the curve invalidates the blessed 20-fixture judgment battery
+  (`tools/probe_advisor.py`), and (2) recalibrating to "rest at 3%, never tighten" would bake in
+  a false absolute — a tight grid *chosen in chop and pulled before the trend* works (proven live
+  + oracle +164.6%). The advisor is advisory-only (`auto_apply` off) during the soak, so its
+  mis-calibrated curve is harmless log-noise. The proper curve + battery rework moves to the
+  parked regime track (synthesis §4). Original Slice A intent retained below for the record.
+- **(original) A — curve recalibration** (`quant.yml` DATA edit) + validate vs `heuristic_backtest.py`.
 - **B — lookback finding + dormancy doc** ✅ 2026-05-30. Measurement reversed the plan: do NOT
   widen the window; keep `metrics_lookback_hours: 6`; document `dont_fix_working` dormant at 3%
   (comment-only). Numbers in the "Slice B finding" section below.
@@ -90,6 +99,31 @@ it re-arms for the MoE world's tighter grids). The probe was throwaway (gitignor
 are preserved here so the research isn't lost.
 
 (The original A–F regime-classifier/port/prompt slices are parked with the track.)
+
+## Operator NAS deploy (Slice D handoff — Claude does NOT deploy)
+
+Per the deployment-split rule, Claude doesn't touch the NAS; the operator cut/pastes the
+synced files into the bind-mount and restarts the daemons in their own terminal. Stage 8.6's
+**only behavior change** is the grid spacing — so the deploy is minimal:
+
+1. **`config/settings.yml` → NAS bind-mount.** The deploy-master `settings.yml` now has
+   `grid.default.spacing_percentage: 3.0` (was 1.0). Cut/paste it to the NAS
+   `config/settings.yml`. This is the one change that alters live behavior (the BTC grid
+   lays at 3% spacing on next `cli/live` start; exposure unchanged at $60).
+2. **`config/heuristic/quant.yml` → NAS bind-mount (optional this stage).** The only edit is
+   a *comment* documenting `dont_fix_working`'s dormancy — **no values changed**, so the
+   advisor behaves identically whether or not you copy it. Copy it anyway to keep the
+   bind-mount in sync with the repo (avoids future-drift confusion).
+3. **Restart `wobblebot-live`** (the grid daemon) so it re-lays at 3%. Operator does this in
+   their own terminal / Portainer (no phantom-daemon bounces from Claude).
+4. **`wobblebot-advise` needs no restart for correctness** — its config is unchanged in
+   substance. Note it will log mis-calibrated "tighten to 0.65%" recommendations against the
+   3% grid (the deferred Slice A curve); this is harmless (advisory-only, `auto_apply` off).
+   If the log noise is unwanted during the soak, simply don't run `cli/advise` — it's purely
+   observational right now. (Full rationale: ADR-019.)
+5. **Verify** per the docker-deployments rule (`docker inspect` / spot-check the live
+   `settings.yml`), not the Portainer green-check: confirm the running container's
+   `config/settings.yml` shows `spacing_percentage: 3.0`.
 
 ## What this is NOT
 

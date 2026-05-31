@@ -99,8 +99,15 @@ research found that only the (unreachable-heuristically) oracle clears it.
 - **Posture (defensive/harvest) is advisory-only, NEVER auto-applied** — mechanical auto-de-risk
   fails (the policy sweep proved cash-on-downtrend is destructive without perfect timing). Only
   bounded spacing stays auto-applicable.
-- **Stage 8.6 shrinks to hardening only** (widen grid + recalibrate the curve so the advisor
-  stops recommending the worst setting); the regime-classifier-as-strategy-driver is PARKED (§4).
+- **Stage 8.6 shrinks to hardening only** — and during the slices narrowed further: it shipped
+  the grid widen (1%→3%) + documented the lookback/guard coupling, but **deferred the curve
+  recalibration** to the parked track (§4). Recalibrating to "rest at 3%" would invalidate the
+  blessed 20-fixture judgment battery AND bake in the false absolute "never tighten" — a tight
+  grid *chosen in chop and pulled before the trend* works (proven live + the +164.6% oracle); no
+  single grid rules them all. The advisor is advisory-only during the soak, so its mis-calibration
+  is harmless log-noise. The regime-classifier-as-strategy-driver was already PARKED (§4). Stage
+  CLOSED 2026-05-30; **ADR-019 ratified** (advisor purpose: regime reader + guardrail). See roadmap
+  Stage 8.6.
 - **WobbleBot is a learning/discipline project** — sizing/expectations reflect that; the grid<hold
   finding informs it, doesn't kill the purpose. (Operator reaffirmed clear-headed: $100 always a
   test case; $10k aspirational and maybe never.)
@@ -126,17 +133,27 @@ revisit is preserved here + in the five findings docs.
 - **Untested-but-cheap follow-ups if revisited:** confidence-*proportional* sizing (vs hard
   switching); other window sizes (is 4h the sweet spot?); multi-coin; rolling-distribution of the
   switching policy; the LLM-grade detector comparison.
+- **The advisor curve + judgment-battery rework belongs here too** (deferred from Stage 8.6
+  Slice A, 2026-05-30). The vol→spacing curve in `config/heuristic/quant.yml` and its blessed
+  20-fixture battery (`tools/probe_advisor.py`, 5-agent-adjudicated 2026-05-29) both encode the
+  refuted vol→spacing thesis. When the regime engine lands — with real detection that *can*
+  correctly pick a tight grid in chop and pull it — the curve becomes regime-conditioned
+  base-spacing and the battery is re-derived to the regime-reader philosophy (validated against the
+  market backtest, not just a fresh blind adjudication). Doing it now would bake in "never tighten"
+  (a false absolute) and force a battery rebuild under pre-soak pressure for a model we've already
+  decided to replace. See ADR-019 alternatives.
 
 ## 5. The reconciled plan (what we're actually doing)
 
-1. **Stage 8.6 (rescoped → hardening only, pre-soak):** widen the live BTC grid off 1% toward
-   ~3%; recalibrate `config/heuristic/quant.yml` so the advisor's resting recommendation tracks
-   real BTC vol (~3%) instead of the 0.65% floor; fix the lookback coupling. Advisory-only;
-   posture display optional. ADRs: 019 (advisor purpose: regime reader, refines ADR-002/007) +
-   020 may slim (regime-as-metric becomes parked-track, not shipped). See the revised
-   `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`.
-2. **Gating soak (~2026-06-01):** runs the wider grid + recalibrated advisor; forward-validates
-   the hardening, not a regime engine.
+1. **Stage 8.6 (rescoped → hardening only, pre-soak) — CLOSED ✅ 2026-05-30.** Shipped: widened
+   the live BTC grid 1%→3% (Slice C); documented the lookback/guard coupling instead of widening
+   the window (Slice B — measurement showed widening would mis-fire the −5% drawdown guards).
+   **Deferred** the curve recalibration to the parked track (§4) — it would invalidate the blessed
+   battery and bake in "never tighten." Ratified **ADR-019** (advisor purpose: regime reader +
+   guardrail, not a vol-tuner; posture-advisory-only); **ADR-020 deferred**. Advisory-only
+   throughout. See `docs/planning/stage-8.6-advisor-regime-reorientation-design.md` + roadmap.
+2. **Gating soak (~2026-06-01):** runs the wider (3%) grid; forward-validates the hardening, not a
+   regime engine. The advisor stays advisory-only (its curve is uncalibrated for 3% but harmless).
 3. **v1.0 tag** after the soak. Then **Phase 9 (Kraken Securities equities)** as committed.
 4. **Parked:** the Oracle/MoE regime track (§4); v1.1 backlog items the research superseded get
    marked (notably `docs/release/v1.1/adaptive-grid.md` vol→spacing entries — demoted/parked).

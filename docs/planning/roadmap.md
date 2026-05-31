@@ -219,14 +219,41 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
    reproduced "wider beats tighter" on all 5 coins and grid<hold. The actionable
    widen + advisor pivot are now **Stage 8.6**.
 
-7. **Stage 8.6 – Advisor HARDENING + Grid Widen** ⏳ (kickoff 2026-05-29, **RESCOPED
-   2026-05-30** — the regime-switching research arc closed: heuristic regime detection
-   does NOT beat hold, so 8.6 is cut to hardening only [widen grid + recalibrate the curve
-   so the advisor stops recommending the worst setting + fix the lookback]; the regime
-   classifier + posture are PARKED on the Oracle/MoE research track, not deleted. Full
-   account: `docs/reference/grid-strategy-research-synthesis-2026-05-30.md`; rescoped design
-   in `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`. Original kickoff text
-   below is superseded by that rescope.)
+7. **Stage 8.6 – Advisor HARDENING + Grid Widen** ✅ 2026-05-30 (kickoff 2026-05-29,
+   **RESCOPED then CLOSED 2026-05-30**). The regime-switching research arc closed first
+   (heuristic regime detection does NOT beat hold), cutting 8.6 from "advisor regime
+   reorientation" to hardening only; then measurement during the slices cut it further.
+   **What shipped:**
+   - **Slice C — grid widen** (`a1b39c4`): live BTC `grid.default.spacing_percentage`
+     1.0 → 3.0% (the least-bad *static default*; exposure unchanged at $60 = 3+3 × $10;
+     fee-floor validator + schema-drift green). ADR-006 park-when-offside unchanged.
+   - **Slice B — lookback finding + guard dormancy** (`83d4589`): measurement REVERSED
+     the planned "widen the metrics window" fix. At 3% the grid completes only
+     ~0.2–0.4 cycles/day (2013–2025 BTC), so `dont_fix_working` (cycles_min 8) is
+     unreachable in any vol-current window; widening the window would make the −5%
+     drawdown guards fire on ordinary daily noise (24h dips ≥5% ~13% vs ~2% at 6h). So
+     `metrics_lookback_hours` stays at **6h**; `dont_fix_working` is left enabled but
+     documented-dormant at wide spacing (it auto-re-arms for the MoE world's tight
+     grids). Numbers in the stage design doc's "Slice B finding" section.
+   - **Slice A — curve recalibration: DEFERRED to the Oracle/regime track** (no code).
+     Two findings collided: (1) the curve change would invalidate the blessed 20-fixture
+     judgment battery (5-agent-adjudicated 2026-05-29), and (2) recalibrating to "rest at
+     3%, never tighten" would bake in a false absolute — a tight grid *chosen in chop and
+     pulled before the trend* genuinely works (proven live + oracle +164.6%). The advisor
+     is advisory-only (`auto_apply` off) during the soak, so its mis-calibrated curve is
+     harmless log-noise. The proper curve + battery rework belongs on the regime track
+     where it can be built against real detection.
+   - **Slice D — close-out:** ratified **ADR-019** (advisor purpose: regime reader +
+     guardrail, not a vol-tuner; posture-advisory-only invariant; refines ADR-002/007).
+     **ADR-020** (regime as a first-class metric) **DEFERRED** with the parked track.
+   **Parked (not deleted), on the Oracle/MoE research track** (synthesis §4): the
+   first-class regime classifier + posture output, and the curve/battery rework.
+   Full account: `docs/reference/grid-strategy-research-synthesis-2026-05-30.md`; rescoped
+   design + per-slice findings in
+   `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`. **Real-money cost: $0.00**
+   (offline backtests only); running project total unchanged at **$0.085018**. Closes the
+   pre-soak hardening; the ~2026-06-01 gating soak now runs the widened grid. Original
+   kickoff text below is superseded.)
    _(original kickoff, 2026-05-29):_ (kickoff 2026-05-29,
    pre-soak) – Acts on the backtest verdict (Stage 8.5 post-build + flip-the-script):
    widen the live BTC grid off the catastrophic 1% toward ~3% (per-symbol; exposure

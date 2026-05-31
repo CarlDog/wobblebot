@@ -10,6 +10,43 @@ canonical completion dates.
 
 ## [Unreleased]
 
+### Stage 8.6 (2026-05-30) — Advisor hardening + grid widen (pre-soak)
+
+Acts on the grid-backtest verdict before the v1.0 gating soak. Rescoped
+from "advisor regime reorientation" to hardening-only after the
+regime-switching research arc closed (heuristic regime detection doesn't
+beat buy-and-hold), then narrowed further by measurement during the
+slices. Full account:
+`docs/reference/grid-strategy-research-synthesis-2026-05-30.md`.
+
+- **Widened the live BTC grid 1.0% → 3.0%** (`grid.default.spacing_percentage`,
+  synced across `settings.example.yml` ↔ the deploy-master `settings.yml`).
+  3% is the least-bad *static default* — it survives every regime; the
+  backtest showed no static spacing beats hold over full cycles. Exposure
+  unchanged ($60 = 3+3 × $10). ADR-006 park-when-offside unchanged.
+- **Documented the heuristic lookback coupling** instead of "fixing" it.
+  Measurement reversed the planned window-widen: at 3% the grid completes
+  only ~0.2–0.4 cycles/day, so `dont_fix_working` (cycles_min 8) is
+  unreachable in any volatility-current window, and widening the window
+  would make the −5% drawdown guards fire on ordinary daily noise.
+  `advise.metrics_lookback_hours` stays at 6h; `dont_fix_working` stays
+  enabled but documented-dormant at wide spacing (it auto-re-arms for the
+  MoE world's tight grids). A `config/heuristic/quant.yml` comment only.
+- **Deferred the vol→spacing curve recalibration** to the Oracle/regime
+  track. Recalibrating to "rest at 3%, never tighten" would bake in a
+  false absolute (a tight grid chosen in chop and pulled before the trend
+  works — proven live + a +164.6% perfect-foresight oracle), and would
+  invalidate the blessed 20-fixture judgment battery. The advisor is
+  advisory-only (`auto_apply` off) during the soak, so its mis-calibrated
+  curve is harmless log-noise.
+- **Ratified ADR-019** — advisor purpose: regime reader + transparent
+  guardrail, not a volatility tuner; posture-output-advisory-only
+  invariant; refines ADR-002/007. **ADR-020** (regime as a first-class
+  metric) deferred with the parked regime/Oracle track.
+
+No code paths changed; advisor stays advisory-only. Real-money cost
+$0.00 (offline backtests only).
+
 ### Stage 8.5 (2026-05-29) — Advisor heuristic+LLM cascade (pre-soak)
 
 A pre-soak value-add so the v1.0 gating soak runs on the real advisor.
