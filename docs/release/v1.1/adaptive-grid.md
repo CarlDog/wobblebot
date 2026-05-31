@@ -13,6 +13,13 @@
 > below; entries describing a regime classifier / regime-aware grid modes / confidence-driven
 > extension are part of that parked track. Per-symbol spacing + the graduated auto-apply gate
 > remain valid.*
+>
+> **Now ratified in ADR-019** (Stage 8.6 close, 2026-05-30): advisor purpose = regime reader +
+> guardrail, not a vol-tuner. The vol→spacing curve recalibration + its 20-fixture judgment
+> battery rework were *deferred* onto the parked Oracle track rather than shipped — recalibrating
+> to "rest at 3%, never tighten" would bake in a false absolute (a tight grid chosen in chop and
+> pulled before the trend works — proven live + the +164.6% oracle). The live grid runs a single
+> survival-optimized 3% static default meanwhile (Stage 8.6 Slice C).*
 
 *Entries here turn the static-grid engine into a regime-aware system: classify the market, evaluate advisor recommendations against outcomes, extend the grid under operator/advisor agreement, replay historical configs. All preserve ADR-002 (LLM advisory only) and ADR-006 (engine parks honestly when offside).*
 
