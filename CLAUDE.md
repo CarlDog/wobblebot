@@ -9,10 +9,11 @@ completion date. Do NOT duplicate project status here (per the documentation-dis
 rule); this section is a pointer, not a changelog.
 
 - **Current:** Phase 8 (Hardening & v1.0 Release). Phases 1–7 + Stages 8.0–8.3 closed;
-  **Stage 8.4.E v1.0 soak in progress**, with Stage 8.5 (advisor heuristic+LLM cascade)
-  landed as a pre-soak value-add (closed 2026-05-29). The gating soak runs on the NAS
-  Docker deployment, restarting ~2026-06-01 post-move. Phase 9 (Kraken Securities
-  equities) is committed to start after the v1.0 tag.
+  **Stage 8.4.E v1.0 soak in progress**, with Stage 8.5 (advisor heuristic+LLM cascade,
+  closed 2026-05-29) and Stage 8.6 (advisor hardening + grid widen to 3%, closed
+  2026-05-30; ADR-019 ratified) landed as pre-soak value-adds. The gating soak runs on
+  the NAS Docker deployment, restarting ~2026-06-01 post-move, now on the widened grid.
+  Phase 9 (Kraken Securities equities) is committed to start after the v1.0 tag.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..7}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
