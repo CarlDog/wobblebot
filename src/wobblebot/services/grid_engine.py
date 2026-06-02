@@ -58,6 +58,12 @@ from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
+# How often (in consecutive offside ticks) to emit a "still parked" INFO
+# summary while a symbol stays offside. The per-tick offside WARNING was
+# demoted to a transition + heartbeat after the 2026-06-02 soak logged it
+# every 5s for ~7h straight. 240 ticks ≈ 20 min at the default 5s cadence.
+_OFFSIDE_SUMMARY_EVERY_TICKS = 240
+
 # Order statuses that represent committed funds for the
 # max_daily_spend_usd cap (Stage 8.4.E follow-up 2026-05-22): the
 # field's name says SPEND, so canceled / expired BUYs — which never
@@ -111,7 +117,7 @@ class _SafetyDecision:
     reason: str | None = None
 
 
-class GridEngine:
+class GridEngine:  # pylint: disable=too-many-instance-attributes
     """Per-symbol micro-grid engine.
 
     Stateless across restarts (state lives in storage). The only
@@ -138,6 +144,11 @@ class GridEngine:
         # later if operators report surprise.
         self._paused_symbols: set[Symbol] = set()
         self._stop_requested = False
+        # Per-symbol count of consecutive offside ticks. Drives transition +
+        # heartbeat logging (log once on entry, periodic summary while
+        # parked, once on recovery) instead of a WARNING every tick. Absent
+        # / 0 means the symbol is onside.
+        self._offside_ticks: dict[Symbol, int] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -407,14 +418,35 @@ class GridEngine:
             )
 
         if offside:
-            _LOGGER.warning(
-                "grid offside; staying parked",
-                extra={
-                    "symbol": str(symbol),
-                    "current_price": str(current_price),
-                    "lowest_level": str(levels[0].price) if levels else None,
-                    "highest_level": str(levels[-1].price) if levels else None,
-                },
+            # Transition + heartbeat logging. A sustained downtrend can keep
+            # the grid parked for hours; emit ONE WARNING when it goes
+            # offside, then only a periodic INFO summary — never a WARNING
+            # every tick (the 2026-06-02 soak logged this every 5s for ~7h).
+            consecutive = self._offside_ticks.get(symbol, 0) + 1
+            self._offside_ticks[symbol] = consecutive
+            if consecutive == 1:
+                _LOGGER.warning(
+                    "grid offside; parking until price returns to the band",
+                    extra={
+                        "symbol": str(symbol),
+                        "current_price": str(current_price),
+                        "lowest_level": str(levels[0].price) if levels else None,
+                        "highest_level": str(levels[-1].price) if levels else None,
+                    },
+                )
+            elif consecutive % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
+                _LOGGER.info(
+                    "grid still offside; parked",
+                    extra={
+                        "symbol": str(symbol),
+                        "current_price": str(current_price),
+                        "consecutive_offside_ticks": consecutive,
+                    },
+                )
+        elif self._offside_ticks.pop(symbol, 0):
+            _LOGGER.info(
+                "grid back onside; resuming",
+                extra={"symbol": str(symbol), "current_price": str(current_price)},
             )
 
         return StepResult(
