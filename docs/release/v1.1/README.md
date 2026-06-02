@@ -82,7 +82,7 @@ goes silent (crash/power/network loss) — the failure the `finally`-block cance
 
 | # | Slice | Effort | Value | Safety | Notes |
 |---|---|---|---|---|---|
-| 1 | **Hardcoded-facts four-homes audit** | M | med | ⚠️ | **FIRST, load-bearing.** Apply the code/config/DB/live-fetch+cache test per mutable fact; **keep LLM pricing + Kraken fees code-resident**; model-compat lists are the prime DB/config candidate. Output = a punch list the rest of v1.1 references. Gates every storage-tier migration. (`infrastructure.md`) |
+| 1 | **Hardcoded-facts four-homes audit** | M | med | ⚠️ | ✅ **DONE 2026-06-01 → [`four-homes-audit.md`](four-homes-audit.md).** Safety carve-out held (pricing + fees stay code; review verified zero safety facts moved). Only move candidates = 3 model-ecosystem config externalizations (Q1–Q3 below), all queued (none trivial). Nothing unblocks a DB migration of a safety fact. |
 | 2 | Schema-drift coverage for canonical profiles | S | med | | Assert canonical profiles exist in operator `settings.yml`; wire drift tests into pre-commit/`make check`; improve the "profile not found" error. (`infrastructure.md`) |
 | 3 | `cli/preflight` ADR-003 key-scope verification | M | high | ⚠️ | **Read-only** scope check (`services/kraken_key_audit.py`): refuse exit 0 if trade key has Withdraw or harvest key has Trade. **No test-withdrawal probe** (rejected as dangerous). Needs the Kraken scope-surfacing endpoint identified. (`engine.md`) |
 | 4 | Solo-operator incident runbook | M | med | ⚠️ | Docs-only decision-tree (`v1.0-incident-runbook.md`): key compromise, unexpected withdrawal, web exposed, gitleaks/PII finding, bot misbehavior. NOT a team IR process. (`observability.md`) |
@@ -94,6 +94,20 @@ goes silent (crash/power/network loss) — the failure the `finally`-block cance
 code-resident); profile drift asserted; preflight refuses exit 0 on scope divergence; runbook
 + retry-policy docs committed; optional refactors merged only if clean; tests + lint green per
 commit; **no `main` merge.**
+
+### Queued from P0.1 (the four-homes audit) — all branch-safe, optional during the soak
+
+The audit produced three config-externalization candidates + code-health findings. They're
+non-safety, branch-safe (no `main`/soak impact), and could be pulled during the soak or
+deferred. Full detail in [`four-homes-audit.md`](four-homes-audit.md).
+
+| # | Slice | Effort | Notes |
+|---|---|---|---|
+| Q1 | Model-compat lists → config | S–M | `KNOWN_INCOMPATIBLE`/`KNOWN_DEGRADED` + the embedded recommendation list (`ollama_assistant.py`) → one config section, fail-soft loader, schema-drift test. The prime candidate (verdicts have flipped on re-probing). |
+| Q2 | Model-name patterns → config | S–M | `_REASONING_MODEL_PREFIXES` + `_THINKING_MODEL_PATTERNS` → config with a safe default. **Folds in the o4 latent-bug fix** below. |
+| Q3 | News-coin whitelist → config | S | `_COIN_PATTERNS` (`rss_news.py`; MATIC→POL stale) → config, derived from / cross-checked against the traded symbols. |
+| — | **o4 latent bug** | S | `_REASONING_MODEL_PREFIXES` is only `("o1","o3")` but `_PRICING` lists o4-class models → future o4/o5 misclassified. Fix in Q2, or a one-line fix-now. |
+| — | Dedup smells (code-health) | S–M | Kraken fee ×4 (⚠️ touches the validator), Kraken URL ×3, Ollama URL ×4, Anthropic URL/version ×2, Discord colors ×2, OHLC intervals ×2; RSS UA `0.1`↛`__version__`. Consolidate *in code*, not move out. |
 
 ---
 
