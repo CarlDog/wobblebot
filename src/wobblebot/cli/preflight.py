@@ -14,8 +14,13 @@ Kraken. Every order the engine wants to place goes through Kraken's
 end-to-end (auth / pair / precision / balance / ordermin / costmin)
 **without placing the order**.
 
-Exits 0 if every order validated, non-zero on any failure. Operator
-runs this before flipping to ``cli/live`` (which actually trades).
+Before the validate run it also enforces the ADR-003 key-scope
+invariant: the trade key must NOT have withdrawal permission (probed
+read-only via Kraken's ``WithdrawMethods`` — no funds move). Exit 3
+specifically flags that violation; exit 0 means every order validated
+AND the key scope is clean; other non-zero exits are validation / config
+failures. Operator runs this before flipping to ``cli/live`` (which
+actually trades).
 
 Configuration layering (per ADR-009):
 1. Base config — ``config/settings.yml`` (or fallback).
@@ -101,6 +106,38 @@ def _check_step_result(result: StepResult, expected_layout: int) -> int | None:
     return None
 
 
+async def _audit_trade_key_scope(adapter: KrakenAdapter) -> int | None:
+    """ADR-003: the trade key must NOT hold withdrawal permission.
+
+    Probes the key's withdraw scope read-only (Kraken ``WithdrawMethods``;
+    no funds move). Returns exit code 3 if the trade key CAN withdraw — a
+    critical key-misconfiguration, since the trading key must never be able
+    to move money out (only the separate Harvester key may). Returns
+    ``None`` when the check passes, or when it can't be completed (a
+    transient probe error logs a WARNING and lets preflight continue rather
+    than blocking a legitimate run on a network blip).
+    """
+    try:
+        can_withdraw = await adapter.has_withdraw_scope()
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "could not verify trade-key withdraw scope; continuing to validate run",
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return None
+    if can_withdraw:
+        _LOGGER.error(
+            "ADR-003 VIOLATION: the trade key (KRAKEN_TRADER_API_KEY) has WITHDRAWAL "
+            "permission. The trading key must NOT be able to withdraw funds — only the "
+            "separate Harvester key may. Turn off 'Withdraw Funds' for this key in "
+            "Kraken Pro -> Settings -> API, or mint a withdrawal-disabled trade key.",
+            extra={"key_var": "KRAKEN_TRADER_API_KEY", "exit_code": 3},
+        )
+        return 3
+    _LOGGER.info("trade-key scope OK: no withdrawal permission (ADR-003 invariant holds)")
+    return None
+
+
 async def _run(config: WobbleBotConfig) -> int:
     if config.preflight is None:
         _LOGGER.error("settings.yml is missing the `preflight:` section")
@@ -129,6 +166,12 @@ async def _run(config: WobbleBotConfig) -> int:
     engine = GridEngine(adapter, storage, grid_config, safety_config)
 
     try:
+        # ADR-003 key-scope gate (fail-fast before the validate run): the
+        # trade key must not be able to withdraw. Read-only probe.
+        scope_exit = await _audit_trade_key_scope(adapter)
+        if scope_exit is not None:
+            return scope_exit
+
         ref_price = (await adapter.get_current_price(config.preflight.symbol)).amount
         _LOGGER.info(
             "validate run starting",
