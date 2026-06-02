@@ -4,6 +4,43 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### ⚠️ Harvester `--execute` replay guard (P1 — highest-blast-radius hole)
+
+*Surfaced by the 2026-06-02 plan review; not previously planned.*
+
+**What:** an idempotency check ("layer 0") at the top of `cli/harvest --execute <id>`: before the
+seven defense layers, `SELECT TransferResult WHERE proposal_id=? AND status IN (pending, completed)`
+and **refuse** if a result already exists. Today the gates run 1–7 (enabled → lookup → direction →
+staleness → destination → balance → day-cap) and then go **straight to `withdraw()`** with no
+already-executed check.
+
+**Why:** `--execute` is the only money-out path and is trivially replayable — a double-tap, a shell
+re-run of the same id, or a retry after a perceived hang all re-withdraw. The rolling
+`max_withdrawal_per_day_usd` cap is the **only accidental backstop**, and only when the second
+amount exceeds it. Single highest-blast-radius hole in the codebase.
+
+**How:** deterministic SQL guard; own ADR (new defense layer) + a regression test that re-runs the
+same approved proposal and asserts the second call refuses. Cheap (S).
+
+**Trigger:** before the Harvester ever runs `--execute` against real funds (i.e. before money-out
+is enabled post-v1.0).
+
+### ⚠️ Harvester-key separateness + withdraw-scope verification (P1)
+
+*Symmetric inverse of the shipped P0.3 preflight gate; promotes the P0.3 "harvest-key checks deferred" note.*
+
+**What:** at `cli/harvest` startup, verify the Harvester key (a) is **distinct from the trade key**
+(fingerprint-compare the resolved secrets, not just the env-var names) and (b) **actually holds
+Withdraw scope** (`KrakenAdapter.has_withdraw_scope()`, already built for P0.3). Refuse to run if
+either fails.
+
+**Why:** P0.3 proves the *trade* key **cannot** withdraw; nothing proves the *harvester* key is
+separate and **can**. If both `.env` vars resolve to the same secret (copy-paste / shared key),
+ADR-003 financial-power-fragmentation collapses **silently** — the trade key would effectively hold
+withdraw authority.
+
+**Trigger:** with the replay guard, before money-out is enabled.
+
 ### Harvester reconciliation
 
 **What:** a `services/harvester_reconciler.py` parallel to

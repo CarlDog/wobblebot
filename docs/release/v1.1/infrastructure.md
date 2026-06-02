@@ -15,11 +15,14 @@ weekly. Output: a single test that fails loudly when Kraken
 changes a field name or response shape, before that change
 silently breaks the engine.
 
-**Why deferred:** CI doesn't exist yet (see "CI / GitHub
-Actions" entry). Manual integration test run is the current
-fallback.
+**Why deferred (updated 2026-06-02):** CI now exists — `docker-publish.yml`'s test job
+(black/isort/pylint/mypy/pytest) gates the GHCR publish. This contract test just needs
+wiring into that gate (it carries the `integration` marker, excluded by default, so add it
+explicitly). While there: the mock-only e2e tests (`test_grid_engine_e2e.py`,
+`test_phase5_operator_e2e.py`) are CI-safe and should move into the gate too. Manual run is
+the fallback until then.
 
-**Trigger:** pair with the CI / GitHub Actions entry.
+**Trigger:** wire into the existing `docker-publish.yml` test gate.
 
 ### CI / GitHub Actions
 
