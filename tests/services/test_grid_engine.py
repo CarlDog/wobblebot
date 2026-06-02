@@ -267,6 +267,43 @@ class TestOffside:
         assert result.action == "stepped"
         assert result.offside is False
 
+    async def test_offside_logs_once_not_every_tick(
+        self,
+        storage: SQLiteStorageAdapter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A sustained downtrend logs offside ONCE on entry, not a WARNING
+        every tick (the 2026-06-02 soak surfaced ~7h of per-tick warnings)."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("48000"))  # below the lowest BUY
+
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            for _ in range(5):  # five consecutive offside ticks
+                await engine.step(BTC_USD)
+
+        parking = [r for r in caplog.records if "parking" in r.getMessage()]
+        assert len(parking) == 1, "offside WARNING must fire once on entry, not per tick"
+
+    async def test_offside_recovery_logs_resuming(
+        self,
+        storage: SQLiteStorageAdapter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("48000"))
+        await engine.step(BTC_USD)  # offside
+        exchange.set_price(BTC_USD, Decimal("50000"))  # back into the band
+
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+
+        resuming = [r for r in caplog.records if "back onside" in r.getMessage()]
+        assert resuming, "expected a 'back onside; resuming' log on recovery"
+
 
 # ---------------------------------------------------------------------------
 # State recovery: a fresh engine pointed at the same storage resumes
