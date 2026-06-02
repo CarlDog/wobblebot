@@ -138,7 +138,9 @@ async def _audit_trade_key_scope(adapter: KrakenAdapter) -> int | None:
     return None
 
 
-async def _run(config: WobbleBotConfig) -> int:
+async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
+    config: WobbleBotConfig,
+) -> int:
     if config.preflight is None:
         _LOGGER.error("settings.yml is missing the `preflight:` section")
         return 2
