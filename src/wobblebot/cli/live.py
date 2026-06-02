@@ -65,6 +65,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.models import Order
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
@@ -89,6 +90,14 @@ async def _cancel_all_open(
 ) -> tuple[int, int]:
     """Cancel every open order across all configured ``symbols``.
 
+    Fetches the account's open orders with a SINGLE global ``OpenOrders``
+    call (not one per symbol — that burst blew Kraken's private-API rate
+    limit on a multi-coin shutdown, 2026-06-02), then cancels the orders
+    whose symbol is configured. A fetch failure propagates so the caller
+    marks the cancel unclean and LEAVES the dead-man's-switch armed
+    (ADR-021) — Kraken's server-side timer becomes the backstop that
+    sweeps whatever this cleanup couldn't.
+
     After each successful ``adapter.cancel_order()``, persist the
     ``status="canceled"`` transition back to storage (Stage 8.1.B /
     ADR-018). Storage failures log and continue — losing the audit
@@ -99,54 +108,49 @@ async def _cancel_all_open(
     """
     cancelled = 0
     failed = 0
-    for symbol in symbols:
+    configured = set(symbols)
+    opens = await adapter.get_open_orders()
+    for o in opens:
+        if o.symbol not in configured:
+            continue
         try:
-            opens = await adapter.get_open_orders(symbol=symbol)
+            await adapter.cancel_order(o)
+            cancelled += 1
+            _LOGGER.info(
+                "shutdown cancelled",
+                extra={"symbol": str(o.symbol), "exchange_id": o.exchange_id},
+            )
         except WobbleBotPortError as exc:
+            failed += 1
             _LOGGER.error(
-                "shutdown get_open_orders failed",
-                extra={"symbol": str(symbol), "error": str(exc)},
+                "shutdown cancel failed",
+                extra={
+                    "symbol": str(o.symbol),
+                    "exchange_id": o.exchange_id,
+                    "error": str(exc),
+                },
             )
             continue
-        for o in opens:
-            try:
-                await adapter.cancel_order(o)
-                cancelled += 1
-                _LOGGER.info(
-                    "shutdown cancelled",
-                    extra={"symbol": str(symbol), "exchange_id": o.exchange_id},
+        # Stage 8.1.B: persist the status transition so the
+        # storage view matches what we just did to the exchange.
+        try:
+            await storage.save_order(
+                o.model_copy(
+                    update={
+                        "status": "canceled",
+                        "updated_at": Timestamp(dt=datetime.now(UTC)),
+                    }
                 )
-            except WobbleBotPortError as exc:
-                failed += 1
-                _LOGGER.error(
-                    "shutdown cancel failed",
-                    extra={
-                        "symbol": str(symbol),
-                        "exchange_id": o.exchange_id,
-                        "error": str(exc),
-                    },
-                )
-                continue
-            # Stage 8.1.B: persist the status transition so the
-            # storage view matches what we just did to the exchange.
-            try:
-                await storage.save_order(
-                    o.model_copy(
-                        update={
-                            "status": "canceled",
-                            "updated_at": Timestamp(dt=datetime.now(UTC)),
-                        }
-                    )
-                )
-            except StorageError as exc:
-                _LOGGER.warning(
-                    "shutdown cancel persistence failed; reconciler will catch on next start",
-                    extra={
-                        "symbol": str(symbol),
-                        "exchange_id": o.exchange_id,
-                        "error": str(exc),
-                    },
-                )
+            )
+        except StorageError as exc:
+            _LOGGER.warning(
+                "shutdown cancel persistence failed; reconciler will catch on next start",
+                extra={
+                    "symbol": str(o.symbol),
+                    "exchange_id": o.exchange_id,
+                    "error": str(exc),
+                },
+            )
     return cancelled, failed
 
 
@@ -203,9 +207,27 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
     check. Returns True when the loss cap tripped (caller stops)."""
+    # One global OpenOrders fetch per tick, shared across every symbol.
+    # Kraken's OpenOrders returns the whole account in a single call; the
+    # engine used to fetch per-symbol, so a 5-coin tick fired it 5x and blew
+    # the private-API rate limit (EAPI:Rate limit exceeded, 2026-06-02). On a
+    # fetch failure, skip this tick's steps rather than let each symbol fall
+    # back to its own fetch (which would worsen the rate limit) — the next
+    # tick retries; the loss-cap check + DMS ping below still run.
+    tick_open_orders: list[Order] | None
+    try:
+        tick_open_orders = await adapter.get_open_orders()
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "tick open-orders fetch failed; skipping this tick's steps",
+            extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+        )
+        tick_open_orders = None
     for symbol in live.symbols:
+        if tick_open_orders is None:
+            break
         try:
-            result = await engine.step(symbol)
+            result = await engine.step(symbol, exchange_open_orders=tick_open_orders)
             # Per-symbol per-tick output is DEBUG so the operator's
             # terminal doesn't flood at the 5s default cadence. The
             # actually-interesting events (fills, cap trips, session

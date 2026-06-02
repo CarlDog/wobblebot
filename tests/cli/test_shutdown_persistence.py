@@ -365,8 +365,10 @@ class TestPerTickBalanceResilience:
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
 
         # _run_one_tick should NOT raise; should return False (no cap trip).
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
         result = await _run_one_tick(
-            adapter=MagicMock(),
+            adapter=adapter,
             engine=engine,
             live=live_cfg,
             tick=1,
@@ -524,8 +526,10 @@ class TestSessionLossCapAccountsForAssetConversion:
             )
         )
 
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
         result = await _run_one_tick(
-            adapter=MagicMock(),
+            adapter=adapter,
             engine=engine,
             live=live_cfg,
             tick=1,
@@ -567,8 +571,10 @@ class TestSessionLossCapAccountsForAssetConversion:
             )
         )
 
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
         result = await _run_one_tick(
-            adapter=MagicMock(),
+            adapter=adapter,
             engine=engine,
             live=live_cfg,
             tick=1,
