@@ -14,9 +14,10 @@ passing to these models.
 from __future__ import annotations
 
 from decimal import Decimal
+from math import ceil
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from wobblebot.domain.value_objects import Symbol
 
@@ -97,6 +98,15 @@ class LiveConfig(BaseModel):
     # to an operator watching the terminal. Default 15 min keeps the
     # signal-to-noise ratio sane.
     terminal_heartbeat_seconds: float = Field(default=900.0, gt=0)
+    # ADR-021: server-side dead man's switch. Each tick the engine pings
+    # Kraken's CancelAllOrdersAfter with this timeout; if cli/live dies
+    # (crash, power loss, network partition) Kraken auto-cancels every
+    # open order once the timer lapses — the 2026-05-19 outage scenario
+    # the finally-block cancel cannot cover. ON by default: a real-
+    # incident-motivated safety net that can only cancel, never place or
+    # move money. ``null`` disables it. NOTE: Kraken's timer is account-
+    # wide, so it cancels manually-placed orders on the same account too.
+    dead_mans_switch_seconds: int | None = Field(default=60)
 
     class Config:
         frozen = True
@@ -105,6 +115,24 @@ class LiveConfig(BaseModel):
     @classmethod
     def _parse_symbols(cls, v: object) -> list[Symbol]:
         return _coerce_symbol_list(v)
+
+    @model_validator(mode="after")
+    def _validate_dead_mans_switch(self) -> LiveConfig:
+        """When enabled, the timeout must comfortably outlast a tick.
+
+        Floor = ``max(10, ceil(2 x tick_seconds))`` so a couple of slow
+        ticks (network jitter, a GC pause) can't lapse the timer and
+        falsely cancel every open order mid-session.
+        """
+        if self.dead_mans_switch_seconds is not None:
+            floor = max(10, ceil(self.tick_seconds * 2))
+            if self.dead_mans_switch_seconds < floor:
+                raise ValueError(
+                    f"dead_mans_switch_seconds ({self.dead_mans_switch_seconds}) must be "
+                    f">= {floor} (max of 10 and 2 x tick_seconds={self.tick_seconds}) so a "
+                    f"few slow ticks can't falsely trip the switch; set null to disable"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------

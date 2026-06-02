@@ -85,6 +85,31 @@ class TestLiveConfig:
         with pytest.raises(ValidationError, match="log_format"):
             LiveConfig(symbols=["BTC/USD"], log_format="csv")  # type: ignore[arg-type]
 
+    def test_dead_mans_switch_default_on(self) -> None:
+        # ADR-021: on by default at 60s.
+        cfg = LiveConfig(symbols=["BTC/USD"])
+        assert cfg.dead_mans_switch_seconds == 60
+
+    def test_dead_mans_switch_null_disables(self) -> None:
+        cfg = LiveConfig(symbols=["BTC/USD"], dead_mans_switch_seconds=None)
+        assert cfg.dead_mans_switch_seconds is None
+
+    def test_dead_mans_switch_below_floor_rejected(self) -> None:
+        # tick 5.0 -> floor max(10, 2*5) = 10; 9 is below it.
+        with pytest.raises(ValidationError, match="dead_mans_switch_seconds"):
+            LiveConfig(symbols=["BTC/USD"], dead_mans_switch_seconds=9)
+
+    def test_dead_mans_switch_floor_scales_with_tick(self) -> None:
+        # tick 30.0 -> floor max(10, 2*30) = 60; 50 is below it, 60 is OK.
+        with pytest.raises(ValidationError, match="dead_mans_switch_seconds"):
+            LiveConfig(symbols=["BTC/USD"], tick_seconds=30.0, dead_mans_switch_seconds=50)
+        ok = LiveConfig(symbols=["BTC/USD"], tick_seconds=30.0, dead_mans_switch_seconds=60)
+        assert ok.dead_mans_switch_seconds == 60
+
+    def test_dead_mans_switch_explicit_value_accepted(self) -> None:
+        cfg = LiveConfig(symbols=["BTC/USD"], dead_mans_switch_seconds=120)
+        assert cfg.dead_mans_switch_seconds == 120
+
     def test_frozen(self) -> None:
         cfg = LiveConfig(symbols=["BTC/USD"])
         with pytest.raises(ValidationError):
