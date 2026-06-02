@@ -362,7 +362,7 @@ async def _process_pending_commands(
     return len(approved)
 
 
-async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements,too-many-branches
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -452,7 +452,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
-                        "dead man's switch reset failed; continuing " "(timer retains prior value)",
+                        "dead man's switch reset failed; continuing (timer retains prior value)",
                         extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
 
