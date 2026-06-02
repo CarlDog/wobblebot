@@ -104,9 +104,9 @@ deferred. Full detail in [`four-homes-audit.md`](four-homes-audit.md).
 | # | Slice | Effort | Notes |
 |---|---|---|---|
 | Q1 | Model-compat lists → config | S–M | `KNOWN_INCOMPATIBLE`/`KNOWN_DEGRADED` + the embedded recommendation list (`ollama_assistant.py`) → one config section, fail-soft loader, schema-drift test. The prime candidate (verdicts have flipped on re-probing). |
-| Q2 | Model-name patterns → config | S–M | `_REASONING_MODEL_PREFIXES` + `_THINKING_MODEL_PATTERNS` → config with a safe default. **Folds in the o4 latent-bug fix** below. |
+| Q2 | Model-name patterns → config | S–M | `_REASONING_MODEL_PREFIXES` + `_THINKING_MODEL_PATTERNS` → config with a safe default. **o4 bug FIXED code-resident** (below); externalization itself still queued (low value for a solo operator-dev). |
 | Q3 | News-coin whitelist → config | S | `_COIN_PATTERNS` (`rss_news.py`; MATIC→POL stale) → config, derived from / cross-checked against the traded symbols. |
-| — | **o4 latent bug** | S | `_REASONING_MODEL_PREFIXES` is only `("o1","o3")` but `_PRICING` lists o4-class models → future o4/o5 misclassified. Fix in Q2, or a one-line fix-now. |
+| — | ✅ **o4 latent bug FIXED** (2026-06-02) | S | `is_reasoning_model` now matches the whole o-series (`o<digit>` regex) — `o4-mini` (priced, was unmatched) + future o5 handled. gpt-5 reasoning-shape flagged-not-touched (separate API question). |
 | — | Dedup smells (code-health) | S–M | Kraken fee ×4 (⚠️ touches the validator), Kraken URL ×3, Ollama URL ×4, Anthropic URL/version ×2, Discord colors ×2, OHLC intervals ×2; RSS UA `0.1`↛`__version__`. Consolidate *in code*, not move out. |
 
 ---
