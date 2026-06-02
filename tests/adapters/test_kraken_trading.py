@@ -397,6 +397,56 @@ class TestDeadMansSwitch:
 
 
 # ---------------------------------------------------------------------------
+# has_withdraw_scope (ADR-003 key-scope probe, P0.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestHasWithdrawScope:
+    async def test_success_means_has_withdraw_scope(self) -> None:
+        # WithdrawMethods returns a LIST result; the probe must treat a
+        # clean (empty error array) response as "has scope" regardless.
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/0/private/WithdrawMethods"
+            return httpx.Response(
+                200, json={"error": [], "result": [{"method": "Bitcoin", "minimum": "0.0005"}]}
+            )
+
+        adapter = _make_adapter(handler)
+        assert await adapter.has_withdraw_scope() is True
+
+    async def test_permission_denied_means_no_scope(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"error": ["EGeneral:Permission denied"], "result": {}})
+
+        adapter = _make_adapter(handler)
+        assert await adapter.has_withdraw_scope() is False
+
+    async def test_other_error_reraises(self) -> None:
+        # A non-permission failure must NOT be misread as "no scope".
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"error": ["EAPI:Invalid nonce"], "result": {}})
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError):
+            await adapter.has_withdraw_scope()
+
+    async def test_not_gated_by_dry_run(self) -> None:
+        # preflight runs the adapter in dry_run=True, but the scope probe
+        # must still hit Kraken — the point is to read the live key's perms.
+        hits = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/0/private/WithdrawMethods"
+            hits["n"] += 1
+            return httpx.Response(200, json={"error": [], "result": []})
+
+        adapter = _make_adapter(handler, dry_run=True)
+        assert await adapter.has_withdraw_scope() is True
+        assert hits["n"] == 1
+
+
+# ---------------------------------------------------------------------------
 # get_order_status
 # ---------------------------------------------------------------------------
 

@@ -106,6 +106,12 @@ class _PairMetadata:
 # stable enough for this.
 _INSUFFICIENT_FUNDS_MARKERS = ("EOrder:Insufficient funds",)
 
+# Kraken's API-key-permission rejection. Surfaced as ``EGeneral:Permission
+# denied`` (and occasionally ``EAPI:Permission denied``); the substring is
+# the stable part. Used by ``has_withdraw_scope`` to tell "key lacks the
+# permission" (expected, good) apart from a transport/protocol failure.
+_PERMISSION_DENIED_MARKERS = ("Permission denied",)
+
 
 class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
     """Concrete ``ExchangePort`` for the Kraken REST API.
@@ -535,6 +541,36 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             )
         return refid
 
+    async def has_withdraw_scope(self) -> bool:
+        """Probe whether this API key holds Kraken's "Withdraw Funds" permission.
+
+        Calls the read-only ``/0/private/WithdrawMethods`` endpoint, which
+        Kraken gates behind the Withdraw-Funds permission and which moves
+        **no money** (it only lists available withdrawal methods). A
+        successful response means the key CAN withdraw; an
+        ``EGeneral:Permission denied`` rejection means it cannot. Any
+        OTHER failure (transport, nonce, etc.) re-raises ``ExchangeError``
+        so a transient error is never silently read as "no withdraw scope".
+
+        Used by ``cli/preflight`` to enforce the ADR-003 invariant that the
+        TRADE key must NOT be able to withdraw — only the separate Harvester
+        key may. **Deliberately NOT gated by ``dry_run``**: the point is to
+        interrogate the live key's real permissions, and the probe call is
+        itself read-only and safe. There is intentionally no
+        test-withdrawal: actually attempting ``Withdraw`` is rejected as
+        dangerous; ``WithdrawMethods`` surfaces the same permission bit
+        without touching funds.
+        """
+        try:
+            # WithdrawMethods returns a *list* result; we only need the
+            # error-array signal, so relax the dict-result assertion.
+            await self._private_post("/0/private/WithdrawMethods", require_result=False)
+            return True
+        except ExchangeError as exc:
+            if any(marker in str(exc) for marker in _PERMISSION_DENIED_MARKERS):
+                return False
+            raise
+
     # ------------------------------------------------ Asset metadata cache
 
     async def _ensure_asset_metadata(self) -> None:
@@ -742,7 +778,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         return self._unwrap_envelope(response, path)
 
     async def _private_post(
-        self, path: str, params: dict[str, Any] | None = None
+        self, path: str, params: dict[str, Any] | None = None, *, require_result: bool = True
     ) -> dict[str, Any]:
         """Issue a signed POST to a private Kraken endpoint and return ``result``.
 
@@ -768,10 +804,12 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             response = await self._http.post(path, data=body, headers=headers)
         except httpx.HTTPError as exc:
             raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-        return self._unwrap_envelope(response, path)
+        return self._unwrap_envelope(response, path, require_result=require_result)
 
     @staticmethod
-    def _unwrap_envelope(response: httpx.Response, path: str) -> dict[str, Any]:
+    def _unwrap_envelope(
+        response: httpx.Response, path: str, require_result: bool = True
+    ) -> dict[str, Any]:
         """Validate Kraken's ``{"error": [...], "result": {...}}`` envelope.
 
         Kraken returns HTTP 200 even on application errors — the
@@ -791,9 +829,14 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         if errors:
             raise ExchangeError(f"Kraken {path} returned errors: {errors}")
         result = envelope.get("result")
-        if not isinstance(result, dict):
+        if isinstance(result, dict):
+            return result
+        if require_result:
             raise ExchangeError(f"Kraken {path} response missing 'result' object")
-        return result
+        # Some endpoints (e.g. WithdrawMethods) return a list result; callers
+        # that only need the error-array signal pass require_result=False and
+        # get a normalized empty dict.
+        return {}
 
     def _make_nonce(self) -> int:
         """Generate a strictly increasing nonce (milliseconds since epoch).
