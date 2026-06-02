@@ -439,6 +439,23 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # operator_storage isn't wired.
             await emit_heartbeat(operator_storage, "cli/live")
 
+            # ADR-021: pet Kraken's server-side dead man's switch every
+            # tick (before any order is placed this iteration). If this
+            # loop dies — crash, power loss, network partition — Kraken
+            # auto-cancels all open orders once the timer lapses, the
+            # safety net the finally-block cancel can't provide when the
+            # host is gone. Log-and-continue: never crash a tick over the
+            # switch, and a failed ping just leaves the timer at its prior
+            # (still-protective) value until the next tick re-pings.
+            if live.dead_mans_switch_seconds is not None:
+                try:
+                    await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
+                except WobbleBotPortError as exc:
+                    _LOGGER.warning(
+                        "dead man's switch reset failed; continuing " "(timer retains prior value)",
+                        extra={"error": str(exc), "error_type": type(exc).__name__},
+                    )
+
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(
@@ -519,12 +536,27 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             ended_known = False
         try:
             cancelled, failed = await _cancel_all_open(adapter, storage, tuple(live.symbols))
+            cancel_clean = failed == 0
         except WobbleBotPortError as exc:
             _LOGGER.warning(
                 "session_end cancel_all_open raised; reconciler will catch stragglers",
                 extra={"error": str(exc)},
             )
             cancelled, failed = 0, 0
+            cancel_clean = False
+        # ADR-021: disarm the dead man's switch ONLY on a confirmed-clean
+        # cancel. If our own cancellation failed or raised, deliberately
+        # LEAVE it armed so Kraken's timer becomes the backstop that sweeps
+        # the stragglers we couldn't — exactly the failure mode it exists
+        # for. Disarm == set timeout 0.
+        if live.dead_mans_switch_seconds is not None and cancel_clean:
+            try:
+                await adapter.set_dead_mans_switch(0)
+            except WobbleBotPortError as exc:
+                _LOGGER.warning(
+                    "dead man's switch disarm failed; Kraken timer will lapse harmlessly",
+                    extra={"error": str(exc)},
+                )
         session_pnl = ended_value_usd - started_value_usd if ended_known else Decimal("0")
         duration_seconds = round(time.monotonic() - started_at, 1)
         ending_usd_str = str(ended_usd) if ended_known else "unknown"
