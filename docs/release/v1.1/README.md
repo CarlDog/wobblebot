@@ -52,9 +52,10 @@ never the sort key). **WIP limit: finish a phase before opening the next** — r
 
 | | |
 |---|---|
-| `main` | = the **v0.1.0 candidate** at `73e9388` (the hardening below, fast-forwarded 2026-06-02) |
+| `main` | = the **v0.1.0 candidate** at `38b8678` (advances with soak-hotfixes; **no longer frozen** since 2026-06-02) |
 | v1.0 hardening | ✅ dead man's switch (ADR-021) · preflight key-scope gate · four-homes/schema-drift/retry audits · o4 fix · G1 cleanup · offside log fix — **all on `main`** |
-| v1.0 | gating soak being **restarted on the new candidate, multi-coin** |
+| v1.0 soak-hotfixes | ✅ rate-limit batch fix + DMS disarm-on-failed-cancel fix (`abf3aa6`) · regression test (`8b25feb`) · DOGE ordermin workaround — **2026-06-02, on `main`** |
+| v1.0 | gating soak **running multi-coin** (ETH/SOL/XRP/DOGE/ADA) on the hardened candidate |
 | "v1.1" (post-tag) | the **P1–P4 roadmap below** — branches off `main` after the v1.0 tag |
 
 ## Phase map
@@ -81,11 +82,35 @@ goes silent (crash/power/network loss) — the failure the `finally`-block cance
 
 ---
 
-## P0 — Branch-safe groundwork (during the soak, `main` frozen)
+## ✅ Done — soak safety hotfixes (2026-06-02, on `main`)
 
-**Goal:** land everything provably safe on the `v1.1` branch while v1.0 soaks — the two
-`v1.1`-start gates, docs-only deliverables, and branch-only refactors that need neither a
-`main` merge, the tag, nor accumulated data. **No `main` merge.**
+The 2026-06-02 multi-coin soak restart surfaced two real safety defects, both **fixed on the
+v1.0 candidate**:
+
+- **Per-symbol `OpenOrders` rate-limit storm** — the engine fetched open orders once per symbol
+  per tick; 5 coins × that tripped `EAPI:Rate limit exceeded`, blocking startup reconciliation
+  and the shutdown cancel. Fix: one global fetch per tick distributed to every symbol (private
+  calls now ~3/tick regardless of coin count). `abf3aa6`.
+- **Dead-man's-switch disarmed on a failed shutdown cancel** — a rate-limited `_cancel_all_open`
+  fetch-failure returned `(0,0)` → caller read `cancel_clean=True` → `set_dead_mans_switch(0)`,
+  leaving orders open AND unprotected (~15 orders, ~10 min). Same `abf3aa6` fixes it (the global
+  fetch now propagates → `cancel_clean=False` → switch stays armed); regression test `8b25feb`.
+  The DMS arming itself was verified live (`tools/check_dead_mans_switch.py`: Kraken
+  `triggerTime` = `currentTime` + timeout).
+
+Also shipped: DOGE `order_size_usd` $5→$6 (Kraken's fixed 50-DOGE ordermin; $5 fell to 49.99
+DOGE at ~$0.10) and the diagnostic `tools/check_dead_mans_switch.py`. See ADR-021 + `engine.md`.
+
+---
+
+## ✅ P0 — Branch-safe groundwork (DONE — merged to `main` 2026-06-02)
+
+**Goal (as written):** land everything provably safe while v1.0 soaks — the two `v1.1`-start
+gates, docs-only deliverables, and branch-only refactors. **Historical note:** this work turned
+out to be v1.0 hardening and was fast-forwarded into `main`; the original "no `main` merge /
+`main` frozen" constraint was lifted 2026-06-02 (see the strategy update at the top). Slices 1–5
+are done; the optional refactors (#6/#7) + the Q1–Q3 externalizations are **post-tag cleanup**,
+not blockers.
 
 | # | Slice | Effort | Value | Safety | Notes |
 |---|---|---|---|---|---|
@@ -118,11 +143,18 @@ deferred. Full detail in [`four-homes-audit.md`](four-homes-audit.md).
 
 ---
 
-## 🚦 GATE — tag v1.0
+## 🚦 GATE — tag v1.0 (code-blocked, planning-open)
 
-**v1.0 soak passes → tag v1.0 → merge P0 + the dead-man's-switch to `main` → `main` unfreezes.**
-Everything below this line requires the tag. *(Open question: the exact soak passing criteria —
-see [Open questions](#open-questions).)*
+**v1.0 soak passes → tag v1.0 → P1–P4 branch off `main`.** The hardening + soak-hotfixes are
+already on `main`; this gate is **code-blocked, not planning-blocked** — plan items below may be
+written and refined during the soak (e.g. the P3 buying-power card, `38b8678`), but no P1+
+*code* lands until the tag.
+
+**Soak pass criteria** (resolves [Open question](#open-questions) 1): engine-correctness coverage
++ reconciliation across restarts + ≥1 of each daemon cycle + **no hard-stops** (per the soak
+runbook). Profit and BTC direction are explicitly **NOT** criteria — alts are BTC-correlated, so
+this measures *coverage, not profit* (decorrelation is the equities/Phase 9 play). Target
+duration ~1 month on the multi-coin restart.
 
 ---
 
@@ -144,7 +176,11 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | Footer "update available" indicator | S–M | low-med | | `release_checker` polls GitHub releases; disableable. Meaningless until a tag exists — lands right after it. |
 | More Kraken crypto pairs | S | med | | Pure config (engine multi-symbol since Stage 2.4). Operator risk-budget call on which coins / what split. |
 | **Engine ordermin-awareness** | S–M | med | ⚠️ | A fixed `order_size_usd` ÷ a rising price can slide under a pair's fixed-quantity `ordermin` (DOGE: $5 → 49.99 < 50 DOGE at ~$0.10, 2026-06-02 soak). The engine already holds pair metadata — bump the volume to clear `ordermin` (capped by the per-coin cap) or skip with a clear INFO, instead of submitting a doomed order. Operator worked around it per-coin (DOGE `order_size_usd: 6`). |
-| **Dead-man's-switch arm confirmation** | S–M | high | ⚠️ | `set_dead_mans_switch` discards Kraken's `CancelAllOrdersAfter` response, so the bot never confirms the arm took (2026-06-02: 15 orders open ~10 min with the switch "configured" at 120s, yet it never fired). Return + log Kraken's `triggerTime` on each arm; consider refusing to place orders when the switch isn't confirmed-armed, so a rate-limit storm can't leave unprotected orders. Diagnostic shipped: `tools/check_dead_mans_switch.py`. |
+| **Dead-man's-switch arm confirmation** | S–M | high | ⚠️ | `set_dead_mans_switch` discards Kraken's `CancelAllOrdersAfter` response, so the bot doesn't *confirm* the arm took. (The 2026-06-02 non-firing was the disarm-on-failed-cancel bug, now **fixed in `abf3aa6`**; the arm itself is verified working via `tools/check_dead_mans_switch.py`.) Defense-in-depth: return + log Kraken's `triggerTime` on each arm in-loop; consider refusing to place orders when the switch isn't confirmed-armed. |
+| **Harvester `--execute` replay guard** | S | high | ⚠️ | **Highest-blast-radius hole in the codebase** (2026-06-02 plan review). `cli/harvest --execute` runs gates 1–7 (enabled/lookup/direction/staleness/destination/balance/day-cap) then goes straight to `withdraw()` — no "already-executed for this `proposal_id`" check. A double-tap / shell re-run / retry-after-perceived-hang can double-withdraw; the rolling day-cap is the only accidental backstop. Fix = a cheap "layer 0": `SELECT TransferResult WHERE proposal_id=? AND status IN (pending,completed) → refuse`. Own ADR + test. (Not in `harvester.md`.) |
+| **Harvester-key separateness + withdraw-scope check** | S–M | high | ⚠️ | Symmetric inverse of the shipped P0.3 gate (which proves the *trade* key can't withdraw). Nothing proves the *harvester* key is **distinct from the trade key** AND **holds Withdraw scope** — if both `.env` vars resolve to the same secret, ADR-003 financial-power-fragmentation collapses silently. Reuse `has_withdraw_scope()` + a key-fingerprint compare at `cli/harvest` startup. Promotes the P0.3 "harvest-key checks deferred" note to a real slice. |
+| **Today's-PnL truncation fix** | S | med-high | ⚠️ | `today_realized_pnl` reads `get_trades(limit=100)` (`operator_service.py:865`, `web/routes/status.py:252`); multi-coin makes >100 trades/day plausible, so the oldest legs silently drop and PnL **undercounts with no error** (the dashboard can show fees from trades whose PnL it isn't counting — the fee path already uses `limit=10_000` at `cost.py:214`). Fix: scope by time-window in operator-tz, not a fixed row count. Prerequisite to the P3 "Today's PnL split". |
+| **`EmergencyStopConfig`: wire or document** | S | med | ⚠️ | `safety.emergency_stop.{max_loss_percentage,min_exchange_balance_usd}` ships in `settings.example.yml` but `grid_engine._check_safety` (line 629) enforces only the 4 caps — the field is read by nobody (only `calibrator.py` scaling + a `preflight.py` throwaway). An operator reasonably believes it's a hard balance floor; it does nothing. **A silent dead safety knob is worse than none** — wire `min_exchange_balance_usd` as a 5th cap, or document it as calibration-only in the schema + known-limitations. Pick one. |
 
 ---
 
@@ -283,14 +319,16 @@ gated out by the standing operator-experience rules; Claude pushes back if asked
 clear. **Phase 9 (Kraken Securities equities)** is a committed *phase*, not a v1.1 item — pointer only.
 
 ### Already shipped (listed for reconciliation; no action)
-Graceful-shutdown timeout (2026-05-23, into v1.0) · `cli/observe --backfill` substrate
-(2026-05-25) · Discord response quality (2026-05-24, v1.0).
+Dead man's switch (ADR-021, 2026-06-02) · rate-limit batch fix + DMS disarm-on-failed-cancel fix
+(`abf3aa6`) + its regression test (`8b25feb`) · DOGE ordermin $5→$6 workaround · graceful-shutdown
+timeout (2026-05-23, into v1.0) · `cli/observe --backfill` substrate (2026-05-25) · Discord
+response quality (2026-05-24, v1.0).
 
 ---
 
 ## Guardrails
 
-1. **Branch-freeze:** `main` frozen at `152e830` until the v1.0 tag; image rebuilds only on push-to-`main`. All active work on `v1.1`; only P0 proceeds during the soak.
+1. **`main` = the v1.0 candidate (freeze lifted 2026-06-02):** the hardening + soak-hotfixes live on `main`, which advances with soak-surfaced *hotfixes only* during the soak — no speculative P1+ code until the tag (planning/doc work is open). Image rebuilds only on a push-to-`main` that touches a build-allowlist path (docs-only pushes don't rebuild); the deployed soak is pinned via the `IMAGE_TAG` stack env var, so a push doesn't auto-redeploy it.
 2. **Advisory-only (ADR-002):** the LLM never executes trades or transfers. Auto-action features stay parked behind their own ADRs + accrued data; auto-pause needs an ADR-002 ratified-with-exception. `pending_commands WHERE status='approved'` stays the firewall on every mutation.
 3. **Harvester sole transfer authority (ADR-003/004):** no `BankingPort`; trade key has no Withdraw; Withdraw lives only on the Harvester key. Top-up deposits parked behind a feasibility check + new ADR + ADR-003 re-ratification.
 4. **Safety-critical facts stay code-resident:** the P0 audit keeps LLM pricing + Kraken fees in code; only non-safety facts may move, and only after the verdict.
@@ -308,7 +346,7 @@ Graceful-shutdown timeout (2026-05-23, into v1.0) · `cli/observe --backfill` su
 
 Resolve as we reach each phase; the plan stands without them, but a few shape it.
 
-1. **Soak exit criteria** — what passing condition ends the soak / triggers the tag? (The P0↔P1 pivot.)
+1. **Soak exit criteria** — ✅ **DEFINED 2026-06-02** (see the GATE above): engine-coverage + reconciliation-across-restarts + ≥1 of each daemon cycle + no hard-stops; profit/BTC-direction NOT a criterion. Open sub-question: the minimum *duration* (the multi-coin restart targets ~1 month).
 2. **"Success" definition** for advisor outcome tracking (P4 keystone) — fill-cadence delta? realized-PnL? cap-trip avoidance? operator-regret?
 3. **Four-homes migration scope** — after the audit, move approved facts in one wave or one at a time? (Bounds whether SQLCipher is in v1.1's horizon.)
 4. **Branch-only refactor appetite** (P0 #6/#7) — pull into the soak window only if clean, or leave parked?
