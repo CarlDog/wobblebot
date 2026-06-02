@@ -461,6 +461,31 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         order.mark_canceled()
         return order
 
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        """Arm/reset (``timeout_seconds`` > 0) or disable (``0``) Kraken's
+        server-side dead man's switch via ``/0/private/CancelAllOrdersAfter``.
+
+        Kraken starts a countdown; if no further call arrives within
+        ``timeout`` seconds it cancels ALL open orders on the account,
+        server-side — so it fires even if this host loses power or
+        network (ADR-021). Kraken's recommended pattern is a 60s timeout
+        pinged every 15-30s; the engine pings far more often (per tick).
+
+        Requires the trading key's "Create & modify orders" or "Cancel &
+        close orders" permission (the bot's trade key already has both) —
+        notably NOT Withdraw, so this stays clear of the ADR-003 key split.
+
+        Dry-run short-circuits locally: a ``validate=true`` diagnostic run
+        must never arm a real timer on the live account.
+        """
+        if timeout_seconds < 0:
+            raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
+        if self._dry_run:
+            return
+        await self._private_post(
+            "/0/private/CancelAllOrdersAfter", {"timeout": str(timeout_seconds)}
+        )
+
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         """Withdraw funds via Kraken's ``/0/private/Withdraw`` endpoint.
 

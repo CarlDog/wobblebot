@@ -233,6 +233,21 @@ class TestOrderManagement:
         btc_only = await exch.get_open_orders(BTC_USD)
         assert [o.symbol for o in btc_only] == [BTC_USD]
 
+    async def test_set_dead_mans_switch_records_value(self) -> None:
+        # No-op (no server-side timer), but records the value so engine-loop
+        # tests can assert the loop armed/disarmed the switch (ADR-021).
+        exch = MockExchangeAdapter()
+        assert exch.last_dead_mans_switch_seconds is None
+        await exch.set_dead_mans_switch(60)
+        assert exch.last_dead_mans_switch_seconds == 60
+        await exch.set_dead_mans_switch(0)
+        assert exch.last_dead_mans_switch_seconds == 0
+
+    async def test_set_dead_mans_switch_negative_raises(self) -> None:
+        exch = MockExchangeAdapter()
+        with pytest.raises(ValueError, match=">= 0"):
+            await exch.set_dead_mans_switch(-5)
+
 
 class TestWithdraw:
     async def test_withdraw_decrements_balance(self) -> None:

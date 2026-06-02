@@ -43,7 +43,7 @@ from wobblebot.ports.exchange import ExchangePort
 _DEFAULT_FEE_RATE = Decimal("0.0026")
 
 
-class MockExchangeAdapter(ExchangePort):
+class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
     """Deterministic in-memory ``ExchangePort`` for simulations and tests.
 
     Construct with starting balances and (optionally) starting prices,
@@ -73,6 +73,11 @@ class MockExchangeAdapter(ExchangePort):
         self._trade_history: list[Trade] = []
         self._order_counter = 0
         self._trade_counter = 0
+        # ADR-021: the mock has no server-side timer and holds no real
+        # resting orders, so set_dead_mans_switch is a no-op — but we
+        # record the last value so engine-loop tests can assert the loop
+        # armed/disarmed it (None until the first call).
+        self.last_dead_mans_switch_seconds: int | None = None
 
     # ----------------------------------------------------------------- mock controls
 
@@ -164,6 +169,15 @@ class MockExchangeAdapter(ExchangePort):
         live = self._open_orders.pop(order.exchange_id)
         live.mark_canceled()
         return live
+
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        """No-op (ADR-021): the in-memory mock has no server-side timer and
+        holds no real resting orders. Records the value so engine-loop tests
+        can assert the loop armed/disarmed the switch.
+        """
+        if timeout_seconds < 0:
+            raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
+        self.last_dead_mans_switch_seconds = timeout_seconds
 
     async def get_order_status(self, order: Order) -> Order:
         if not order.exchange_id:

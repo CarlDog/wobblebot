@@ -75,6 +75,9 @@ class _StubExchange(ExchangePort):
     async def cancel_order(self, order):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 
+    async def set_dead_mans_switch(self, timeout_seconds):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("not used by harvest")
+
     async def get_open_orders(self, symbol=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 

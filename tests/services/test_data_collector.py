@@ -62,6 +62,9 @@ class _FailingExchange(ExchangePort):
     async def cancel_order(self, order: Order) -> Order:
         raise NotImplementedError
 
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        raise NotImplementedError
+
     async def get_order_status(self, order: Order) -> Order:
         raise NotImplementedError
 
