@@ -46,7 +46,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.ports.exceptions import WobbleBotPortError
 
-_LOGGER = logging.getLogger("tools.check_dead_mans_switch")
+_LOGGER = logging.getLogger("wobblebot.tools.check_dead_mans_switch")
 
 
 async def _run(timeout: int, watch: bool) -> int:
