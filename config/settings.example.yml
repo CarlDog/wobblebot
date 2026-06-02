@@ -145,6 +145,14 @@ live:
   tick_seconds: 5.0
   max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 5.0           # mark-to-market portfolio drop (USD) that aborts the session
+  # ADR-021: server-side dead man's switch (Kraken CancelAllOrdersAfter),
+  # pinged every tick. If cli/live dies (crash, power/network loss),
+  # Kraken auto-cancels ALL open orders on the account once this many
+  # seconds elapse — fires even when this host is fully dark. ON by
+  # default; set ~null~ to disable. Must be >= max(10, 2 x tick_seconds).
+  # NOTE: account-wide — also cancels orders you placed manually on the
+  # same account.
+  dead_mans_switch_seconds: 60
   log_format: plain                   # plain | json
   # Rotating-file log with daily rotation (7-day retention). Soak-period
   # follow-up (2026-05-25) wired this through every long-running daemon
