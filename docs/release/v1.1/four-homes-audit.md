@@ -53,7 +53,7 @@ so they *could* be pulled during the soak.
 | # | Fact | Location | Slice |
 |---|---|---|---|
 | **Q1** | `KNOWN_INCOMPATIBLE_FOR_ASSISTANT` + `KNOWN_DEGRADED_FOR_ASSISTANT` + the embedded recommended-replacement model list | `adapters/ollama_assistant.py:100,112,133-137` | **Model-compat externalization** — one config section, fail-soft loader (empty/malformed override must degrade, not crash), schema-drift test. The prime candidate: MEMORY records a 2026-05-25 sweep *reversing* two prior "broken" verdicts in an hour. |
-| **Q2** | `_REASONING_MODEL_PREFIXES` (`("o1","o3")`) + `_THINKING_MODEL_PATTERNS` | `adapters/openai.py:77`, `adapters/ollama.py:57` | **Model-pattern externalization** — config the pattern sets with a safe default + validation (an empty override must not send `temperature` to every model). **Includes fixing the o4 drift gap (below).** |
+| **Q2** | `_REASONING_MODEL_PREFIXES` + `_THINKING_MODEL_PATTERNS` | `adapters/openai.py`, `adapters/ollama.py:57` | **Model-pattern externalization** — config the pattern sets with a safe default + validation (an empty override must not send `temperature` to every model). ⚠️ The **o4 drift bug is now FIXED code-resident (2026-06-02)** — see secondary findings; the *externalization itself* remains queued (low marginal value for a solo operator-developer who builds/deploys the image — its real trigger is friend-deployment). |
 | **Q3** | `_COIN_PATTERNS` news coin/ticker whitelist (MATIC→POL rebrand is stale in-list) | `adapters/rss_news.py:49` | **News-coin whitelist → config** — ideally *derived from / cross-checked against* the operator's traded symbols so the two lists can't drift apart. |
 
 ### ⚪ No action — already in the right home (config / live-fetch) or stable design constants
@@ -69,12 +69,15 @@ so they *could* be pulled during the soak.
 These surfaced during the sweep. They are **not** "wrong home" problems; they're code-health
 items to decide separately.
 
-1. **⚠️ Latent bug — `_REASONING_MODEL_PREFIXES` drift gap.** `_PRICING` lists o4-mini-class
-   models but the prefix tuple is still only `("o1","o3")`, so a future `o4`/`o5` model would
-   be **misclassified** for reasoning-token handling (temperature sent, wrong token param →
-   degraded/failed call). Not safety-critical (no budget bypass), but a real defect. *Fix:
-   verify which families belong, extend the tuple — fold into **Q2** (the externalization
-   that touches this exact code), or a one-line fix-now if Q2 is deferred.*
+1. **✅ FIXED 2026-06-02 — `_REASONING_MODEL_PREFIXES` drift gap.** `_PRICING` lists `o4-mini`,
+   but the match was the literal tuple `("o1","o3")`, so a configured o4 model was
+   **misclassified** for reasoning-token handling (temperature sent, wrong token param →
+   degraded/failed call). Not safety-critical (no budget bypass), but a real present defect.
+   Fixed code-resident (Q2 scoped): `is_reasoning_model` now matches the whole o-series via an
+   `o<digit>` regex (`adapters/openai.py`), future-proofing o4/o5. **Flagged-not-touched:** the
+   gpt-5 family also bills reasoning tokens, but whether it needs the same request *shape* is a
+   separate unverified OpenAI-API question. The full pattern *externalization* (Q2) remains
+   queued — see the note on its low marginal value for a solo operator-developer.
 2. **Duplication smells (consolidate in code, not move out of code):**
    - **Kraken fee rate hardcoded in 4 places** (`grid.py`, `shadow_exchange.py`, `mock_exchange.py`, `config/cli.py`) → centralize on one code constant. *Touches the safety-critical validator → careful, its own slice, not trivial.*
    - Kraken base URL ×3 (`config/kraken.py`, `kraken_health.py`, config); Ollama base URL ×4; Anthropic URL/version ×2; Discord colors ×2 (embed-render + transport); `OHLCBar.ALLOWED_INTERVALS` ×2 (value-objects + the kraken range-check).

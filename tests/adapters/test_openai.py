@@ -227,9 +227,15 @@ class TestPureHelpers:
             ("o1-preview", True),
             ("o3-mini", True),
             ("o3", True),
+            ("o4-mini", True),  # Q2 fix: was misclassified False (priced in _PRICING, unmatched)
+            ("o5", True),  # future o-series handled without a code change
             ("gpt-4o", False),
             ("gpt-4o-mini", False),
             ("gpt-3.5-turbo", False),
+            (
+                "gpt-5",
+                False,
+            ),  # NOT folded in — gpt-5 reasoning-shape is a separate unverified question
         ],
     )
     def test_is_reasoning_model(self, model: str, expected: bool) -> None:
