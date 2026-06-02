@@ -90,7 +90,10 @@ def resolve_config(
         if profile_name not in profiles:
             available = sorted(profiles.keys()) if profiles else []
             raise KeyError(
-                f"Profile {profile_name!r} not found in config; " f"available profiles: {available}"
+                f"Profile {profile_name!r} not found in config; "
+                f"available profiles: {available}. If you expected this profile, "
+                f"your settings.yml may predate it — copy the "
+                f"'profiles.{profile_name}' block from config/settings.example.yml."
             )
         base = deep_merge(base, profiles[profile_name])
 

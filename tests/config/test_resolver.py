@@ -128,6 +128,16 @@ class TestResolveConfig:
         with pytest.raises(KeyError, match="not found"):
             resolve_config(self._raw(), profile_name="moonshot")
 
+    def test_unknown_profile_error_hints_at_example_file(self) -> None:
+        """The error points the operator at settings.example.yml + the
+        specific profile block to copy (P0.2 — a stale settings.yml that
+        predates a profile is the common cause)."""
+        with pytest.raises(KeyError) as exc_info:
+            resolve_config(self._raw(), profile_name="moonshot")
+        message = str(exc_info.value)
+        assert "settings.example.yml" in message
+        assert "profiles.moonshot" in message
+
     def test_unknown_profile_when_none_defined(self) -> None:
         raw = {"grid": {}, "safety": {}}  # no profiles: block at all
         with pytest.raises(KeyError, match="not found"):
