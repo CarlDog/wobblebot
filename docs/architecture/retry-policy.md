@@ -55,11 +55,11 @@ This is the gold standard the other integrations are measured against.
 - `KrakenConfig` (`config/kraken.py`) is built via `from_env(...)` — it carries only
   credentials, `base_url`, and a **default 10s** `request_timeout_seconds`. It is **not**
   populated from the YAML.
-- **Dead config:** `settings.example.yml`'s `exchange:` block documents
-  `rate_limit_rps`, `max_retries`, and `retry_delay_seconds` — **none are referenced by
-  any code** (verified by sweep). The adapter neither retries nor rate-limits; even the
-  YAML `request_timeout_seconds` is not wired (the env-built `KrakenConfig` default is
-  used). See **G1**.
+- **Dead config (now removed — see G1):** `settings.example.yml`'s `exchange:` block used
+  to document `rate_limit_rps`, `max_retries`, `retry_delay_seconds`, and
+  `request_timeout_seconds` — **none were referenced by any code** (`WobbleBotConfig` has
+  no `exchange` field). The adapter neither retries nor rate-limits, and used the env-built
+  `KrakenConfig` 10s timeout default. The dead section was removed 2026-06-02.
 - **Why it's been fine:** on the engine path, a per-symbol Kraken error is swallowed at
   the CLI layer (Stage 2.4 design) and the symbol is retried on the **next 5s tick** —
   an implicit retry with a generous interval. The one-shot CLIs (`preflight`, `status`,
@@ -95,15 +95,15 @@ This is the gold standard the other integrations are measured against.
 
 ## Findings / gaps (ticketed for v1.1 — not fixed here)
 
-- **G1 — Kraken connection knobs are dead config (clear inconsistency).**
-  `rate_limit_rps`, `max_retries`, `retry_delay_seconds` (and the YAML
-  `request_timeout_seconds`) in the `exchange:` block are not consumed by any code. The
-  KrakenAdapter neither retries nor rate-limits. **Decide:** either (a) wire a small
-  transient-retry wrapper + a client-side rate limiter into the adapter and feed it from
-  the YAML, or (b) remove the dead knobs from `settings.example.yml` + the schema. Option
-  (b) is the cheaper, more honest first step; (a) is the real robustness improvement.
-  *(Adjacent to the four-homes audit's "config that does nothing" spirit; this is a
-  config↔code mismatch, not a hardcoded-fact home decision.)*
+- **G1 — Kraken connection knobs were dead config. ✅ RESOLVED 2026-06-02 (removed).**
+  The whole `exchange:` block (`name`, `rate_limit_rps`, `request_timeout_seconds`,
+  `max_retries`, `retry_delay_seconds`) was consumed by **no** code — `WobbleBotConfig`
+  has no `exchange` field at all, so Pydantic silently dropped it on load; the adapter is
+  built from env-sourced `KrakenConfig`. Took the honest first step (option b): **removed
+  the entire dead `exchange:` section** from `settings.example.yml` + the deploy `settings.yml`
+  (replaced with a comment explaining Kraken is env-configured). The real robustness
+  improvement (option a — wire an actual transient-retry wrapper + a client-side rate
+  limiter) stays as future work; it would reintroduce these knobs *with code behind them*.
 
 - **G2 — retry asymmetry on one-shot Kraken paths.** The daemon paths get an implicit
   next-cycle retry; the **one-shot** Kraken calls (`preflight`, `status`,

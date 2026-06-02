@@ -28,15 +28,14 @@ application:
 # ============================================================================
 # Exchange connection (Kraken)
 # ============================================================================
-# API credentials NEVER live here — they're in .env as KRAKEN_READER_API_KEY
-# (read-only) and KRAKEN_TRADER_API_KEY (Trade scope, no Withdraw).
-# This block holds connection-level tunables only.
-exchange:
-  name: "kraken"
-  rate_limit_rps: 1.0       # request budget per second; Kraken's tier limit is generous for hobby use
-  request_timeout_seconds: 10
-  max_retries: 3
-  retry_delay_seconds: 2.0
+# Configured via ENVIRONMENT, not this file. Credentials live in .env
+# (KRAKEN_READER_API_KEY / KRAKEN_TRADER_API_KEY / KRAKEN_HARVESTER_API_KEY —
+# never here); the base URL is an optional KRAKEN_BASE_URL override; the
+# per-request timeout is a code default (10s). There is intentionally no
+# `exchange:` section — the prior one (name / rate_limit_rps / max_retries /
+# retry_delay_seconds / request_timeout_seconds) was dead config read by no
+# code (WobbleBotConfig has no `exchange` field). Removed per the
+# retry-policy audit — see docs/architecture/retry-policy.md, finding G1.
 
 # ============================================================================
 # Grid trading geometry (engine-tunable)
