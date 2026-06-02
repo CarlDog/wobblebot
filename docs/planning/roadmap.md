@@ -280,9 +280,11 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
 **Status:** v1.1 development began 2026-06-01 on the `v1.1` branch while the v1.0 gating
 soak runs on the NAS. `main` stays **frozen at the soak commit** until v1.0 is tagged (the
 GHCR image only rebuilds on a push to `main`, which would bounce the live soak container);
-all v1.1 work lands on the branch and merges after the tag. The full v1.1 backlog (76
-catalogued items) lives in [`docs/release/v1.1/`](../release/v1.1/) and
-[`docs/release/v1.0-future-improvements.md`](../release/v1.0-future-improvements.md); only
+all v1.1 work lands on the branch and merges after the tag. **The sequenced plan — phases
+P0–P4, the dependency spine, and the parked register — lives in
+[`docs/release/v1.1/README.md`](../release/v1.1/README.md)** (the per-area files there hold
+the detail; the full backlog index is
+[`docs/release/v1.0-future-improvements.md`](../release/v1.0-future-improvements.md)). Only
 *shipped* v1.1 items are receipted here.
 
 1. **Dead man's switch** ✅ 2026-06-01 — server-side `CancelAllOrdersAfter` safety net

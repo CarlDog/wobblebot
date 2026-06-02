@@ -26,6 +26,14 @@ below — they are NOT part of the v1.0 release.
   `max(10, 2 × tick_seconds)`). Note: Kraken's timer is account-wide. Real-money cost
   $0.00.
 
+### Planning (2026-06-01)
+
+- **v1.1 plan + index.** `docs/release/v1.1/README.md` — the sequenced master plan
+  (phases P0–P4, the dependency spine, the parked register, guardrails, open questions),
+  synthesized from a full inventory of the v1.1 backlog. The per-area docs in that folder
+  remain the detail; the roadmap's v1.1-track section points here. (The owed v1.1
+  consolidation pass.)
+
 ## [Unreleased]
 
 ### Stage 8.6 (2026-05-30) — Advisor hardening + grid widen (pre-soak)
