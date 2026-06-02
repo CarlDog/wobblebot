@@ -1358,6 +1358,99 @@ path).
 - ADR-002, ADR-007 (the advisory-only invariants ADR-019 refines), ADR-006, ADR-012.
 - Project memory: `project_advisor_philosophy`, `no-false-absolutes-from-backtests`, `project_oracle_naming`.
 
-<!-- ADR-019 is the last in this file; new ADRs append below. -->
+<!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
+
+## ADR-021 — Server-Side Dead Man's Switch (Kraken CancelAllOrdersAfter)
+
+**Status:** Accepted
+**Date:** 2026-06-01
+
+**Context:** The engine's only order-cleanup mechanism at v1.0 is the `cli/live`
+`finally`-block cancel (`e2b6cfc`, Stage 8.4 hotfix): on shutdown it iterates open
+orders and cancels each via `ExchangePort.cancel_order`. That mechanism requires the
+host to be *alive enough to run Python cleanup* AND *able to reach Kraken over the
+network*. The 2026-05-19 soak outage defeated exactly that — a thunderstorm took out
+DNS mid-`finally`, the cancel calls couldn't reach Kraken, and three open BUYs sat
+overnight; one filled when BTC drifted into it. A safety net that depends on the failing
+host cannot cover the failure mode where the host itself is gone.
+
+Kraken exposes `/0/private/CancelAllOrdersAfter`: a call starts a countdown timer ON
+KRAKEN'S SERVERS; if the client doesn't call again within `timeout` seconds, Kraken
+cancels every open order on the account itself. The cancellation runs exchange-side, so
+a power/network loss at our end is the *trigger* (no keepalive → timer lapses), not an
+obstacle. Kraken's recommended pattern is a 60s timeout pinged every 15–30s; it requires
+only "Create & modify orders" / "Cancel & close orders" scope — notably NOT Withdraw, so
+it stays clear of the ADR-003 key split.
+
+**Decision:** Add `ExchangePort.set_dead_mans_switch(timeout_seconds)` and pet it from
+`cli/live`'s engine loop every tick, ON BY DEFAULT (`live.dead_mans_switch_seconds = 60`;
+`null` disables). Specifics:
+
+1. **Port-level capability, not Kraken-specific.** The method is abstract on
+   `ExchangePort`. `KrakenAdapter` implements the real call (dry-run short-circuits, so a
+   `validate=true` diagnostic never arms a real timer). Synthetic adapters
+   (`MockExchangeAdapter`, `ShadowExchangeAdapter`) implement a documented no-op — they
+   hold no real resting orders. **Shadow deliberately does NOT forward to its wrapped
+   live adapter**: doing so would arm a REAL timer on the operator's real account during
+   a paper-trade.
+2. **Pet every tick, before any order is placed that iteration.** Log-and-continue on
+   failure — never crash a tick over the safety net; a failed ping leaves the timer at
+   its prior (still-protective) value until the next tick re-pings.
+3. **Disarm only on a confirmed-clean shutdown cancel.** In the `finally`, set timeout 0
+   ONLY when `_cancel_all_open` reported zero failures. If our own cancel failed or
+   raised, the switch is deliberately LEFT armed so Kraken's timer sweeps the stragglers
+   we couldn't — making the dead man's switch the backstop for a failed clean cancel too.
+4. **Default ON.** A real-incident-motivated safety net that can only cancel orders —
+   never place or move money — is enabled by default; the operator opts out with `null`.
+5. **Validation.** `dead_mans_switch_seconds`, when set, must be `>= max(10, 2 × tick_seconds)`
+   so a couple of slow ticks can't lapse the timer and falsely cancel everything.
+
+**Alternatives considered:**
+- **Keep only the `finally`-block cancel.** Rejected: it cannot cover host death / power
+  loss / network partition — the exact 2026-05-19 failure. The switch is *strictly
+  stronger* and complementary (the `finally` handles controlled stops + disarms the
+  switch; the switch handles uncontrolled death).
+- **Make it a Kraken-only concrete method (not on the port).** Rejected: the loop is
+  unit-tested through `MockExchangeAdapter`, so the seam must be on the port; and an
+  abstract method forces any future real adapter to consciously implement the safety net
+  rather than silently inherit a no-op.
+- **Auto-liquidate holdings on outage (stop-loss style).** Rejected — out of scope and an
+  anti-pattern for the grid (see the standing "stop-loss declined" position). The switch
+  cancels resting ORDERS only; it does not and should not touch inventory.
+- **Opt-in (default `null`).** Rejected per operator decision: the safety upside is high,
+  the downside (account-wide cancellation) is documented, and the feature can't move money.
+
+**Consequences:**
+- **Positive:** The 2026-05-19 orphaned-order scenario is bounded from "hours" to
+  "≤ timeout seconds," and fires even when the host is fully dark.
+- **Positive:** A failed clean-shutdown cancel now has a server-side backstop instead of
+  leaving orders resting until the next-startup reconciler.
+- **Negative / caveat:** Kraken's timer is **account-wide** — it cancels manually-placed
+  orders on the same account too. Documented in `settings.example.yml` and the port
+  docstring. The bot runs on a dedicated trading key, but keys share the account's order
+  book.
+- **Negative / caveat:** A residual exposure window of up to `timeout` seconds exists
+  between the last ping and expiry; a resting order can fill in that gap. The
+  `>= 2 × tick_seconds` floor trades a slightly larger window for false-trip immunity.
+- **Negative:** One extra private POST per tick (~12/min at the 5s default) — negligible
+  against Kraken's rate budget.
+
+**Soak note:** This is v1.1 work on the `v1.1` branch and is NOT in the frozen v1.0 soak
+image; it takes effect only when the operator deploys the v1.1 image post-tag and runs
+`cli/live`.
+
+**Compliance:** Adds an engine-level guardrail only; introduces no new money-mover and no
+auto-execution path (financial-power fragmentation intact). Uses `ExchangePort` per
+ADR-001/004; needs no Withdraw scope, so the ADR-003 key split is untouched. Independent
+of ADR-002 (no LLM involvement).
+
+**References:**
+- `docs/release/v1.1/engine.md` — the backlog entry this ships.
+- `docs/reference/kraken-api-reference.md` — the `CancelAllOrdersAfter` endpoint.
+- Kraken REST docs: `POST /0/private/CancelAllOrdersAfter`.
+- ADR-001 (hexagonal / `ExchangePort`), ADR-003/004 (key split + withdrawal API), and the
+  Stage 8.4 `finally`-block hotfix (`e2b6cfc`) this complements.
+
+<!-- ADR-021 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

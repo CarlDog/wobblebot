@@ -3,10 +3,28 @@
 All notable changes to WobbleBot are documented in this file. Format
 is a modified [Keep a Changelog](https://keepachangelog.com/en/1.0.0/);
 versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
-Pre-v1.0.0, all entries land under `[Unreleased]` until a tagged
-release exists; per-stage receipts in
+Pre-v1.0.0, v1.0-bound entries land under `[Unreleased]` until the v1.0
+tag exists; per-stage receipts in
 [`docs/planning/roadmap.md`](docs/planning/roadmap.md) carry the
-canonical completion dates.
+canonical completion dates. **v1.1 work is being developed on the `v1.1`
+branch in parallel with the v1.0 gating soak** (`main` stays frozen at
+the soak commit until v1.0 is tagged); those entries land under `[v1.1]`
+below — they are NOT part of the v1.0 release.
+
+## [v1.1] — Unreleased (on the `v1.1` branch; not yet merged to main)
+
+### Dead man's switch (2026-06-01, ADR-021)
+
+- **Server-side dead man's switch.** New
+  `ExchangePort.set_dead_mans_switch(timeout_seconds)`; `KrakenAdapter` calls
+  `/0/private/CancelAllOrdersAfter`, synthetic adapters no-op (shadow deliberately does
+  not arm a real timer on the wrapped live account). `cli/live` pings it every tick and
+  disarms only on a confirmed-clean shutdown cancel — if the host dies (crash, power
+  loss, network partition) Kraken auto-cancels all open orders once the timer lapses, the
+  failure mode the `finally`-block cancel cannot cover (2026-05-19 outage). On by default
+  at 60s (`live.dead_mans_switch_seconds`; `null` disables; floor
+  `max(10, 2 × tick_seconds)`). Note: Kraken's timer is account-wide. Real-money cost
+  $0.00.
 
 ## [Unreleased]
 
