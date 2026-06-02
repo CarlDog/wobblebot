@@ -89,6 +89,12 @@ class _FakeAdapter:
             raise ExchangeError("simulated cancel failure")
         self.cancelled_ids.append(order.exchange_id or "")
 
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        # ADR-021: no-op for this minimal fake; the finally block disarms
+        # the switch on a clean cancel. Dedicated coverage lives in
+        # test_live_dead_mans_switch.py.
+        return None
+
 
 # --------------------------------------------------------------------- #
 # cli/live persistence                                                  #
