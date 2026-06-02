@@ -62,6 +62,9 @@ class _StubLiveExchange(ExchangePort):
     async def cancel_order(self, order: Order) -> Order:
         raise NotImplementedError
 
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        raise NotImplementedError
+
     async def get_order_status(self, order: Order) -> Order:
         raise NotImplementedError
 
@@ -243,3 +246,19 @@ class TestNoWithdrawals:
         )
         with pytest.raises(NotImplementedError, match="Phase 4"):
             await shadow.withdraw("USD", Decimal("10"), "bank")
+
+
+class TestDeadMansSwitch:
+    async def test_no_op_does_not_touch_live_exchange(self) -> None:
+        # ADR-021: shadow must NOT forward to the wrapped live adapter —
+        # doing so would arm a REAL dead man's switch on the operator's
+        # real Kraken account during a paper-trade. _StubLiveExchange
+        # raises NotImplementedError on set_dead_mans_switch, so a forward
+        # would raise; returning None proves the no-forward guarantee.
+        live = _StubLiveExchange({BTC_USD: Decimal("80000")})
+        shadow = ShadowExchangeAdapter(
+            live_exchange=live,
+            starting_balances={"USD": Decimal("100")},
+        )
+        assert await shadow.set_dead_mans_switch(60) is None
+        assert live.price_call_count == 0

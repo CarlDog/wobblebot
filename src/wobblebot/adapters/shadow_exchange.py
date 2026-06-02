@@ -175,6 +175,20 @@ class ShadowExchangeAdapter(ExchangePort):
     async def cancel_order(self, order: Order) -> Order:
         return await self._mock.cancel_order(order)
 
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        """No-op (ADR-021), and deliberately NOT forwarded to ``self._live``.
+
+        Shadow mode places no real orders on the live exchange — it only
+        reads prices from it and matches against a synthetic ledger.
+        Forwarding to the wrapped live adapter would arm a REAL dead man's
+        switch on the operator's REAL Kraken account during a paper-trade
+        session, which could cancel their genuine manual orders. There are
+        no real resting orders here for a timer to protect, so this does
+        nothing.
+        """
+        if timeout_seconds < 0:
+            raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
+
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError(
             "Shadow mode does not simulate withdrawals — that is Phase 4 territory"

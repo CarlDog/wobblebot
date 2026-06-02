@@ -111,6 +111,38 @@ class ExchangePort(ABC):
         pass
 
     @abstractmethod
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        """Arm, reset, or disable a server-side dead man's switch (ADR-021).
+
+        Sets a countdown timer **on the exchange**: if the client does
+        not call again within ``timeout_seconds``, the exchange cancels
+        *all* open orders on the account itself. Because the cancellation
+        runs exchange-side, it fires even when this host has lost power
+        or network — the exact case the engine's ``finally``-block cancel
+        cannot cover. The engine "pets" the timer on every tick to keep
+        it from lapsing during normal operation.
+
+        Args:
+            timeout_seconds: Seconds until the exchange auto-cancels if
+                not reset. ``0`` disables the switch. Must be ``>= 0``.
+
+        Note:
+            The cancellation is *account-wide* on exchanges (e.g. Kraken)
+            that scope the timer to the account rather than the API key —
+            it cancels manually-placed orders too. Callers placing orders
+            outside the bot on the same account should be aware.
+
+        Adapters with no such facility (synthetic / simulated execution,
+        where no real resting orders are at risk) implement this as a
+        documented no-op.
+
+        Raises:
+            ExchangeError: On transport / protocol failure when arming.
+            ValueError: If ``timeout_seconds`` is negative.
+        """
+        pass
+
+    @abstractmethod
     async def get_order_status(self, order: Order) -> Order:
         """Get current status of an order.
 

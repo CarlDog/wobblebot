@@ -329,6 +329,74 @@ class TestCancelOrder:
 
 
 # ---------------------------------------------------------------------------
+# set_dead_mans_switch (ADR-021)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestDeadMansSwitch:
+    async def test_arm_posts_timeout_to_cancel_all_orders_after(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/0/private/CancelAllOrdersAfter"
+            captured["body"] = _post_body(request)
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "currentTime": "2026-06-01T00:00:00Z",
+                        "triggerTime": "2026-06-01T00:01:00Z",
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        result = await adapter.set_dead_mans_switch(60)
+        assert result is None
+        assert captured["body"]["timeout"] == "60"
+
+    async def test_disable_posts_zero(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/0/private/CancelAllOrdersAfter"
+            captured["body"] = _post_body(request)
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"currentTime": "x", "triggerTime": "x"}},
+            )
+
+        adapter = _make_adapter(handler)
+        await adapter.set_dead_mans_switch(0)
+        assert captured["body"]["timeout"] == "0"
+
+    async def test_dry_run_short_circuits(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            pytest.fail("Should not arm a real timer in dry-run mode")
+
+        adapter = _make_adapter(handler, dry_run=True)
+        assert await adapter.set_dead_mans_switch(60) is None
+
+    async def test_negative_timeout_raises_value_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            pytest.fail("Should not reach Kraken with a negative timeout")
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ValueError, match=">= 0"):
+            await adapter.set_dead_mans_switch(-1)
+
+    async def test_kraken_error_surfaces_as_exchange_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"error": ["EAPI:Invalid key"], "result": {}})
+
+        adapter = _make_adapter(handler)
+        with pytest.raises(ExchangeError):
+            await adapter.set_dead_mans_switch(60)
+
+
+# ---------------------------------------------------------------------------
 # get_order_status
 # ---------------------------------------------------------------------------
 
