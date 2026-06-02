@@ -158,16 +158,28 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             self._coin_locks[key] = lock
         return lock
 
-    async def step(self, symbol: Symbol) -> StepResult:
+    async def step(
+        self, symbol: Symbol, *, exchange_open_orders: list[Order] | None = None
+    ) -> StepResult:
         """Advance the engine by one tick for ``symbol``.
 
         Safe to call concurrently for different symbols; calls for the
         same symbol serialize via per-coin lock.
+
+        ``exchange_open_orders``: an optional whole-account open-orders
+        snapshot the caller fetched once this tick. When provided it is
+        used for fill detection instead of a per-symbol exchange call,
+        collapsing N ``OpenOrders`` calls per multi-symbol tick into one —
+        which keeps multi-coin sessions under Kraken's private-API rate
+        limit. When ``None`` (single-symbol callers / shadow / tests), fill
+        detection fetches per-symbol as before.
         """
         async with self._lock_for(symbol):
-            return await self._step_unlocked(symbol)
+            return await self._step_unlocked(symbol, exchange_open_orders)
 
-    async def _step_unlocked(self, symbol: Symbol) -> StepResult:
+    async def _step_unlocked(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+    ) -> StepResult:
         coin_cfg = self._config.for_coin(symbol.base)
         if not coin_cfg.enabled:
             return StepResult(symbol=symbol, action="skipped_disabled")
@@ -180,7 +192,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if grid_state is None:
             return await self._initialize(symbol, current_price, coin_cfg)
 
-        return await self._tick(symbol, current_price, grid_state, coin_cfg)
+        return await self._tick(symbol, current_price, grid_state, coin_cfg, exchange_open_orders)
 
     # ------------------------------------------------------------------ operator control (5.4)
 
@@ -335,7 +347,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     # ------------------------------------------------------------------ subsequent ticks
 
-    async def _tick(  # pylint: disable=too-many-locals,too-many-branches
+    async def _tick(  # pylint: disable=too-many-locals,too-many-branches,too-many-arguments,too-many-positional-arguments
         # R0914 disable: every local here represents a distinct
         # tick-stage signal (levels, offside, fills, trade_ids,
         # counters_placed, refusals, spacing, target, counter_amount,
@@ -346,6 +358,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         current_price: Decimal,
         state: GridState,
         coin_cfg: CoinGridConfig,
+        exchange_open_orders: list[Order] | None = None,
     ) -> StepResult:
         levels = compute_grid_levels(
             reference_price=state.reference_price,
@@ -355,7 +368,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         offside = is_offside(current_price, levels)
 
-        fills, trade_ids = await self._detect_fills(symbol)
+        fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders)
         counters_placed = 0
         refusals = 0
         placed = 0
@@ -462,15 +475,29 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     # ------------------------------------------------------------------ helpers
 
-    async def _detect_fills(self, symbol: Symbol) -> tuple[list[Order], list[str]]:
+    async def _detect_fills(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+    ) -> tuple[list[Order], list[str]]:
         """Diff storage's open set against the exchange's; record fills.
 
         Returns ``(filled_orders, saved_trade_ids)`` — the orders that
         transitioned out of the open set this tick (status refreshed
         from the exchange) and the trade IDs persisted as a result.
+
+        ``exchange_open_orders``: when provided (a whole-account snapshot
+        the caller fetched once this tick), it is filtered to ``symbol``
+        instead of issuing a per-symbol ``OpenOrders`` call. The adapter's
+        per-symbol fetch already pulls the whole account and filters
+        client-side, so the filtered snapshot is identical — this just
+        avoids re-fetching once per symbol and is what keeps multi-coin
+        sessions under Kraken's private-API rate limit. ``None`` falls back
+        to a per-symbol fetch (single-symbol callers / shadow / tests).
         """
         stored_open = await self._storage.get_open_orders(symbol=symbol)
-        exchange_open = await self._exchange.get_open_orders(symbol=symbol)
+        if exchange_open_orders is None:
+            exchange_open = await self._exchange.get_open_orders(symbol=symbol)
+        else:
+            exchange_open = [o for o in exchange_open_orders if o.symbol == symbol]
         live_ids = {o.exchange_id for o in exchange_open if o.exchange_id}
 
         candidates = [o for o in stored_open if o.exchange_id and o.exchange_id not in live_ids]
