@@ -414,6 +414,40 @@ async def execute_transfer(
 
 ---
 
+## Dead Man's Switch (CancelAllOrdersAfter endpoint)
+
+Server-side safety timer used by the engine's dead man's switch (ADR-021,
+`ExchangePort.set_dead_mans_switch`). Each call (re)starts a countdown **on Kraken's
+servers**; if no further call arrives within `timeout` seconds, Kraken cancels every
+open order on the account itself — so it fires even when our host has lost power or
+network. `timeout: 0` disables it. Permission: "Create & modify orders" OR "Cancel &
+close orders" (NOT Withdraw). Kraken's recommended pattern is a 60s timeout pinged every
+15–30s; `cli/live` pings every tick (≈5s).
+
+### **Request: CancelAllOrdersAfter** (`POST /0/private/CancelAllOrdersAfter`)
+```python
+{
+    "timeout": "60"  # seconds until auto-cancel if not reset; "0" disables
+}
+```
+
+### **Response: CancelAllOrdersAfter**
+```json
+{
+    "error": [],
+    "result": {
+        "currentTime": "2026-06-01T00:00:00Z",  # server time the request was handled
+        "triggerTime": "2026-06-01T00:01:00Z"   # when all orders cancel if not reset
+    }
+}
+```
+
+**Key Insight:** the timer is **account-wide** — it cancels manually-placed orders on the
+same account too, not just the bot's. The empty `error` array is the success signal (the
+adapter ignores the `result` body and relies on the standard envelope check).
+
+---
+
 ## Field Naming Conventions Summary
 
 Reflects the post-ADR-005 domain model. The ⚠️ rows in the original

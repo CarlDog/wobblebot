@@ -55,7 +55,14 @@ threshold tuning needs measurement data.
 **Trigger:** the operator notices ticks dropping during the soak
 and wants automated detection.
 
-### Server-side dead man's switch (`CancelAllOrdersAfter`)
+### Server-side dead man's switch (`CancelAllOrdersAfter`) — ✅ SHIPPED 2026-06-01 (v1.1, ADR-021)
+
+**✅ Shipped 2026-06-01** on the `v1.1` branch (ADR-021): `ExchangePort.set_dead_mans_switch`
++ per-tick pet in `cli/live`'s loop, ON by default at 60s (`live.dead_mans_switch_seconds`,
+`null` disables), disarmed only on a confirmed-clean shutdown cancel (left armed otherwise
+so Kraken sweeps stragglers). Synthetic adapters no-op; shadow deliberately does not arm a
+real timer. Takes effect when the v1.1 image deploys post-tag. See ADR-021 +
+`docs/reference/kraken-api-reference.md`. Original backlog rationale preserved below.
 
 **What:** Kraken's `/0/private/CancelAllOrdersAfter` endpoint sets a
 server-side timer; if the engine doesn't ping again within N
