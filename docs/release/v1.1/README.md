@@ -12,6 +12,15 @@ declines), **not** plan candidates.
 - **Decision records:** `docs/architecture/decisions.md` (ADRs).
 - **Written:** 2026-06-01. Living document — re-sequence as the soak surfaces facts; keep it honest.
 
+> **⚠️ Strategy update (2026-06-02).** The work that was originally built on the `v1.1`
+> branch turned out to be mostly **v1.0 hardening** (the dead man's switch, the preflight
+> key-scope gate, the four-homes/schema-drift/retry audits, the o4 bug fix, the G1
+> dead-config cleanup, the offside log-noise fix). It was **fast-forwarded into `main` as
+> the v1.0 candidate** (`73e9388`) — `main` is **no longer frozen**. "v1.1" now refers to
+> the **post-tag P1–P4 roadmap** below; those phases branch off `main` *after* the v1.0
+> tag. The gating soak is being **restarted on the hardened candidate** (and going
+> **multi-coin** for better engine coverage while BTC is parked).
+
 > Built from a full inventory of every documented v1.1 candidate (213 item-rows →
 > deduped). Nothing is dropped: work that isn't in an active phase below is in the
 > [Parked register](#parked-register) with its trigger.
@@ -23,10 +32,10 @@ declines), **not** plan candidates.
 **Freeze-gated dependency layering, value-and-risk ordered within each layer.** Phases
 are cut by the three hard boundaries that actually constrain the work:
 
-1. **Branch-freeze** — `main` is frozen at the soak commit (`152e830`) until v1.0 is
-   tagged (the GHCR image rebuilds only on push-to-`main`, which would bounce the live
-   soak container). All v1.1 work lives on the `v1.1` branch; nothing merges to `main`
-   until the tag. **Only P0 can proceed while the soak runs.**
+1. **Tag gate** *(the original branch-freeze that shaped this plan was lifted 2026-06-02 —
+   see the strategy update above; the "P0" hardening already merged into the v1.0
+   candidate)* — the **P1–P4 work below is gated on the v1.0 tag**: it branches off `main`
+   after the restarted soak passes and v1.0 ships.
 2. **Dependency spine** — the four-homes audit must precede any storage-tier migration;
    the Kraken-history import must precede its DB consumers; OHLC+TA is the shared input
    gating the regime detector / auditor / screener / counter-target / historian.
@@ -43,19 +52,17 @@ never the sort key). **WIP limit: finish a phase before opening the next** — r
 
 | | |
 |---|---|
-| Branch | `v1.1` (off `main` at `152e830`) |
-| `main` | **FROZEN** at the soak commit until v1.0 is tagged |
-| v1.0 | gating soak in progress on the NAS |
-| Shipped (v1.1) | ✅ **Dead man's switch** (ADR-021) — first v1.1 item |
-| Active now | **P0** (branch-safe groundwork) |
+| `main` | = the **v0.1.0 candidate** at `73e9388` (the hardening below, fast-forwarded 2026-06-02) |
+| v1.0 hardening | ✅ dead man's switch (ADR-021) · preflight key-scope gate · four-homes/schema-drift/retry audits · o4 fix · G1 cleanup · offside log fix — **all on `main`** |
+| v1.0 | gating soak being **restarted on the new candidate, multi-coin** |
+| "v1.1" (post-tag) | the **P1–P4 roadmap below** — branches off `main` after the v1.0 tag |
 
 ## Phase map
 
 | Phase | When | Theme | Status |
 |---|---|---|---|
-| ✅ Dead man's switch | on branch | Safety | **done** (ADR-021) |
-| **P0** | during soak, branch-only | Groundwork | **active** |
-| 🚦 **GATE** | soak passes | tag v1.0 → merge → unfreeze `main` | — |
+| ✅ Hardening (dead man's switch + P0.1–P0.5 + o4 + G1) | merged to `main` 2026-06-02 | Safety / Groundwork | **done** |
+| 🚦 **GATE** | restarted (multi-coin) soak passes | **tag v1.0** | — |
 | **P1** | post-tag | Safety + ready-now | active after tag |
 | **P2** | post-tag | Data-infrastructure spine | active after tag |
 | **P3** | post-tag (parallel to P2) | Ops / observability / UX | active after tag |
