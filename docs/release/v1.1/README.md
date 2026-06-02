@@ -143,6 +143,8 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | One-command daemon orchestrator (`cli/up`) | M | med-high | | `honcho` + Procfiles with pre-launch preflight. Promote only if full-stack restart friction is real. |
 | Footer "update available" indicator | S–M | low-med | | `release_checker` polls GitHub releases; disableable. Meaningless until a tag exists — lands right after it. |
 | More Kraken crypto pairs | S | med | | Pure config (engine multi-symbol since Stage 2.4). Operator risk-budget call on which coins / what split. |
+| **Engine ordermin-awareness** | S–M | med | ⚠️ | A fixed `order_size_usd` ÷ a rising price can slide under a pair's fixed-quantity `ordermin` (DOGE: $5 → 49.99 < 50 DOGE at ~$0.10, 2026-06-02 soak). The engine already holds pair metadata — bump the volume to clear `ordermin` (capped by the per-coin cap) or skip with a clear INFO, instead of submitting a doomed order. Operator worked around it per-coin (DOGE `order_size_usd: 6`). |
+| **Dead-man's-switch arm confirmation** | S–M | high | ⚠️ | `set_dead_mans_switch` discards Kraken's `CancelAllOrdersAfter` response, so the bot never confirms the arm took (2026-06-02: 15 orders open ~10 min with the switch "configured" at 120s, yet it never fired). Return + log Kraken's `triggerTime` on each arm; consider refusing to place orders when the switch isn't confirmed-armed, so a rate-limit storm can't leave unprotected orders. Diagnostic shipped: `tools/check_dead_mans_switch.py`. |
 
 ---
 
