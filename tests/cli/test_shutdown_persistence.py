@@ -260,6 +260,108 @@ class TestSessionEndResilience:
 
 
 # --------------------------------------------------------------------- #
+# Dead man's switch: never disarm on a failed shutdown cancel           #
+# --------------------------------------------------------------------- #
+
+
+class _DmsSpyAdapter:
+    """Minimal adapter for the shutdown finally block. ``fetch_raises``
+    simulates a rate-limited ``get_open_orders``; records every
+    ``set_dead_mans_switch`` timeout so tests can assert (non-)disarm."""
+
+    def __init__(self, *, fetch_raises: bool) -> None:
+        self._fetch_raises = fetch_raises
+        self.dms_timeouts: list[int] = []
+
+    async def get_open_orders(self, *, symbol: Symbol | None = None) -> list[Order]:
+        if self._fetch_raises:
+            raise ExchangeError("EAPI:Rate limit exceeded")
+        return []
+
+    async def cancel_order(self, order: Order) -> None:
+        return None
+
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        self.dms_timeouts.append(timeout_seconds)
+
+
+async def _run_loop_until_shutdown(
+    adapter: _DmsSpyAdapter,
+    storage: SQLiteStorageAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive ``_run_loop`` straight to its finally block: ``stop`` is pre-set
+    so no per-tick DMS ping runs, and the only ``set_dead_mans_switch`` call
+    that can happen is the session-end disarm decision."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from wobblebot.cli import live as live_module
+    from wobblebot.config.cli import LiveConfig
+
+    async def fixed_balance(_a: Any) -> Decimal:
+        return Decimal("100")
+
+    async def fixed_portfolio(_a: Any, _s: Any) -> Decimal:
+        return Decimal("100")
+
+    monkeypatch.setattr(live_module, "_session_usd_balance", fixed_balance)
+    monkeypatch.setattr(live_module, "_session_portfolio_value_usd", fixed_portfolio)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+    live_cfg = LiveConfig(
+        symbols=[Symbol(base="BTC", quote="USD")],
+        db=":memory:",
+        tick_seconds=5.0,
+        max_runtime_minutes=None,
+        max_session_loss_usd=Decimal("5"),
+        dead_mans_switch_seconds=120,
+    )
+    engine = MagicMock()
+    engine.is_stop_requested = False
+    await live_module._run_loop(
+        adapter,  # type: ignore[arg-type]
+        engine,
+        live_cfg,
+        storage,
+        stop_event,
+    )
+
+
+class TestDeadMansSwitchNotDisarmedOnFailedCancel:
+    """Regression for the 2026-06-02 unprotected-orders incident.
+
+    A rate-limited shutdown couldn't fetch open orders. The bug:
+    ``_cancel_all_open``'s fetch failure was swallowed (``continue``,
+    ``failed`` unchanged), so it returned ``(0, 0)`` and the caller read
+    ``cancel_clean = (failed == 0) = True`` — which DISARMED the dead man's
+    switch. ~15 orders sat open ~10 min, unprotected. The fix makes the
+    global fetch PROPAGATE on failure → ``cancel_clean = False`` → the switch
+    is LEFT ARMED so Kraken's server-side timer sweeps them (ADR-021).
+    """
+
+    async def test_failed_shutdown_fetch_leaves_dms_armed(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = _DmsSpyAdapter(fetch_raises=True)
+        await _run_loop_until_shutdown(adapter, storage, monkeypatch)
+        # Disarm == set_dead_mans_switch(0); on a failed cancel it must NEVER
+        # be called, so Kraken's timer stays the backstop.
+        assert 0 not in adapter.dms_timeouts, "DMS was disarmed despite a failed shutdown cancel"
+
+    async def test_clean_shutdown_does_disarm(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Converse: a successful (empty) fetch IS a clean cancel, so the switch
+        # IS disarmed — proving the regression above isn't passing merely
+        # because disarm never happens.
+        adapter = _DmsSpyAdapter(fetch_raises=False)
+        await _run_loop_until_shutdown(adapter, storage, monkeypatch)
+        assert 0 in adapter.dms_timeouts, "clean shutdown should disarm the DMS"
+
+
+# --------------------------------------------------------------------- #
 # cli/shadow persistence                                                #
 # --------------------------------------------------------------------- #
 
