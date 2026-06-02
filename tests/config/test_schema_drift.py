@@ -30,6 +30,14 @@ checks because they are operator-extensible by design:
 
 For these subtrees we only verify that the parent key exists in both
 files; we don't drill into the children.
+
+Profile *names* are a special case (``test_operator_has_all_canonical_profiles``):
+although ``profiles.*`` children are exempt, the canonical profile names
+shipped in the example (``conservative``, ``aggressive``, ``cpu-only``,
+...) must still exist in the operator file — otherwise an operator who
+copied an older example silently loses access to profiles added later,
+surfacing only as a "profile not found" error at daemon startup. Custom
+operator-defined profiles remain exempt (example→operator direction only).
 """
 
 from __future__ import annotations
@@ -135,6 +143,25 @@ def _load_yaml_paths(path: Path) -> set[str]:
     return _extract_yaml_paths(raw)
 
 
+def _load_profile_names(path: Path) -> set[str]:
+    """Return the profile names defined directly under ``profiles:``.
+
+    The profile NAMES are the canonical-profile surface. ``profiles.*``
+    children are exempt from the leaf-path drift check (operators override
+    freely inside a profile), but the canonical names shipped in the
+    example must exist in the operator file or ``--profile X`` fails at
+    daemon startup. Returns an empty set when there is no ``profiles:``
+    block (or it isn't a mapping).
+    """
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return set()
+    profiles = raw.get("profiles")
+    if not isinstance(profiles, dict):
+        return set()
+    return set(profiles.keys())
+
+
 class TestSettingsDrift:
     """Operator's settings.yml vs settings.example.yml."""
 
@@ -161,6 +188,26 @@ class TestSettingsDrift:
         example_paths = _load_yaml_paths(_SETTINGS_EXAMPLE)
         operator_paths = _load_yaml_paths(_SETTINGS_OPERATOR)
         missing = example_paths - operator_paths
+        _report_missing("settings.yml", missing)
+
+    def test_operator_has_all_canonical_profiles(self) -> None:
+        """Canonical profiles shipped in the example must exist in the
+        operator's settings.yml.
+
+        ``profiles.*`` children are an open subtree, so the leaf-path
+        checks never see profile names; without this, an operator who
+        copied an older example silently loses access to profiles added
+        later (e.g. ``cpu-only``, ``cloud-only-moe``) — surfacing only as
+        a "profile not found" error at daemon startup. Custom
+        operator-defined profiles stay exempt: we check the
+        example→operator direction only, never flagging operator-only
+        names as stale.
+        """
+        if not _SETTINGS_OPERATOR.exists():
+            pytest.skip("no operator settings.yml; nothing to compare")
+        canonical = _load_profile_names(_SETTINGS_EXAMPLE)
+        operator_profiles = _load_profile_names(_SETTINGS_OPERATOR)
+        missing = {f"profiles.{name}" for name in (canonical - operator_profiles)}
         _report_missing("settings.yml", missing)
 
 
@@ -256,6 +303,26 @@ class TestExtractYamlPaths:
             "profiles.conservative.safety.max",
         ):
             assert forbidden not in result
+
+
+class TestLoadProfileNames:
+    def test_extracts_profile_names(self, tmp_path: Path) -> None:
+        f = tmp_path / "s.yml"
+        f.write_text(
+            "profiles:\n  conservative:\n    x: 1\n  aggressive:\n    y: 2\n",
+            encoding="utf-8",
+        )
+        assert _load_profile_names(f) == {"conservative", "aggressive"}
+
+    def test_no_profiles_block(self, tmp_path: Path) -> None:
+        f = tmp_path / "s.yml"
+        f.write_text("live:\n  tick_seconds: 5.0\n", encoding="utf-8")
+        assert _load_profile_names(f) == set()
+
+    def test_empty_profiles_block(self, tmp_path: Path) -> None:
+        f = tmp_path / "s.yml"
+        f.write_text("profiles:\n", encoding="utf-8")
+        assert _load_profile_names(f) == set()
 
 
 class TestExtractEnvKeys:

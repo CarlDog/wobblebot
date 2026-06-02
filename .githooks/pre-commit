@@ -77,3 +77,32 @@ if [ "$FOUND" -ne 0 ]; then
 fi
 
 echo "No PII patterns detected."
+
+# 4. Schema-drift check (scoped) — only when an example config file is staged.
+# Adding a key/profile to settings.example.yml or .env.example without syncing
+# your own (gitignored) settings.yml/.env is the exact drift this catches.
+# Strict mode so it BLOCKS; fail-soft if the venv is absent (a missing .venv
+# must never block a commit). Scoped to example-file commits so unrelated
+# commits pay zero cost.
+if printf '%s\n' "$STAGED" | grep -qE '^(config/settings\.example\.yml|\.env\.example)$'; then
+  echo "Staged an example config file; checking schema drift..."
+  DRIFT_PYTHON=""
+  if [ -x ".venv/Scripts/python.exe" ]; then
+    DRIFT_PYTHON=".venv/Scripts/python.exe"
+  elif [ -x ".venv/bin/python" ]; then
+    DRIFT_PYTHON=".venv/bin/python"
+  fi
+  if [ -z "$DRIFT_PYTHON" ]; then
+    echo "  (no .venv found; skipping — run 'pytest tests/config/test_schema_drift.py' manually)" >&2
+  elif DRIFT_OUT=$(WOBBLEBOT_STRICT_CONFIG_DRIFT=1 "$DRIFT_PYTHON" -m pytest tests/config/test_schema_drift.py --no-cov -q 2>&1); then
+    echo "Schema drift check passed."
+  else
+    echo "" >&2
+    echo "Commit blocked: schema drift between an example config and your operator file." >&2
+    echo "You staged an example config change but your gitignored settings.yml/.env is out of sync." >&2
+    printf '%s\n' "$DRIFT_OUT" | tail -20 >&2
+    echo "" >&2
+    echo "Sync the missing key(s)/profile(s) into your settings.yml/.env and re-stage." >&2
+    exit 1
+  fi
+fi
