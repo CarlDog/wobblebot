@@ -115,6 +115,7 @@ tests/         # Mirrors src/ structure
 - `domain/` must not import from `adapters/`, `services/`, or `cli/`. Run `grep -r "from wobblebot.adapters" src/wobblebot/domain/` — output should be empty.
 - Dependencies flow inward only: adapters depend on ports, services depend on ports + domain, nothing depends on adapters.
 - All cross-module wiring happens via constructor dependency injection of port interfaces.
+- **Documented exception — LLM plumbing.** The cloud-LLM adapters (`adapters/openai.py`, `anthropic.py`, `google.py`, their `*_assistant.py` variants) and `adapters/moe_advisor.py` import shared *leaf* helpers from `services/` (`llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry`, `aggregators`). This bends "nothing flows out of adapters" but creates **no import cycle** — those helpers never import the adapters back — and centralizes one cost-gate / retry / pricing implementation instead of copying it per provider. This is the one sanctioned outward edge; new LLM adapters may reuse these helpers, but don't introduce fresh adapter→service dependencies outside this plumbing.
 
 ### Financial Power Fragmentation (Safety Design)
 

@@ -186,22 +186,23 @@ batch post-tag — none are soak hotfixes, so none land on `main` mid-soak):
   (`architecture-components.md`, `glossary.md`, `context.md`, `architecture-intro.md`,
   `runtime-view.md`) + the `exceptions.py` docstring in the same commit; replaced the ABC with a
   module docstring explaining the Harvester-is-a-service rationale.
-- **F7a — login rate-limit docstring + MFA rationale.** The `LoginRateLimit` docstring
-  (`web/middleware.py:110-130`) promises per-IP isolation, but behind the recommended
-  loopback+reverse-proxy posture `request.client.host` is the proxy IP → all logins share one global
-  bucket. Fix the docstring to describe an effectively-global throttle (correct for one operator);
-  **do not** enable `proxy_headers`. *Also* correct the MFA-deferral rationale in `operator-ux.md`
-  (the MFA "Trigger" line cites "per-IP rate-limit" as adequate — that premise doesn't hold under
-  the proxy, so the deferral leans on something false).
+- **F7a — login rate-limit docstring + MFA rationale.** ✅ **DONE 2026-06-03.** The `LoginRateLimit`
+  docstring promised per-IP isolation, but behind the recommended loopback+reverse-proxy posture
+  `request.client.host` is the proxy IP → all logins share one global bucket (`_client_ip` reads
+  `request.client.host` with no `X-Forwarded-For` parsing — confirmed). Rewrote the docstring to
+  describe an effectively-global throttle (correct for one operator) and why `proxy_headers` stays
+  off (forwarded header is spoofable); **did not** enable `proxy_headers`. Also corrected the
+  MFA-deferral rationale in `operator-ux.md` — the "Trigger" line no longer leans on a false "per-IP"
+  premise and now frames the throttle as anti-guessing, not isolation (which is the MFA upgrade).
 - **F7b — dead `?attempted=` query param.** ✅ **DONE 2026-06-03.** `web/routes/settings.py`
   redirected with `&attempted={timezone}` but the GET handler read only `save` and no template
   rendered it. Not an XSS vector (autoescaping on). Param deleted.
-- **F8 — document the `adapters → services` import exception.** 5 LLM adapters + `moe_advisor.py:40`
-  import `services.*` against the `CLAUDE.md` inward-only layer rule — but there's **no import cycle**
-  (`adapters/ollama.py` is a clean leaf) and the LLM plumbing is well-factored. Add one sentence to
-  `CLAUDE.md` documenting the exception so the rule matches the graph; relocation is not warranted.
-  *(Believed to be on the backlog from the 2026-05-29 audit but never written into a doc — and that
-  note mischaracterized it as a "cycle.")*
+- **F8 — document the `adapters → services` import exception.** ✅ **DONE 2026-06-03.** 5 LLM
+  adapters + `adapters/moe_advisor.py` import `services.*` (`llm_cloud_call`, `llm_cost_gate`,
+  `llm_pricing`, `llm_retry`, `aggregators`) against the `CLAUDE.md` inward-only layer rule — but
+  there's **no import cycle** (the service helpers are clean leaves that never import the adapters
+  back) and the LLM plumbing is well-factored. Added a "Documented exception — LLM plumbing" hard-rule
+  bullet to `CLAUDE.md` so the rule matches the graph; relocation not warranted.
 
 **Confirmed-fine — no action** (verified, recorded so they aren't re-flagged next sweep): double
 `BalanceEx` is per-session not per-tick; `_check_safety` runs zero SELECTs on a no-fill tick

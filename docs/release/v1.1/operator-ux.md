@@ -1453,8 +1453,12 @@ Documented as a deliberate L3 gap in the security audit (2026-05-23).
   same access that lets you read `.env`)
 
 **Trigger:** any of the three "becomes load-bearing when"
-conditions above. Until then: per-IP rate-limit + bcrypt cost 12
-+ single-user-on-LAN is reasonable.
+conditions above. Until then: the login throttle (effectively
+*global*, not per-IP, behind the reverse proxy — see the
+`LoginRateLimit` docstring) + bcrypt cost 12 + single-user-on-LAN
+is reasonable. The throttle slows online password-guessing; it is
+not an isolation control, which is exactly why MFA is the named
+upgrade when the threat model grows.
 
 ### Content-Security-Policy header
 
