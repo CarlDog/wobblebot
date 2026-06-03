@@ -234,6 +234,8 @@ class TestPureHelpers:
             ("gpt-3.5-turbo", False),
             ("gpt-5", True),  # 2026-06-03: reasoning-shape verified via OpenAI docs
             ("gpt-5-mini", True),  # gpt-5 family folded in
+            ("gpt-5.5", True),  # priced in llm_pricing._PRICING — must classify as reasoning
+            ("gpt-5.5-pro", True),  # priced; pre-fix would have been sent temperature → rejected
         ],
     )
     def test_is_reasoning_model(self, model: str, expected: bool) -> None:
