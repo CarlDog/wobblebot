@@ -333,6 +333,37 @@ class TestSparkline:
         finally:
             await observe.close()
 
+    @pytest.mark.asyncio
+    async def test_per_order_delta_column(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            eth = Symbol(base="ETH", quote="USD")
+            # Current market 1810; a BUY at 1790 is +1.12% below market.
+            await observe.save_price_snapshot(
+                eth, Price(amount=Decimal("1810"), currency="USD"), Timestamp(dt=datetime.now(UTC))
+            )
+            await live_storage.save_order(_make_order(symbol="ETH/USD", price="1790"))
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert "vs mkt" in resp.text  # delta column header
+                assert "+1.12%" in resp.text  # (1810-1790)/1790*100, signed
+        finally:
+            await observe.close()
+
 
 # --------------------------------------------------------------------- #
 # /dashboard                                                            #
