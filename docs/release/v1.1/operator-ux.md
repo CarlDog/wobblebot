@@ -658,7 +658,9 @@ price, mode-badge) are NOT repeated here.
 - **Notification level-color inconsistency.** `info` renders blue
   (`info`) on `notifications.html:39` but green (`ok`) on
   `history.html:82` — same notification, different color across pages.
-  Pick one (info ≠ success → use `info`/blue). ~2-line fix.
+  Pick one (info ≠ success → use `info`/blue). ~2-line fix. **✅ FIXED
+  2026-06-03 — `history.html` info → `info`/blue, matching
+  `notifications.html`.**
 - **Zero responsive CSS.** `base.css` has no `@media` rule except
   `prefers-color-scheme` — the 6-7-column tables (Recent Fills,
   harvester) overflow on mobile and the navbar crowds. If the operator
@@ -686,6 +688,16 @@ price, mode-badge) are NOT repeated here.
   trading instrument" lever; no chart lib.
 - **Fill-flash micro-interaction.** Flash a just-filled row on the 15s
   HTMX swap. (`/cost` also lacks the dashboard's `transition:true`.)
+- **Fill toast (Kraken-style)** *(operator idea 2026-06-03)*. A
+  bottom-right popup when an order fills, auto-dismissing after a few
+  seconds and progressing through each fill that landed since the page
+  was last active (modeled on Kraken Pro). Richer than the fill-flash
+  row-highlight above — a transient queue of "X filled @ $Y" cards.
+  Source data: the same `recent_trades` the status card already polls;
+  the client diffs against the last-seen trade id (mirrors the
+  bell-badge last-seen pattern in `layout.html`). HTMX/JS, no new
+  backend. Pairs with the per-symbol sparkline + scoreboard for a
+  "live instrument" feel.
 - **Advisor pagination/collapse** (`advisor.html:34`) — every
   suggestion is a full stacked card with a nested table; collapse older
   ones once `cli/advise` accumulates volume.
