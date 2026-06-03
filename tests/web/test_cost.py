@@ -166,6 +166,7 @@ class TestCostRoute:
             assert "0.001234" in resp.text
             assert "anthropic / operator" in resp.text
             assert "openai / operator" in resp.text
+            assert 'class="bar-chart"' in resp.text  # 7-day spend bars render
 
 
 class TestCostCardFragment:

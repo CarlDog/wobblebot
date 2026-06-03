@@ -681,9 +681,10 @@ price, mode-badge) are NOT repeated here.
   "—" when unwired; the buried 13px Today's-PnL span was removed. This
   folded in the buying-power *aggregate* + the lifetime-PnL items; the
   per-symbol held inventory *inside each card* remains.
-- **`/cost` spend-by-day bar chart.** "Spend by Day (Last 7 Days)"
-  (`cost.html:20`) is a 7-row table begging for a 7-bar inline-SVG
-  chart.
+- **`/cost` spend-by-day bar chart.** **✅ DONE 2026-06-03 (v1.1):** a
+  CSS bar chart (7 bars, height ∝ daily cost, oldest→newest, date label +
+  hover detail) now sits above the "Spend by Day" table for at-a-glance
+  trend; exact values stay in the table.
 
 **Tier 2 — high value, medium effort:**
 - **Per-symbol grid-band sparklines.** A tiny inline-SVG sparkline
