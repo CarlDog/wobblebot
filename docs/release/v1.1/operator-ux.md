@@ -666,9 +666,11 @@ price, mode-badge) are NOT repeated here.
   harvester) overflow on mobile and the navbar crowds. If the operator
   ever checks on a phone, it's broken. Min: a horizontal-scroll wrapper
   on wide tables + a nav collapse below ~700px.
-- **Settings inputs dark-on-light** (`base.css:72`/`1307`) + **`.muted`
-  declared twice** (`base.css:918`/`1328`) — both flagged in-code "for
-  the dark-mode cleanup" that never landed.
+- **Settings inputs dark-on-light** + **`.muted` declared twice** — both
+  flagged in-code "for the dark-mode cleanup" that never landed. **✅ FIXED
+  2026-06-03:** settings `.form-row` inputs now theme via `--surface-card`/
+  `--text-primary`/`--border-strong` (the dead `--form-input-*` vars removed);
+  the duplicate `.muted` collapsed to one rule.
 
 **Tier 1 — high value, low effort:**
 - **Dashboard scoreboard strip.** The dashboard buries Today's PnL in a

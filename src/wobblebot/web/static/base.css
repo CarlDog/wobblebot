@@ -69,12 +69,6 @@
   /* === Errors === */
   --error-bg: #ffe5e5;
 
-  /* === Form inputs (settings page currently uses dark-on-light;
-        kept as-is for step 1 — the inconsistency lands in step 2) === */
-  --form-input-bg: #1d1f23;
-  --form-input-text: #e4e6eb;
-  --form-input-border: #3a3d42;
-
   /* === Indicators === */
   --bell-unread-dot: #dc2626;
 
@@ -911,14 +905,6 @@ table.data.compact td {
   font-size: 13px;
 }
 
-/* NOTE: .muted is declared twice — once here and once in the settings
-   page block below with a different value. The settings block wins
-   via cascade order. Variable refactor preserves this behavior pending
-   a focused cleanup; flagged for the dark-mode commit. */
-.muted {
-  color: var(--text-secondary);
-}
-
 .tag {
   display: inline-block;
   padding: 2px 8px;
@@ -1309,9 +1295,11 @@ table.data th {
   width: 100%;
   max-width: 360px;
   padding: 6px 8px;
-  background: var(--form-input-bg);
-  color: var(--form-input-text);
-  border: 1px solid var(--form-input-border);
+  /* Themed like every other input (was a hardcoded dark-on-light bg —
+     the settings-page inconsistency flagged in-code; now consistent). */
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font: inherit;
 }
@@ -1322,9 +1310,7 @@ table.data th {
   color: var(--text-muted);
 }
 
-/* Second .muted declaration — wins via cascade order over the
-   earlier .muted rule that uses --text-secondary. Pre-existing
-   duplicate flagged for cleanup in step 2 of the theme work. */
+/* Muted helper — dimmer than body text, for timestamps + chrome. */
 .muted {
   color: var(--text-muted);
   font-size: 13px;
