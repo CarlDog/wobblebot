@@ -876,6 +876,87 @@ Cosmetic UX issue, not a data correctness one.
 probe battery showed how dominant the tally stack is relative
 to the narrative.
 
+### Bespoke notification-card renderers (proactive push embeds)
+
+**What:** give the *proactive* Discord notifications — the fills,
+cycle-closes, cap-trips, offside warnings, dead-man's-switch
+events, and harvester alerts that ``cli/live`` / ``cli/harvest``
+raise through ``NotifierPort`` — the same per-event-type embed
+treatment the *query responses* already got in v1.0, replacing
+today's one-size-fits-all renderer.
+
+**Current state (the gap):** every notification is forwarded to
+Discord by a single generic path in
+``cli/operator.py::_forward_pending_notifications``. It posts:
+
+- ``title`` = the raw ``notification.title`` string
+- ``description`` = the raw ``notification.message`` string
+- ``color`` = a 4-bucket level→color map (info / warning /
+  error / critical) — no per-event semantics
+- ``fields`` = ``_render_context_fields()``, a **generic dict
+  dump**: the first 8 keys of ``notification.context``, str-cast,
+  truncated at 200 chars, in insertion order
+- ``footer`` = ``level=… • id=…``
+
+So a fill card and a cap-trip card are structurally identical —
+title + blurb + whatever happened to be in the ``context`` dict.
+There is no fill-specific layout (price / size / side / fee /
+realized-PnL as labelled fields), no cap-trip emphasis, no
+offside-vs-recovered visual distinction. Ironically the v1.0
+query-embed work (``services/discord_embed_render.py``, 9
+renderers) cites *"like the existing fill notifications"* as its
+target — but those fill notifications **are** this generic path,
+never a polished baseline.
+
+**Implementation outline:**
+
+1. New ``services/notification_embed_render.py`` mirroring the
+   shipped ``discord_embed_render.py`` shape: one pure renderer per
+   event type, each returning ``DiscordTransport.send_embed``
+   kwargs. Reuse the shared ``COLOR_*`` constants and
+   ``format_signed_usd`` helper rather than re-deriving them
+   (consolidates the Discord-colors ×2 dedup smell flagged in the
+   four-homes audit).
+2. A stable **event-type discriminator** in ``notification.context``
+   at the raise sites. Today ``cli/live`` / ``cli/harvest`` pass
+   free-form context dicts; the renderer needs a reliable key (e.g.
+   ``context["event"] = "fill" | "cycle_close" | "cap_trip" |
+   "offside" | "dms_trip" | "harvester_proposal" | …``) to dispatch
+   on. Defining that small vocabulary at the producers is the
+   load-bearing half of the work — the rendering is mechanical once
+   the event type is trustworthy. Unknown / missing event types
+   fall back to today's generic ``_render_context_fields`` path so
+   nothing regresses to a blank card.
+3. Swap the forwarder's hardcoded ``send_embed(...)`` call for
+   ``render_notification_embed(row.notification)``; the
+   per-row try/except + ``mark_notification_forwarded`` flow is
+   unchanged.
+4. Tests per variant + the generic fallback + empty/overflow,
+   modeled on the 21-test query-embed suite.
+
+**Why high value:** the proactive cards are how the operator learns
+the bot *did something* without asking — the most-seen Discord
+surface during a soak. Generic title+blurb+dict-dump is legible but
+loses the glanceability a labelled, color-by-event card gives
+(a red cap-trip vs a green cycle-close should be distinguishable at
+a thumb-scroll). This is the push-side twin of the v1.0 query-side
+work, and the two share the renderer pattern + color constants.
+
+**Why deferred:** every part is feature work, not a bug — the
+generic path is correct, just undifferentiated. Pairs naturally
+with the **status_report tally compactness** item (same embed-field
+ergonomics) and the **buttons-over-reactions** migration (both
+touch ``DiscordTransport``); batch the Discord-format changes so the
+embed shape shifts once, predictably, rather than across several
+commits. Branch-safe to **document** now; implementation is
+gate-blocked with the rest of P3 (needs soak → tag → unfreeze).
+
+**Trigger:** operator-flagged 2026-06-03 while reviewing the v1.1
+Discord backlog — the proactive notification cards never received
+the bespoke-renderer treatment the query responses did, so they sit
+on the generic forwarder path. Pick up alongside the other Discord
+P3 format items.
+
 ### Operator command catalog: single source of truth across prompt + code
 
 **What:** today the catalog of available operator commands and
