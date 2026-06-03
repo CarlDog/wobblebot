@@ -233,7 +233,7 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | Slice | Effort | Value | Safety | Notes |
 |---|---|---|---|---|
 | **Reconciler fill-vs-cancel disambiguation** | L | high | ⚠️ | Highest-value safety defect: query `ClosedOrders` for storage-only `exchange_id`s; replay counter-placement when the order actually *filled*. Recovers the 2026-05-19 orphaned-$10-BTC class. Own ADR + regression test reproducing the orphan. |
-| **Live partial-fill Trade-drop** *(deep-scan 2026-06-02)* | M | high | ⚠️ | **Distinct from the reconciler row above** — that one is *startup*-scoped; this is a **live `_detect_fills` bug**. The engine saves a `Trade` + places a counter only when the refreshed order is `closed` (full fill). A partially-filled order that refreshes to `canceled`/`expired` with `filled_amount > 0` — now *more* likely, since shutdown cancel-all + the ADR-021 dead-man's-switch both cancel partially-filled limits — drops the matching `Trade` rows (storage under-records a real fill) and skips the counter, corrupting cycle-matcher/dashboard PnL and drifting base-inventory vs Kraken's real holdings. The startup reconciler does **not** patch it (it diffs open-order status, never re-derives a dropped partial Trade). Floor fix: on a cancel/expire with `filled_amount > 0`, still save the trades + WARN about the unbalanced leg; optional counter sized to the partial when not offside. Own test for a canceled order carrying `filled_amount > 0`. |
+| **Live partial-fill Trade-drop** *(deep-scan 2026-06-02)* | M | high | ⚠️ | **Distinct from the reconciler row above** — that one is *startup*-scoped; this is a **live `_detect_fills` bug**. The engine saves a `Trade` + places a counter only when the refreshed order is `closed` (full fill). A partially-filled order that refreshes to `canceled`/`expired` with `filled_amount > 0` — now *more* likely, since shutdown cancel-all + the ADR-021 dead-man's-switch both cancel partially-filled limits — drops the matching `Trade` rows (storage under-records a real fill) and skips the counter, corrupting cycle-matcher/dashboard PnL and drifting base-inventory vs Kraken's real holdings. The startup reconciler does **not** patch it (it diffs open-order status, never re-derives a dropped partial Trade). Floor fix: on a cancel/expire with `filled_amount > 0`, still save the trades + WARN about the unbalanced leg; optional counter sized to the partial when not offside. Own test for a canceled order carrying `filled_amount > 0` — **test-infra caveat (test-honesty audit 2026-06-02):** the `MockExchangeAdapter` cannot produce a canceled-with-`filled_amount>0` order today, so the F1 test must build that state via the Kraken adapter's raw `_apply_kraken_order_update` (where it's production-reachable) or extend the mock. Independently confirmed **unpinned** — no current test exercises this axis. |
 | Session-loss-cap cool-down period | M | high | ⚠️ | Operator-configurable cool-down after `cli/live` exits `exit_code=1`; `--ignore-cool-down`. New ADR; soak data informs the default. |
 | Slippage / spread guard before placement | M | high | ⚠️ | New `get_order_book` `ExchangePort` method + pre-tick spread check refusing placement above threshold. New ADR. Higher priority once multi-asset ships. |
 | Partial-grid placement: WARN → INFO | S | low-med | | Demote the scary insufficient-balance WARN to an INFO summary (placed-vs-target). Reserve WARN for genuine refusals. |
@@ -254,6 +254,36 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | **Dashboard safety visibility — LIVE badge + session-cap card** | M | med-high | ⚠️ | The "LIVE" badge is **hardcoded** in `_status_card.html` (a dead engine shows green forever; the route never loads the health snapshot) — wire it to `load_health_snapshot` (LIVE/STALE/STOPPED). And add a **Session card** (PnL vs `max_session_loss_usd`, % consumed, tripped state): `web/` has zero `session_pnl`/`loss_cap` surface, so after a cap trip the operator who missed the bell/Discord ping has no visual signal (the "cap tripped unnoticed ~1.5h" soak miss). Promote ahead of the P3 buying-power card. |
 | **Auto-apply NaN guard** *(deep-scan 2026-06-02)* | S | med | ⚠️ | `evaluate_auto_apply` promises "never raises on bad input," but a NaN LLM recommendation (`json.loads` accepts a bare `NaN` token) becomes `Decimal('NaN')`, and `Decimal('NaN') <= 0` **raises** `decimal.InvalidOperation` (floats wouldn't) — and the `cli/apply.py` call sits *outside* the guarding try/except. A garbled LLM response crashes the ADR-002 safety boundary. One-line fix in `_coerce_numeric`: `if not coerced.is_finite(): return None` (NaN/Inf both become a `RejectedKey`). Branch-safe to start; lands post-tag with a regression test feeding a NaN recommendation through the gate. |
 | **Per-tick price-fetch dedup** *(deep-scan 2026-06-02)* | M | med | | Each `cli/live` tick fetches a symbol's price twice — `engine.step`→`_step_unlocked` and again in `_session_portfolio_value_usd` (loss-cap mark-to-market) — both uncached `/0/public/Ticker` GETs, one extra serial round-trip per *held* symbol. **Latency hygiene, not an outage risk**: public bucket (not the private bucket of the 06-02 storm), and gated on `base_balance > 0` so cost is `N + held`, not `2N`. Fix mirrors the OpenOrders snapshot pattern: fetch prices once at the top of `_run_one_tick` into a dict and thread through (`engine.step` gains an optional `prices=`, falling back to per-symbol fetch for shadow/test callers). |
+
+### P1 test-hardening — consequence/orchestration coverage (test-honesty audit 2026-06-02)
+
+A 12-path mutation-mindset audit (*does a regression actually fail a test?*) + a suite-wide hygiene
+scan. **Hygiene is gold-standard** — zero tautological / over-mock / called-not-effect tests across
+153 files, all 11 skips legitimate (live-cred/data gates), `filterwarnings=error` un-relaxed
+(recorded so future audits don't re-litigate it). But **6 of 12 safety paths have a real coverage
+gap, all the same shape: the decision logic is pinned, the *consequence / orchestration* is not** —
+the tested unit is honest; the call-site wiring that makes it safety-critical is unverified. These
+are test *additions* (P1 / branch-safe — not soak hotfixes), ≈one end-to-end test each, clustering
+with the P1 safety work above.
+
+| Add | Path | Sev | The regression that ships green today |
+|---|---|---|---|
+| Loss-cap consequence E2E | P3 | high | Nothing drives `_run_loop` through a real cap trip: `exit_code = 1`→`0` ships green (a watchdog auto-restarts into the losing market) and a regression skipping cancellation *on the trip path* leaves orders resting on Kraken. Detection is pinned; the consequence + the `< / <=` boundary are not. Test: trip the cap, assert `exit_code==1` AND orders canceled AND boundary at exactly `-cap`. |
+| Firewall-bypass negative test | P7 | high | The ADR-002 "approved-only reaches the engine" SELECT is well-pinned, but "intent never dispatches directly" is prevented *only by code structure* (the handler holds no engine ref) — a future edit giving `_handle_command_intent` an engine reference bypasses silently. Test: after an intent with **no** confirmation, assert the engine was **not** actioned. (Also: the stray-emoji `else` branch at `operator.py:861` is uncovered.) |
+| Preflight gate orchestration | P9 | med | `_audit_trade_key_scope` is solid, but nothing wires `preflight._run`: the "scope violation pre-empts the validate run" early-return (and "not gated by `dry_run`") is untested at the CLI level. Test: drive `_run`, assert the gate fires before `engine.step` and independent of `dry_run`. |
+| Reconciler fail-soft | P5 | med | The "one bad row doesn't block boot" resilience branch (`reconciler.py:266-275`) is unexercised — `StorageError` is never injected. A `continue`→re-raise regression aborts daemon boot. Test: inject a `StorageError`, assert boot continues + `storage_persistence_failures` is counted. |
+| F1 partial-fill *(cross-ref)* | P6 | high | **Unpinned** — see the "Live partial-fill Trade-drop" row above; the fix's test must construct the canceled-with-`filled_amount>0` state the mock can't currently produce. |
+
+**Narrows (fails-safe or defensible — record, don't rush):** P2 intra-tick *ordering* of the DMS
+pet is unpinned (frequency + the disarm gate are pinned); P4 per-coin *exposure* cap isn't asserted
+symbol-scoped (a global-scope regression fails *safe*); P8 compound-failure redundancy + the layer-6
+`current_balance is None` execute branch are unasserted (no wrong money movement under single-failure
+inputs); P11 cross-symbol offside isolation on the non-raising parked path is untested.
+
+**Well-pinned (no action):** P1 shutdown cancel-all, P2 DMS arm-each-tick, P4 caps enforcement, P8
+harvester 7 layers, P10 auto-apply bounds (news firewall + cap direction verified by simulation),
+P12 OpenOrders global-fetch — each with concrete failing-assertion coverage of its plausible
+regressions.
 
 ---
 
