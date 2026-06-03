@@ -108,12 +108,24 @@ class _IPBucket:
 
 
 class LoginRateLimit:
-    """Per-IP token-bucket-ish rate-limit for the login route.
+    """Token-bucket-ish login rate-limit, keyed by client IP.
 
     Tracks login attempts (regardless of success) within a rolling
     window keyed by ``request.client.host``. ``allow(ip)`` returns
     ``True`` if another attempt is permitted (and records it); ``False``
     if the IP has exhausted its budget for the window.
+
+    Deployment note — under the recommended posture this is effectively a
+    *global* throttle, not per-IP. The web tier is meant to sit behind a
+    loopback bind + reverse proxy (ADR-016/017), and we deliberately do
+    NOT parse ``X-Forwarded-For`` (``proxy_headers`` stays off, since a
+    forwarded header is spoofable), so ``request.client.host`` is the
+    proxy's address and every login shares one bucket. That is the
+    intended behaviour for a single-operator LAN deployment — the
+    limiter's job is to slow online password-guessing, and one global
+    bucket does that without trusting a spoofable header. The per-IP
+    keying only fractures into genuine per-client buckets if the daemon
+    is ever exposed directly (no proxy) to multiple distinct clients.
 
     Successful login calls :meth:`reset` to clear the bucket — the
     operator should not get locked out by their own three-wrong-tries-
