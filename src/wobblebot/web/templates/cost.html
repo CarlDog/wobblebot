@@ -23,6 +23,17 @@
   {% if snapshot.error %}
     <p class="error">{{ snapshot.error }}</p>
   {% elif snapshot.per_day %}
+    {# 7-day spend bar chart — at-a-glance trend; exact values in the table
+       below. per_day is newest-first, so reverse for oldest→newest L-to-R. #}
+    {% set max_cost = snapshot.per_day | map(attribute='cost_usd') | max %}
+    <div class="bar-chart" role="img" aria-label="Daily LLM spend, last 7 days">
+      {% for d in snapshot.per_day | reverse %}
+        <div class="bar-col" title="{{ d.day }}: ${{ '%.6f'|format(d.cost_usd) }} ({{ d.call_count }} calls)">
+          <div class="bar" style="height: {% if max_cost > 0 %}{{ (d.cost_usd / max_cost * 100) | round(1) }}{% else %}0{% endif %}%"></div>
+          <div class="bar-label">{{ d.day[-5:] }}</div>
+        </div>
+      {% endfor %}
+    </div>
     <table class="data">
       <thead>
         <tr><th>day</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>

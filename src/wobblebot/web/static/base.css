@@ -889,6 +889,42 @@ h2 {
   font-feature-settings: "tnum";
 }
 
+/* Inline-SVG-free bar chart (CSS bars) — e.g. /cost daily spend. Bars
+   grow from a flex-end baseline; height is an inline % of the tallest
+   bar. Exact values live in the companion table + each bar's title. */
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 120px;
+  margin: 8px 0 16px;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.bar {
+  width: 100%;
+  max-width: 48px;
+  min-height: 2px;
+  background: var(--color-link);
+  border-radius: 3px 3px 0 0;
+  transition: height 200ms ease;
+}
+
+.bar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
 table.data td.num,
 table.data th.num {
   text-align: right;
