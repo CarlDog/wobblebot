@@ -268,20 +268,32 @@ def _current_value(grid: GridLevels, key: str) -> Decimal:
 
 def _coerce_numeric(value: Any) -> Decimal | None:
     """Coerce LLM-emitted numerics (float/int/str) into ``Decimal`` for
-    bounded comparison. Returns None on non-numerics or NaN."""
+    bounded comparison. Returns None on non-numerics, NaN, or Infinity.
+
+    The NaN/Inf rejection is load-bearing: ``json.loads`` accepts bare
+    ``NaN`` / ``Infinity`` tokens, and ``Decimal(str(float("nan")))`` is a
+    *valid, non-raising* ``Decimal("NaN")``. Left unchecked it flows past
+    the ``coerced is None`` reject in ``evaluate_auto_apply`` and crashes
+    the downstream ``<= 0`` bound check with ``decimal.InvalidOperation``
+    — inside the ADR-002 auto-apply safety boundary, whose contract is
+    "never raises on bad input." ``is_finite()`` filters NaN/±Inf/sNaN so
+    a garbled recommendation degrades to a ``RejectedKey`` instead.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float, Decimal)):
         try:
-            return Decimal(str(value))
+            coerced = Decimal(str(value))
         except (ArithmeticError, ValueError):
             return None
-    if isinstance(value, str):
+    elif isinstance(value, str):
         try:
-            return Decimal(value)
+            coerced = Decimal(value)
         except (ArithmeticError, ValueError):
             return None
-    return None
+    else:
+        return None
+    return coerced if coerced.is_finite() else None
 
 
 def _cap_for_key(config: AutoApplyConfig, key: str) -> Decimal:
