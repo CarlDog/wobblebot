@@ -166,6 +166,64 @@ missing retry).
 **Trigger:** post-v1.0 cleanup phase OR next time a Kraken /
 Ollama / cloud-LLM timeout incident surfaces uneven coverage.
 
+### Logging-quality audit + enrichment pass (application-wide)
+
+**What:** a systematic sweep of every log site in the codebase
+(~90+ call sites) to make each line *self-explanatory* — the message
+says what happened, and the operationally-useful data (symbol, side,
+price, amount, counts, ids, durations) rides in BOTH the message
+string (so the plain-text formatter shows it to an operator tailing
+the log) AND the `extra=` dict (so JSON consumers index it). Output
+is a short logging-conventions note in `docs/implementation/` plus
+the per-module edits.
+
+**Why operator-flagged (2026-06-03):** the soak surfaced it
+concretely. A grid fill logs the bare string `grid fill` — no
+symbol, side, price, or amount — so an operator watching `cli/live`
+cannot tell *what* filled, or even buy-vs-sell, let alone whether a
+buy→sell cycle actually closed (this is exactly what blocked reading
+"6 fills in 17h" on 2026-06-03). The detail exists in structured
+`extra=` fields, but `PlainExtraFormatter` only surfaces
+`extra.error` inline (Day-11 work), so plain-format readers see
+nothing. That bare-message shape recurs across the app.
+
+**What "good" looks like (conventions to ratify):**
+- Operator-facing data in the message string (plain format is
+  message-only by default); structured fields in `extra=` for JSON
+  consumers — the existing CLAUDE.md rule, applied *consistently*.
+- Severity is accurate: an *expected* degraded state is INFO with
+  context, not a scary WARNING.
+- Every state-change / money-touching / external-call event answers
+  what / which / how-much in one line.
+- Consistent field names + vocabulary across modules.
+
+**Scope discipline — audit-and-enrich, NOT a logging rewrite:** the
+pass enriches message content + corrects severities; it does NOT
+re-architect the logging stack (formatter, rotation, JSON sink stay
+as-is). It is the umbrella over two already-tracked specifics: the
+`grid fill` detail gap (this entry's worked example) and the
+partial-grid `WARN→INFO` demotion (`engine.md`). New structured-
+logging *infrastructure* (trace_ids) stays separate under "Per-cycle
+LLM call tracing."
+
+**Implementation:** enumerate sites (`grep -rn "_LOGGER\." src/`),
+bucket by module, and for each ask: does the line answer
+what/which/how-much? Fix message + `extra=` together; correct
+severity. Land per-module in small commits (engine → adapters →
+services → cli → web) so a regression is bisectable. A lightweight
+test can assert that fill/order/cap log lines carry their key
+fields, so the convention doesn't rot.
+
+**Why deferred:** quality/observability, not v1.0-gating — the data
+is on disk and the dashboard is the authoritative read; this
+improves the *live-tail* experience. Branch-safe (no runtime
+behavior change beyond log text + severity).
+
+**Trigger:** operator-requested 2026-06-03 after the soak's "6 fills
+but I can't tell buys from sells from the log" moment. Pairs with
+the P3 dashboard-visibility items (same "operator can't see what's
+happening" theme).
+
 ### Disk space awareness in the anomaly detector
 
 **What:** when the anomaly detector daemon ships (see Group 2),
