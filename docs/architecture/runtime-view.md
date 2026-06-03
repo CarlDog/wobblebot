@@ -26,7 +26,7 @@ This document describes key runtime executions and interactions.
 
 ## Harvester Sequence
 
-1. Orchestrator queries Harvester for balance status (via HarvesterPort)
+1. Orchestrator queries Harvester for balance status
 2. Harvester checks Kraken balance (via ExchangePort)
 3. Harvester applies threshold logic (min liquidity, surplus scraping, top-up rules)
 4. If withdrawal needed → Harvester builds transfer proposal

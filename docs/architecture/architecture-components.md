@@ -18,9 +18,6 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 - **DataCollectorPort** – Market metrics, historical data, derived analytics (aggregation layer). Phase 3.1.
 - **NewsPort** – Interface for crypto news ingestion (`fetch_recent(since) -> list[NewsItem]`; implementations are `RssNewsAdapter` per feed + `CryptoCompareAdapter`). Phase 3.2.5.
 
-### Treasury Ports
-- **HarvesterPort** – Interface for Orchestrator to interact with Harvester (fund transfer management)
-
 ### Operational Ports
 - **NotifierPort** – Alerts, notifications (email, Slack, Discord, etc.)
 
@@ -110,7 +107,7 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 
 ## 6. Harvester Module
 - Bank ↔ Kraken balance manager
-- **Implements HarvesterPort** (consumed by Orchestrator)
+- **A service, not a port-implementing adapter** — withdraws via `ExchangePort` per ADR-004 (no separate banking/harvester port)
 - **Depends on:**
   - **ExchangePort** (Kraken Adapter with withdrawal permissions) for balance queries AND fund transfers
   - **StoragePort** for logging transfer proposals and outcomes

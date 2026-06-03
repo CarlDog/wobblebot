@@ -53,7 +53,7 @@ class AdvisorError(WobbleBotPortError):
 
 
 class HarvesterError(WobbleBotPortError):
-    """Raised when a ``HarvesterPort`` operation fails.
+    """Raised when a harvester operation fails.
 
     Examples: Kraken withdrawal endpoint rejects the request, bank
     address book lookup fails, safety-cap validation fails.

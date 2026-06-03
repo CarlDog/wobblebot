@@ -30,8 +30,6 @@
 
 **AdvisorPort** – Interface for strategy recommendations. Implemented by Strategy Advisor (LLM).
 
-**HarvesterPort** – Interface for fund transfer management. Implemented by Harvester module.
-
 **NotifierPort** – Interface for alerts and notifications. Implementation TBD.
 
 **Note on BankingPort:** Originally planned as a separate port for bank API integration. Per ADR-004, not needed—Kraken's withdrawal API handles bank transfers directly.

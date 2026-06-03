@@ -173,17 +173,19 @@ the orphan one-liners (no other home) are detailed here.
 **Branch-safe code-health one-liners** (no other home; do on the feature branch during the soak or
 batch post-tag — none are soak hotfixes, so none land on `main` mid-soak):
 
-- **F5 — harvester band-label off-by-equality.** `operator_service.py:915` uses `<` where the
-  authority `harvester.py:158` `propose_transfer` uses `>` — at exact `balance == surplus_threshold`
-  it labels the band "surplus" while the authority would HOLD. **Purely cosmetic** (label only
-  drives a Discord embed color + a tally + log strings; no money path keys off it). One-line `<=`
-  align before the thresholds get tuned.
-- **F6 — delete the dead `HarvesterPort` ABC.** `ports/harvester.py:63-141` — a 4-method ABC with
-  zero implementers / injectors / annotations (the real design is free functions + a local
-  `_TransferHistoryReader` Protocol that doesn't subclass it). Implies a DI seam the code abandoned.
-  Delete it + the two re-exports (`ports/__init__.py:39,104`); **keep** the co-located
-  `TransferProposal`/`TransferResult` models. *(Doc-sync side-effect: `architecture-components.md` +
-  `glossary.md` still describe it as live — update those in the same commit.)*
+- **F5 — harvester band-label off-by-equality.** ✅ **DONE 2026-06-03.** `operator_service.py`
+  `_classify_band` used `<` where the authority `harvester.py` `propose_transfer` uses `>` — at exact
+  `balance == surplus_threshold` it labeled the band "surplus" while the authority would HOLD.
+  **Purely cosmetic** (label only drove a Discord embed color + a tally + log strings; no money path
+  keyed off it). Aligned to `<=`.
+- **F6 — delete the dead `HarvesterPort` ABC.** ✅ **DONE 2026-06-03.** `ports/harvester.py` carried a
+  4-method ABC with zero implementers / injectors / annotations (the real design is free functions +
+  a local `_TransferHistoryReader` Protocol that doesn't subclass it) — a DI seam the code abandoned.
+  Deleted it + the two re-exports (`ports/__init__.py`); **kept** the co-located
+  `TransferProposal`/`TransferResult` models. Doc-synced six architecture files
+  (`architecture-components.md`, `glossary.md`, `context.md`, `architecture-intro.md`,
+  `runtime-view.md`) + the `exceptions.py` docstring in the same commit; replaced the ABC with a
+  module docstring explaining the Harvester-is-a-service rationale.
 - **F7a — login rate-limit docstring + MFA rationale.** The `LoginRateLimit` docstring
   (`web/middleware.py:110-130`) promises per-IP isolation, but behind the recommended
   loopback+reverse-proxy posture `request.client.host` is the proxy IP → all logins share one global
@@ -191,9 +193,9 @@ batch post-tag — none are soak hotfixes, so none land on `main` mid-soak):
   **do not** enable `proxy_headers`. *Also* correct the MFA-deferral rationale in `operator-ux.md`
   (the MFA "Trigger" line cites "per-IP rate-limit" as adequate — that premise doesn't hold under
   the proxy, so the deferral leans on something false).
-- **F7b — dead `?attempted=` query param.** `web/routes/settings.py:124` redirects with
-  `&attempted={timezone}` but the GET handler reads only `save` and no template renders it. Not an
-  XSS vector (autoescaping on). Delete the param.
+- **F7b — dead `?attempted=` query param.** ✅ **DONE 2026-06-03.** `web/routes/settings.py`
+  redirected with `&attempted={timezone}` but the GET handler read only `save` and no template
+  rendered it. Not an XSS vector (autoescaping on). Param deleted.
 - **F8 — document the `adapters → services` import exception.** 5 LLM adapters + `moe_advisor.py:40`
   import `services.*` against the `CLAUDE.md` inward-only layer rule — but there's **no import cycle**
   (`adapters/ollama.py` is a clean leaf) and the LLM plumbing is well-factored. Add one sentence to

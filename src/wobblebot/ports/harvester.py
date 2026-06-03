@@ -1,18 +1,21 @@
-"""HarvesterPort - Abstract interface for fund transfer management.
+"""Treasury transfer data models.
 
-This port defines the contract for treasury management
-(exchange ↔ bank). The Harvester module implements this port for the
-configured exchange (Phase 4+); per ADR-004 the Kraken implementation
-uses Kraken's withdrawal API via ``ExchangePort`` rather than a
-separate banking adapter.
+``TransferProposal`` (a proposed exchange↔bank movement) and
+``TransferResult`` (the outcome of an executed transfer) — the domain
+types the Harvester produces / consumes.
 
-CRITICAL: Harvester is the ONLY module with withdrawal permissions.
+There is deliberately no ``HarvesterPort`` abstraction: per ADR-004 the
+Harvester is a *service* (``services/harvester.py``) that withdraws via
+Kraken's API through ``ExchangePort``, not a swappable adapter behind a
+port. (A speculative ``HarvesterPort`` ABC lived here through Phase 4 but
+nothing ever implemented / injected it — removed 2026-06-03.)
+
+CRITICAL: the Harvester is the ONLY module with withdrawal permissions.
 All transfers must respect strict thresholds and safety caps.
 """
 
-from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,84 +61,3 @@ class TransferResult(BaseModel):
     direction: Literal["exchange_to_bank", "bank_to_exchange"]
     asset: str = Field(..., min_length=1, max_length=10)
     timestamp: Timestamp = Field(..., description="When the transfer was submitted")
-
-
-class HarvesterPort(ABC):
-    """Abstract interface for fund transfer management.
-
-    Phase 4+ feature — manages exchange ↔ bank transfers.
-
-    Implementations:
-    - Harvester module (uses the configured exchange's withdrawal API;
-      per ADR-004, Kraken's `Withdraw` endpoint via ``ExchangePort``)
-
-    Error convention:
-    - "No transfer needed" returns ``None`` from
-      ``check_balance_status``; not an error.
-    - Protocol/transport failure raises ``HarvesterError`` (Kraken
-      withdrawal endpoint rejects, bank address book lookup fails,
-      safety-cap validation fails).
-    """
-
-    @abstractmethod
-    async def check_balance_status(self, asset: str) -> TransferProposal | None:
-        """Check if a transfer is needed based on thresholds.
-
-        Args:
-            asset: Asset to check (e.g., USD)
-
-        Returns:
-            Transfer proposal if action needed, None otherwise
-
-        Raises:
-            HarvesterError: If balance check fails
-        """
-        pass
-
-    @abstractmethod
-    async def execute_transfer(self, proposal: TransferProposal) -> TransferResult:
-        """Execute an approved transfer.
-
-        CRITICAL: Only call after Orchestrator approval and safety validation.
-
-        Args:
-            proposal: Approved transfer proposal
-
-        Returns:
-            Transfer result with transaction ID and status
-
-        Raises:
-            HarvesterError: If transfer fails
-            SafetyViolation: If proposal violates safety caps
-        """
-        pass
-
-    @abstractmethod
-    async def get_transfer_history(self, limit: int = 100) -> list[TransferResult]:
-        """Get history of executed transfers.
-
-        Args:
-            limit: Maximum number of results
-
-        Returns:
-            List of transfer results
-
-        Raises:
-            HarvesterError: If history cannot be retrieved
-        """
-        pass
-
-    @abstractmethod
-    async def get_configured_thresholds(self, asset: str) -> dict[str, Any]:
-        """Get configured balance thresholds for an asset.
-
-        Args:
-            asset: Asset code
-
-        Returns:
-            Dict with min_liquidity, max_surplus, top_up_amount, etc.
-
-        Raises:
-            HarvesterError: If thresholds cannot be retrieved
-        """
-        pass
