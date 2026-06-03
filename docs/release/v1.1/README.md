@@ -143,6 +143,73 @@ deferred. Full detail in [`four-homes-audit.md`](four-homes-audit.md).
 
 ---
 
+## 🔍 Queued from the v1.1 deep-scan (2026-06-02)
+
+A 15-agent adversarial codebase scan (7 dimensions) + an 11-finding cross-reference against this
+plan. Honest headline: **the codebase is clean for a solo-operator $100-test grid bot** — one real
+correctness gap, two cheap robustness fixes, the rest one-liners; **zero new safety-critical
+defects** in the financial-power-fragmentation design. Each finding was classified
+*already-tracked / partial / net-new* against the docs above. Findings with a home went there;
+the orphan one-liners (no other home) are detailed here.
+
+**Promoted into existing homes** (detail at the link — not duplicated here):
+
+- **F1 — live partial-fill Trade-drop** → P1 row above. ⚠️ *Partial-overlap trap:* the existing
+  "Reconciler fill-vs-cancel" P1 row *looks* like it covers this but is **startup-scoped** and would
+  not catch the live `_detect_fills` gate. Two separate fixes — don't check one off for the other.
+- **F2 — auto-apply NaN guard** → P1 row above.
+- **F3 — per-tick price-fetch dedup** → P1 row above.
+- **F4 — explicit `busy_timeout`** → the *adapter half is already tracked* in `engine.md`
+  (`SQLiteStorageAdapter.connect()` PRAGMA); the net-new sliver (the raw `sqlite3.connect` in
+  `maintenance.py:70` / `backuper.py:115-117` has **no** timeout) is now a bullet there.
+- **F7c — `pending_message_map` grow-only leak** → incidentally removed by the P3 "Discord buttons
+  over reactions" row (the View migration deletes the in-memory map). UX-motivated item, so noted
+  there as a correctness side-benefit; interim 1-line `.pop()` if it ever bites first.
+- **F9 — web-route poll-query cost** (`/cost` 10k-trade rollup, `/news` two 1k scans) → Parked
+  register → Performance. Immaterial at $100/few-coin volume + indexed; the SQL-rollup rewrite is
+  over-engineering until volume nears the cap. *(The scan wanted to fold it into an "existing
+  pagination note" — there wasn't one, so it's parked fresh.)*
+
+**Branch-safe code-health one-liners** (no other home; do on the feature branch during the soak or
+batch post-tag — none are soak hotfixes, so none land on `main` mid-soak):
+
+- **F5 — harvester band-label off-by-equality.** `operator_service.py:915` uses `<` where the
+  authority `harvester.py:158` `propose_transfer` uses `>` — at exact `balance == surplus_threshold`
+  it labels the band "surplus" while the authority would HOLD. **Purely cosmetic** (label only
+  drives a Discord embed color + a tally + log strings; no money path keys off it). One-line `<=`
+  align before the thresholds get tuned.
+- **F6 — delete the dead `HarvesterPort` ABC.** `ports/harvester.py:63-141` — a 4-method ABC with
+  zero implementers / injectors / annotations (the real design is free functions + a local
+  `_TransferHistoryReader` Protocol that doesn't subclass it). Implies a DI seam the code abandoned.
+  Delete it + the two re-exports (`ports/__init__.py:39,104`); **keep** the co-located
+  `TransferProposal`/`TransferResult` models. *(Doc-sync side-effect: `architecture-components.md` +
+  `glossary.md` still describe it as live — update those in the same commit.)*
+- **F7a — login rate-limit docstring + MFA rationale.** The `LoginRateLimit` docstring
+  (`web/middleware.py:110-130`) promises per-IP isolation, but behind the recommended
+  loopback+reverse-proxy posture `request.client.host` is the proxy IP → all logins share one global
+  bucket. Fix the docstring to describe an effectively-global throttle (correct for one operator);
+  **do not** enable `proxy_headers`. *Also* correct the MFA-deferral rationale in `operator-ux.md`
+  (the MFA "Trigger" line cites "per-IP rate-limit" as adequate — that premise doesn't hold under
+  the proxy, so the deferral leans on something false).
+- **F7b — dead `?attempted=` query param.** `web/routes/settings.py:124` redirects with
+  `&attempted={timezone}` but the GET handler reads only `save` and no template renders it. Not an
+  XSS vector (autoescaping on). Delete the param.
+- **F8 — document the `adapters → services` import exception.** 5 LLM adapters + `moe_advisor.py:40`
+  import `services.*` against the `CLAUDE.md` inward-only layer rule — but there's **no import cycle**
+  (`adapters/ollama.py` is a clean leaf) and the LLM plumbing is well-factored. Add one sentence to
+  `CLAUDE.md` documenting the exception so the rule matches the graph; relocation is not warranted.
+  *(Believed to be on the backlog from the 2026-05-29 audit but never written into a doc — and that
+  note mischaracterized it as a "cycle.")*
+
+**Confirmed-fine — no action** (verified, recorded so they aren't re-flagged next sweep): double
+`BalanceEx` is per-session not per-tick; `_check_safety` runs zero SELECTs on a no-fill tick
+(≤36-row indexed table); sync VACUUM/backup is a separate process from the trading loop;
+`feedparser.parse` has no loop competitor; web HTMX polls are single-operator + indexed, far below
+caps. Several of the scan's louder framings — a "Ticker rate-limit storm twin", `busy_timeout`
+instant-failure, sync-VACUUM as a live-trading risk — **did not survive verification.**
+
+---
+
 ## 🚦 GATE — tag v1.0 (code-blocked, planning-open)
 
 **v1.0 soak passes → tag v1.0 → P1–P4 branch off `main`.** The hardening + soak-hotfixes are
@@ -166,6 +233,7 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | Slice | Effort | Value | Safety | Notes |
 |---|---|---|---|---|
 | **Reconciler fill-vs-cancel disambiguation** | L | high | ⚠️ | Highest-value safety defect: query `ClosedOrders` for storage-only `exchange_id`s; replay counter-placement when the order actually *filled*. Recovers the 2026-05-19 orphaned-$10-BTC class. Own ADR + regression test reproducing the orphan. |
+| **Live partial-fill Trade-drop** *(deep-scan 2026-06-02)* | M | high | ⚠️ | **Distinct from the reconciler row above** — that one is *startup*-scoped; this is a **live `_detect_fills` bug**. The engine saves a `Trade` + places a counter only when the refreshed order is `closed` (full fill). A partially-filled order that refreshes to `canceled`/`expired` with `filled_amount > 0` — now *more* likely, since shutdown cancel-all + the ADR-021 dead-man's-switch both cancel partially-filled limits — drops the matching `Trade` rows (storage under-records a real fill) and skips the counter, corrupting cycle-matcher/dashboard PnL and drifting base-inventory vs Kraken's real holdings. The startup reconciler does **not** patch it (it diffs open-order status, never re-derives a dropped partial Trade). Floor fix: on a cancel/expire with `filled_amount > 0`, still save the trades + WARN about the unbalanced leg; optional counter sized to the partial when not offside. Own test for a canceled order carrying `filled_amount > 0`. |
 | Session-loss-cap cool-down period | M | high | ⚠️ | Operator-configurable cool-down after `cli/live` exits `exit_code=1`; `--ignore-cool-down`. New ADR; soak data informs the default. |
 | Slippage / spread guard before placement | M | high | ⚠️ | New `get_order_book` `ExchangePort` method + pre-tick spread check refusing placement above threshold. New ADR. Higher priority once multi-asset ships. |
 | Partial-grid placement: WARN → INFO | S | low-med | | Demote the scary insufficient-balance WARN to an INFO summary (placed-vs-target). Reserve WARN for genuine refusals. |
@@ -184,6 +252,8 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | **Kraken rate-limit backoff** | S–M | high | ⚠️ | The 06-02 global-fetch fix cut call *count* but not the error *class* — `_unwrap_envelope` still raises a generic `ExchangeError` on `EAPI:Rate limit exceeded`, and the shutdown still fires N `CancelOrder` back-to-back with zero spacing (can re-trigger the storm during the most safety-critical cleanup). Classify the rate-limit error as transient + bounded backoff (reuse the cloud-LLM retry shape, ADR-015) + inter-cancel pacing in `_cancel_all_open`. Own small ADR + test. (`retry-policy.md` G4 parked this under "perf"; the soak proved it's *resilience*.) |
 | **Boot-time stale-anchor WARN on restart** | S | med-high | ⚠️ | On restart the engine re-lays the full grid at the *persisted* `reference_price`; "offside" is checked against that stale anchor, so a multi-day-old anchor that still brackets price passes silently. Cheap WARN at the auto-relayout site (drift % + anchor age, both already in scope there), optional refuse. The *detect* rail; the P3 operator-initiated re-anchor command is the *fix* flow. Closes the "stale-anchor-on-restart" class the soak flagged (BTC + the alts). |
 | **Dashboard safety visibility — LIVE badge + session-cap card** | M | med-high | ⚠️ | The "LIVE" badge is **hardcoded** in `_status_card.html` (a dead engine shows green forever; the route never loads the health snapshot) — wire it to `load_health_snapshot` (LIVE/STALE/STOPPED). And add a **Session card** (PnL vs `max_session_loss_usd`, % consumed, tripped state): `web/` has zero `session_pnl`/`loss_cap` surface, so after a cap trip the operator who missed the bell/Discord ping has no visual signal (the "cap tripped unnoticed ~1.5h" soak miss). Promote ahead of the P3 buying-power card. |
+| **Auto-apply NaN guard** *(deep-scan 2026-06-02)* | S | med | ⚠️ | `evaluate_auto_apply` promises "never raises on bad input," but a NaN LLM recommendation (`json.loads` accepts a bare `NaN` token) becomes `Decimal('NaN')`, and `Decimal('NaN') <= 0` **raises** `decimal.InvalidOperation` (floats wouldn't) — and the `cli/apply.py` call sits *outside* the guarding try/except. A garbled LLM response crashes the ADR-002 safety boundary. One-line fix in `_coerce_numeric`: `if not coerced.is_finite(): return None` (NaN/Inf both become a `RejectedKey`). Branch-safe to start; lands post-tag with a regression test feeding a NaN recommendation through the gate. |
+| **Per-tick price-fetch dedup** *(deep-scan 2026-06-02)* | M | med | | Each `cli/live` tick fetches a symbol's price twice — `engine.step`→`_step_unlocked` and again in `_session_portfolio_value_usd` (loss-cap mark-to-market) — both uncached `/0/public/Ticker` GETs, one extra serial round-trip per *held* symbol. **Latency hygiene, not an outage risk**: public bucket (not the private bucket of the 06-02 storm), and gated on `base_balance > 0` so cost is `N + held`, not `2N`. Fix mirrors the OpenOrders snapshot pattern: fetch prices once at the top of `_run_one_tick` into a dict and thread through (`engine.step` gains an optional `prices=`, falling back to per-symbol fetch for shadow/test callers). |
 
 ---
 
@@ -226,7 +296,7 @@ detector** needs ~30d of baseline, so it tails the phase.
 | Re-anchor banner action button + snooze | M–L | med-high | ⚠️ | "Re-anchor" + "Snooze 24h" (`reanchor_snoozes`) + projected-loss line on the info banner. Auto-cancellation **rejected**. |
 | State-aware per-symbol pause/resume buttons | M | low-med | ⚠️ | Render only contextually-relevant actions; needs `engine_state` (`cli/live` writes, `cli/web` reads). |
 | Web UI per-entity action buttons | L | high | ⚠️ | Apply/Execute/Approve/Acknowledge/Reject on review queues via `pending_commands`. Surfaced soak Day 2 (CLI roundtrip friction). |
-| Discord confirmation UX: buttons over reactions | M | med | ⚠️ | `discord.ui.View` Approve/Reject; removes `pending_message_map`; firewall intact. |
+| Discord confirmation UX: buttons over reactions | M | med | ⚠️ | `discord.ui.View` Approve/Reject; removes `pending_message_map` (also drops its grow-only in-memory leak — deep-scan F7c; interim 1-line `.pop()` in `_handle_reaction` if it bites first); firewall intact. |
 | Notifications: server-side read-state + deep linking | M–L | low-med | | `read_at` column + read/read-all endpoints (cross-device badge) + deep links. Migration first, deep-linking second. |
 | Today's PnL — split realization-day from earning-day | M | med | | Distinguish normal-grid from fallback (long-hold/re-anchor) cycles; add `pairing_method`/`hold_duration`. |
 | **Buying-power / account card + per-symbol held inventory** | M | med-high | | A top "Buying Power" card (total account value + **free USD available-to-buy** + held-asset breakdown) above Trading Status, plus **per-symbol held inventory** in each symbol card. Two-sided framing — free USD funds buys, per-coin held funds sells — makes flat-start `insufficient balance` refusals self-explanatory at a glance. **Source: `balance_snapshots` in `observe.db`** (cli/observe balance poll; Option A — web tier stays credential-free per ADR-016/017) with an "as of HH:MM" freshness stamp; tighten `schedules.observe_balances` for the dashboard. A later `cli/reconcile`/ledger-diff can become the authoritative source. Soak 2026-06-02: operator couldn't tell free USD without leaving the dashboard. |
@@ -295,7 +365,9 @@ cluster. Full detail in the per-area docs.
 ### Performance (soak/profile-triggered)
 Storage caching layer · async query parallelism · batch save APIs · tick-latency alarming ·
 WebSocket real-time updates · Kraken `SystemStatus` awareness · SQLite concurrency stress test →
-`operator.db` `busy_timeout`+retry · mid-session reconciliation · `cli/reconcile` ledger diff.
+`operator.db` `busy_timeout`+retry · mid-session reconciliation · `cli/reconcile` ledger diff ·
+web-route poll-query aggregation (`/cost` 10k-trade rollup, `/news` two 1k scans — deep-scan F9;
+defer the SQL-rollup rewrite until trade volume nears the cap).
 
 ### Harvester (`harvester.md`)
 Reconciliation (soak drift evidence) · 8th defense layer (cumulative daily total) · top-up

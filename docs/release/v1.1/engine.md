@@ -275,6 +275,15 @@ for whichever daemon lost the race.
   Used by the three known concurrent writers (emit_heartbeat,
   save_notification, save_pending_command). Doesn't generalize to
   every storage method -- only the ones with documented contention.
+- *(deep-scan 2026-06-02)* The same `busy_timeout` floor is **missing
+  entirely** from the raw synchronous `sqlite3.connect` calls in
+  `services/maintenance.py:70` (VACUUM / prune) and
+  `services/backuper.py:115-117` — these bypass
+  `SQLiteStorageAdapter.connect()`, so they inherit no adapter PRAGMA
+  at all (only Python's implicit 5s default). Pass `timeout=30` to
+  those three connects when the adapter PRAGMA above lands. The
+  adapter half of this fix is the well-covered part; this raw-connect
+  sliver is the net-new piece the cross-reference surfaced.
 
 **Why deferred:** the failure mode is benign today (heartbeat
 warnings, no data loss). The fix is small but the verification
