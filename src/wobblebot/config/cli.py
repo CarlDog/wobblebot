@@ -22,6 +22,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from wobblebot.domain.value_objects import Symbol
 
 LogFormat = Literal["plain", "json"]
+# Which trading mode a cli/web instance represents. Drives the
+# dashboard's LIVE/SHADOW mode-badge and (future) which ledger the
+# data loaders read. One instance = one mode; the same UI is reused
+# for both rather than forking a separate shadow dashboard.
+TradingMode = Literal["live", "shadow"]
 
 
 def _coerce_symbol_list(value: object) -> list[Symbol]:
@@ -619,6 +624,13 @@ class WebConfig(BaseModel):
     # in non-US regions or who prefer the trade view may override.
     # Set to null to suppress the link entirely.
     kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/home", min_length=1)
+
+    # Trading mode this web instance serves. Drives the dashboard's
+    # LIVE/SHADOW mode-badge today; future work points the data loaders
+    # at the matching ledger (live vs cli/shadow synthetic). One
+    # instance = one mode — run a second cli/web with ``mode: shadow``
+    # pointed at the shadow DBs to watch a paper run in the same UI.
+    mode: TradingMode = Field(default="live")
 
     # ---- cross-DB paths -------------------------------------------- #
 

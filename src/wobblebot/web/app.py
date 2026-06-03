@@ -223,6 +223,10 @@ def create_app(  # pylint: disable=too-many-arguments
     # ``version`` attribute so a future ``pyproject.toml`` bump
     # flows through automatically.
     templates.env.globals["app_version"] = app.version
+    # Trading mode (live vs shadow) — drives the dashboard's LIVE/SHADOW
+    # mode-badge. One cli/web instance serves one mode; the same UI is
+    # reused for both rather than forking a separate shadow page.
+    templates.env.globals["trading_mode"] = config.mode
     # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
     # pass the operator's tz preference (loaded from
     # user_preferences) as ``operator_tz`` in context; templates

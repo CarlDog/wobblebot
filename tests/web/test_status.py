@@ -124,6 +124,39 @@ class TestDashboardRoute:
             # be redundant ("no fills" alongside "no symbols").
             assert "No active symbols yet" in resp.text
 
+    def test_mode_badge_defaults_to_live(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # The mode-badge is driven by WebConfig.mode (default "live"),
+        # not hardcoded — proving the same UI can render SHADOW too.
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert "mode-badge-live" in resp.text
+            assert ">LIVE<" in resp.text
+
+    def test_mode_badge_reflects_shadow_config(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # Same templates + routes, mode="shadow" -> purple SHADOW badge.
+        # This is the whole "reuse the webui for both modes" contract.
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10, mode="shadow"),
+            operator_storage=operator_storage,
+            session_secret="x" * 64,
+            live_storage=live_storage,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert "mode-badge-shadow" in resp.text
+            assert ">SHADOW<" in resp.text
+            assert "mode-badge-live" not in resp.text
+
     @pytest.mark.asyncio
     async def test_with_orders_and_trades_renders_them(
         self,

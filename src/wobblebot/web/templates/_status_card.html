@@ -28,11 +28,12 @@
     <div class="card-header">
       <div class="card-title">
         Trading Status
-        {# v1.0 hardcoded LIVE; cli/shadow will get its own page +
-           SHADOW (purple) variant of this badge once the shadow
-           dashboard is built (v1.1). The CSS already supports both
-           variants so the template flip is the only future work. #}
-        <span class="mode-badge mode-badge-live">LIVE</span>
+        {# Trading-mode badge, driven by the `trading_mode` Jinja global
+           (WebConfig.mode). One cli/web instance serves one mode; the
+           SAME UI is reused for both (no separate shadow dashboard) — a
+           mode=shadow instance pointed at the shadow ledger renders the
+           purple SHADOW variant. CSS ships both variants (base.css). #}
+        <span class="mode-badge mode-badge-{{ trading_mode }}">{{ trading_mode|upper }}</span>
         {# Health-icon-on-status-card removed 2026-05-23 — health
            status now lives ONLY on the navbar's heart-pulse icon as a
            tiered colored dot (yellow=degraded, red=error, no dot when
