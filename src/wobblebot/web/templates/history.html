@@ -79,7 +79,7 @@
             <td>{{ n.timestamp.dt | tz_format(operator_tz) }}</td>
             <td>
               <span class="tag
-                {% if n.level == 'info' %}ok
+                {% if n.level == 'info' %}info
                 {% elif n.level == 'warning' %}warn
                 {% else %}fail{% endif %}">{{ n.level }}</span>
             </td>
