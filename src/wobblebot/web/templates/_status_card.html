@@ -185,7 +185,6 @@
                 <col>
                 <col style="width: 90px">
                 <col style="width: 140px">
-                <col style="width: 140px">
                 <col style="width: 110px">
               </colgroup>
               <thead>
@@ -194,7 +193,6 @@
                   <th class="num">price</th>
                   <th class="num" title="Signed % distance from current market price: +ve = market is ABOVE the order (a BUY needs price to fall to fill; a SELL is already in the money)">vs mkt</th>
                   <th class="num">amount</th>
-                  <th class="num">filled</th>
                   <th class="num">age</th>
                 </tr>
               </thead>
@@ -209,7 +207,6 @@
                     <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
                     <td class="num">{% if cur %}{{ "%+.2f"|format((cur - o.price.amount) / o.price.amount * 100) }}%{% else %}—{% endif %}</td>
                     <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
-                    <td class="num">{{ "%.8f"|format(o.filled_amount) }}</td>
                     <td class="num">{{ snapshot.order_ages.get(o.id|string, 0) | humanize_duration }}</td>
                   </tr>
                 {% endfor %}
