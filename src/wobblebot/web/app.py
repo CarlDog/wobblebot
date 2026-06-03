@@ -28,7 +28,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 from starlette.types import Scope
 
-from wobblebot.config.cli import WebConfig
+from wobblebot.config.cli import TradingMode, WebConfig
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
@@ -138,6 +138,7 @@ def _csrf_input(request: Request) -> Markup:
 def create_app(  # pylint: disable=too-many-arguments
     *,
     config: WebConfig,
+    trading_mode: TradingMode = "live",
     operator_storage: StoragePort,
     session_secret: str,
     advise_storage: StoragePort | None = None,
@@ -223,10 +224,10 @@ def create_app(  # pylint: disable=too-many-arguments
     # ``version`` attribute so a future ``pyproject.toml`` bump
     # flows through automatically.
     templates.env.globals["app_version"] = app.version
-    # Trading mode (live vs shadow) — drives the dashboard's LIVE/SHADOW
-    # mode-badge. One cli/web instance serves one mode; the same UI is
-    # reused for both rather than forking a separate shadow page.
-    templates.env.globals["trading_mode"] = config.mode
+    # Deployment trading mode (live / shadow / sandbox) from the single
+    # `application.mode` source — drives the dashboard mode-badge. The
+    # same UI is reused across modes (no separate shadow page).
+    templates.env.globals["trading_mode"] = trading_mode
     # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
     # pass the operator's tz preference (loaded from
     # user_preferences) as ``operator_tz`` in context; templates

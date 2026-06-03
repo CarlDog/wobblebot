@@ -1040,6 +1040,16 @@ style stays identical. The CSS already ships both badge variants
 (`mode-badge-live` / `mode-badge-shadow`, `base.css:1449`), so the
 presentation side is a context-variable flip.
 
+**✅ Badge + single-source DONE 2026-06-03 (v1.1).** The badge now reads
+`application.mode` (`live | shadow | sandbox`) — the **single**
+deployment-mode config — via the `trading_mode` Jinja global; `cli/web`
+passes `config.application.mode` to `create_app`. `application.mode` was
+promoted from informational-only YAML to a modeled `ApplicationConfig`
+field; the redundant `web.mode` knob was removed (operator: one mode
+source, not two). All three badge variants ship in CSS. **Remaining:**
+the *data-source* switch (point the loaders at the shadow ledger) — see
+the Mode-source note below.
+
 **Why (operator decision 2026-06-03):** don't reinvent the wheel for a
 shadow UI. The dashboard is already mode-agnostic except for that one
 hardcoded badge; DRY says reuse it. Mode is a runtime concern, not a

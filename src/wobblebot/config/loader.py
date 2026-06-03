@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from wobblebot.config.advisor import AdvisorConfig
 from wobblebot.config.cli import (
     AdviseConfig,
+    ApplicationConfig,
     HarvestConfig,
     LiveConfig,
     MaintenanceConfig,
@@ -55,6 +56,11 @@ class WobbleBotConfig(BaseModel):
     grid: GridConfig
     safety: SafetyConfig
     schedules: SchedulesConfig = Field(default_factory=lambda: SchedulesConfig(root={}))
+    # Application metadata + the single deployment-wide trading mode
+    # (live / shadow / sandbox). Optional — defaults to live when the
+    # block is omitted. cli/web reads ``application.mode`` for the
+    # dashboard mode-badge.
+    application: ApplicationConfig | None = None
     live: LiveConfig | None = None
     shadow: ShadowConfig | None = None
     observe: ObserveConfig | None = None

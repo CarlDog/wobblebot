@@ -145,7 +145,8 @@ class TestDashboardRoute:
         # Same templates + routes, mode="shadow" -> purple SHADOW badge.
         # This is the whole "reuse the webui for both modes" contract.
         app = create_app(
-            config=WebConfig(bcrypt_cost=10, mode="shadow"),
+            config=WebConfig(bcrypt_cost=10),
+            trading_mode="shadow",
             operator_storage=operator_storage,
             session_secret="x" * 64,
             live_storage=live_storage,

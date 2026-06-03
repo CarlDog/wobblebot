@@ -1455,3 +1455,8 @@ table.data th {
      operator can never confuse a shadow window with a live one. */
   background: #7c3aed;
 }
+.mode-badge-sandbox {
+  /* Slate — a neutral "mock / paper cycle" tone, distinct from both
+     the real-money red and the shadow purple. */
+  background: #475569;
+}

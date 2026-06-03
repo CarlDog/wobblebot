@@ -21,9 +21,13 @@
 application:
   name: "WobbleBot"
   version: "0.1.0"
-  # mode: sandbox | dev | live-low-risk | production
-  # Currently informational only; Phase 5 may use it to gate features.
-  mode: "sandbox"
+  # The deployment's trading mode — the SINGLE source of truth.
+  #   live    = real money (cli/live)
+  #   shadow  = live prices + synthetic ledger (cli/shadow)
+  #   sandbox = mock exchange + paper cycle (cli/sandbox)
+  # cli/web reads this for the dashboard mode-badge; Phase 5+ may also
+  # gate engine features on it.
+  mode: "live"
 
 # ============================================================================
 # Exchange connection (Kraken)
@@ -685,11 +689,6 @@ web:
   # operators in non-US regions or who prefer the trade view may
   # override. Set to null to suppress the link entirely.
   kraken_account_url: "https://pro.kraken.com/app/home"
-  # Trading mode this web instance serves: live | shadow. Drives the
-  # dashboard's LIVE/SHADOW mode-badge. One instance = one mode; run a
-  # second cli/web with mode: shadow pointed at the shadow DBs to watch
-  # a paper run in the same UI. Default live.
-  mode: live
   # ---- cross-DB paths ----
   # operator.db is REQUIRED (users table + pending_commands +
   # notifications + llm_calls). The other four are optional per the

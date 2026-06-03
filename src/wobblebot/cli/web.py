@@ -225,6 +225,8 @@ async def _bootstrap_app(
 
     app = create_app(
         config=web_config,
+        # Single source of truth for the dashboard mode-badge.
+        trading_mode=config.application.mode if config.application else "live",
         operator_storage=operator_storage,
         session_secret=session_secret,
         live_storage=optionals["live"],
