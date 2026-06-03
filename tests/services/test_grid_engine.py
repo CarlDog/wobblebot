@@ -17,6 +17,7 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import CoinGridConfig
 from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services.grid_engine import GridEngine
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -35,6 +36,13 @@ def _exchange(
         starting_balances={"USD": Decimal(balance_usd), "BTC": Decimal(balance_btc)},
         starting_prices={BTC_USD: Decimal(price)},
     )
+
+
+class _FetchFailExchange(MockExchangeAdapter):
+    """MockExchangeAdapter whose open-order fetch always raises ExchangeError."""
+
+    async def get_open_orders(self, symbol=None):  # type: ignore[no-untyped-def]
+        raise ExchangeError("kraken OpenOrders unavailable")
 
 
 @pytest_asyncio.fixture
@@ -912,3 +920,15 @@ class TestCancelOpenOrders:
         assert cancelled == len(opens_total)
         assert failed == 0
         assert await storage.get_open_orders() == []
+
+    async def test_cancel_raises_when_fetch_fails(self, storage: SQLiteStorageAdapter) -> None:
+        # A failed open-order fetch must propagate, not collapse into (0, 0):
+        # that is indistinguishable from "nothing to cancel" and would read as
+        # a false all-clear to an operator while orders stay live on Kraken.
+        exch = _FetchFailExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        with pytest.raises(ExchangeError):
+            await engine.cancel_open_orders(symbol=BTC_USD)

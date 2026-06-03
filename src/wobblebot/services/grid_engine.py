@@ -262,15 +262,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             ``(cancelled, failed)`` counts.
+
+        Raises:
+            ExchangeError: If the open-order fetch itself fails. The cancel
+                set is then indeterminate, so the error propagates rather
+                than collapsing into ``(0, 0)`` — which an operator "cancel
+                all" would otherwise read as a false all-clear while orders
+                stay live on the exchange. (The per-order loop below still
+                logs-and-counts; the batch never aborts mid-way.)
         """
-        try:
-            opens = await self._exchange.get_open_orders(symbol=symbol)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            _LOGGER.warning(
-                "cancel_open_orders: get_open_orders failed",
-                extra={"symbol": str(symbol) if symbol else None, "error": str(exc)},
-            )
-            return (0, 0)
+        opens = await self._exchange.get_open_orders(symbol=symbol)
         cancelled = 0
         failed = 0
         for order in opens:

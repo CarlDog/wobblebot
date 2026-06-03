@@ -31,7 +31,12 @@ from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.assistant import AssistantPort
-from wobblebot.ports.exceptions import AssistantError, OperatorError, StorageError
+from wobblebot.ports.exceptions import (
+    AssistantError,
+    ExchangeError,
+    OperatorError,
+    StorageError,
+)
 from wobblebot.ports.operator import (
     CancelOpenOrdersCommand,
     CommandResult,
@@ -294,10 +299,27 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         )
 
     async def _dispatch_cancel_open_orders(self, command: CancelOpenOrdersCommand) -> CommandResult:
-        cancelled, failed = await self._engine.cancel_open_orders(symbol=command.symbol)
         scope = str(command.symbol) if command.symbol else "all symbols"
+        try:
+            cancelled, failed = await self._engine.cancel_open_orders(symbol=command.symbol)
+        except ExchangeError as exc:
+            # The open-order fetch failed, so we cannot know what (if anything)
+            # is still live on Kraken. Report the uncertainty rather than a
+            # false "0 cancelled, 0 failed" all-clear — the orders may persist.
+            return CommandResult(
+                success=False,
+                command_kind="cancel_open_orders",
+                message=(
+                    f"Could not fetch open orders on {scope} ({exc}); "
+                    "they may still be LIVE on Kraken. Retry shortly."
+                ),
+                executed_at=_now(),
+                side_effects={"scope": scope, "fetch_failed": True, "error": str(exc)},
+            )
         return CommandResult(
-            success=cancelled > 0 or failed == 0,
+            # Any per-order cancel failure makes this not a clean all-clear:
+            # the operator needs to retry, so don't flag it green.
+            success=failed == 0,
             command_kind="cancel_open_orders",
             message=f"Cancelled {cancelled} order(s) on {scope}; {failed} failed.",
             executed_at=_now(),
