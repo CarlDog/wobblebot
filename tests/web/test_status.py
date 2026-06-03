@@ -214,6 +214,56 @@ class TestScoreboard:
             assert "lifetime PnL" in resp.text
             assert "—" in resp.text  # money cells degraded
 
+    @pytest.mark.asyncio
+    async def test_parked_symbol_shows_price(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # A symbol with a recent trade but NO open order still shows its
+        # price on the card (the BTC-offside "bare name, no price" gap).
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            eth = Symbol(base="ETH", quote="USD")
+            await observe.save_price_snapshot(
+                eth,
+                Price(amount=Decimal("1800.00"), currency="USD"),
+                Timestamp(dt=datetime.now(UTC)),
+            )
+            # ETH SELL with no matching BUY -> ETH appears via recent_trades
+            # with no open orders (parked).
+            await live_storage.save_trade(
+                Trade(
+                    id="TXID-eth",
+                    order_id="OID-eth",
+                    symbol=eth,
+                    side="sell",  # type: ignore[arg-type]
+                    price=Price(amount=Decimal("1810"), currency="USD"),
+                    amount=Amount(value=Decimal("0.01"), asset="ETH"),
+                    fee=Decimal("0.05"),
+                    cost=Decimal("18.10"),
+                    executed_at=Timestamp(dt=datetime.now(UTC) - timedelta(seconds=30)),
+                )
+            )
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert "ETH/USD" in resp.text
+                assert "No open orders for this symbol." in resp.text  # parked
+                assert "symbol-price" in resp.text  # price rendered on the card
+                assert "1800.00" in resp.text  # the fetched price
+        finally:
+            await observe.close()
+
 
 # --------------------------------------------------------------------- #
 # /dashboard                                                            #
