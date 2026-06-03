@@ -59,6 +59,8 @@ _TRADE_FETCH_LIMIT = 10_000
 # feeds the lifetime-PnL aggregate). Keeps the table bounded once the
 # match window covers the whole history.
 _RECENT_CYCLES_DISPLAY = 10
+# Cap on fills rendered in the Recent Fills table — symmetric with cycles.
+_RECENT_FILLS_DISPLAY = 10
 # Per-symbol sparkline geometry (a tiny inline SVG on each symbol card:
 # recent price line + grid band + current-price marker). Viewbox units.
 _SPARK_W = 100.0
@@ -456,12 +458,12 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     try:
         open_orders = await live_storage.get_open_orders()
         # Wide window: match cycles over the full trade history for the
-        # lifetime-PnL aggregate + correct FIFO pairing; slice the first
-        # 20 for Recent Fills. One query, several views.
+        # lifetime-PnL aggregate + correct FIFO pairing; slice the newest
+        # few for Recent Fills. One query, several views.
         all_recent = await live_storage.get_trades(limit=_TRADE_FETCH_LIMIT)
     except StorageError as exc:
         return _empty_snapshot(wired=True, error=f"failed to query live.db: {exc}")
-    recent = all_recent[:20]
+    recent = all_recent[:_RECENT_FILLS_DISPLAY]
     cycles = tuple(match_cycles(all_recent))
     today_pnl = today_realized_pnl(cycles, tz_name=operator_tz) if cycles else None
     lifetime_pnl = sum((c.net_pnl for c in cycles), Decimal(0)) if cycles else None
@@ -492,11 +494,13 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     reanchor_recs = await _load_reanchor_recommendations(
         live_storage, list(open_orders), prices, order_ages
     )
-    # Union of symbols seen in open orders + recent trades, sorted
-    # by (base, quote) for stable rendering order.
+    # A card renders for every symbol you have orders for, hold a balance
+    # in, or traded recently — so a parked/held coin (e.g. offside BTC)
+    # keeps its card + price even when its last fill ages out of the
+    # display window. Sorted by (base, quote) for stable order.
     all_symbols = tuple(
         sorted(
-            symbols_with_orders | {t.symbol for t in recent},
+            symbols_with_orders | held_symbols | {t.symbol for t in recent},
             key=lambda s: (s.base, s.quote),
         )
     )
