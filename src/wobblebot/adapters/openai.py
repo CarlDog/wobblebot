@@ -72,21 +72,24 @@ from wobblebot.services.llm_retry import LLMRetryConfig
 _DEFAULT_BASE_URL = "https://api.openai.com"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
-# OpenAI's reasoning-tuned models are the "o-series" — o1, o3, o4, o5, …
-# and their -mini variants. They accept ``reasoning_effort``, ignore (and
-# on some endpoints reject) ``temperature``, use ``max_completion_tokens``,
-# and their ``usage`` block carries ``completion_tokens_details``. Match the
-# whole series via an ``o<digit>`` prefix so a new family (o4-mini, o5, …)
-# is handled without a code change; ``gpt-*`` chat models never match.
+# OpenAI's reasoning-tuned models are the "o-series" (o1, o3, o4, o5, … and
+# their -mini variants) plus the gpt-5 family. They accept ``reasoning_effort``,
+# ignore (and on some endpoints reject) ``temperature``, use
+# ``max_completion_tokens``, and their ``usage`` block carries
+# ``completion_tokens_details``. Match the o-series via an ``o<digit>`` prefix
+# (so new families like o4-mini/o5 need no code change) and the gpt-5 family
+# via a ``gpt-5`` prefix; other ``gpt-*`` chat models never match.
 #
-# NOTE (Q2 scoped fix, 2026-06-02): before this, the match was the literal
-# tuple ("o1","o3") — but ``_PRICING`` already lists ``o4-mini``, so a
-# configured o4 model was misclassified (temperature sent, wrong token
-# param). The gpt-5 family ALSO bills reasoning tokens (see
-# ``llm_pricing.py``), but whether it needs this same request SHAPE is a
-# separate, unverified OpenAI-API question — deliberately NOT folded in
-# here without checking it against the live API.
-_REASONING_MODEL_RE = re.compile(r"^o\d")
+# History:
+#  - 2026-06-02 (Q2 scoped fix): the match was the literal tuple ("o1","o3"),
+#    but ``_PRICING`` already listed ``o4-mini`` → a configured o4 model was
+#    misclassified (temperature sent, wrong token param). Fixed to ``^o\d``.
+#    gpt-5 was left out pending a live-API check.
+#  - 2026-06-03: that check landed — OpenAI's API docs confirm the reasoning
+#    request shape applies to "gpt-5 and o-series models", so gpt-5 is now
+#    folded in. Caveat: if OpenAI ships a NON-reasoning ``gpt-5-chat`` variant
+#    that takes ``temperature``, this prefix would over-match it — narrow then.
+_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5)")
 
 
 def is_reasoning_model(model: str) -> bool:
