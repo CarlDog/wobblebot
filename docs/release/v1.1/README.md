@@ -138,7 +138,7 @@ deferred. Full detail in [`four-homes-audit.md`](four-homes-audit.md).
 | Q1 | Model-compat lists → config | S–M | `KNOWN_INCOMPATIBLE`/`KNOWN_DEGRADED` + the embedded recommendation list (`ollama_assistant.py`) → one config section, fail-soft loader, schema-drift test. The prime candidate (verdicts have flipped on re-probing). |
 | Q2 | Model-name patterns → config | S–M | `_REASONING_MODEL_PREFIXES` + `_THINKING_MODEL_PATTERNS` → config with a safe default. **o4 bug FIXED code-resident** (below); externalization itself still queued (low value for a solo operator-dev). |
 | Q3 | News-coin whitelist → config | S | `_COIN_PATTERNS` (`rss_news.py`; MATIC→POL stale) → config, derived from / cross-checked against the traded symbols. |
-| — | ✅ **o4 latent bug FIXED** (2026-06-02) | S | `is_reasoning_model` now matches the whole o-series (`o<digit>` regex) — `o4-mini` (priced, was unmatched) + future o5 handled. gpt-5 reasoning-shape flagged-not-touched (separate API question). |
+| — | ✅ **o4 + gpt-5 reasoning-shape FIXED** (o4 2026-06-02, gpt-5 2026-06-03) | S | `is_reasoning_model` matches the whole o-series (`o<digit>`) + the gpt-5 family — regex now `^(o\d|gpt-5)`. o4-mini (priced, was unmatched) + future o5 handled; gpt-5 reasoning-shape **verified via context7** (OpenAI docs: reasoning shape applies to "gpt-5 and o-series") and folded in with a regression test (`gpt-5-chat` over-match caveat noted in code). |
 | — | Dedup smells (code-health) | S–M | Kraken fee ×4 (⚠️ touches the validator), Kraken URL ×3, Ollama URL ×4, Anthropic URL/version ×2, Discord colors ×2, OHLC intervals ×2; RSS UA `0.1`↛`__version__`. Consolidate *in code*, not move out. |
 
 ---

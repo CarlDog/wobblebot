@@ -74,9 +74,12 @@ items to decide separately.
    **misclassified** for reasoning-token handling (temperature sent, wrong token param →
    degraded/failed call). Not safety-critical (no budget bypass), but a real present defect.
    Fixed code-resident (Q2 scoped): `is_reasoning_model` now matches the whole o-series via an
-   `o<digit>` regex (`adapters/openai.py`), future-proofing o4/o5. **Flagged-not-touched:** the
-   gpt-5 family also bills reasoning tokens, but whether it needs the same request *shape* is a
-   separate unverified OpenAI-API question. The full pattern *externalization* (Q2) remains
+   `o<digit>` regex (`adapters/openai.py`), future-proofing o4/o5. **gpt-5 verified + folded in
+   2026-06-03:** the gpt-5 family also bills reasoning tokens, and current OpenAI docs (checked via
+   context7) confirm the reasoning request *shape* applies to "gpt-5 and o-series models" — so a
+   configured gpt-5 was being sent `temperature` (which reasoning models reject). Regex is now
+   `^(o\d|gpt-5)` with a gpt-5 regression test; a non-reasoning `gpt-5-chat` variant would over-match
+   and is flagged in-code to narrow if it ships. The full pattern *externalization* (Q2) remains
    queued — see the note on its low marginal value for a solo operator-developer.
 2. **Duplication smells (consolidate in code, not move out of code):**
    - **Kraken fee rate hardcoded in 4 places** (`grid.py`, `shadow_exchange.py`, `mock_exchange.py`, `config/cli.py`) → centralize on one code constant. *Touches the safety-critical validator → careful, its own slice, not trivial.*

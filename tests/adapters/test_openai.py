@@ -232,10 +232,8 @@ class TestPureHelpers:
             ("gpt-4o", False),
             ("gpt-4o-mini", False),
             ("gpt-3.5-turbo", False),
-            (
-                "gpt-5",
-                False,
-            ),  # NOT folded in — gpt-5 reasoning-shape is a separate unverified question
+            ("gpt-5", True),  # 2026-06-03: reasoning-shape verified via OpenAI docs
+            ("gpt-5-mini", True),  # gpt-5 family folded in
         ],
     )
     def test_is_reasoning_model(self, model: str, expected: bool) -> None:
