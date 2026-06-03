@@ -17,7 +17,7 @@ from wobblebot.config.grid import CoinGridConfig, GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Amount, Symbol, Timestamp
-from wobblebot.ports.exceptions import OperatorError
+from wobblebot.ports.exceptions import ExchangeError, OperatorError
 from wobblebot.ports.operator import (
     CancelOpenOrdersCommand,
     GridConfigQuery,
@@ -49,6 +49,27 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 BTC_USD = Symbol(base="BTC", quote="USD")
 ETH_USD = Symbol(base="ETH", quote="USD")
+
+
+class _FetchFailExchange(MockExchangeAdapter):
+    """MockExchangeAdapter whose open-order fetch always raises ExchangeError."""
+
+    async def get_open_orders(self, symbol=None):  # type: ignore[no-untyped-def]
+        raise ExchangeError("kraken OpenOrders down")
+
+
+class _OneCancelFailsExchange(MockExchangeAdapter):
+    """Cancels every order except the first attempt, which raises (partial failure)."""
+
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._cancel_attempts = 0
+
+    async def cancel_order(self, order):  # type: ignore[no-untyped-def]
+        self._cancel_attempts += 1
+        if self._cancel_attempts == 1:
+            raise ExchangeError("transient cancel failure")
+        return await super().cancel_order(order)
 
 
 def _grid_config() -> GridConfig:
@@ -254,6 +275,54 @@ class TestCancelOpenOrders:
         assert result.success is True
         assert result.side_effects["cancelled"] == 6
         assert result.side_effects["failed"] == 0
+
+    async def test_cancel_reports_failure_when_fetch_fails(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        # During a Kraken outage the open-order fetch fails. The operator must
+        # see an explicit failure ("may still be LIVE"), NOT a false all-clear
+        # of "Cancelled 0; 0 failed" — the orders are still on the exchange.
+        exch = _FetchFailExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(CancelOpenOrdersCommand(symbol=BTC_USD))
+        assert result.success is False
+        assert "may still be LIVE" in result.message
+        assert result.side_effects["fetch_failed"] is True
+
+    async def test_cancel_partial_failure_is_not_success(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        # 5 cancel, 1 fail must report success=False so the operator retries —
+        # the old `cancelled > 0 or failed == 0` flagged this green.
+        exch = _OneCancelFailsExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # 6 orders placed
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(CancelOpenOrdersCommand(symbol=BTC_USD))
+        assert result.success is False
+        assert result.side_effects["cancelled"] == 5
+        assert result.side_effects["failed"] == 1
 
 
 class TestStop:
