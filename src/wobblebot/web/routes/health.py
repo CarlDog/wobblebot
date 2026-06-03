@@ -22,10 +22,10 @@ Severity roll-up (operator-facing semantics):
   unknown.
 * 🟢 **Green** — Kraken online + every detected daemon fresh.
 
-v1.0 only detects daemons whose primary writes are frequent
-(observe / news / advise). cli/live, cli/harvest, cli/operator,
-cli/maintenance need a heartbeat table to detect reliably; queued
-for v1.1.
+All daemons are now detected: observe / news / advise via their
+frequent primary writes, and cli/live / cli/harvest / cli/operator /
+cli/maintenance via the ``daemon_heartbeats`` table (Stage 8.4.E
+follow-up). See :mod:`wobblebot.services.daemon_health`.
 """
 
 from __future__ import annotations

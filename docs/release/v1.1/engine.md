@@ -57,12 +57,22 @@ and wants automated detection.
 
 ### Server-side dead man's switch (`CancelAllOrdersAfter`) — ✅ SHIPPED 2026-06-01 (v1.1, ADR-021)
 
-**✅ Shipped 2026-06-01** on the `v1.1` branch (ADR-021): `ExchangePort.set_dead_mans_switch`
-+ per-tick pet in `cli/live`'s loop, ON by default at 60s (`live.dead_mans_switch_seconds`,
-`null` disables), disarmed only on a confirmed-clean shutdown cancel (left armed otherwise
-so Kraken sweeps stragglers). Synthetic adapters no-op; shadow deliberately does not arm a
-real timer. Takes effect when the v1.1 image deploys post-tag. See ADR-021 +
-`docs/reference/kraken-api-reference.md`. Original backlog rationale preserved below.
+**✅ Shipped 2026-06-01** (ADR-021), **fast-forwarded into `main` and now DEPLOYED** in the
+multi-coin soak: `ExchangePort.set_dead_mans_switch` + per-tick pet in `cli/live`'s loop, ON by
+default (`live.dead_mans_switch_seconds`, `null` disables; soak config 120s), disarmed only on a
+confirmed-clean shutdown cancel (left armed otherwise so Kraken sweeps stragglers). Synthetic
+adapters no-op; shadow deliberately does not arm a real timer.
+
+**Validated + hardened on the soak (2026-06-02):** the arm itself works — verified live via
+`tools/check_dead_mans_switch.py` (Kraken `triggerTime` = `currentTime` + timeout). But the
+multi-coin restart exposed a real defect: a rate-limited shutdown couldn't fetch open orders, the
+old `_cancel_all_open` swallowed that as `(0,0)` → the caller read `cancel_clean=True` → it
+**disarmed the switch**, leaving ~15 orders open AND unprotected ~10 min. **Fixed in `abf3aa6`**
+(the global fetch now *propagates* on failure → `cancel_clean=False` → the switch stays armed),
+regression test `8b25feb`. Remaining v1.1 hardening (P1, defense-in-depth): confirm the arm
+in-loop by logging Kraken's `triggerTime`, and optionally refuse to place orders when the switch
+isn't confirmed-armed. See ADR-021 + `docs/reference/kraken-api-reference.md`. Original backlog
+rationale preserved below.
 
 **What:** Kraken's `/0/private/CancelAllOrdersAfter` endpoint sets a
 server-side timer; if the engine doesn't ping again within N
