@@ -949,6 +949,46 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+/* Fill toasts — bottom-right popups when an order fills. Newest stacks at
+   the bottom; each slides in, holds ~6s, slides out. Left rail colored by
+   money-flow (BUY = USD out / red, SELL = USD in / green), matching the
+   Recent Fills value column. */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+.toast {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-dropdown);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.toast-show {
+  opacity: 1;
+  transform: translateX(0);
+}
+.toast-buy {
+  border-left-color: var(--trend-down);
+}
+.toast-sell {
+  border-left-color: var(--trend-up);
+}
+
 table.data td.num,
 table.data th.num {
   text-align: right;

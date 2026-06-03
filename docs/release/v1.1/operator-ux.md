@@ -698,16 +698,14 @@ price, mode-badge) are NOT repeated here.
   on mobile. No chart lib.
 - **Fill-flash micro-interaction.** Flash a just-filled row on the 15s
   HTMX swap. (`/cost` also lacks the dashboard's `transition:true`.)
-- **Fill toast (Kraken-style)** *(operator idea 2026-06-03)*. A
-  bottom-right popup when an order fills, auto-dismissing after a few
-  seconds and progressing through each fill that landed since the page
-  was last active (modeled on Kraken Pro). Richer than the fill-flash
-  row-highlight above — a transient queue of "X filled @ $Y" cards.
-  Source data: the same `recent_trades` the status card already polls;
-  the client diffs against the last-seen trade id (mirrors the
-  bell-badge last-seen pattern in `layout.html`). HTMX/JS, no new
-  backend. Pairs with the per-symbol sparkline + scoreboard for a
-  "live instrument" feel.
+- **Fill toast (Kraken-style)** *(operator idea 2026-06-03)*. **✅ DONE
+  2026-06-03 (v1.1):** bottom-right popups when an order fills — slide in,
+  hold ~6s, slide out; left rail colored by money-flow (BUY red / SELL
+  green). A new `GET /status/recent-fills.json` endpoint feeds a poller in
+  `layout.html` that diffs against a `localStorage` watermark (so returning
+  to the page replays fills since last active; first-ever load doesn't
+  flood; capped at 5/cycle). Lives in the shared layout, so it's on every
+  authenticated page.
 - **Advisor pagination/collapse** (`advisor.html:34`) — every
   suggestion is a full stacked card with a nested table; collapse older
   ones once `cli/advise` accumulates volume.
