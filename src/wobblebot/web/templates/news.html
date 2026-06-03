@@ -78,7 +78,7 @@
               </td>
               <td>
                 {% for c in item.mentioned_coins %}
-                  <code>{{ c }}</code>{% if not loop.last %}, {% endif %}
+                  <span class="tag">{{ c }}</span>{% if not loop.last %} {% endif %}
                 {% endfor %}
               </td>
             </tr>

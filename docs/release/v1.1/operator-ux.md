@@ -661,11 +661,13 @@ price, mode-badge) are NOT repeated here.
   Pick one (info ≠ success → use `info`/blue). ~2-line fix. **✅ FIXED
   2026-06-03 — `history.html` info → `info`/blue, matching
   `notifications.html`.**
-- **Zero responsive CSS.** `base.css` has no `@media` rule except
-  `prefers-color-scheme` — the 6-7-column tables (Recent Fills,
-  harvester) overflow on mobile and the navbar crowds. If the operator
-  ever checks on a phone, it's broken. Min: a horizontal-scroll wrapper
-  on wide tables + a nav collapse below ~700px.
+- **Zero responsive CSS.** `base.css` had no `@media` rule except
+  `prefers-color-scheme`. **✅ DONE 2026-06-03 (v1.1, minimal pass):** a
+  `@media (max-width: 700px)` block — wide tables scroll inside their
+  card (`.card { overflow-x: auto }`), primary nav scrolls sideways
+  instead of crowding, content padding shrinks, scoreboard/emergency-stop
+  tighten. Not a hamburger nav — just "usable, doesn't overflow" on a
+  phone.
 - **Settings inputs dark-on-light** + **`.muted` declared twice** — both
   flagged in-code "for the dark-mode cleanup" that never landed. **✅ FIXED
   2026-06-03:** settings `.form-row` inputs now theme via `--surface-card`/
@@ -715,9 +717,10 @@ price, mode-badge) are NOT repeated here.
   lever.
 
 **Small:**
-- News `mentioned_coins` as `.tag` pills, not a comma `<code>` list
-  (`news.html:80`), for vocabulary consistency; render the collected-
-  but-hidden `publisher` field.
+- News `mentioned_coins`: **✅ DONE 2026-06-03** — now `.tag` pills, not a
+  comma `<code>` list, matching the app's badge vocabulary. (The
+  collected-but-hidden `publisher` field stays parked pending a
+  presentation decision.)
 - Emergency-stop confirm page (`command_confirm.html`) gets the same
   generic treatment as a routine pause — give the highest-consequence
   action stronger visual weight on its confirm screen.
