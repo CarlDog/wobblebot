@@ -1487,3 +1487,48 @@ table.data th {
      the real-money red and the shadow purple. */
   background: #475569;
 }
+
+/* ---- Responsive (narrow / mobile) ------------------------------------
+   Minimal pass so the dashboard is usable on a phone: wide data tables
+   scroll inside their card instead of blowing out the viewport, the
+   navbar tightens + its primary links scroll horizontally rather than
+   crowding, and content padding shrinks. Not a hamburger nav — just
+   "doesn't break below ~700px". */
+@media (max-width: 700px) {
+  main.content {
+    padding: 16px 12px;
+  }
+
+  .topnav-inner {
+    padding: 0 12px;
+    gap: 12px;
+  }
+
+  /* Primary nav links scroll sideways instead of wrapping/crowding. */
+  nav.primary {
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox — hide the scrollbar chrome */
+  }
+  nav.primary::-webkit-scrollbar {
+    display: none;
+  }
+  nav.primary a {
+    white-space: nowrap;
+  }
+
+  /* Let a wide 6-7-column table scroll horizontally within its card
+     rather than forcing the whole page wider than the screen. */
+  .card {
+    overflow-x: auto;
+  }
+
+  .scoreboard {
+    gap: 8px 20px;
+  }
+
+  .emergency-stop-row {
+    width: 90%;
+  }
+}
