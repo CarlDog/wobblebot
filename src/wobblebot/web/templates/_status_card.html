@@ -40,34 +40,6 @@
            healthy). Single source of truth for health UX, consistent
            with the bell's red-dot alert pattern. The /health page is
            still the granular drill-down. #}
-        {# Today's PnL — sum of realized cycle.net_pnl whose SELL
-           fired today (UTC). Anchored to the right edge of the
-           card-title row. Color + arrow follow the same green ▲ /
-           red ▼ vocabulary as the price-trend arrows on the
-           per-symbol headers. #}
-        {# %.4f + 1/100¢ threshold: cycles trade ~$0.0001–$0.20 NET,
-           so 2dp rounding hides real signal (a $0.0035 day reads
-           "$0.00"). Threshold stays nonzero so exact zero still
-           renders flat. #}
-        {% if snapshot.today_realized_pnl is not none %}
-          {% set pnl = snapshot.today_realized_pnl %}
-          {% if pnl > 0.0001 %}
-            <span class="today-pnl today-pnl-positive"
-                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: +${{ "%.4f"|format(pnl) }} <span aria-hidden="true">▲</span>
-            </span>
-          {% elif pnl < -0.0001 %}
-            <span class="today-pnl today-pnl-negative"
-                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: -${{ "%.4f"|format(-pnl) }} <span aria-hidden="true">▼</span>
-            </span>
-          {% else %}
-            <span class="today-pnl today-pnl-flat"
-                  title="Realized PnL today (within rounding noise)">
-              Today: $0.0000
-            </span>
-          {% endif %}
-        {% endif %}
       </div>
       <div class="card-meta">
         {% if snapshot.last_fill_age_seconds is not none %}
@@ -84,6 +56,45 @@
         </button>
       </div>
     </div>
+    {# Account scoreboard — "answers first": account value + free USD +
+       in-positions + today/lifetime PnL. Money cells come from observe.db's
+       latest balance snapshot (credential-free per ADR-016) and degrade to
+       "—" when it's unwired; the PnL cells come from live.db cycles. Renders
+       whenever there's balance OR realized-PnL data. #}
+    {% if snapshot.account_value_usd is not none
+          or snapshot.today_realized_pnl is not none
+          or snapshot.lifetime_realized_pnl is not none %}
+    <div class="scoreboard">
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.account_value_usd is not none %}${{ "%.2f"|format(snapshot.account_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">account value{% if snapshot.balance_as_of %} · as of {{ snapshot.balance_as_of | tz_format(operator_tz, "%H:%M %Z") }}{% endif %}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.free_usd is not none %}${{ "%.2f"|format(snapshot.free_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">free USD</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.held_value_usd is not none %}${{ "%.2f"|format(snapshot.held_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">in positions</div>
+      </div>
+      <div class="metric">
+        {% if snapshot.today_realized_pnl is not none %}
+          {% set t = snapshot.today_realized_pnl %}
+          <div class="metric-value{% if t > 0.0001 %} metric-pos{% elif t < -0.0001 %} metric-neg{% endif %}"
+               title="Realized PnL from cycles whose SELL fired today">{% if t < -0.0001 %}-${{ "%.4f"|format(-t) }}{% elif t > 0.0001 %}+${{ "%.4f"|format(t) }}{% else %}$0.0000{% endif %}</div>
+        {% else %}<div class="metric-value">—</div>{% endif %}
+        <div class="metric-label">today's PnL</div>
+      </div>
+      <div class="metric">
+        {% if snapshot.lifetime_realized_pnl is not none %}
+          {% set l = snapshot.lifetime_realized_pnl %}
+          <div class="metric-value{% if l > 0.0001 %} metric-pos{% elif l < -0.0001 %} metric-neg{% endif %}"
+               title="All-time realized PnL across every completed cycle">{% if l < -0.0001 %}-${{ "%.4f"|format(-l) }}{% elif l > 0.0001 %}+${{ "%.4f"|format(l) }}{% else %}$0.0000{% endif %}</div>
+        {% else %}<div class="metric-value">—</div>{% endif %}
+        <div class="metric-label">lifetime PnL</div>
+      </div>
+    </div>
+    {% endif %}
     {% if not snapshot.live_wired %}
       <p class="placeholder">
         The web UI's <code>live_db</code> path is unset; open orders +

@@ -14,10 +14,11 @@ from fastapi.testclient import TestClient
 from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
-from wobblebot.domain.models import Order, Trade
+from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
+from wobblebot.web.routes.status import _compute_balance_metrics
 
 pytestmark = pytest.mark.unit
 
@@ -79,6 +80,139 @@ def _make_trade(*, symbol: str = "BTC/USD", side: str = "buy") -> Trade:
         cost=Decimal("30.00"),
         executed_at=Timestamp(dt=datetime.now(UTC) - timedelta(seconds=10)),
     )
+
+
+# --------------------------------------------------------------------- #
+# Account scoreboard                                                    #
+# --------------------------------------------------------------------- #
+
+
+def _make_cycle_trades() -> tuple[Trade, Trade]:
+    """A matched BUY->SELL pair (cheaper buy, same amount) = one cycle.
+
+    net = (31000-30000) * 0.001 - 0.10 - 0.10 = 0.80
+    """
+    now = datetime.now(UTC)
+    buy = Trade(
+        id="TXID-buy",
+        order_id="OID-buy",
+        symbol=Symbol(base="BTC", quote="USD"),
+        side="buy",  # type: ignore[arg-type]
+        price=Price(amount=Decimal("30000"), currency="USD"),
+        amount=Amount(value=Decimal("0.001"), asset="BTC"),
+        fee=Decimal("0.10"),
+        cost=Decimal("30.00"),
+        executed_at=Timestamp(dt=now - timedelta(minutes=5)),
+    )
+    sell = Trade(
+        id="TXID-sell",
+        order_id="OID-sell",
+        symbol=Symbol(base="BTC", quote="USD"),
+        side="sell",  # type: ignore[arg-type]
+        price=Price(amount=Decimal("31000"), currency="USD"),
+        amount=Amount(value=Decimal("0.001"), asset="BTC"),
+        fee=Decimal("0.10"),
+        cost=Decimal("31.00"),
+        executed_at=Timestamp(dt=now - timedelta(minutes=1)),
+    )
+    return buy, sell
+
+
+class TestScoreboard:
+    def test_compute_balance_metrics_values_held_inventory(self) -> None:
+        balances = [
+            Balance(
+                asset="USD", total=Decimal("100"), available=Decimal("80"), locked=Decimal("20")
+            ),
+            Balance(
+                asset="BTC", total=Decimal("0.001"), available=Decimal("0.001"), locked=Decimal("0")
+            ),
+        ]
+        prices = {Symbol(base="BTC", quote="USD"): Decimal("50000")}
+        free, account, held = _compute_balance_metrics(balances, prices)
+        assert free == Decimal("80")
+        assert held == Decimal("50")  # 0.001 * 50000
+        assert account == Decimal("150")  # 100 USD + 50 held
+
+    def test_compute_balance_metrics_empty_is_none(self) -> None:
+        assert _compute_balance_metrics([], {}) == (None, None, None)
+
+    def test_compute_balance_metrics_skips_unpriced_held(self) -> None:
+        # A held asset with no observed price is omitted (undercount), not
+        # a crash — the USD + priced assets still value.
+        balances = [
+            Balance(
+                asset="USD", total=Decimal("100"), available=Decimal("100"), locked=Decimal("0")
+            ),
+            Balance(
+                asset="DOGE", total=Decimal("500"), available=Decimal("500"), locked=Decimal("0")
+            ),
+        ]
+        assert _compute_balance_metrics(balances, {}) == (
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("0"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_scoreboard_renders_balance_and_lifetime_pnl(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            await observe.save_balance_snapshot(
+                [
+                    Balance(
+                        asset="USD",
+                        total=Decimal("159.95"),
+                        available=Decimal("159.95"),
+                        locked=Decimal("0"),
+                    )
+                ]
+            )
+            buy, sell = _make_cycle_trades()
+            await live_storage.save_trade(buy)
+            await live_storage.save_trade(sell)
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert 'class="scoreboard"' in resp.text
+                assert "account value" in resp.text
+                assert "159.95" in resp.text  # account value == free USD (no held)
+                assert "lifetime PnL" in resp.text
+                assert "0.8000" in resp.text  # cycle net
+        finally:
+            await observe.close()
+
+    @pytest.mark.asyncio
+    async def test_scoreboard_degrades_without_observe_db(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # observe.db unwired -> PnL still shows (from live.db), money cells
+        # degrade to an em-dash rather than 500ing.
+        buy, sell = _make_cycle_trades()
+        await live_storage.save_trade(buy)
+        await live_storage.save_trade(sell)
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert 'class="scoreboard"' in resp.text
+            assert "lifetime PnL" in resp.text
+            assert "—" in resp.text  # money cells degraded
 
 
 # --------------------------------------------------------------------- #

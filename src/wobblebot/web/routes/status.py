@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
-from wobblebot.domain.models import Order, Trade
+from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
@@ -50,6 +50,15 @@ _PRICE_LOOKBACK_MINUTES = 15
 # Percent change below this threshold renders as "flat" (no arrow).
 # Without a threshold the arrow flickers up/down on stable markets.
 _TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
+# Trade-fetch window. Wide enough to match cycles over the bot's full
+# history (lifetime PnL + correct FIFO pairing) at this capital's volume;
+# mirrors the cost page's all-time fee aggregation. Revisit if the trade
+# count ever approaches this.
+_TRADE_FETCH_LIMIT = 10_000
+# Cap on cycles rendered in the Recent Cycles table (the full set still
+# feeds the lifetime-PnL aggregate). Keeps the table bounded once the
+# match window covers the whole history.
+_RECENT_CYCLES_DISPLAY = 10
 
 TrendDirection = Literal["up", "down", "flat"]
 ReanchorSeverity = Literal["mild", "moderate", "strong"]
@@ -127,9 +136,22 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # "Recent Cycles" panel below Recent Fills.
     recent_cycles: tuple[RecentCycle, ...] = field(default_factory=tuple)
     # Sum of cycle.net_pnl across cycles whose SELL fired today (UTC).
-    # The header "Today's PnL" number — None when no realized PnL
+    # The "Today's PnL" scoreboard number — None when no realized PnL
     # has accrued today yet.
     today_realized_pnl: Decimal | None = None
+    # All-time realized cycle PnL (sum of every matched cycle's net_pnl).
+    # None when no cycles have completed.
+    lifetime_realized_pnl: Decimal | None = None
+    # Aggregate account scoreboard (top-of-dashboard strip). Sourced from
+    # observe.db's latest balance snapshot (credential-free per ADR-016)
+    # + the observed prices above. All ``None`` when observe.db is
+    # unwired/empty. ``held_value_usd`` = account_value − free USD (the
+    # "in positions" exposure); ``balance_as_of`` carries the snapshot
+    # time for a freshness stamp.
+    free_usd: Decimal | None = None
+    account_value_usd: Decimal | None = None
+    held_value_usd: Decimal | None = None
+    balance_as_of: datetime | None = None
     error: str | None = None
 
 
@@ -228,6 +250,54 @@ async def _load_current_prices(
     return prices, trends
 
 
+async def _load_balances(observe_storage: StoragePort | None) -> list[Balance]:
+    """Latest balance snapshot from observe.db; ``[]`` when unwired/failed.
+
+    Per ADR-016 the web tier stays credential-free — balances come from
+    the observe.db snapshot cli/observe polls, not a live Kraken call. A
+    storage failure degrades to an empty list (the scoreboard renders
+    "—") rather than 500ing the dashboard.
+    """
+    if observe_storage is None:
+        return []
+    try:
+        return await observe_storage.get_latest_balance_snapshot()
+    except StorageError as exc:
+        _LOGGER.warning("balance snapshot lookup failed; skipping", extra={"error": str(exc)})
+        return []
+
+
+def _compute_balance_metrics(
+    balances: list[Balance],
+    prices: dict[Symbol, Decimal],
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Derive (free_usd, account_value, held_value) from a balance snapshot.
+
+    ``account_value`` = USD total + Σ(held base × observed price);
+    ``free_usd`` = the USD balance's available; ``held_value`` =
+    account − USD total (the "in positions" exposure). Held assets
+    without a known price are omitted from the valuation — a slight
+    undercount beats blocking the whole card on one missing price.
+    Returns all-``None`` when no balance snapshot is available.
+    """
+    if not balances:
+        return (None, None, None)
+    usd_total = Decimal(0)
+    free_usd = Decimal(0)
+    held_value = Decimal(0)
+    for bal in balances:
+        if bal.asset == "USD":
+            usd_total = bal.total
+            free_usd = bal.available
+            continue
+        if bal.total <= 0:
+            continue
+        price = prices.get(Symbol(base=bal.asset, quote="USD"))
+        if price is not None:
+            held_value += bal.total * price
+    return (free_usd, usd_total + held_value, held_value)
+
+
 async def _load_snapshot(  # pylint: disable=too-many-locals
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
@@ -247,21 +317,32 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         return _empty_snapshot(wired=False)
     try:
         open_orders = await live_storage.get_open_orders()
-        # Fetch a wider window for cycle matching; slice the first
-        # 20 for the Recent Fills feed. One query, two views.
-        all_recent = await live_storage.get_trades(limit=100)
+        # Wide window: match cycles over the full trade history for the
+        # lifetime-PnL aggregate + correct FIFO pairing; slice the first
+        # 20 for Recent Fills. One query, several views.
+        all_recent = await live_storage.get_trades(limit=_TRADE_FETCH_LIMIT)
     except StorageError as exc:
         return _empty_snapshot(wired=True, error=f"failed to query live.db: {exc}")
     recent = all_recent[:20]
     cycles = tuple(match_cycles(all_recent))
     today_pnl = today_realized_pnl(cycles, tz_name=operator_tz) if cycles else None
+    lifetime_pnl = sum((c.net_pnl for c in cycles), Decimal(0)) if cycles else None
     last_age: float | None = None
     if recent:
         most_recent = max(recent, key=lambda t: t.executed_at.dt)
         delta = datetime.now(UTC) - most_recent.executed_at.dt
         last_age = delta.total_seconds()
     symbols_with_orders = {o.symbol for o in open_orders}
-    prices, trends = await _load_current_prices(observe_storage, symbols_with_orders)
+    # Latest balance snapshot from observe.db (credential-free per ADR-016).
+    # Held bases join the price-fetch set so the account-value math can
+    # value inventory that isn't currently trading (e.g. parked BTC).
+    balances = await _load_balances(observe_storage)
+    held_symbols = {
+        Symbol(base=b.asset, quote="USD") for b in balances if b.asset != "USD" and b.total > 0
+    }
+    prices, trends = await _load_current_prices(observe_storage, symbols_with_orders | held_symbols)
+    free_usd, account_value, held_value = _compute_balance_metrics(balances, prices)
+    balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
     order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
     reanchor_recs = await _load_reanchor_recommendations(
@@ -289,8 +370,13 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         reanchor_recommendations=reanchor_recs,
         symbols=all_symbols,
         orders_by_symbol=orders_by_symbol,
-        recent_cycles=cycles,
+        recent_cycles=cycles[:_RECENT_CYCLES_DISPLAY],
         today_realized_pnl=today_pnl,
+        lifetime_realized_pnl=lifetime_pnl,
+        free_usd=free_usd,
+        account_value_usd=account_value,
+        held_value_usd=held_value,
+        balance_as_of=balance_as_of,
     )
 
 
