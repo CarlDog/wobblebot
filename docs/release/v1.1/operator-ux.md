@@ -596,14 +596,117 @@ Two complementary paths to choose between when the time comes:
    price with its orders contextually. Subsection headers also
    give the per-order delta column (above) a natural fit.
 
-**Why deferred:** soak currently runs 1 coin (BTC/USD); the
-existing inline layout works perfectly. The break-point is
-~5 coins, and v1.0 won't see that. Designing for hypothetical
-multi-coin width during documentation freeze would be premature.
+**Status (2026-06-03 — largely SHIPPED):** the live multi-coin
+dashboard renders per-symbol subsections with the current price
+baked into each subhead (option 2), as the soak's 6-coin run shows
+— the old "soak runs 1 coin (BTC/USD)" rationale is stale.
+Remaining: (1) the **parked / no-order symbol** sub-gap — a
+configured symbol with no open orders renders a bare header with no
+price (dedicated entry below); (2) option 1's CSS-grid wrap is only
+worth it if per-symbol subsections get unwieldy past ~8 coins — not
+a concern at 6.
 
-**Trigger:** operator increases to 3+ concurrent coins post-soak,
-or any time the status card starts wrapping mid-ticker on a
-normal desktop window width.
+**Trigger:** per-symbol grouping already triggered (multi-coin
+soak). The parked-symbol price sub-gap is operator-flagged
+2026-06-03; the width/wrap refinement waits for ~8+ coins.
+
+### Symbol-card price + indicator for parked / no-order symbols
+
+**What:** the dashboard's per-symbol cards bake the current price +
+up/down indicator into the header (`DOGE/USD $0.09 ▼`) for symbols
+that have open orders, but a *configured* symbol with no open
+orders — parked because it's offside per ADR-006, or simply held
+and inactive — renders a bare `BTC/USD` with no price. Render the
+price + indicator in the header for EVERY configured symbol
+regardless of open-order state; a held, tradeable asset should read
+like the others.
+
+**Why:** surfaced 2026-06-03 — BTC was in the live grid but offside
+& parked the whole session, so its card showed no price while
+ETH/SOL/XRP/DOGE/ADA all did. The operator wants the price visible
+for any coin in the account, trading or not.
+
+**How:** the per-symbol header already renders price from
+`StatusSnapshot.current_prices` for order-bearing symbols. First
+confirm the snapshot actually carries a parked symbol's price —
+`current_prices` is built from the price poll, which *should* cover
+every configured symbol, but verify a parked/offside symbol isn't
+skipped. If present, it's a template conditional (render the header
+price block even when the symbol's open-orders list is empty). If
+absent, also plumb the price for no-order symbols. Pairs with the
+per-symbol held-inventory card (Buying-power item) — same "show the
+held/tradeable asset even when idle" theme.
+
+**Why deferred:** dashboard polish, not gating. Branch-safe,
+template-ish (a one-line conditional if the data's already present).
+
+**Trigger:** operator-flagged 2026-06-03 from the multi-coin soak
+dashboard — BTC parked, no price shown, while the trading alts all
+displayed price + indicator.
+
+### Whole-UI design review — punch list (2026-06-03)
+
+A frontend-design pass over every page (auth, dashboard, health, cost,
+advisor, harvester, news, history, notifications, settings, command
+flow) + `base.css`. The app is well-engineered + consistent with strong
+empty-state discipline; these are the improvement candidates. Items
+already slated elsewhere (session card, buying-power/held-inventory,
+lifetime PnL, per-order delta, recent-fills enhancement, parked-symbol
+price, mode-badge) are NOT repeated here.
+
+**Defects (cheap, fix-worthy on their own):**
+- **Notification level-color inconsistency.** `info` renders blue
+  (`info`) on `notifications.html:39` but green (`ok`) on
+  `history.html:82` — same notification, different color across pages.
+  Pick one (info ≠ success → use `info`/blue). ~2-line fix.
+- **Zero responsive CSS.** `base.css` has no `@media` rule except
+  `prefers-color-scheme` — the 6-7-column tables (Recent Fills,
+  harvester) overflow on mobile and the navbar crowds. If the operator
+  ever checks on a phone, it's broken. Min: a horizontal-scroll wrapper
+  on wide tables + a nav collapse below ~700px.
+- **Settings inputs dark-on-light** (`base.css:72`/`1307`) + **`.muted`
+  declared twice** (`base.css:918`/`1328`) — both flagged in-code "for
+  the dark-mode cleanup" that never landed.
+
+**Tier 1 — high value, low effort:**
+- **Dashboard scoreboard strip.** The dashboard buries Today's PnL in a
+  13px span (`_status_card.html:54`) and has no account scoreboard.
+  `/cost` already leads with the `.metric` hero (`_cost_card.html:26`);
+  do the same on the dashboard (Engine state · Today PnL · Lifetime PnL
+  · Free USD · Account value). Reuses an existing style. Overlaps the
+  buying-power + lifetime-PnL items — fold together.
+- **`/cost` spend-by-day bar chart.** "Spend by Day (Last 7 Days)"
+  (`cost.html:20`) is a 7-row table begging for a 7-bar inline-SVG
+  chart.
+
+**Tier 2 — high value, medium effort:**
+- **Per-symbol grid-band sparklines.** A tiny inline-SVG sparkline
+  (recent price + grid levels + current marker) per symbol card makes
+  "offside/parked" *visible* instead of inferred. Highest "feels like a
+  trading instrument" lever; no chart lib.
+- **Fill-flash micro-interaction.** Flash a just-filled row on the 15s
+  HTMX swap. (`/cost` also lacks the dashboard's `transition:true`.)
+- **Advisor pagination/collapse** (`advisor.html:34`) — every
+  suggestion is a full stacked card with a nested table; collapse older
+  ones once `cli/advise` accumulates volume.
+
+**Tier 3 — optional aesthetic elevation:**
+- **Typography + brand.** System stack everywhere (`base.css:205`);
+  `--color-link` is Facebook-blue. Put numeric columns in a tabular
+  monospace (reads like a terminal) + carry the login page's teal
+  (`#4dd0e1`) past auth. The "stop looking like a generic admin panel"
+  lever.
+
+**Small:**
+- News `mentioned_coins` as `.tag` pills, not a comma `<code>` list
+  (`news.html:80`), for vocabulary consistency; render the collected-
+  but-hidden `publisher` field.
+- Emergency-stop confirm page (`command_confirm.html`) gets the same
+  generic treatment as a routine pause — give the highest-consequence
+  action stronger visual weight on its confirm screen.
+
+**Trigger:** operator-requested whole-UI review 2026-06-03. All P3 /
+post-tag; the defects are cheap enough to pull forward if they bite.
 
 ### Discord response quality: data + presentation + model attribution — ✅ shipped in v1.0 (2026-05-24)
 
@@ -912,6 +1015,47 @@ that v1.0's status_report doesn't need.
 **Trigger:** if the operator switches to cloud, OR if a future
 v1.1 feature (weather_report, anomaly_summary) needs the
 broader provider coverage.
+
+### Mode-parameterized webui — reuse the dashboard for live + shadow
+
+**What:** serve the **same** web UI for both trading modes instead of
+building a separate shadow dashboard. The `LIVE`/`SHADOW` `mode-badge`
+becomes **dynamic** (rendered from the active mode, not hardcoded `LIVE`
+at `_status_card.html:35`); the mode parameter switches *how the app
+responds* — chiefly which data source it reads (the live ledger vs
+`cli/shadow`'s synthetic ledger) — while every template, route, and
+style stays identical. The CSS already ships both badge variants
+(`mode-badge-live` / `mode-badge-shadow`, `base.css:1449`), so the
+presentation side is a context-variable flip.
+
+**Why (operator decision 2026-06-03):** don't reinvent the wheel for a
+shadow UI. The dashboard is already mode-agnostic except for that one
+hardcoded badge; DRY says reuse it. Mode is a runtime concern, not a
+template fork — it pairs with `cli/up shadow` (below), which already
+distinguishes the two daemon sets.
+
+**How / design questions to settle when built:**
+- **Mode source:** likely a separate `cli/web` instance per mode
+  (pointed at the shadow DBs via config) — simplest, mirrors `cli/up
+  live` vs `cli/up shadow` running their own stacks. Alternative: one
+  instance that resolves mode + data source from config/env.
+- **Data source:** `web.live_db` → the shadow ledger in shadow mode;
+  the snapshot loaders are already DB-path-parameterized.
+- **Mutations/firewall:** the `pending_commands` ADR-013 firewall still
+  applies in shadow mode — commands target the shadow engine. Confirm
+  the confirm-flow copy reads correctly when the target is paper.
+- The **badge-dynamic flip is the small, branch-safe first slice**; the
+  data-source + mode-selection plumbing is the larger piece.
+
+**Supersedes:** the code comments that assumed a *separate* shadow page
+(`_status_card.html:31`, `base.css:1429` say "future shadow-dashboard
+page/variant") — update those when this lands.
+
+**Why deferred:** not needed until the operator runs `cli/shadow` as a
+standing paper-trading instance. Branch-safe to start (the badge flip).
+
+**Trigger:** operator wants to watch a shadow run in the browser, OR the
+`cli/up shadow` orchestrator lands and a paper stack wants a UI.
 
 ### One-command daemon orchestrator (`cli/up` wrapper)
 
