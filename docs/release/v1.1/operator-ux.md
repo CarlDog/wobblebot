@@ -887,61 +887,81 @@ to the narrative.
 
 ### Bespoke notification-card renderers (proactive push embeds)
 
-**What:** give the *proactive* Discord notifications — the fills,
-cycle-closes, cap-trips, offside warnings, dead-man's-switch
-events, and harvester alerts that ``cli/live`` / ``cli/harvest``
-raise through ``NotifierPort`` — the same per-event-type embed
-treatment the *query responses* already got in v1.0, replacing
-today's one-size-fits-all renderer.
+**What:** give the *proactive* Discord notifications — the events
+``cli/live`` / ``cli/harvest`` raise through ``NotifierPort`` — the
+same per-event embed treatment the *query responses* got in v1.0,
+replacing today's one-size-fits-all renderer. *(Design sharpened by a
+feature-dev architecture pass 2026-06-03: real taxonomy mapped, two
+approaches weighed, Approach B recommended — recorded below.)*
 
-**Current state (the gap):** every notification is forwarded to
-Discord by a single generic path in
-``cli/operator.py::_forward_pending_notifications``. It posts:
+**Current state (the gap):** every notification is forwarded by one
+generic path, ``cli/operator.py::_forward_pending_notifications`` —
+``title``=``notification.title``, ``description``=``notification.message``,
+``color``=a 4-bucket level→color map, ``fields``=``_render_context_fields()``
+(first 8 ``context`` keys, str-cast, 200-char truncated), ``footer``=
+``level=… • id=…``. So a fill card and a loss-cap card are structurally
+identical. The pattern to mirror — ``services/discord_embed_render.py`` —
+dispatches **10 renderers via ``match`` over the typed ``QueryResult``
+union** (no fallthrough) with a 35-test suite; the proactive side never
+got that treatment.
 
-- ``title`` = the raw ``notification.title`` string
-- ``description`` = the raw ``notification.message`` string
-- ``color`` = a 4-bucket level→color map (info / warning /
-  error / critical) — no per-event semantics
-- ``fields`` = ``_render_context_fields()``, a **generic dict
-  dump**: the first 8 keys of ``notification.context``, str-cast,
-  truncated at 200 chars, in insertion order
-- ``footer`` = ``level=… • id=…``
+**The real event taxonomy (feature-dev exploration):** the renderer must
+cover the **7 events that actually exist**, all via the ``notify()`` helper
+(``cli/_common.py``):
 
-So a fill card and a cap-trip card are structurally identical —
-title + blurb + whatever happened to be in the ``context`` dict.
-There is no fill-specific layout (price / size / side / fee /
-realized-PnL as labelled fields), no cap-trip emphasis, no
-offside-vs-recovered visual distinction. Ironically the v1.0
-query-embed work (``services/discord_embed_render.py``, 9
-renderers) cites *"like the existing fill notifications"* as its
-target — but those fill notifications **are** this generic path,
-never a polished baseline.
+| Event | CLI | Level | Key payload |
+|---|---|---|---|
+| `session_start` | live | info | symbols, tick_seconds, max_session_loss_usd, starting_value_usd |
+| `fill` | live | info | symbol, fills, counters_placed, tick |
+| `loss_cap` | live | error | session_pnl_usd, limit, tick |
+| `session_end` | live | info / error | duration, session_pnl, ticks, orders_cancelled/_failed, exit_code |
+| `harvest_proposal` | harvest | info | proposal_id, direction, asset, amount, rationale, balances |
+| `withdrawal_failed` | harvest | error | proposal_id, asset, amount, destination, error |
+| `withdrawal_submitted` | harvest | warning | proposal_id, transaction_id, asset, amount, destination |
 
-**Implementation outline:**
+⚠️ **Corrects the original entry:** there is **no** separate ``cycle_close``,
+``offside``, or ``dms_trip`` notification today — those are *logged*, not
+raised through ``NotifierPort``. Per-event cards for them are *new raise
+sites*, not just renderer work — out of scope for the initial renderer
+(which covers the existing 7).
 
-1. New ``services/notification_embed_render.py`` mirroring the
-   shipped ``discord_embed_render.py`` shape: one pure renderer per
-   event type, each returning ``DiscordTransport.send_embed``
-   kwargs. Reuse the shared ``COLOR_*`` constants and
-   ``format_signed_usd`` helper rather than re-deriving them
-   (consolidates the Discord-colors ×2 dedup smell flagged in the
-   four-homes audit).
-2. A stable **event-type discriminator** in ``notification.context``
-   at the raise sites. Today ``cli/live`` / ``cli/harvest`` pass
-   free-form context dicts; the renderer needs a reliable key (e.g.
-   ``context["event"] = "fill" | "cycle_close" | "cap_trip" |
-   "offside" | "dms_trip" | "harvester_proposal" | …``) to dispatch
-   on. Defining that small vocabulary at the producers is the
-   load-bearing half of the work — the rendering is mechanical once
-   the event type is trustworthy. Unknown / missing event types
-   fall back to today's generic ``_render_context_fields`` path so
-   nothing regresses to a blank card.
-3. Swap the forwarder's hardcoded ``send_embed(...)`` call for
-   ``render_notification_embed(row.notification)``; the
-   per-row try/except + ``mark_notification_forwarded`` flow is
-   unchanged.
-4. Tests per variant + the generic fallback + empty/overflow,
-   modeled on the 21-test query-embed suite.
+**Recommended approach — typed ``NotificationEvent`` union (Approach B):**
+mirror the in-repo ``QueryResult`` / ``OperatorCommand`` discriminated-union
+pattern rather than a stringly-typed ``context["event"]``.
+
+1. New ``ports/notification_events.py``: 7 frozen Pydantic models +
+   ``NotificationEvent = Annotated[…, Field(discriminator="kind")]``. Fixes
+   two latent inconsistencies — ``symbols`` (list) vs ``symbol`` (str), and
+   the ``"unknown"`` sentinel strings in ``session_end`` (→ ``str | None``).
+2. ``Notification`` gains ``event: NotificationEvent | None = None``
+   (additive — old rows keep working).
+3. **No schema migration:** the event serializes via ``model_dump_json()``
+   into the *existing* ``context_json TEXT`` column; ``row_to_notification``
+   reconstructs it with a module-level ``TypeAdapter[NotificationEvent]``
+   keyed on ``kind`` (the exact ``_COMMAND_ADAPTER`` pattern already in
+   ``sqlite_storage_rowmap.py``). Rows without ``kind`` (the live soak's
+   existing rows) → ``event=None`` → legacy path. **Soak-safe, zero migration.**
+4. New ``services/notification_embed_render.py``: ``match`` over the typed
+   models (mypy-exhaustive, no fallthrough), per-event color + layout
+   (fill=green, loss_cap=red, withdrawal_submitted=amber/loud — money moved).
+5. Forwarder: two-path dispatch (``event is not None`` → typed renderer; else
+   the legacy ``_render_context_fields``). Per-row try/except +
+   ``mark_notification_forwarded`` untouched.
+6. ``notify_event()`` added alongside ``notify()``; the 7 raise sites migrate.
+
+**Build sequence:** (1) ports union + ``Notification.event`` field; (2)
+storage round-trip (``save_notification`` serializer + rowmap ``TypeAdapter``)
++ round-trip tests; (3) ``notification_embed_render.py`` + per-event tests
+(mirror the 35-test suite); (4) forwarder two-path swap + a forwarder test;
+(5) migrate the 7 raise sites; (6, post-soak cleanup) drop ``context: dict``
++ ``_render_context_fields`` once all rows are new-format.
+
+**Alternative (Approach A — not recommended here):** a stringly-typed
+``context["event"]`` discriminator + string ``match`` — 3 commits, no storage
+change, but mypy-invisible (a typo → silent generic fallback) and a *less*
+faithful mirror of the typed query renderer. Right only to ship per-event
+cards *before* the tag; since this is gate-blocked, go straight to B — both
+approaches converge on B as the end state anyway.
 
 **Why high value:** the proactive cards are how the operator learns
 the bot *did something* without asking — the most-seen Discord
