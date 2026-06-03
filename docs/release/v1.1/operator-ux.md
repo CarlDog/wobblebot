@@ -114,7 +114,16 @@ machinery being commonly idiomatic. v1.1 candidate:
    click writes to ``pending_commands`` with `status='approved'`
    and cli/live's ADR-002 poll picks it up. No engine call
    bypass.
-4. Buttons auto-disable after click (`view.stop()`), so the
+4. **Operator-only gate via `View.interaction_check`.** The reaction
+   flow implicitly filters on *who* reacted; buttons have no such
+   filter, so any channel member could click Approve. Override
+   ``View.interaction_check(interaction)`` to return ``True`` only for
+   the authorized operator ID — the same identity the reaction handler
+   checks. Skipping this silently drops operator-only enforcement on
+   the migration: a firewall regression layered on top of ADR-002.
+   (Verified against current discord.py docs 2026-06-03 — `interaction_check`
+   is the idiomatic per-View gate.)
+5. Buttons auto-disable after click (`view.stop()`), so the
    operator can't double-approve a single PendingCommand.
 
 **Why deferred:** the emoji-reaction flow works end-to-end. The
