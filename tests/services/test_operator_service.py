@@ -374,8 +374,12 @@ class TestStatusQuery:
         from wobblebot.domain.value_objects import Amount, Price
 
         now = datetime.now(UTC)
-        # One BUY + one cheaper-than-SELL pair that produces a real
-        # cycle today.
+        # Anchor both legs to fixed hours of TODAY (UTC), not `now - Nh`:
+        # today_realized_pnl filters by the SELL's UTC date, so `now - 1h/2h`
+        # straddled into "yesterday" when the suite ran in the first hours after
+        # UTC midnight (2026-06-03 00:0x CI flake). PnL is timestamp-independent
+        # (price/amount/fees), so this only pins the day, not the value.
+        today_at = now.replace(minute=0, second=0, microsecond=0)
         await storage.save_trade(
             Trade(
                 id=f"T-{uuid4().hex[:8]}",
@@ -386,7 +390,7 @@ class TestStatusQuery:
                 amount=Amount(value=Decimal("0.000131"), asset="BTC"),
                 fee=Decimal("0.025"),
                 cost=Decimal("9.956"),
-                executed_at=Timestamp(dt=now - timedelta(hours=2)),
+                executed_at=Timestamp(dt=today_at.replace(hour=10)),  # today 10:00 UTC
             )
         )
         await storage.save_trade(
@@ -399,7 +403,7 @@ class TestStatusQuery:
                 amount=Amount(value=Decimal("0.000131"), asset="BTC"),
                 fee=Decimal("0.025"),
                 cost=Decimal("10.055"),
-                executed_at=Timestamp(dt=now - timedelta(hours=1)),
+                executed_at=Timestamp(dt=today_at.replace(hour=11)),  # today 11:00 UTC
             )
         )
         svc = await _service(storage, exchange_with_btc_and_eth)
