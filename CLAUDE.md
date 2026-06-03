@@ -8,19 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 completion date. Do NOT duplicate project status here (per the documentation-discipline
 rule); this section is a pointer, not a changelog.
 
-- **Current:** Phase 8 (Hardening & v1.0 Release). Phases 1–7 + Stages 8.0–8.3 closed;
-  **Stage 8.4.E v1.0 soak in progress**, with Stage 8.5 (advisor heuristic+LLM cascade,
-  closed 2026-05-29) and Stage 8.6 (advisor hardening + grid widen to 3%, closed
-  2026-05-30; ADR-019 ratified) landed as pre-soak value-adds. The gating soak runs on
-  the NAS Docker deployment, restarting ~2026-06-01 post-move, now on the widened grid.
-  Phase 9 (Kraken Securities equities) is committed to start after the v1.0 tag.
+- **Current:** Phase 8 (Hardening & v1.0 Release) — the v1.0 soak gates the tag, then
+  Phase 9 (Kraken Securities equities). **`docs/planning/roadmap.md` holds the
+  authoritative phase/stage, soak status, and running real-money cost** — read it for
+  the live picture rather than trusting a number here.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..7}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
   (future improvements), `docs/release/v1.0-soak-runbook.md`.
-- **Running real-money cost: $0.085018** (full breakdown in roadmap + phase summaries).
-- Test counts, lint scores, and src-file counts are authoritative in the roadmap's
-  per-stage entries — not duplicated here, to avoid drift.
+- Test counts, lint scores, src-file counts, and the real-money cost ledger are
+  authoritative in the roadmap's per-stage entries — not duplicated here, to avoid drift.
 
 **Before any non-trivial work:** read `docs/planning/roadmap.md`, confirm the request
 matches the current stage, and name any drift before starting. If asked for Stage N+1
@@ -230,8 +227,8 @@ to every project. The wobblebot-specific items below extend it:
   Don't relitigate; do flag if a new ADR superseded one. New ADRs
   added during the phase get a one-line mention.
 - **Real-money cost ledger updated.** If any live-money operations
-  ran, the running total in the "Project Status" section reflects
-  reality (currently $0.085018).
+  ran, the running total in `docs/planning/roadmap.md` (the
+  authoritative ledger) reflects reality.
 
 ### Quarterly (wobblebot extras)
 
