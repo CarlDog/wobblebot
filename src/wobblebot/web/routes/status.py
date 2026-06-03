@@ -340,7 +340,13 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     held_symbols = {
         Symbol(base=b.asset, quote="USD") for b in balances if b.asset != "USD" and b.total > 0
     }
-    prices, trends = await _load_current_prices(observe_storage, symbols_with_orders | held_symbols)
+    # Fetch prices for EVERY symbol that will render a card (orders ∪
+    # recent trades) plus held bases — so a parked / no-order symbol
+    # (e.g. BTC offside) still shows its price + trend, not a bare name.
+    trade_symbols = {t.symbol for t in recent}
+    prices, trends = await _load_current_prices(
+        observe_storage, symbols_with_orders | held_symbols | trade_symbols
+    )
     free_usd, account_value, held_value = _compute_balance_metrics(balances, prices)
     balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
