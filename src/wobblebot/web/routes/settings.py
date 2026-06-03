@@ -121,7 +121,7 @@ async def save_settings(
 
     if timezone not in available_timezones():
         return RedirectResponse(
-            url=f"/settings?save=invalid_tz&attempted={timezone}",
+            url="/settings?save=invalid_tz",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 

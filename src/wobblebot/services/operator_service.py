@@ -934,6 +934,11 @@ def _classify_band(
         return "deficit"
     if balance < cfg.topup_threshold_usd:
         return "topup"
-    if balance < cfg.surplus_threshold_usd:
+    # `<=` (not `<`) so that at exact ``balance == surplus_threshold`` this
+    # labels "hold" — matching the authority, ``services.harvester.
+    # propose_transfer``, which only proposes a surplus draw when
+    # ``balance > surplus_threshold`` (deep-scan F5; label-only, no money
+    # path keys off it).
+    if balance <= cfg.surplus_threshold_usd:
         return "hold"
     return "surplus"
