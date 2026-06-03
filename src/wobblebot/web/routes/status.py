@@ -59,6 +59,12 @@ _TRADE_FETCH_LIMIT = 10_000
 # feeds the lifetime-PnL aggregate). Keeps the table bounded once the
 # match window covers the whole history.
 _RECENT_CYCLES_DISPLAY = 10
+# Per-symbol sparkline geometry (a tiny inline SVG on each symbol card:
+# recent price line + grid band + current-price marker). Viewbox units.
+_SPARK_W = 100.0
+_SPARK_H = 24.0
+_SPARK_PAD = 2.0
+_SPARK_LOOKBACK_MINUTES = 120  # 2h of price snapshots
 
 TrendDirection = Literal["up", "down", "flat"]
 ReanchorSeverity = Literal["mild", "moderate", "strong"]
@@ -93,6 +99,25 @@ class ReanchorRecommendation:
     oldest_order_age_seconds: int
     current_price: Decimal
     anchor_price: Decimal
+
+
+@dataclass(frozen=True)
+class Sparkline:
+    """Pre-computed SVG geometry for one symbol's price sparkline.
+
+    The template plugs these straight into an ``<svg viewBox="0 0 100 24">``
+    — a polyline of the recent price series, an optional shaded band
+    spanning the open-order ladder (lowest BUY → highest SELL), and a
+    marker at the current price. ``offside`` flags the marker red when
+    price has left the band (the visual "parked" signal).
+    """
+
+    points: str  # polyline "x,y x,y ..."
+    band_y: float | None  # top of the band rect (None = no open orders)
+    band_h: float | None
+    marker_x: float
+    marker_y: float
+    offside: bool
 
 
 @dataclass(frozen=True)
@@ -152,6 +177,10 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     account_value_usd: Decimal | None = None
     held_value_usd: Decimal | None = None
     balance_as_of: datetime | None = None
+    # Per-symbol price sparkline geometry (key = symbol). Symbols with
+    # < 2 price snapshots in the 2h window are absent — the card renders
+    # exactly as before (no misleading single-point line).
+    sparklines: dict[Symbol, Sparkline] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -248,6 +277,115 @@ async def _load_current_prices(
             _classify_trend(oldest_price, latest_price) if len(sorted_snaps) >= 2 else "flat"
         )
     return prices, trends
+
+
+def _build_sparkline(  # pylint: disable=too-many-locals
+    series: list[Decimal],
+    band_low: Decimal | None,
+    band_high: Decimal | None,
+    current: Decimal | None,
+) -> Sparkline | None:
+    """Project a price series (+ optional grid band + current) into SVG
+    coords for the ``0 0 _SPARK_W _SPARK_H`` viewbox.
+
+    Returns ``None`` when there aren't >= 2 points to draw a line from.
+    The y-axis is inverted (higher price = lower y) and the domain spans
+    every value that has to fit (series + band edges + current marker).
+    """
+    if len(series) < 2:
+        return None
+    values = list(series)
+    for extra in (band_low, band_high, current):
+        if extra is not None:
+            values.append(extra)
+    lo = min(values)
+    hi = max(values)
+    span = hi - lo
+    inner_h = _SPARK_H - 2 * _SPARK_PAD
+    inner_w = _SPARK_W - 2 * _SPARK_PAD
+
+    def y_of(value: Decimal) -> float:
+        if span == 0:
+            return _SPARK_H / 2
+        frac = float((value - lo) / span)  # 0 = lo (bottom), 1 = hi (top)
+        return _SPARK_PAD + (1.0 - frac) * inner_h
+
+    n = len(series)
+    points = " ".join(
+        f"{_SPARK_PAD + (i / (n - 1)) * inner_w:.1f},{y_of(v):.1f}" for i, v in enumerate(series)
+    )
+
+    band_y: float | None = None
+    band_h: float | None = None
+    if band_low is not None and band_high is not None and band_high >= band_low:
+        band_y = y_of(band_high)
+        band_h = max(y_of(band_low) - band_y, 0.5)
+
+    marker_value = current if current is not None else series[-1]
+    offside = (
+        current is not None
+        and band_low is not None
+        and band_high is not None
+        and (current < band_low or current > band_high)
+    )
+    return Sparkline(
+        points=points,
+        band_y=band_y,
+        band_h=band_h,
+        marker_x=_SPARK_W - _SPARK_PAD,
+        marker_y=y_of(marker_value),
+        offside=offside,
+    )
+
+
+async def _load_price_series(
+    observe_storage: StoragePort | None,
+    symbols: set[Symbol],
+) -> dict[Symbol, list[Decimal]]:
+    """Per-symbol price series (oldest->newest) over the sparkline window.
+
+    Best-effort against observe.db (credential-free per ADR-016); a
+    per-symbol storage failure logs + skips, and symbols with < 2 points
+    are omitted so the sparkline degrades to nothing.
+    """
+    if observe_storage is None or not symbols:
+        return {}
+    cutoff = datetime.now(UTC) - timedelta(minutes=_SPARK_LOOKBACK_MINUTES)
+    out: dict[Symbol, list[Decimal]] = {}
+    for symbol in symbols:
+        try:
+            snaps = await observe_storage.get_price_snapshots(symbol=symbol, start_time=cutoff)
+        except StorageError as exc:
+            _LOGGER.warning(
+                "sparkline series lookup failed; skipping",
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            continue
+        if len(snaps) < 2:
+            continue
+        out[symbol] = [s.price.amount for s in sorted(snaps, key=lambda s: s.observed_at.dt)]
+    return out
+
+
+def _build_sparklines(
+    series_by_symbol: dict[Symbol, list[Decimal]],
+    orders_by_symbol: dict[Symbol, tuple[Order, ...]],
+    prices: dict[Symbol, Decimal],
+) -> dict[Symbol, Sparkline]:
+    """Build per-symbol sparkline geometry. Band = open-order ladder
+    (lowest -> highest order price); absent for parked / no-order symbols."""
+    out: dict[Symbol, Sparkline] = {}
+    for symbol, series in series_by_symbol.items():
+        order_prices = [o.price.amount for o in orders_by_symbol.get(symbol, ())]
+        spark = _build_sparkline(
+            series,
+            min(order_prices) if order_prices else None,
+            max(order_prices) if order_prices else None,
+            prices.get(symbol),
+        )
+        if spark is not None:
+            out[symbol] = spark
+    return out
 
 
 async def _load_balances(observe_storage: StoragePort | None) -> list[Balance]:
@@ -365,6 +503,11 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     orders_by_symbol: dict[Symbol, tuple[Order, ...]] = {
         sym: tuple(o for o in open_orders if o.symbol == sym) for sym in all_symbols
     }
+    sparklines = _build_sparklines(
+        await _load_price_series(observe_storage, set(all_symbols)),
+        orders_by_symbol,
+        prices,
+    )
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -383,6 +526,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         account_value_usd=account_value,
         held_value_usd=held_value,
         balance_as_of=balance_as_of,
+        sparklines=sparklines,
     )
 
 

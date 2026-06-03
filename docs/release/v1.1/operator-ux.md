@@ -689,10 +689,13 @@ price, mode-badge) are NOT repeated here.
   trend; exact values stay in the table.
 
 **Tier 2 — high value, medium effort:**
-- **Per-symbol grid-band sparklines.** A tiny inline-SVG sparkline
-  (recent price + grid levels + current marker) per symbol card makes
-  "offside/parked" *visible* instead of inferred. Highest "feels like a
-  trading instrument" lever; no chart lib.
+- **Per-symbol grid-band sparklines.** **✅ DONE 2026-06-03 (v1.1):** a
+  tiny inline SVG in each symbol-card header — recent price line (2h from
+  observe.db) + shaded band spanning the open-order ladder + current-price
+  marker (green inside the band, **red when offside/parked**), so the
+  parked state reads visually. Geometry pre-computed server-side
+  (`_build_sparkline`); degrades to nothing below 2 price points; hidden
+  on mobile. No chart lib.
 - **Fill-flash micro-interaction.** Flash a just-filled row on the 15s
   HTMX swap. (`/cost` also lacks the dashboard's `transition:true`.)
 - **Fill toast (Kraken-style)** *(operator idea 2026-06-03)*. A
