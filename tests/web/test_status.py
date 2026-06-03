@@ -366,6 +366,42 @@ class TestSparkline:
 
 
 # --------------------------------------------------------------------- #
+# /status/recent-fills.json (fill toasts)                              #
+# --------------------------------------------------------------------- #
+
+
+class TestRecentFillsJson:
+    def test_anonymous_redirects(self, operator_storage: SQLiteStorageAdapter) -> None:
+        with _build_client(operator_storage, None) as client:
+            resp = client.get("/status/recent-fills.json")
+            assert resp.status_code == 302
+
+    @pytest.mark.asyncio
+    async def test_returns_recent_fills(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        await live_storage.save_trade(_make_trade(side="sell"))
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/status/recent-fills.json")
+            assert resp.status_code == 200
+            fills = resp.json()["fills"]
+            assert len(fills) == 1
+            assert fills[0]["symbol"] == "BTC/USD"
+            assert fills[0]["side"] == "sell"
+            assert "id" in fills[0] and "price" in fills[0]
+
+    def test_no_live_db_empty(self, operator_storage: SQLiteStorageAdapter) -> None:
+        with _build_client(operator_storage, None) as client:
+            login_as(client)
+            resp = client.get("/status/recent-fills.json")
+            assert resp.status_code == 200
+            assert resp.json() == {"fills": []}
+
+
+# --------------------------------------------------------------------- #
 # /dashboard                                                            #
 # --------------------------------------------------------------------- #
 

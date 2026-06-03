@@ -135,6 +135,10 @@
       </a>
     </div>
   </footer>
+  {# Fill-toast stack — bottom-right popups when an order fills. Driven by
+     the poller below (polls /status/recent-fills.json, diffs against a
+     localStorage watermark). Empty until a fill lands. #}
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 </div>
 
 {# Nav-icon alert dots. Two independent pollers driving the same
@@ -192,6 +196,47 @@
   };
   window.updateHealthBadge();
   setInterval(window.updateHealthBadge, 30000);
+
+  // Fill toasts — poll recent fills, show a bottom-right popup for each
+  // fill newer than the localStorage watermark (so returning to the page
+  // replays fills since you were last active), then advance the mark. The
+  // very first load (no watermark) just sets the mark without a flood.
+  (function () {
+    function showFillToast(f) {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const el = document.createElement('div');
+      el.className = 'toast toast-' + (f.side === 'buy' ? 'buy' : 'sell');
+      // textContent (not innerHTML) — XSS-safe even though the data is ours.
+      el.textContent = f.side.toUpperCase() + ' ' + f.symbol + '  ' + f.amount + ' @ $' + f.price;
+      stack.appendChild(el);
+      requestAnimationFrame(function () { el.classList.add('toast-show'); });
+      setTimeout(function () {
+        el.classList.remove('toast-show');
+        setTimeout(function () { el.remove(); }, 300);
+      }, 6000);
+    }
+    window.pollFills = async function () {
+      try {
+        const r = await fetch('/status/recent-fills.json');
+        if (!r.ok) return;
+        const data = await r.json();
+        const fills = data.fills || [];
+        if (!fills.length) return;
+        const lastSeen = localStorage.getItem('wobblebot_last_seen_fill') || '';
+        const fresh = [];
+        for (const f of fills) {            // newest-first from the server
+          if (f.id === lastSeen) break;
+          fresh.push(f);
+        }
+        localStorage.setItem('wobblebot_last_seen_fill', fills[0].id);
+        if (!lastSeen) return;              // first ever load — no flood
+        fresh.slice(0, 5).reverse().forEach(showFillToast);  // cap + oldest-first
+      } catch (e) { /* silent — toasts aren't critical UX */ }
+    };
+    window.pollFills();
+    setInterval(window.pollFills, 15000);
+  })();
 
   // User menu dropdown — toggle on trigger click; close on outside
   // click and on Escape. Keeps the trigger's aria-expanded in sync.

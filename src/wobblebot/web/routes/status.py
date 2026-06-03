@@ -27,7 +27,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
@@ -643,6 +643,39 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
         },
+    )
+
+
+@router.get("/status/recent-fills.json")
+async def recent_fills_json(
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
+    live_storage: StoragePort | None = Depends(get_live_storage),
+) -> Response:
+    """Compact newest-first JSON of recent fills, for the client toast popper.
+
+    Auth-gated like every status surface. ``live.db`` unwired or a query
+    failure returns an empty list rather than erroring — the toast poll is
+    best-effort UX, never load-bearing.
+    """
+    if live_storage is None:
+        return JSONResponse({"fills": []})
+    try:
+        trades = await live_storage.get_trades(limit=20)
+    except StorageError:
+        return JSONResponse({"fills": []})
+    return JSONResponse(
+        {
+            "fills": [
+                {
+                    "id": t.id,
+                    "symbol": f"{t.symbol.base}/{t.symbol.quote}",
+                    "side": t.side.value,
+                    "price": f"{t.price.amount:.2f}",
+                    "amount": f"{t.amount.value:.8f}",
+                }
+                for t in trades
+            ]
+        }
     )
 
 
