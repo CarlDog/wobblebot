@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -537,6 +538,71 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     return 0
 
 
+# ADR-003 financial-power-fragmentation: the Harvester key (and ONLY it)
+# may withdraw, and it must be a SEPARATE secret from the trade key. cli/live
+# loads the trade key from this fixed env var (see cli/live).
+_TRADE_KEY_ENV_VAR = "KRAKEN_TRADER_API_KEY"
+
+
+async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig) -> int | None:
+    """Verify the ADR-003 invariants for the Harvester key at startup.
+
+    Defense-in-depth on top of the operator-side .env discipline (the
+    seven per-execute layers still apply regardless):
+
+    1. **Withdraw scope present.** The Harvester key's whole job is to
+       withdraw; a definitive ``has_withdraw_scope() == False`` means the
+       wrong/misconfigured key — refuse.
+    2. **Distinct from the trade key.** If ``KRAKEN_TRADER_API_KEY`` is in
+       this process's env AND equals the Harvester key, financial-power
+       fragmentation has collapsed (one secret can trade AND withdraw) —
+       refuse.
+
+    Fails SOFT on a transient probe error (an ``ExchangeError`` that is NOT
+    a definitive permission-denied): logs + continues rather than
+    crash-looping the daemon under ``restart: unless-stopped`` during a
+    Kraken blip. Returns ``3`` on a definitive violation, ``None`` to proceed.
+    """
+    assert config.harvester is not None  # caller checked
+
+    try:
+        can_withdraw: bool | None = await adapter.has_withdraw_scope()
+    except ExchangeError as exc:
+        _LOGGER.warning(
+            "could not verify Harvester key withdraw scope (transient); continuing",
+            extra={"error": str(exc)},
+        )
+        can_withdraw = None
+    if can_withdraw is False:
+        _LOGGER.error(
+            "Harvester key lacks Kraken Withdraw scope — refusing to start "
+            "(ADR-003); mint a Harvester key with the Withdraw Funds permission",
+            extra={"key_env_var": config.harvester.api_key_env_var},
+        )
+        return 3
+
+    harvest_key = os.environ.get(config.harvester.api_key_env_var)
+    trade_key = os.environ.get(_TRADE_KEY_ENV_VAR)
+    if harvest_key is not None and trade_key is not None and harvest_key == trade_key:
+        _LOGGER.error(
+            "Harvester key is identical to the trade key — refusing to start "
+            "(ADR-003 financial-power-fragmentation); the Harvester key MUST be "
+            "a separate secret with Withdraw scope",
+            extra={
+                "harvester_key_env_var": config.harvester.api_key_env_var,
+                "trade_key_env_var": _TRADE_KEY_ENV_VAR,
+            },
+        )
+        return 3
+    if trade_key is None:
+        _LOGGER.info(
+            "trade key not present in this process's env — key distinctness not "
+            "byte-verified; relying on deployment-level key separation",
+            extra={"trade_key_env_var": _TRADE_KEY_ENV_VAR},
+        )
+    return None
+
+
 async def _main_async(  # pylint: disable=too-many-return-statements,too-many-branches
     config: WobbleBotConfig,
     *,
@@ -606,6 +672,14 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             notifier = None
 
     try:
+        # ADR-003 startup invariants for the Harvester key (withdraw scope
+        # present + distinct from the trade key). Defense-in-depth; a
+        # definitive violation refuses (exit 3) and the finally below cleans
+        # up the adapter + any opened storage.
+        verify_exit = await _verify_harvester_key(adapter, config)
+        if verify_exit is not None:
+            return verify_exit
+
         if execute_proposal_id is not None:
             # Stage 4.4c: one-shot operator-approved execution.
             if storage is None:
