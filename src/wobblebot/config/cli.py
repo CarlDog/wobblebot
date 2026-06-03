@@ -22,11 +22,30 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from wobblebot.domain.value_objects import Symbol
 
 LogFormat = Literal["plain", "json"]
-# Which trading mode a cli/web instance represents. Drives the
-# dashboard's LIVE/SHADOW mode-badge and (future) which ledger the
-# data loaders read. One instance = one mode; the same UI is reused
-# for both rather than forking a separate shadow dashboard.
-TradingMode = Literal["live", "shadow"]
+# The deployment's trading mode — the SINGLE source of truth, set in the
+# `application` config section (NOT per-CLI). Drives the dashboard's
+# mode-badge and, in future, which ledger the data loaders read.
+# `live` = real money (cli/live); `shadow` = live prices + synthetic
+# ledger (cli/shadow); `sandbox` = mock exchange + paper cycle
+# (cli/sandbox).
+TradingMode = Literal["live", "shadow", "sandbox"]
+
+
+class ApplicationConfig(BaseModel):
+    """Application metadata + the deployment-wide trading mode.
+
+    ``mode`` is the single source of truth for whether this deployment
+    is live / shadow / sandbox — read by cli/web for the dashboard
+    mode-badge (and, in future, engine feature-gating). One mode knob,
+    not per-CLI; replaces the earlier informational-only field.
+    """
+
+    name: str = Field(default="WobbleBot", min_length=1)
+    version: str = Field(default="0.1.0", min_length=1)
+    mode: TradingMode = Field(default="live")
+
+    class Config:
+        frozen = True
 
 
 def _coerce_symbol_list(value: object) -> list[Symbol]:
@@ -625,13 +644,6 @@ class WebConfig(BaseModel):
     # Set to null to suppress the link entirely.
     kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/home", min_length=1)
 
-    # Trading mode this web instance serves. Drives the dashboard's
-    # LIVE/SHADOW mode-badge today; future work points the data loaders
-    # at the matching ledger (live vs cli/shadow synthetic). One
-    # instance = one mode — run a second cli/web with ``mode: shadow``
-    # pointed at the shadow DBs to watch a paper run in the same UI.
-    mode: TradingMode = Field(default="live")
-
     # ---- cross-DB paths -------------------------------------------- #
 
     # The dashboard reads from up to five DBs. operator.db is required
@@ -736,6 +748,7 @@ class MaintenanceConfig(BaseModel):
 
 __all__ = [
     "AdviseConfig",
+    "ApplicationConfig",
     "AssistantLLMConfig",
     "CryptoCompareSpec",
     "HarvestConfig",
@@ -751,5 +764,6 @@ __all__ = [
     "SandboxConfig",
     "ShadowConfig",
     "StatusConfig",
+    "TradingMode",
     "WebConfig",
 ]

@@ -52,7 +52,6 @@ class TestWebConfigDefaults:
         assert cfg.rate_limit_window_seconds == 60
         assert cfg.bcrypt_cost == 12
         assert cfg.htmx_poll_seconds == 15.0
-        assert cfg.mode == "live"
         assert cfg.operator_db == "data/wobblebot-operator.db"
         assert cfg.live_db is None
         assert cfg.advise_db is None
@@ -134,14 +133,6 @@ class TestWebConfigValidation:
     def test_invalid_log_format_rejected(self) -> None:
         with pytest.raises(Exception):
             WebConfig(log_format="syslog")  # type: ignore[arg-type]
-
-    def test_mode_default_and_valid_values(self) -> None:
-        assert WebConfig().mode == "live"
-        assert WebConfig(mode="shadow").mode == "shadow"
-
-    def test_invalid_mode_rejected(self) -> None:
-        with pytest.raises(Exception):
-            WebConfig(mode="paper")  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------------- #
