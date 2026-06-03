@@ -796,6 +796,30 @@ h2 {
   font-weight: 600;
 }
 
+/* Per-symbol price sparkline — tiny inline SVG in the card header:
+   line = recent price, shaded band = open-order ladder, dot = current
+   price (green inside the band, red when offside/parked). */
+.sparkline {
+  display: block;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.spark-band {
+  fill: var(--surface-hover);
+}
+.spark-line {
+  stroke: var(--text-secondary);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.spark-marker {
+  fill: var(--trend-up);
+}
+.sparkline-offside .spark-marker {
+  fill: var(--trend-down);
+}
+
 /* Recent-fills value column color-coding — red for BUYs (USD
    flowed out of the account into the position), green for SELLs
    (USD flowed in). Reuses the trend arrow colors which are
@@ -1530,5 +1554,10 @@ table.data th {
 
   .emergency-stop-row {
     width: 90%;
+  }
+
+  /* Sparklines crowd the per-symbol header on a phone — hide them. */
+  .sparkline {
+    display: none;
   }
 }

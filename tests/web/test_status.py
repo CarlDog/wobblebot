@@ -18,7 +18,7 @@ from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
-from wobblebot.web.routes.status import _compute_balance_metrics
+from wobblebot.web.routes.status import _build_sparkline, _compute_balance_metrics
 
 pytestmark = pytest.mark.unit
 
@@ -261,6 +261,75 @@ class TestScoreboard:
                 assert "No open orders for this symbol." in resp.text  # parked
                 assert "symbol-price" in resp.text  # price rendered on the card
                 assert "1800.00" in resp.text  # the fetched price
+        finally:
+            await observe.close()
+
+
+# --------------------------------------------------------------------- #
+# Per-symbol sparkline                                                  #
+# --------------------------------------------------------------------- #
+
+
+class TestSparkline:
+    def test_under_two_points_is_none(self) -> None:
+        assert _build_sparkline([Decimal("100")], None, None, Decimal("100")) is None
+
+    def test_geometry_and_inside_band(self) -> None:
+        spark = _build_sparkline(
+            [Decimal("100"), Decimal("102"), Decimal("101")],
+            Decimal("99"),
+            Decimal("103"),
+            Decimal("101"),
+        )
+        assert spark is not None
+        assert spark.points  # non-empty "x,y x,y ..."
+        assert spark.band_y is not None and spark.band_h is not None
+        assert spark.offside is False  # 101 within [99, 103]
+
+    def test_offside_when_current_outside_band(self) -> None:
+        spark = _build_sparkline(
+            [Decimal("100"), Decimal("110")], Decimal("95"), Decimal("105"), Decimal("110")
+        )
+        assert spark is not None
+        assert spark.offside is True  # 110 > 105 -> parked
+
+    def test_no_band_without_orders(self) -> None:
+        spark = _build_sparkline([Decimal("100"), Decimal("101")], None, None, Decimal("101"))
+        assert spark is not None
+        assert spark.band_y is None
+        assert spark.offside is False
+
+    @pytest.mark.asyncio
+    async def test_sparkline_renders_with_price_series(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            eth = Symbol(base="ETH", quote="USD")
+            now = datetime.now(UTC)
+            for i, p in enumerate(["1800", "1810", "1805"]):
+                await observe.save_price_snapshot(
+                    eth,
+                    Price(amount=Decimal(p), currency="USD"),
+                    Timestamp(dt=now - timedelta(minutes=30 - i * 10)),
+                )
+            await live_storage.save_order(_make_order(symbol="ETH/USD", price="1790"))
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert 'class="sparkline' in resp.text
+                assert "spark-line" in resp.text
         finally:
             await observe.close()
 

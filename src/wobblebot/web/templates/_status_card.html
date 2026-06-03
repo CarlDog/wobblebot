@@ -132,6 +132,20 @@
                   <span class="trend-down" title="trending down over last 15m">▼</span>
                 {% endif %}
               {% endif %}
+              {# Price sparkline (2h): line = recent price, shaded band =
+                 the open-order ladder, dot = current price (red when it's
+                 left the band = parked/offside). Absent < 2 price points. #}
+              {% set spark = snapshot.sparklines.get(symbol) %}
+              {% if spark %}
+                <svg class="sparkline{% if spark.offside %} sparkline-offside{% endif %}"
+                     viewBox="0 0 100 24" width="100" height="24" aria-hidden="true">
+                  {% if spark.band_y is not none %}
+                    <rect class="spark-band" x="0" y="{{ spark.band_y }}" width="100" height="{{ spark.band_h }}"></rect>
+                  {% endif %}
+                  <polyline class="spark-line" points="{{ spark.points }}" fill="none"></polyline>
+                  <circle class="spark-marker" cx="{{ spark.marker_x }}" cy="{{ spark.marker_y }}" r="2.2"></circle>
+                </svg>
+              {% endif %}
             </div>
             <div class="symbol-actions">
               {# Pause symbol — POSTs to /commands/pause; redirects to
