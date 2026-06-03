@@ -673,12 +673,14 @@ price, mode-badge) are NOT repeated here.
   the duplicate `.muted` collapsed to one rule.
 
 **Tier 1 — high value, low effort:**
-- **Dashboard scoreboard strip.** The dashboard buries Today's PnL in a
-  13px span (`_status_card.html:54`) and has no account scoreboard.
-  `/cost` already leads with the `.metric` hero (`_cost_card.html:26`);
-  do the same on the dashboard (Engine state · Today PnL · Lifetime PnL
-  · Free USD · Account value). Reuses an existing style. Overlaps the
-  buying-power + lifetime-PnL items — fold together.
+- **Dashboard scoreboard strip.** **✅ DONE 2026-06-03 (v1.1).** A
+  top-of-status-card strip now leads with the answers — Account value ·
+  Free USD · In positions · Today's PnL · Lifetime PnL — reusing the
+  `.metric` hero `/cost` already uses. Money cells come from `observe.db`
+  balance snapshots (credential-free, "as of HH:MM" stamp) and degrade to
+  "—" when unwired; the buried 13px Today's-PnL span was removed. This
+  folded in the buying-power *aggregate* + the lifetime-PnL items; the
+  per-symbol held inventory *inside each card* remains.
 - **`/cost` spend-by-day bar chart.** "Spend by Day (Last 7 Days)"
   (`cost.html:20`) is a 7-row table begging for a 7-bar inline-SVG
   chart.

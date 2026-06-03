@@ -612,32 +612,8 @@ h2 {
   font-weight: 600;
 }
 
-/* Today's PnL — header-row scoreboard on the status card. Anchored
-   to the right edge of the card-title flex row via margin-left:auto.
-   Color + arrow mirror the price-trend arrows (cae4405) so "up =
-   good, down = bad" reads identically whether it's market price
-   or money. */
-.today-pnl {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 600;
-  font-feature-settings: "tnum"; /* tabular numerals — digits don't shift width */
-}
-
-.today-pnl-positive {
-  color: var(--trend-up);
-}
-
-.today-pnl-negative {
-  color: var(--trend-down);
-}
-
-.today-pnl-flat {
-  color: var(--text-secondary);
-}
-
-/* Per-cycle PnL in the Recent Cycles table. Same color vocabulary
-   as the Today's header so the operator's eye flows naturally
+/* Per-cycle PnL in the Recent Cycles table. Same color vocabulary as
+   the scoreboard PnL cells so the operator's eye flows naturally
    between aggregate (top) and per-cycle (bottom). */
 .cycle-pnl-positive {
   color: var(--trend-up);
@@ -882,6 +858,35 @@ h2 {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+/* Account scoreboard — the top-of-status-card "answers first" strip: a
+   flex row of .metric cells separated from the body by a hairline (not
+   its own card chrome, since it lives inside the status card). Wraps on
+   narrow widths. */
+.scoreboard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 36px;
+  padding-bottom: 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.scoreboard .metric {
+  margin-bottom: 0;
+}
+
+/* PnL metric coloring — same green-up / red-down vocabulary as the
+   per-symbol trend arrows + the recent-cycles table. */
+.metric-value.metric-pos {
+  color: var(--trend-up);
+  font-feature-settings: "tnum";
+}
+
+.metric-value.metric-neg {
+  color: var(--trend-down);
+  font-feature-settings: "tnum";
 }
 
 table.data td.num,
