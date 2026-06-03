@@ -14,6 +14,7 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.services.auto_apply import (
     AutoApplyResult,
+    _coerce_numeric,
     evaluate_auto_apply,
 )
 
@@ -68,6 +69,31 @@ def _auto_apply(
         max_spacing_change_percentage=Decimal(max_spacing_pct),
         max_order_size_change_percentage=Decimal(max_order_size_pct),
     )
+
+
+class TestNaNGuard:
+    """NaN / Inf recommendations degrade to a RejectedKey, never a crash
+    in the ADR-002 boundary (deep-scan F2, 2026-06-02). ``json.loads``
+    accepts bare ``NaN`` / ``Infinity`` tokens, and ``Decimal("NaN")`` is
+    a valid Decimal that would crash the downstream ``<= 0`` bound check.
+    """
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), "NaN", "Infinity"])
+    def test_coerce_numeric_rejects_non_finite(self, bad: Any) -> None:
+        assert _coerce_numeric(bad) is None
+
+    def test_coerce_numeric_keeps_finite(self) -> None:
+        assert _coerce_numeric(1.05) == Decimal("1.05")
+        assert _coerce_numeric("2.5") == Decimal("2.5")
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), "NaN"])
+    def test_non_finite_recommendation_rejected_not_raised(self, bad: Any) -> None:
+        # The contract is "never raises on bad input" — a garbled NaN must
+        # land as a rejected key, not a decimal.InvalidOperation.
+        suggestion = _suggestion(recommendations={"spacing_percentage": bad})
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.applied_keys == []
+        assert "spacing_percentage" in {r.key for r in result.rejected_keys}
 
 
 class TestEnabledFlag:
