@@ -490,6 +490,7 @@ ADRs.
 | Slice | Effort | Value | Notes |
 |---|---|---|---|
 | **Advisor outcome tracking** *(keystone)* | XL | high | `recommendation_outcomes` table + `advisor_evaluator` + per-model/per-role scoreboard. Needs 30–90d of applied-rec data **and an operator "success" definition**. |
+| **Chaos Gremlin advisor** *(loose-reasoning, scored-not-applied)* | M | med-high | Standalone observe-and-score voice: same inputs, loose logic; own `gremlin` role in `_BLOCKED_ROLES`, **not** arbitrator-fed (avoids the `role="aggregated"` news-laundering hole). Emits a falsifiable directional call → cleanest first customer for the outcome ledger. **Role buildable in v1.1 with MoE-on for the 1.1 soak; scoreboard rides the keystone.** Detail in `adaptive-grid.md`. |
 | Per-cycle LLM call tracing | S | low-med | `trace_id` on `llm_calls` + "by cycle" `/cost` toggle. **Shares the outcome-tracking migration — ship together.** |
 | Auditor — rec-scoring half | M | high | Score past advisor recs vs realized outcomes. Needs the outcome ledger + the P2 config-replay half. |
 | `weather_report` query | M–L | med | News + price-trend + advisor-suggestion summary over multi-day windows via `AssistantPort.summarize`. After `status_report` stabilizes. |

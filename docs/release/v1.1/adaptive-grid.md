@@ -418,6 +418,76 @@ configuration. NOT generalizable; should not be published as
 operator-facing prose so nobody mistakes a personal scoreboard
 for a public benchmark.
 
+### Chaos Gremlin — a loose-reasoning advisor, scored not applied
+
+**What:** a fourth advisory voice that reads the *same* `PerformanceSummary`
+inputs as quant/risk/news but reasons **loose** — an earnest contrarian that
+trusts pattern and conviction over proof, willing to take an unconventional
+swing the evidence-bound experts would reject for lack of support. It is the
+operator's gut modeled as a role: *swinging to win, never to gamble.* Not
+random (it shares the panel's objective — be right, make money), not
+destructive (it does not want to watch the world burn), just
+**under-constrained** where the others are rigorous. This is *reasoning-style*
+diversity — the one axis a panel of careful analysts structurally cannot
+produce — not another data source.
+
+**Why it earns a slot (when more rigorous experts would not):** the grounded
+trio is already right-sized for a $100 advisory grid, and the one macro angle
+they miss is owned by the LLM Historian below. Adding more *evidence-bound*
+experts is over-engineering. But quant/risk/news share a blind spot: all three
+are consensus-trained and act only on what the data licenses; none can flag the
+regime-break that becomes visible *because* you are willing to make a leap. The
+gremlin fills exactly that gap — and its standing question, "does loose
+intuition beat careful evidence on this market over time?", is itself worth
+measuring.
+
+**Firewall (load-bearing — stricter than news, for the same reason):** a
+confident hunch dressed up as a number is the single most dangerous thing to
+let near a live value, so:
+
+- Its own role string (`gremlin`) goes in `_BLOCKED_ROLES`
+  (`services/auto_apply.py`) — it never auto-applies, by the same mechanism as
+  `news`.
+- It is a **standalone scored observer, NOT an MoE expert that feeds the
+  arbitrator.** Wiring it into `MoEAdvisorAdapter` would launder its whimsy
+  through the arbitrator's force-tagged `role="aggregated"` output
+  (`adapters/moe_advisor.py`), which is NOT in `_BLOCKED_ROLES` — the exact
+  news-laundering hole flagged in the 2026-06-04 MoE prompt review (P1 in the
+  README). Standalone is also what you *want* for hit-rate tracking: isolate
+  its calls, do not blend them into consensus. It still gets a seat at the
+  table — its take is shown to the operator for color — it just can never tilt
+  a live number.
+
+**Falsifiable by design:** if it only proposed a spacing number, "was it
+right?" would be unanswerable — it is never applied, so there is no
+counterfactual to compare against. So the gremlin emits a **directional /
+regime call** ("toppy, expect a pullback next 24h"; "chop, not trend") that
+grades cheaply against the realized outcome with no counterfactual needed.
+That makes it the *cleanest first customer* for the Advisor-outcome-tracking
+ledger above (no applied-config confound to untangle) and a natural
+single-forecaster on-ramp to the Oracle / weather-report track.
+
+**Build split (why it is a v1.1 candidate, not pure P4):**
+
+- *The gremlin role itself* — prompt (high `temperature_hint`, a leap-licensed
+  system prompt), the `gremlin` role string, its `_BLOCKED_ROLES` entry, the
+  standalone observe-and-log wiring, and falsifiable directional output — is
+  buildable **in v1.1**, ideally turned on when MoE is enabled for the 1.1
+  soak. Turning it on early matters: its track record starts accumulating
+  immediately, so the scoreboard has real data the moment the P4 infra lands.
+- *Its hit-rate scoreboard* rides the **P4 Advisor-outcome-tracking keystone**
+  above (data-gated; needs the `recommendation_outcomes` ledger + time). The
+  gremlin feeds that ledger; it does not need its own.
+
+**Discipline note:** the answer could honestly be *"loose intuition loses to
+rigor here,"* and that is a finding, not a failure. Do not tune the gremlin
+until its scoreboard flatters it — same learning-signal discipline as the soak
+(do not short-circuit the very data you are collecting). Let it be wrong and
+measure the wrongness.
+
+**Trigger:** v1.1, alongside enabling MoE for the 1.1 soak; the scoreboard half
+unlocks with the P4 outcome ledger.
+
 ### LLM Historian — long-horizon pattern recognition over weeks/months/years
 
 **What:** a new advisor role (or standalone daemon — see "open
