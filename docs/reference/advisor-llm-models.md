@@ -17,7 +17,49 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
-## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT)
+## Rev 2026-06-04 — Cloud free-judge escalation model: gpt-5-mini (ADR-022)
+
+When the advisor was reoriented to **guards + LLM free judge** (ADR-022),
+the cascade's escalation target became the model that decides every
+non-guard tick. This bake-off picked it. Driven by
+`tools/probe_advisor.py --provider {openai,anthropic,google}` against the
+8-fixture `heldout` battery (real API calls, isolated `data/probe_llm_cost.db`).
+
+**Methodology note (load-bearing).** Run the held-out fixtures through the
+*real* heuristic and **all 8 are guard-resolved** — so most of the battery
+scores the LLM on cases it never sees in production. The decision-relevant
+subset is the **3 fixtures that escalate post-ADR-022** (`heldout_clear_widen`,
+`heldout_matched`, `heldout_matched_whipsaw` — a clear widen + two matched
+grids that should be left alone). The full-battery score is context; the
+escalate subset is the test.
+
+**Full heldout (curve prompt, 4-run mean /24) + measured cost:**
+
+| Model | mean /24 | $/call | $/day @36 | over-tightens matched? |
+|---|---|---|---|---|
+| **gpt-5-mini** | **19.8** | $0.0028 | ~$0.10 | **no — held both** |
+| claude-haiku-4-5 | 16.2 | $0.0026 | ~$0.09 | no, but tightened *into* a drawdown once |
+| o3 (incumbent) | 14.8 | $0.0086 | ~$0.31 | **yes — 8/8 runs** |
+| gemini-3.5-flash | 14.0 | $0.0158 | ~$0.57 | yes |
+| o3-mini / o4-mini | 11 (n=1) | $0.0079 / $0.0060 | ~$0.25 | yes (o4-mini went below the fee floor) |
+| gemini-2.5-flash | 8 | $0.0051 | ~$0.18 | yes (worst) |
+
+**Escalate subset (free-judge prompt, 12 calls/model):** gpt-5-mini 6/12 OK
+(held the matched grids 6/8, never a wrong-direction call); **o3 0/12 — it
+tightened both matched grids in every run**, under both the curve and the
+free-judge prompt. That compulsive matched-grid tightening is the exact
+pathology ADR-022 fixes.
+
+**Decision: `gpt-5-mini`.** Best judgment on the cases that reach the LLM,
+~⅓ o3's cost, prompt-robust. Counter-intuitive findings worth keeping: (a)
+o3-mini is only ~5% cheaper than o3 — the weaker model burns more reasoning
+tokens, so same-class "minis" don't save money; (b) o4-mini was no better
+than o3-mini. **Caveats:** the escalate subset is only 3 fixtures (thin); all
+scores are non-deterministic single-to-quad runs; the residual gpt-5-mini
+over-tighten is caught by the application-time floor (`8500226`), never
+applied. A purpose-built no-guard battery is the gold-standard follow-up.
+
+## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT for the local battery)
 
 The 6-fixture battery used by the 2026-05-25 sweep below was
 **superseded** on 2026-05-29, ahead of the CPU-only NAS advisor

@@ -20,6 +20,15 @@
 > to "rest at 3%, never tighten" would bake in a false absolute (a tight grid chosen in chop and
 > pulled before the trend works — proven live + the +164.6% oracle). The live grid runs a single
 > survival-optimized 3% static default meanwhile (Stage 8.6 Slice C).*
+>
+> **Executed in ADR-022** (v1.1, 2026-06-04): the deferred curve rework landed — by
+> *retiring* the vol→spacing first-order logic, not recalibrating it. The heuristic is now a
+> guard-only layer; every non-guard tick escalates to an LLM **free judge** (`gpt-5-mini`,
+> picked in a 2026-06-04 cloud bake-off) that reads the regime with no prescribed target. The
+> curve survives only as the `defensive_drawdown` guard's widen floor, and the application
+> floor (`8500226`) still bounds what lands. Per-suggestion accuracy is now trackable (the
+> curve no longer suppresses escalation). See ADR-022 +
+> `docs/reference/advisor-llm-models.md`.
 
 *Entries here turn the static-grid engine into a regime-aware system: classify the market, evaluate advisor recommendations against outcomes, extend the grid under operator/advisor agreement, replay historical configs. All preserve ADR-002 (LLM advisory only) and ADR-006 (engine parks honestly when offside).*
 
