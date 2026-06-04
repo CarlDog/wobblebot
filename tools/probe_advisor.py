@@ -51,11 +51,14 @@ WRONG, whereas a constant shows OK clustered on one direction and
 multiple WRONG on the opposite. If no candidate clears ~60%, no
 NAS-viable model reasons well for this task — itself a useful finding.
 
-**The ideal-spacing-vs-volatility curve below is the load-bearing
-judgment** — it generates every fixture's expected direction and the
+**The ideal-spacing-vs-volatility curve below is the fixture-scoring
+oracle** — it generates every fixture's expected direction and the
 magnitude target. Operator-reviewed + independently re-derived by a
-5-agent blind adjudication (12/12 unanimous) 2026-05-29. See
-``docs/reference/advisor-llm-models.md``.
+5-agent blind adjudication (12/12 unanimous) 2026-05-29. NB: the
+*production* heuristic retired this curve as a first-order driver
+(ADR-022) — it survives there only as the defensive_drawdown guard's
+floor. Here it remains the scoring convenience for grading LLM
+direction quality. See ``docs/reference/advisor-llm-models.md``.
 
 **Use when:**
 
