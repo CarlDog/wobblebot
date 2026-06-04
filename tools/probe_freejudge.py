@@ -436,7 +436,7 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
         daily_cap=args.daily_cap,
     )
 
-    print(f"# free-judge battery: {len(FIXTURES)} no-guard fixtures (all guard-free ✓)")
+    print(f"# free-judge battery: {len(FIXTURES)} no-guard fixtures (all verified guard-free)")
     print(f"# model: {args.provider}/{args.model}  prompt: {args.prompt_file}")
     counts = {"OK": 0, "SUBOPTIMAL": 0, "UNSAFE": 0, "ERROR": 0}
     rows: list[dict[str, object]] = []
@@ -490,6 +490,11 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
 
 
 def main() -> int:
+    # Windows pipes/redirects default stdout to cp1252, which crashes on any
+    # non-ASCII output char. Force UTF-8 so redirected runs never die on a glyph.
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
     load_operator_env()
     p = argparse.ArgumentParser(
         prog="tools.probe_freejudge",

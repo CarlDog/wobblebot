@@ -66,6 +66,19 @@ Fixture labels were adversarially reviewed by a 3-lens critic panel (2026-06-04;
 two corrected). Run `python tools/probe_freejudge.py --model gpt-5-mini` to grade a
 candidate on demand (live API, ~6 min for a reasoning model over 14 calls).
 
+**gpt-5-mini on the no-guard battery (2 runs × 14, 2026-06-04):** OK 19/28,
+SUBOPTIMAL 5, **UNSAFE 4** — all four UNSAFE were *tightens* into risk, one
+repeatable (`moderate_drawdown_below_guard`: tightened a −4.5% drawdown both runs).
+gpt-5-mini stays the pick (every other model was worse), but it is **not immune**
+to the tighten-into-risk pathology — the 3-fixture escalate subset hid this.
+Two things keep it inert in production: (a) those tightens are all below the
+configured spacing, so the auto-apply floor (`8500226`) rejects them and the
+dashboard tags them "below floor" — tracked, never applied; only widens and holds
+can land. (b) The repeatable drawdown miss is a candidate to tighten the
+`defensive_drawdown` guard threshold so the guard handles it deterministically
+instead of escalating — a guard-tune, not a model swap. (Reference: gpt-4o-mini,
+non-reasoning, scored OK 10 / SUB 1 / UNSAFE 3.)
+
 ## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT for the local battery)
 
 The 6-fixture battery used by the 2026-05-25 sweep below was
