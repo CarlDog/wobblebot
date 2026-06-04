@@ -1451,6 +1451,97 @@ of ADR-002 (no LLM involvement).
 - ADR-001 (hexagonal / `ExchangePort`), ADR-003/004 (key split + withdrawal API), and the
   Stage 8.4 `finally`-block hotfix (`e2b6cfc`) this complements.
 
-<!-- ADR-021 is the last in this file; new ADRs append below. -->
+## ADR-022 — Advisor Reorientation: Guards-Only Heuristic + LLM Free Judge
+
+**Status:** Accepted
+**Date:** 2026-06-04
+
+**Context:** ADR-019 ratified the advisor as a regime reader, demoted the vol→spacing
+curve to a "coarse static-default calibration," and **deferred** its rework to the future
+Oracle track — explicitly *rejecting* a recalibrate-to-rest-at-3% as a false absolute. It
+left the curve in place for the soak as "harmless log-noise." Picking that thread up on
+the v1.1 track surfaced two new facts:
+
+1. **The curve isn't harmless once the advisor is meant to be *tracked*.** Its 2.70%
+   ceiling sits below the 3% live grid, so its first-order logic recommended TIGHTEN on
+   ~every non-guard tick *and flagged those as clear matches* — so in `engine: cascade`
+   the LLM was almost never consulted. The trackable advisory signal (the whole point of
+   running the advisor through a soak) was the curve's mechanical tighten, not judgment.
+2. **Clamping the recommendation would destroy the signal it's meant to produce.** The
+   tempting fix — floor the *recommendation* at the configured spacing — was rejected: it
+   launders a bad recommendation into a fake-good one, so per-suggestion accuracy tracking
+   (and any future learned arbitrator trained on it) measures the clamp, not the advisor.
+   The application-time floor (`8500226`, defense-in-depth under ADR-019/ADR-002) already
+   guarantees nothing below the configured spacing ever *lands*; the recommendation itself
+   must stay honest.
+
+**Decision:** Retire the vol→spacing first-order logic entirely (do not recalibrate it —
+consistent with ADR-019's rejection of baking in a "never below 3%" absolute) and
+reorient the advisor to **deterministic guards + an LLM free judge**:
+
+1. **The heuristic makes only the four clear guard calls** (`directional_runaway`,
+   `defensive_drawdown`, `dont_fix_working`, `fee_floor_calm`). `_first_order` and
+   `_is_ambiguous` are deleted; `hold_deadband` + the `escalation` band are removed from
+   the spec. The vol curve survives **only** as the `defensive_drawdown` guard's widen
+   floor.
+2. **Every non-guard tick escalates to the LLM**, which judges the regime with no
+   prescribed target (`config/prompts/quant.md` rewritten curve-follower → free judge). A
+   genuine HOLD is a valid answer. The cascade already does this — escalate on
+   `clear_match=False`, fall back to the heuristic's HOLD on LLM error / cost-cap — so it
+   needs no code change.
+3. **The escalation model is `gpt-5-mini`** (cpu-only profile), chosen over `o3` in a
+   2026-06-04 bake-off: on the cases that actually reach the LLM post-reorientation,
+   gpt-5-mini held the matched grids that o3 (and o3-mini, o4-mini, the Gemini flashes)
+   compulsively tightened, never made a wrong-direction call, and costs ~⅓ of o3
+   (~$0.10/day, gate-bounded by ADR-014). Recorded in
+   `docs/reference/advisor-llm-models.md`.
+4. **Advisory-only is unchanged (ADR-002).** The LLM has full rein to *recommend* — that
+   honesty is what makes the signal trackable — but the auto-apply floor (`8500226`) and
+   the `cli/apply` gate (ADR-012) bound what can be *applied*. gpt-5-mini's residual
+   matched-grid over-tighten (a minority of escalate ticks) cannot land below the
+   configured spacing.
+
+**Alternatives considered:**
+- **Recalibrate the curve to rest at 3%.** Rejected here exactly as in ADR-019 — it bakes
+  in "tight is always wrong," which the regime research refuted. Retiring the curve
+  removes the false absolute rather than re-encoding it.
+- **Clamp the LLM/heuristic recommendation at the configured floor (a "Layer 1").** Built,
+  then reverted: it destroys per-suggestion accuracy tracking by converting a sub-floor
+  recommendation into a floor-equal one. The floor belongs at *application* only.
+- **Keep o3.** Rejected: the bake-off showed o3 tightens matched grids 100% of runs (the
+  exact pathology motivating this ADR) at 3× the cost.
+- **o3-mini / o4-mini (same reasoning class, cheaper rate).** Rejected: measured ~5%
+  cheaper per call than o3 (the weaker model burns more reasoning tokens) *and* worse
+  judgment; o4-mini even recommended below the fee floor.
+
+**Consequences:**
+- **Positive:** The advisor now produces a genuine, trackable judgment signal on every
+  non-guard tick — the precondition for the learned-arbitrator soak and any P4 work.
+- **Positive:** Safety is unchanged: guards still catch the clear failure modes; the
+  application floor + `cli/apply` gate still bound real changes.
+- **Positive:** Cheaper than the o3 baseline and gate-bounded; full escalation can't run
+  away (`llm.cost.enforce`).
+- **Negative:** Real LLM spend rises from ~$0 (curve suppressed escalation) to ~$0.10/day
+  at full escalation — the cost of an honest signal, bounded by the daily cap.
+- **Negative:** The curve-keyed *heuristic* battery tests are retired; the
+  `tools/probe_advisor.py` fixtures are repurposed as the LLM-grading oracle (not rebuilt,
+  per ADR-019's reluctance to rework the blessed battery under pressure).
+
+**Compliance:** Successor to **ADR-019** — executes its deferred curve rework by retiring
+(not recalibrating) the curve. Refines nothing in ADR-002 (advisory-only intact; bounds
+enforced at application, not by suppressing the recommendation), ADR-007, ADR-012, or
+ADR-014 (cost gate unchanged and now load-bearing).
+
+**Soak note:** v1.1 work on the `v1.1` branch; NOT in the frozen v1.0 soak image. Takes
+effect only when the operator deploys the v1.1 image post-tag and updates the live
+`config/settings.yml` cpu-only model to `gpt-5-mini`.
+
+**References:**
+- `docs/reference/advisor-llm-models.md` — the 2026-06-04 model bake-off + selection.
+- `8500226` — the application-time spacing floor this ADR relies on.
+- ADR-019 (the predecessor this executes), ADR-002/012 (advisory-only + apply gate),
+  ADR-014 (cost gate).
+
+<!-- ADR-022 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
