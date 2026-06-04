@@ -323,6 +323,17 @@ is in freeze.
 advisor quality. This is probably the single highest-leverage
 v1.1 candidate for the advisor pipeline.
 
+**Minimal first slice (2026-06-04, MoE prompt review).** Before the full
+TA suite, the highest-value single addition is a **trend / directional
+metric** on `PerformanceSummary` (e.g. signed drift over the lookback, or
+an EMA-slope / ADX on bars). ADR-019 names trend the *dominant* variable,
+and the post-ADR-022 quant free-judge currently infers ranging-vs-trending
+from `flatness` alone (indirect). One directional field + one `metrics.py`
+computation + a `quant.md` line referencing it would hand the judge the one
+signal it most needs — a focused code stage, not the whole indicator library.
+(This is the additive coverage gap from the MoE prompt review; the prompt-only
+realignment of risk/news/arbitrator shipped separately.)
+
 ### Advisor outcome tracking — close the recommendation feedback loop
 
 **What:** measure post-application outcome for every applied
