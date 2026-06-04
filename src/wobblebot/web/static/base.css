@@ -1024,6 +1024,15 @@ table.data.compact td {
 .tag.warn { background: var(--tag-warn-bg); color: var(--tag-warn-text); }
 .tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
 .tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
+/* Neutral, informational — NOT an error. Marks an advisor suggestion the
+   auto-apply floor will never apply (ADR-022); kept visible for tracking. */
+.tag.floor { background: var(--tag-default-bg); color: var(--text-primary); font-weight: 500; }
+
+/* A suggestion whose proposed spacing is below what the advisor saw: the
+   floor rejects it, so de-emphasise the card (still readable, restores on
+   hover) without hiding the raw recommendation. */
+.card.below-floor { opacity: 0.6; }
+.card.below-floor:hover { opacity: 0.9; }
 
 /* Dedicated "link" column on /news. Narrow column whose only job is
    to carry the article-link pill for rows that have a URL. Empty cell

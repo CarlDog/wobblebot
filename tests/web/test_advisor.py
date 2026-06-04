@@ -46,6 +46,7 @@ def _make_suggestion(
     confidence: str = "medium",
     model: str = "phi4:14b",
     with_experts: bool = False,
+    current_spacing: float | None = None,
 ) -> AdvisorSuggestion:
     rec_kwargs: dict[str, Any] = {
         "recommendation_id": "rec-" + symbol.replace("/", "-"),
@@ -74,10 +75,13 @@ def _make_suggestion(
                 confidence="medium",
             ),
         ]
+    input_summary: dict[str, Any] = {"symbol": symbol}
+    if current_spacing is not None:
+        input_summary["current_grid"] = {"spacing_percentage": current_spacing}
     return AdvisorSuggestion(
         recommendation=AdvisorRecommendation(**rec_kwargs),
         created_at=Timestamp(dt=datetime.now(UTC)),
-        input_summary={"symbol": symbol},
+        input_summary=input_summary,
         model_name=model,
     )
 
@@ -155,6 +159,56 @@ class TestAdvisorRoute:
             assert "Per-Expert Opinions" in resp.text
             assert "quant" in resp.text
             assert "risk" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_below_floor_suggestion_is_dimmed_and_badged(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # Proposes 1.0% while looking at a 3.0% grid -> the auto-apply floor
+        # would reject it, so the card is dimmed and badged.
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="BTC/USD",
+                recommendations={"spacing_percentage": 1.0},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" in resp.text  # dim class on the card
+            assert "below floor" in resp.text  # the badge label
+
+    @pytest.mark.asyncio
+    async def test_at_or_above_floor_is_not_tagged(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # Spacing == current (at floor) and a widen above it: neither tagged.
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="ETH/USD",
+                recommendations={"spacing_percentage": 3.0},
+                current_spacing=3.0,
+            )
+        )
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="DOGE/USD",
+                recommendations={"spacing_percentage": 4.0},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" not in resp.text
+            assert "below floor" not in resp.text
 
     @pytest.mark.asyncio
     async def test_lists_multiple_suggestions_newest_first(
