@@ -4,24 +4,24 @@
 # own this file the same way they own config/prompts/*.md). A daemon
 # restart picks up changes — cli/advise reads this once at startup.
 #
-# WHAT THIS CONTROLS: how the deterministic advisor turns a metrics
-# window (volatility, win rate, cycle count, drawdown, current spacing)
-# into a WIDEN / HOLD / TIGHTEN call WITHOUT calling an LLM. In
-# `engine: cascade`, the LLM (o3) is only consulted when this heuristic
-# reports an ambiguous (non-clear) match — so most ticks cost $0.
+# WHAT THIS CONTROLS: the four override guards the deterministic advisor
+# uses to make the CLEAR calls (directional runaway, defensive drawdown,
+# don't-fix-working, fee-floor calm) WITHOUT calling an LLM. In
+# `engine: cascade`, every tick where no guard fires escalates to the
+# LLM, which judges the regime freely (ADR-022) — the heuristic no longer
+# tunes spacing toward the curve.
 #
 # The guard ALGORITHM and priority order live in code
 # (adapters/heuristic_advisor.py); this file only tunes the numbers.
 # Adding a brand-new guard is a code change with a fixture-battery test.
 
 # ---------------------------------------------------------------------------
-# Ideal grid spacing (%) as a function of realized per-tick volatility.
-# THE load-bearing judgment: a grid wants spacing wide enough that
-# round-trips clear ~2x the 0.26% maker fee and capture the typical
-# swing, tight enough to fill often. Linear interpolation between
-# points; flat-clamped below the first / above the last. Operator-
-# reviewed + blind-adjudicated (12/12) 2026-05-29. See
-# docs/reference/advisor-llm-models.md.
+# Ideal grid spacing (%) vs realized per-tick volatility. Read ONLY by
+# the defensive_drawdown guard, to set a vol-aware floor under its widen
+# target (never below current * widen_factor). It no longer drives any
+# first-order spacing decision — that logic was retired in ADR-022, since
+# the 2.70% ceiling sat below the deployed grid and mechanically pushed
+# TIGHTEN. Linear interpolation between points; flat-clamped at the ends.
 # ---------------------------------------------------------------------------
 curve:
   - {vol: 0.0008, spacing: 0.65}   # dead quiet
@@ -34,19 +34,15 @@ curve:
   - {vol: 0.014,  spacing: 2.70}   # extreme whipsaw
 
 # Never recommend spacing below 2x the 0.26% maker fee — a tighter grid
-# can't clear fees on a round-trip. Clamps every target to >= this.
+# can't clear fees on a round-trip. Clamps the drawdown guard's floor.
 fee_floor: 0.52
 
-# Within +/-15% of the vol-ideal, HOLD: re-placing a whole grid for a
-# small tweak churns fees for nothing. Wide enough that no real action
-# fixture (all >=30% off ideal) is swallowed.
-hold_deadband: 0.15
-
 # ---------------------------------------------------------------------------
-# Override guards — each can FLIP the first-order vol/spacing call.
-# Checked in priority order: directional_runaway -> defensive_drawdown
-# -> dont_fix_working -> fee_floor_calm -> first-order. Set `enabled:
-# false` on any guard to remove it from the chain.
+# Override guards — the heuristic's only opinions. Checked in priority
+# order: directional_runaway -> defensive_drawdown -> dont_fix_working
+# -> fee_floor_calm. The first that fires wins; if none fire the tick
+# escalates to the LLM free judge. Set `enabled: false` on any guard to
+# drop it from the chain (its cases then escalate too).
 # ---------------------------------------------------------------------------
 guards:
   # Price ran away (0 completed cycles) with a drawdown at least this
@@ -73,8 +69,8 @@ guards:
   # window to chase it would make the -5% drawdown guards fire on ordinary
   # daily noise (a 24h window dips >=5% ~13% of the time vs ~2% at 6h), so
   # we deliberately keep metrics_lookback_hours at 6h. At wide spacing the
-  # anti-churn job this guard was built for is done instead by the resting
-  # curve + hold_deadband. Kept enabled (not deleted) because the MoE world
+  # anti-churn job this guard was built for is done instead by escalating
+  # the tick to the LLM free judge. Kept enabled (not deleted) because the MoE world
   # will propose fast/tight grids every ~4h and may run several at once; a
   # grid tight enough to clear 8 cycles in the window re-arms this guard
   # automatically — no code change needed.
@@ -90,14 +86,3 @@ guards:
     enabled: true
     calm_vol: 0.001
     near_floor_spacing: 0.68
-
-# ---------------------------------------------------------------------------
-# Cascade escalation (only consulted in `engine: cascade`). The
-# heuristic defers a first-order call to the LLM when the gap from the
-# vol-ideal sits in an ambiguous band around the hold deadband, or when
-# the metrics window is too thin to trust the volatility estimate.
-# ---------------------------------------------------------------------------
-escalation:
-  enabled: true
-  margin: 0.5         # ambiguous band = hold_deadband * (1 +/- margin) = [0.075, 0.225]
-  min_snapshots: 30   # first-order calls from fewer snapshots -> low confidence -> escalate
