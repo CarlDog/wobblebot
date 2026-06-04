@@ -298,30 +298,130 @@ threshold the operator finds annoying.
 test** entry above; the stress test provides the verification
 harness, this entry is the concrete fix it would validate.
 
-### Reconciler fill-vs-cancel disambiguation
+### Order-lifecycle fill-vs-cancel + partial-fill recovery (reconciler + F1) — blueprint
 
-**What:** extend `services/reconciler.py`'s storage-only handling
-to query Kraken's `/0/private/ClosedOrders` (and optionally
-`/0/private/TradesHistory`) for each storage-only `exchange_id`.
-If Kraken says the order filled rather than was canceled, replay
-the engine's `_detect_fills` counter-placement logic at startup
-— place the counter sell/buy that would have been placed live.
+**What:** one root cause — the untreated state `Order.status in
+(canceled, expired) AND filled_amount > 0` — bites at two sites: the
+per-tick `_detect_fills` gate (**F1**: drops the partial's `Trade` rows +
+skips the counter) and the startup **reconciler** (marks a storage-only
+order `canceled` without checking whether it actually *filled* — the
+2026-05-19 orphaned-$10-BTC class). Fix both behind one shared helper.
 
-**Why deferred:** ADR-018 ratified the v1.0 reconciler as a
-minimal "exchange authoritative" diff with two outcomes
-(storage-only → canceled, exchange-only → log). Adding closed-
-orders / trade-history queries introduces another Kraken API
-dependency at startup and another decision tree (what if the
-order partial-filled? what if the trade-history page is
-paginated? what's the lookback window?). v1.0 chose simplicity;
-v1.1 can re-investigate.
+**Blueprint — settled 2026-06-03** (two independent feature-dev architecture
+passes + an adversarial judge on the contested fork):
 
-**Trigger:** surfaced during the v1.0 soak's first overnight
-outage (2026-05-19) when cli/live was down while a buy filled.
-Reconciler correctly marked the order canceled in storage but no
-counter sell was placed, leaving $10 of BTC orphaned from the
-strategy. Pattern would recur on every host-crash mid-fill, so
-the v1.1 case for fixing this is real.
+- **Shared resolver** in `services/reconciler.py` (`_resolve_terminal_order`):
+  given a departed order, `get_order_status` → classify
+  `closed`/`partial_cancel`/`clean_cancel`; for the first two, save the
+  `Trade` rows + the terminal-status order. Both `_detect_fills` and the
+  reconciler call it (read-side helper; no new module).
+- **QueryOrders, not `ClosedOrders`** — *simplifies the original plan.*
+  `get_order_status` (QueryOrders) already exists on the port + adapter and
+  targets a known `exchange_id`; a paged `ClosedOrders` scan is unnecessary.
+  Widen the reconciler's `_AdapterLike` Protocol to add `get_order_status`.
+  (The `ClosedOrders` mention in the old deferral note was a rough soak note,
+  not ratified — this supersedes it.)
+- **Counter-replay = the engine places it, not the reconciler** — settled by
+  the adversarial judge on *safety* grounds: the reconciler is constructed
+  *after* the engine (`live.py:664` vs `:700`) and is *documented* never to
+  place/cancel (`reconciler.py:226`); a reconciler `place_order` would breach
+  the power-fragmentation design **and** runs outside the engine's per-symbol
+  lock. Instead the reconciler adds the order UUID to
+  `ReconciliationReport.needs_counter_order_ids`; `GridEngine.__init__` takes
+  `pending_counters`; the first `_tick` places them inside the
+  `if not offside:` block (recovery counters inherit the offside suppression).
+- **Retry-on-failure (the judge's correction):** a pending counter that fails
+  placement **stays** in `pending_counters` and retries next tick — do NOT
+  discard on failure. Discard-on-failure + the auto-re-layout guard
+  (`grid_engine.py:407-423`) would re-place a full grid with no counter →
+  **reproduce the very orphan bug** this fixes. Decisive point.
+- **Full safety caps at startup** — `_check_safety` reads storage live; there
+  is no uninitialized session accumulator, so the caps are correct at boot.
+  No reduced-check mode (a first-pass design got this wrong; verified).
+- **No new domain method** — reading `filled_amount` after the refresh
+  suffices; `_apply_kraken_order_update` already produces the canceled+partial
+  state.
+- **Idempotency:** the terminal-status `save_order` drops the order from
+  `_detect_fills`' `status=open` candidate filter (`grid_engine.py:497-504`),
+  so the tick never re-processes it. Self-heals across a
+  crash-between-reconcile-and-tick (next boot re-flags the still-terminal
+  order; cost = one-boot delay, no double-counter).
+- **Test infra:** the `MockExchangeAdapter` can't produce canceled+partial —
+  add an `inject_partial_cancel` control method (mirrors
+  `_apply_kraken_order_update`'s field-assignment bypass); reconciler unit
+  tests use a purpose-built fake adapter. Tests per outcome at both sites +
+  the no-double-counter case.
+- **Build order:** ADR → mock fixture → shared resolver + tests → Site 1
+  (`_detect_fills` gate) → Site 2 (reconciler + `needs_counter_order_ids`) →
+  engine `pending_counters` + `_process_pending_counters` → wire `cli/live` +
+  `cli/shadow`.
+
+**Trigger:** the 2026-05-19 overnight outage (cli/live down while a buy filled
+→ orphaned $10 BTC) + the 2026-06-03 live ADA dust-fill confirming Kraken
+fragments orders into sub-ordermin partials. Recurs on every host-crash
+mid-fill.
+
+### Slippage / spread guard — blueprint
+
+**What:** refuse to place grid orders when the bid/ask spread is too wide (a
+market-quality gate). New ADR.
+
+**Blueprint (2026-06-03):**
+
+- **`get_ticker`, not `get_order_book`** — *simplifies the original plan.*
+  Bid/ask (`a[0]`/`b[0]`) are already in the Kraken Ticker response the adapter
+  fetches every tick (it reads only `c[0]`/last today). A new
+  `get_ticker(symbol) -> Ticker` value object (last/bid/ask + `spread_percentage`
+  + a `bid<ask` validator) extracts the spread at **zero extra API calls**;
+  chosen over widening `get_current_price` (9 callers, most need only last).
+  `_step_unlocked` calls `get_ticker` in place of `get_current_price` → net one
+  read per tick.
+- **Pre-tick gate** in `_step_unlocked` (skip the whole tick if
+  `spread > limit`) — *not* a 5th `_check_safety` arm: spread is a per-symbol
+  market signal, not a per-order invariant, and per-order would re-fetch N×/tick.
+  New `StepAction` skip-variant.
+- **Config:** `max_spread_percentage` on `SafetyConfig` (default 1.0% — never
+  fires on healthy BTC/ETH ~0.01–0.05%; None/0 disables). Per-coin override on
+  `CoinGridConfig` deferred (YAGNI) until a thin alt needs it.
+- **Log-flood guard:** reuse the offside heartbeat (`_OFFSIDE_SUMMARY_EVERY_TICKS`)
+  — a sustained wide spread otherwise floods at 5s cadence.
+- Adapters: Kraken reads a/b/c; Mock gets `set_spread` + a default tight spread
+  (so existing engine tests don't trip); Shadow forwards to live.
+
+**Trigger:** higher priority once multi-asset ships (thin alts dislocate off-hours).
+
+### Session-loss-cap cool-down — blueprint
+
+**What:** after `cli/live` exits on the loss cap (`exit_code=1`), refuse to start
+a new session for a cool-down window; `--ignore-cool-down` bypasses. New ADR.
+
+**Blueprint (2026-06-03):**
+
+- **Persist in a new `live.db` table** (one row per loss-cap trip: `tripped_at`
+  + `session_pnl`), written in `_run_loop`'s `finally` (own try/except,
+  resilient) when `exit_code==1`; queried by a pre-loop gate in `_main_async`.
+  Rejected: a state file (second source of truth) and parsing the notifications
+  table (`operator_db` is optional → no persistence without Discord). StoragePort
+  gains `record_cap_trip` + `get_last_cap_trip_at`.
+- **New exit code 4** for a cool-down refusal — distinct from 2 (creds/config)
+  so restart policies / a future `cli/up` can tell "give up" from "try again
+  later."
+- **Fail-open** on a storage-read error at the gate (log WARNING, proceed) —
+  fail-closed + `restart: unless-stopped` would crash-loop (the docker G1
+  lesson). The cool-down is a safety *feature*, not a safety-*critical* invariant.
+- **Scope:** only `exit_code=1`; not shadow/sandbox (synthetic ledgers).
+  `--ignore-cool-down` is terminal-only (not YAML-settable) so a Portainer
+  redeploy can't standing-bypass it, and it does NOT clear the record.
+- **Default window = operator's risk-tolerance call** (the two design passes
+  split 30 vs 60 min from the same soak evidence) — it's a config knob, set to
+  taste. The gate lives in a small `services/cool_down.py` helper for testability.
+
+**Trigger:** the soak's 4:22am loss-cap trip (a too-low $5 cap → MTM drawdown) —
+a knee-jerk relaunch would have dropped straight back into the losing condition.
+
+**ADR numbering:** the three blueprints above were each independently drafted as
+"ADR-022" (every architect saw ADR-021/DMS as the last). When built they take
+**distinct** numbers in build order (022/023/024), not all 022.
 
 ### Mid-session reconciliation
 
