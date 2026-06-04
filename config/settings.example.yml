@@ -51,49 +51,31 @@ grid:
     # Widened 2026-05-30 from 1.0% -> 3.0% (Stage 8.6). The grid backtest
     # found 1% spacing catastrophic in trends and ~3% the least-bad — its
     # value is downtrend SURVIVAL, not higher profit (per-cycle yield is
-    # ~flat across spacings; wider just bleeds less when wrong). BTC is the
-    # only live symbol and reads this default. Full rationale:
+    # ~flat across spacings; wider just bleeds less when wrong). Multi-coin
+    # runs put every configured alt on this uniform default. Full rationale:
     # docs/reference/grid-strategy-research-synthesis-2026-05-30.md.
     spacing_percentage: 3.0   # delta between adjacent levels, % of reference price
     levels_above: 3           # SELL levels above the anchor
     levels_below: 3           # BUY levels below the anchor
-    order_size_usd: 10.0      # USD budget per order; per-pair quantization happens at submit
+    order_size_usd: 5.0       # USD budget per order; per-pair quantization happens at submit
 
+  # Multi-coin runs put every configured alt on the uniform `default` above —
+  # no per-coin spacing overrides. Add an entry here only to shadow `default`
+  # for one coin; an entry with `enabled: false` SKIPS that coin even if it's
+  # listed in a `symbols:` list. (Spacing must exceed 0.52% = 2 × Kraken's
+  # 0.26% maker fee, or a cycle loses money on every round trip — the engine
+  # validator rejects anything tighter at load.)
   coins:
     DOGE:
-      spacing_percentage: 2.0
+      # $6, not the $5 default: Kraken's DOGE ordermin is a fixed 50 DOGE,
+      # and at $5 the live volume (order_size_usd / price) fell to 49.99
+      # DOGE when DOGE drifted to ~$0.10 (2026-06-02 soak) -> Kraken
+      # refused it. $6 clears 50 DOGE up to ~$0.12. Geometry else = default.
+      spacing_percentage: 3.0
       levels_above: 3
       levels_below: 3
-      order_size_usd: 15.0
+      order_size_usd: 6.0
       enabled: true
-    ADA:
-      spacing_percentage: 1.5
-      levels_above: 4
-      levels_below: 4
-      order_size_usd: 12.0
-      enabled: false
-    SOL:
-      spacing_percentage: 1.0
-      levels_above: 5
-      levels_below: 5
-      order_size_usd: 10.0
-      enabled: false
-    MATIC:
-      spacing_percentage: 1.5
-      levels_above: 4
-      levels_below: 4
-      order_size_usd: 10.0
-      enabled: false
-    ETH:
-      # spacing_percentage must exceed 0.52% (= 2 × Kraken's 0.26% maker
-      # fee) for cycles to be profitable. Soak finding 2026-05-20: the
-      # prior default of 0.5% was below that threshold and would lose
-      # money on every completed cycle. 1.0% leaves a comfortable margin.
-      spacing_percentage: 1.0
-      levels_above: 6
-      levels_below: 6
-      order_size_usd: 20.0
-      enabled: false
 
 # ============================================================================
 # Safety caps (engine-enforced, non-negotiable)
@@ -101,6 +83,11 @@ grid:
 # These are checked inside GridEngine BEFORE any place_order call.
 # Refusals are logged + counted in StepResult.refusals; they never raise.
 safety:
+  # Generic TEMPLATE caps — size these to YOUR balance + coin count before
+  # going live (two-sided ceiling = coins × levels × order_size; keep
+  # max_daily_spend below your free USD). This file is a starting template,
+  # not a mirror of any live deployment — your tuned values live in the
+  # gitignored settings.yml.
   max_total_exposure_usd: 100.0       # global cap across all coins
   max_daily_spend_usd: 100.0          # BUY-side commits per UTC day
   max_per_coin_exposure_usd: 100.0    # per-coin cap
