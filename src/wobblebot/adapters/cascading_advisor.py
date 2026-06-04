@@ -15,10 +15,11 @@ The other two ``advisor.engine`` values don't need this wrapper:
 the pre-8.5 path). ``cli/advise._build_advisor`` does that dispatch;
 this adapter exists only for the composed case.
 
-Because the LLM fires only on hard cases, real cost is typically far
-below an always-LLM deployment. Heuristic-resolved ticks carry
-``role="heuristic"`` and escalated ticks carry the LLM's role, so the
-``advisor_suggestions`` audit trail records which engine decided each tick.
+The LLM is the primary resolver for non-guard ticks (ADR-022): the
+heuristic answers only the clear guard cases for $0, and everything else
+escalates. Heuristic-resolved ticks carry ``role="heuristic"`` and
+escalated ticks carry the LLM's role, so the ``advisor_suggestions``
+audit trail records which engine decided each tick.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ _LOGGER = logging.getLogger("wobblebot.adapters.cascading_advisor")
 
 
 class CascadingAdvisorAdapter(AdvisorPort):
-    """Heuristic-first advisor that escalates ambiguous cases to an LLM.
+    """Heuristic-first advisor that escalates non-guard ticks to an LLM.
 
     Args:
         heuristic: The deterministic adapter (concrete, not just
