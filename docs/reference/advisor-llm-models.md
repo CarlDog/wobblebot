@@ -66,18 +66,34 @@ Fixture labels were adversarially reviewed by a 3-lens critic panel (2026-06-04;
 two corrected). Run `python tools/probe_freejudge.py --model gpt-5-mini` to grade a
 candidate on demand (live API, ~6 min for a reasoning model over 14 calls).
 
-**gpt-5-mini on the no-guard battery (2 runs × 14, 2026-06-04):** OK 19/28,
-SUBOPTIMAL 5, **UNSAFE 4** — all four UNSAFE were *tightens* into risk, one
-repeatable (`moderate_drawdown_below_guard`: tightened a −4.5% drawdown both runs).
-gpt-5-mini stays the pick (every other model was worse), but it is **not immune**
-to the tighten-into-risk pathology — the 3-fixture escalate subset hid this.
-Two things keep it inert in production: (a) those tightens are all below the
-configured spacing, so the auto-apply floor (`8500226`) rejects them and the
-dashboard tags them "below floor" — tracked, never applied; only widens and holds
-can land. (b) The repeatable drawdown miss is a candidate to tighten the
-`defensive_drawdown` guard threshold so the guard handles it deterministically
-instead of escalating — a guard-tune, not a model swap. (Reference: gpt-4o-mini,
-non-reasoning, scored OK 10 / SUB 1 / UNSAFE 3.)
+**gpt-5-mini on the no-guard battery (6 runs × 14 = 84 judgments, 2026-06-04):**
+OK 52 (62%), SUBOPTIMAL 15, **UNSAFE 17 (20%)**. An initial 2-run sample read a
+rosier UNSAFE=1 on run 1 — that was the optimistic outlier; steady state is ~3
+UNSAFE/run. Three distinct behaviors: **clear cases rock-solid + correct**
+(too-tight→widen, too-wide→tighten 6/6); **ambiguous middle a coin-flip**
+(`well_matched_ranging` 3 hold / 3 tighten — the LLM-consistency footgun in the
+flesh); and **dangerous cases consistently WRONG** — `moderate_drawdown_below_guard`
+tightens 6/6, `developing_downtrend` 5/6, `whipsaw` 4/6, all *tightens into risk*. So
+gpt-5-mini is the best model tested but carries a persistent tighten-bias under the
+free-judge prompt; it is **not immune** to the pathology the 3-fixture escalate subset
+hid.
+
+Why this triggers neither a model change nor (yet) a guard change:
+(a) **Inert by construction.** Every one of those tightens is below the configured
+spacing → the auto-apply floor (`8500226`) rejects it and the dashboard tags it
+"below floor" — tracked, never applied; only widens and holds can land.
+(b) **The guard-tune is a POST-soak candidate, not a soak-time one.** Lowering the
+`defensive_drawdown` threshold (−0.05 → −0.04 catches the 6/6 case; −0.03 also catches
+the 5/6 downtrend — measured 6h-window drawdown frequencies on local BTC history: dd≤−3%
+~6.5%, ≤−4% ~2.7%, ≤−5% ~1.3% of windows) *would* make these correct deterministically,
+but **during the soak it throws away the highest-value learning signal**: the LLM's
+`(situation → recommendation → market outcome)` pairs on exactly the hardest cases —
+the dataset for evaluating the free judge and a future learned arbitrator. With
+`auto_apply` off the wrong tightens cost nothing, so there is no safety reason to
+short-circuit them. The no-guard battery already characterized the failure *offline*
+(its job); the soak collects the live pairs. **Revisit the guard-tune when enabling
+`auto_apply`, informed by real soak outcomes** — the prototype + frequency data are
+filed for that day. (Reference: gpt-4o-mini, non-reasoning, scored OK 10 / SUB 1 / UNSAFE 3.)
 
 ## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT for the local battery)
 
