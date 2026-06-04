@@ -215,6 +215,18 @@ to every project. The wobblebot-specific items below extend it:
   Operator `.env` and `settings.yml` keys are a subset of their
   example counterparts; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` for
   bidirectional strict mode in CI.
+- **`settings.example.yml` reflects reality.** The drift test catches KEY
+  drift but **not** value/comment staleness or dead pairs (`grid.coins.*`
+  is exempt) — verified 2026-06-04 after the example silently carried stale
+  per-coin overrides + a retired MATIC pair across several commits. On any
+  strategy change, sync the example's affected values + comments in the SAME
+  commit, and confirm no retired pairs linger (MATIC→POL). The example is a
+  generic **template** (sensible defaults), **not** a mirror of live values:
+  operator-specific caps/balances and the 4 identity fields
+  (`operator.auth.*`, `harvester.withdrawal_destinations`) stay
+  generic/placeholder. (Targeted enforcement tests — structural-parity,
+  valid-pairs, value-invariant — are the durable guard; see
+  `tests/config/`.)
 - **Per-stage receipts have completion dates.** Every closed stage
   in `docs/planning/roadmap.md` carries a ✅ date. Phase summary
   document exists if the phase had real-money or architectural
