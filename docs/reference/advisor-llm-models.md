@@ -57,7 +57,14 @@ tokens, so same-class "minis" don't save money; (b) o4-mini was no better
 than o3-mini. **Caveats:** the escalate subset is only 3 fixtures (thin); all
 scores are non-deterministic single-to-quad runs; the residual gpt-5-mini
 over-tighten is caught by the application-time floor (`8500226`), never
-applied. A purpose-built no-guard battery is the gold-standard follow-up.
+applied. A purpose-built no-guard battery is the gold-standard follow-up —
+**now built** (`tools/probe_freejudge.py` + `tests/tools/test_freejudge_battery.py`):
+14 ambiguous-middle scenarios, each verified guard-free by the shipped heuristic
+(a CI test, no LLM needed), scored against the bot's **risk model** (OK /
+SUBOPTIMAL / UNSAFE — `forbidden`=the actively-unsafe call) rather than a curve.
+Fixture labels were adversarially reviewed by a 3-lens critic panel (2026-06-04;
+two corrected). Run `python tools/probe_freejudge.py --model gpt-5-mini` to grade a
+candidate on demand (live API, ~6 min for a reasoning model over 14 calls).
 
 ## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT for the local battery)
 
