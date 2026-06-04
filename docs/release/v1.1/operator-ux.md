@@ -139,6 +139,16 @@ via View construction.
 
 ### Web UI per-entity action buttons (generic "decide + audit" pattern)
 
+> **⚠️ Build to the corrected blueprint, not this entry alone.** A feature-dev
+> architecture pass + adversarial judge (2026-06-03) found **two decisive safety
+> bugs** in the naive design — see the **"P3 resolved blueprints"** block in
+> [`README.md`](README.md): (F) web-Execute without the P1 Harvester replay guard
+> is a **double-withdrawal** vector (ship them together; UNIQUE on
+> `transfer_results.proposal_id`); (E) the daemons polling `pending_commands` need
+> **query-level `command_kind` filtering** (no atomic claim today → double-dispatch
+> / silent-kill of approved withdrawals). And drop `cli/apply --daemon`
+> (`settings.yml` doesn't hot-reload — operator runs the existing one-shot).
+
 **What:** add commit-vs-reject buttons directly to the persisted
 review queues in the web UI. The backend pattern is generic —
 each per-entity row gets a positive-action button + a negative
@@ -391,6 +401,13 @@ addressable in the URL); deep linking second (more design
 discussion needed).
 
 ### Re-anchor banner — action button + snooze
+
+> **Blueprint 2026-06-03** (feature-dev + judge): the chain resolved to an
+> **in-process** re-anchor + a shared **`engine_state`** keystone table; snooze is
+> UI-local; projected-loss = **fee-only**. ⚠️ judge correction A: place the new grid
+> **in-process**, not via the next-tick re-layout (offside-at-new-anchor would else
+> park silently). Full detail in the **"P3 resolved blueprints"** block in
+> [`README.md`](README.md).
 
 **What:** the dashboard now shows colored re-anchor
 recommendation banners when the drift + age heuristic suggests

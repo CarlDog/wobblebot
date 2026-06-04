@@ -250,7 +250,7 @@ blocker was the tag. Each engine-safety item gets its own ADR + test-for-the-bug
 | More Kraken crypto pairs | S | med | | Pure config (engine multi-symbol since Stage 2.4). Operator risk-budget call on which coins / what split. |
 | **Engine ordermin-awareness** | S–M | med | ⚠️ | A fixed `order_size_usd` ÷ a rising price can slide under a pair's fixed-quantity `ordermin` (DOGE: $5 → 49.99 < 50 DOGE at ~$0.10, 2026-06-02 soak). The engine already holds pair metadata — bump the volume to clear `ordermin` (capped by the per-coin cap) or skip with a clear INFO, instead of submitting a doomed order. Operator worked around it per-coin (DOGE `order_size_usd: 6`). |
 | **Dead-man's-switch arm confirmation** | S–M | high | ⚠️ | `set_dead_mans_switch` discards Kraken's `CancelAllOrdersAfter` response, so the bot doesn't *confirm* the arm took. (The 2026-06-02 non-firing was the disarm-on-failed-cancel bug, now **fixed in `abf3aa6`**; the arm itself is verified working via `tools/check_dead_mans_switch.py`.) Defense-in-depth: return + log Kraken's `triggerTime` on each arm in-loop; consider refusing to place orders when the switch isn't confirmed-armed. |
-| **Harvester `--execute` replay guard** | S | high | ⚠️ | **Highest-blast-radius hole in the codebase** (2026-06-02 plan review). `cli/harvest --execute` runs gates 1–7 (enabled/lookup/direction/staleness/destination/balance/day-cap) then goes straight to `withdraw()` — no "already-executed for this `proposal_id`" check. A double-tap / shell re-run / retry-after-perceived-hang can double-withdraw; the rolling day-cap is the only accidental backstop. Fix = a cheap "layer 0": `SELECT TransferResult WHERE proposal_id=? AND status IN (pending,completed) → refuse`. Own ADR + test. (Not in `harvester.md`.) |
+| **Harvester `--execute` replay guard** | S | high | ⚠️ | **Highest-blast-radius hole in the codebase** (2026-06-02 plan review). `cli/harvest --execute` runs gates 1–7 (enabled/lookup/direction/staleness/destination/balance/day-cap) then goes straight to `withdraw()` — no "already-executed for this `proposal_id`" check. A double-tap / shell re-run / retry-after-perceived-hang can double-withdraw; the rolling day-cap is the only accidental backstop. Fix = a cheap "layer 0": `SELECT TransferResult WHERE proposal_id=? AND status IN (pending,completed) → refuse`. Own ADR + test. (Not in `harvester.md`.) **⚠️ Now a HARD co-requisite of the P3 web-Execute button** (P3 judge 2026-06-03): web→pending_commands→cli/harvest-poll multiplies the double-withdraw vectors — do NOT ship web-Execute without this guard, and prefer a **UNIQUE constraint on `transfer_results.proposal_id`** (DB-enforced, concurrency-proof) over an app-layer-only check. |
 | **Harvester-key separateness + withdraw-scope check** | S–M | high | ✅ | Symmetric inverse of the shipped P0.3 gate (which proves the *trade* key can't withdraw). **✅ DONE 2026-06-03 (v1.1):** `_verify_harvester_key` at `cli/harvest` startup (both daemon + `--execute`) refuses **exit 3** if the Harvester key lacks Withdraw scope (`has_withdraw_scope()`) OR byte-equals `KRAKEN_TRADER_API_KEY`. Fails SOFT on a transient probe error (logs + continues — no crash-loop, docker-rule #6); when the trade key isn't in the harvest env the byte-compare is skipped (deployment-level separation is the implicit guard). 5 unit tests. Promotes the P0.3 "harvest-key checks deferred" note to done. |
 | **Today's-PnL truncation fix** | S | med-high | ⚠️ | `today_realized_pnl` reads `get_trades(limit=100)` (`operator_service.py:865`, `web/routes/status.py:252`); multi-coin makes >100 trades/day plausible, so the oldest legs silently drop and PnL **undercounts with no error** (the dashboard can show fees from trades whose PnL it isn't counting — the fee path already uses `limit=10_000` at `cost.py:214`). Fix: scope by time-window in operator-tz, not a fixed row count. Prerequisite to the P3 "Today's PnL split". |
 | **`EmergencyStopConfig`: wire or document** | S | med | ⚠️ | `safety.emergency_stop.{max_loss_percentage,min_exchange_balance_usd}` ships in `settings.example.yml` but `grid_engine._check_safety` (line 629) enforces only the 4 caps — the field is read by nobody (only `calibrator.py` scaling + a `preflight.py` throwaway). An operator reasonably believes it's a hard balance floor; it does nothing. **A silent dead safety knob is worse than none** — wire `min_exchange_balance_usd` as a 5th cap, or document it as calibration-only in the schema + known-limitations. Pick one. |
@@ -352,11 +352,11 @@ detector** needs ~30d of baseline, so it tails the phase.
 | Docker HEALTHCHECKs on the 8 services | S | med | | None of the 8 containers has a `HEALTHCHECK`, so a wedged-but-alive daemon (stuck socket, blocked Ollama, deadlocked aiosqlite) shows green in Portainer forever; the in-app `/health` is pull-only. `HEALTHCHECK CMD curl -f localhost:8000/health` for web + a heartbeat-freshness `tools/healthcheck.py` for the daemons (reads `daemon_heartbeats`). The in-app anomaly detector does NOT substitute — it assumes the loop is still running. |
 | **Logging-quality audit + enrichment pass** *(operator-flagged 2026-06-03)* | M | med-high | | App-wide sweep so every log line is self-explanatory (what/which/how-much in the message string + `extra=`), severities accurate. Soak proof: the live log showed bare `grid fill` lines with no side/price while the DB-backed dashboard showed the real fills + closed profitable cycles — the tail is an unreliable activity view. Audit-and-enrich, NOT a rewrite; umbrella over the partial-grid `WARN→INFO` item (`engine.md`) + the `grid fill` detail gap. Detail in `observability.md`. |
 | Operator command catalog SSOT | S | med | | Schema-drift test resolving `_HELP_ENTRIES` ↔ `operator.md` drift. Wire when the catalog gains the next command (the re-anchor command). |
-| **Operator-initiated re-anchor command** | M | med | ⚠️ | Root of the chain. Confirm-gated SIGINT + `DELETE grid_state` + restart as one atomic flow via `pending_commands`. |
-| Re-anchor banner action button + snooze | M–L | med-high | ⚠️ | "Re-anchor" + "Snooze 24h" (`reanchor_snoozes`) + projected-loss line on the info banner. Auto-cancellation **rejected**. |
-| State-aware per-symbol pause/resume buttons | M | low-med | ⚠️ | Render only contextually-relevant actions; needs `engine_state` (`cli/live` writes, `cli/web` reads). |
-| Web UI per-entity action buttons | L | high | ⚠️ | Apply/Execute/Approve/Acknowledge/Reject on review queues via `pending_commands`. Surfaced soak Day 2 (CLI roundtrip friction). |
-| Discord confirmation UX: buttons over reactions | M | med | ⚠️ | `discord.ui.View` Approve/Reject; removes `pending_message_map` (also drops its grow-only in-memory leak — deep-scan F7c; interim 1-line `.pop()` in `_handle_reaction` if it bites first); firewall intact. |
+| **Operator-initiated re-anchor command** | M | med | ⚠️ | Root of the chain. **Blueprint 2026-06-03** (see "P3 resolved blueprints"): resolved to an **in-process** `ReanchorCommand` (cancel-FIRST → `save_grid_state` new anchor → engine re-lays), NOT the SIGINT+restart sketch (restart bounces the DMS). ⚠️ judge correction A: `request_reanchor` must place the layout **in-process**, not rely on the next-tick re-layout gate (else offside-at-new-anchor parks with zero orders, silently). Needs **two** ADRs (engine_state table + re-anchor command). |
+| Re-anchor banner action button + snooze | M–L | med-high | ⚠️ | "Re-anchor" + "Snooze 24h" (`reanchor_snoozes`) + projected-loss line on the info banner. Auto-cancellation **rejected**. **Blueprint 2026-06-03:** snooze is UI-local (NOT a firewall mutation); projected-loss = **fee-only** (paper-loss-on-stranded rejected as misleading); reads the `engine_state` keystone. |
+| State-aware per-symbol pause/resume buttons | M | low-med | ⚠️ | Render only contextually-relevant actions; needs `engine_state` (`cli/live` writes, `cli/web` reads). **Blueprint 2026-06-03:** consumes the `engine_state` keystone (see "P3 resolved blueprints"); offside is a **badge, not a button**; safe default = show pause when state absent/stale. |
+| Web UI per-entity action buttons | L | high | ⚠️ | Apply/Execute/Approve/Acknowledge/Reject on review queues via `pending_commands`. Surfaced soak Day 2 (CLI roundtrip friction). **Blueprint 2026-06-03:** `ExecuteProposalCommand` dispatched **only by `cli/harvest`** (ADR-003). 🛑 **Two judge DECISIVE bugs** (see "P3 resolved blueprints"): (F) web-Execute is a **HARD co-requisite of the P1 Harvester replay guard** — double-withdrawal without it (UNIQUE on `transfer_results.proposal_id`); (E) each daemon must SELECT **only its own `command_kind`** (no atomic claim today → double-dispatch / silent-kill of approved withdrawals). Drop `cli/apply --daemon` (settings.yml doesn't hot-reload) — operator runs the one-shot. |
+| Discord confirmation UX: buttons over reactions | M | med | ⚠️ | `discord.ui.View` Approve/Reject; removes `pending_message_map` (also drops its grow-only in-memory leak — deep-scan F7c; interim 1-line `.pop()` in `_handle_reaction` if it bites first); firewall intact. **Blueprint 2026-06-03:** `_ConfirmView` with **`interaction_check`** → `allowed_user_ids` (skipping = a firewall regression); `view.stop()` blocks double-approve; build the View in `cli/operator`, pass to a storage-free transport `send_embed_with_view`. |
 | Notifications: server-side read-state + deep linking | M–L | low-med | | `read_at` column + read/read-all endpoints (cross-device badge) + deep links. Migration first, deep-linking second. |
 | Today's PnL — split realization-day from earning-day | M | med | | Distinguish normal-grid from fallback (long-hold/re-anchor) cycles; add `pairing_method`/`hold_duration`. |
 | **Buying-power / account card + per-symbol held inventory** | M | med-high | ◐ | A top "Buying Power" card (total account value + **free USD available-to-buy** + held-asset breakdown) above Trading Status, plus **per-symbol held inventory** in each symbol card. Two-sided framing makes flat-start `insufficient balance` refusals self-explanatory. **Source: `balance_snapshots` in `observe.db`** (web tier stays credential-free per ADR-016/017). **◐ AGGREGATE DONE 2026-06-03 (v1.1):** the top **scoreboard strip** shipped — account value + free USD + in-positions + today/lifetime PnL, from `observe.db` balance snapshots with an "as of HH:MM" stamp, held inventory valued via the observed prices. **Remaining:** the **per-symbol held inventory inside each symbol card** (the per-coin two-sided framing). |
@@ -372,6 +372,110 @@ detector** needs ~30d of baseline, so it tails the phase.
 | **Bespoke notification-card renderers (proactive push embeds)** *(operator-flagged 2026-06-03; design 2026-06-03 via feature-dev)* | M | med | | Give the 7 real proactive events (`session_start`/`fill`/`loss_cap`/`session_end`/`harvest_proposal`/`withdrawal_failed`/`withdrawal_submitted`) the per-event embed treatment the v1.0 *query* responses got. Today all share one generic path (`_forward_pending_notifications` → title+message+`_render_context_fields` dict-dump+4-bucket color). **Recommended = Approach B (typed `NotificationEvent` union):** new `ports/notification_events.py` + `services/notification_embed_render.py` mirroring `QueryResult`/`discord_embed_render` (10 renderers, `match` over typed models, 35-test suite); event serializes into the **existing** `context_json` column via the `_COMMAND_ADAPTER` round-trip — **no schema migration, soak-safe**; old rows fall back to the legacy path. (`cycle_close`/`offside`/`dms_trip` aren't notifications today — those would be new raise sites.) Batch with tally-compactness + buttons-over-reactions. Full blueprint in `operator-ux.md`. |
 | **Anomaly detector daemon** *(needs ~30d baseline)* | L | high | ⚠️ | `cli/anomaly`: deterministic Z-score/IQR cross-DB outlier watcher vs the operator's own baseline. Tails the phase once the clock matures. |
 | └ Disk-space awareness *(needs data-retention first)* | S | low-med | | `shutil.disk_usage` warn/critical; bundles onto the anomaly daemon. |
+
+### P3 resolved blueprints (feature-dev ×7 agents + adversarial judge, 2026-06-03)
+
+Design-ahead pass on the three design-worthy P3 clusters: a shared 3-explorer sweep → three
+consumer architects (re-anchor chain / action surfaces / observability) → a **surgical adversarial
+judge** on the two genuinely-contested safety forks. All gate-blocked (P3 is post-tag, parallel to
+P2). **The judge found two DECISIVE bugs** — what follows is the *corrected* design; build to this,
+not to the un-annotated architect drafts.
+
+**THE KEYSTONE — `engine_state` table** (engine→web per-symbol visibility; the re-anchor chain's
+shared unblock):
+- New `engine_state` table in **operator.db** (per-symbol `paused, offside, offside_ticks,
+  reference_price, anchored_at, updated_at`, PK `(base,quote)`). `cli/live` upserts one row/symbol/tick,
+  **best-effort** like `emit_heartbeat` (swallow `StorageError`) via a new `emit_engine_state`
+  (`cli/_common.py`). `StoragePort.save_engine_state`/`get_engine_states`; `EngineStateRow` frozen
+  dataclass (`domain/engine_state.py`). `StatusSnapshot` gains `engine_states`; the template applies a
+  **freshness guard** (drop rows older than ~3 ticks → fall back to the safe "show pause" default).
+  Closes the documented `cli/operator.py:295-298` "web sees all symbols active" gap. Per-tick cost = one
+  extra local SQLite read/symbol — trivial (judge claim D CONFIRMED-SOUND).
+
+**Re-anchor chain (4 items, one ordered unblock):**
+- **In-process command, NOT SIGINT+restart** (resolved fork): `ReanchorCommand` (drops into the
+  existing firewall with zero machinery change) → `_dispatch_reanchor` → new
+  `GridEngine.request_reanchor(symbol)` under the per-symbol lock: **cancel-FIRST** (abort + `(False,msg)`
+  if any cancel fails — never save a new anchor over live orders), then
+  `save_grid_state(reference_price=current_price)`, clear `_offside_ticks`, auto-resume if paused.
+  Restart rejected (bounces the DMS; non-atomic delete+restart strictly worse). Own ADR + a regression
+  test pinning **`save_grid_state` is NOT called when `failed>0`**.
+  - ⚠️ **Judge correction A (CORRECTION-NEEDED):** the architect leaned on the next-tick auto-re-layout
+    (`grid_engine.py:407`, storage-driven `get_open_orders`) to place the new grid. It fires correctly
+    *within the same tick* (dispatch precedes `engine.step`; storage already shows the canceled orders +
+    new anchor) — **except** the re-layout block sits inside `if not offside:` (`:376`): if price moved
+    past the band between the price-fetch and the tick, the engine **parks with zero live orders,
+    silently**, right after the operator explicitly re-anchored. Fix: **`request_reanchor` places the
+    initial layout itself** (in-process), not via the next-tick gate. (Fallback if not: document
+    "re-anchor while offside leaves you parked.")
+- **Banner action button + snooze:** `reanchor_snoozes` table (operator.db) + a snooze filter in
+  `_compute_reanchor_recommendations`; `POST /commands/reanchor` (through pending_commands) +
+  `POST /commands/snooze-reanchor` (**UI-local, NOT a firewall mutation** — snoozing a banner moves no
+  money). **Projected-loss line = fee-only** (taker fee on open-order notional + re-lay) — honest at $100;
+  paper-loss-on-stranded-inventory rejected (the asset isn't sold on cancel, so "loss" would mislead).
+- **State-aware pause/resume:** template reads `engine_states.paused`; renders one icon; offside shown as
+  a **badge not a button** (offside is engine state — the operator's lever against it is re-anchor); safe
+  default = show pause when state absent/stale.
+
+**Action surfaces (web buttons + Discord View) — the judge's decisive territory:**
+- **Web per-entity buttons** (Apply/Execute/Approve/Acknowledge/Reject through pending_commands): new
+  `ApplySuggestionCommand`/`ExecuteProposalCommand` variants. **Power-fragmentation resolved (ADR-003):**
+  `ExecuteProposalCommand` is dispatched **only by `cli/harvest`** (the sole process holding the Harvester
+  key) — `cli/live` must never dispatch it. Acknowledge skips pending_commands (passive read-marker, no
+  engine/money path).
+  - 🛑 **Judge DECISIVE-BUG F (double-withdrawal — highest blast radius):** routing Execute through
+    web→pending_commands→cli/harvest-poll lets **two approved rows for the same `proposal_id`** (two
+    clicks, or a web row + a manual `--execute`) both clear all 7 harvest layers and call `withdraw()`
+    twice — `_execute_command` has **no `proposal_id` idempotency check** and the day-cap re-query races.
+    **Web-Execute is a HARD co-requisite of the P1 "Harvester `--execute` replay guard"** — ship them
+    together. Fix: a **UNIQUE constraint on `transfer_results.proposal_id`** (DB-enforced,
+    concurrency-proof) + an app-layer pre-check before layer 7. Do NOT ship web-Execute without it.
+  - 🛑 **Judge DECISIVE-BUG E (multi-daemon double-dispatch / silent-kill):**
+    `cli/live._process_pending_commands` does a plain SELECT-then-separate-UPSERT — **no atomic claim**.
+    With 3 daemons polling `WHERE status='approved'`, two can grab the same row; worse, cli/live hitting an
+    `ExecuteProposalCommand` raises `OperatorError`→marks it **`failed` before cli/harvest sees it**,
+    silently killing an operator-approved withdrawal. Fix: **each daemon SELECTs only its own
+    `command_kind` set at the query level** (cli/live = the 6 trading commands; cli/harvest =
+    `execute_proposal`) — the filter is the gate, NOT a `match`-case fallthrough.
+  - **Judge CORRECTION G:** the architect's `cli/apply --daemon` is over-engineering — `settings.yml`
+    writes don't hot-reload into the running `cli/live` session, so a polling apply-daemon is
+    cosmetic-at-best/confusing-at-worst. **Drop it:** web writes the `ApplySuggestionCommand` pending row;
+    the operator runs the existing one-shot `cli/apply --commit` to act.
+- **Discord buttons over reactions:** `_ConfirmView(discord.ui.View)` with **`interaction_check`** gating
+  to `allowed_user_ids` (skipping it = a firewall regression on top of ADR-002); `view.stop()` after click
+  (no double-approve); deletes `_handle_reaction` + the `pending_message_map` grow-only leak (deep-scan
+  F7c); firewall intact (button writes `status='approved'`; cli/live's poll stays the only engine path).
+  Build the View in `cli/operator`, pass it to a storage-free transport `send_embed_with_view`. 5 reaction
+  tests → `_ConfirmView` tests via a `FakeInteraction` fixture.
+- **Notifications read-state + deep linking:** `read_at` column (separate from Discord `forwarded`) via a
+  guarded `ALTER TABLE ADD COLUMN`; `mark_notification_read`/`mark_all`/`count_unread`; bell badge →
+  server-side `GET /notifications/unread-count`; deep-linking (phase 2) adds `link_path`/`link_query` per
+  raise site. Migration-first.
+
+**Observability cluster (no contested fork — fail-soft, read-only; no judge pass needed):**
+- **LLM health on `/health`:** `services/llm_health.py` mirrors `kraken_health.py` (TTL-cache, raw `httpx`
+  probe — **no adapter import**, no billing): probe Ollama for real (`GET /api/tags`), represent cloud via
+  the free `GET /v1/models` (200=ok / 401=unauthorized / missing-env=not-configured). Discover endpoints
+  from advisor + MoE experts + arbitrator + operator assistant (dedup `(provider,model)`); new "LLM
+  Endpoints" card; folds into `compute_overall_status`.
+- **Docker HEALTHCHECKs:** one `tools/healthcheck.py` (`--mode web` → curl `/health/overall.json`, exit 1
+  only on red/unreachable; `--daemon-name X --operator-db PATH` → read `daemon_heartbeats` mode=ro vs
+  `DaemonHealthThresholds` defaults). Per-service `healthcheck:` on all 8 (+anomaly); no daemon code change.
+- **Anomaly detector `cli/anomaly`** *(needs ~30d baseline; cold-start suppressed via `min_baseline_rows`)*:
+  `services/anomaly_detector.py` = a fail-soft detector registry (Z-score/IQR, no numpy), 6 detectors
+  (trade-fee / cancel-rate / LLM-cost / advise-output-gap / balance-drop / disk-space); `cli/anomaly`
+  mirrors `cli/news`; **anomalies emit `Notification(level=warning)` rows** (reuse the existing Discord
+  forwarder — no new table/route; recorded as a ratified decision) with a dedup window. No ADR.
+- **Logging-quality sweep** (umbrella): per-module bisectable commits enriching the message string (the
+  bare `"grid fill"` → `grid fill: buy ETH/USD 0.005 @ 3421.50 (kraken: …)`) + a `caplog` pin-test
+  asserting fill/cap/offside lines carry their fields. Audit-and-enrich, not a rewrite.
+
+**Cross-cutting:** the surgical judge re-earned the pattern decisively — **two money/state-corrupting bugs
+(F double-withdrawal, E silent-kill/double-dispatch) that no single architect caught**, both born from the
+multi-daemon `pending_commands` fan-out the action-surfaces design introduced. **ADR numbering:** the
+re-anchor chain needs **two** ADRs (engine_state table + re-anchor command); as with P1+P2, every P3
+blueprint independently claimed "ADR-022" → **one global ADR sequence (~022–030) must be assigned at build
+time**, not per-cluster.
 
 ---
 
