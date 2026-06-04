@@ -311,6 +311,29 @@ Order is non-negotiable: **backfill ergonomics → import → OHLC+TA → consum
 | `cli/screener` — symbol-opportunity scanner | L | med | | Rank Kraken pairs by grid-suitability (vol, spread-vs-fee, volume, range-vs-trend, correlation). Operator gates every add (ADR-002). TA-based first cut; regime refinement parked. |
 | Configurable counter-order target | M–L | med-high | ⚠️ | `GridConfig` modes `spacing_up` (default) + `top_sell`. Own ADR; auto-apply treats it as operator-approval-only. The advisor-picks-by-regime *adaptive* mode is parked. |
 
+### P2 resolved blueprints (feature-dev ×7 agents + adversarial judge, 2026-06-03)
+
+Design-ahead pass on the five design-worthy P2 items: a shared exploration → a **spine** architect (which *published the contract*) → three **consumer** architects designing against that fixed contract → a surgical adversarial judge on the auditor's one real-correctness fork. All gate-blocked (P2 is post-P1); this records the resolved design so the build has a spec.
+
+**THE PUBLISHED CONTRACT** (the keystone — every consumer reads through it; build it ONCE in the spine):
+- `StoragePort.get_ohlc_bars(symbol, interval_minutes, *, start_time=None, end_time=None, limit=None) -> list[OHLCBar]` (ASC, `[]` on miss). **Absent today** — only `save_ohlc_bars` exists; this read-side is the gate.
+- `services/ta_metrics.py` (new module, not in `metrics.py`): `compute_rsi/macd/bollinger/sma/ema/atr/adx/stochastic(bars) -> float|None`; compounds return frozen `MACDResult`/`BollingerResult`/`StochasticResult`; **private `_compute_*_series` helpers** are how the auditor/screener get full series.
+- 16 new `PerformanceSummary` TA fields (`float|None`).
+
+**Spine (import + OHLC/TA + validator):** import is a **standalone `tools/import_kraken_history.py`** (not `backfill_range`, which fetches live), reusing the `grid_backtest._load_ohlc` 7-col parser + altname map (`XBT↔BTC`, `XDG↔DOGE`); validator (`@model_validator` on `OHLCBar`: `low<=open/close<=high`) folds into the import and uses **skip-and-log** on rejected legacy 2013 rows (fail-hard would abort an hours-long import on one bad row); **synthesize `price_snapshots`** from the import (bootstraps the existing vol/drawdown metrics); 60-min default interval; TA is **advisor-only, never wired into `cli/live`**. Build order: validator + `get_ohlc_bars` → import → TA.
+
+**Auditor (config-replay):** `AuditorExchangeAdapter` replays historical bars through the **real `GridEngine`** (exercises production caps/offside/counter logic — the authoritative "what would my engine have done"). `:memory:` SQLite, **per-symbol** fresh instances, `tools/auditor.py`. Feed a 4-price sequence per bar (`open→low→high→close`) to recover intra-bar fills. **⚠️ Judge-found corrections (these are load-bearing):**
+1. **Neuter `max_daily_spend_usd` for replay** (or override `_check_safety` to use bar-time, not `datetime.now(UTC)`) — else the daily cap exhausts after the first wall-clock "day" and **refuses every subsequent BUY for the rest of the replay → a silent near-zero-activity result that looks like "your config is ultra-conservative."** Decisive.
+2. **Override `place_order` to suppress its on-placement immediate-fill** — the inherited mock fills a counter in the *same* bar if `close` already crosses it (over-counts cycles/fees). Negligible at 1m bars, **material at 1h/4h** — so the auditor is `_Sim`-equivalent only at 1m granularity.
+3. **Warm-start the anchor at bar-0 *open*** (engine `_initialize` anchors to `close`; `_Sim` uses open → grid levels diverge for the whole replay).
+   Confirmed sound: fills happen at the **order's limit price** (`_fill_order` discards the trigger price ✓). Dropped from the spec: the low-vs-high ordering rationale (false precision — fills within a bar are order-independent since counters defer to the next tick). Honest caveat: the audit is **directional, not exact**.
+
+**Screener (`cli/screener`):** ships in **three phased cuts by dependency** — v1 (price-snapshot vol/flatness + ATR from the spine), v1.5 (+spread/volume when P1's `get_ticker` lands), v2 (+RSI/ADX/BB). Rank-based composite; **volatility scored as distance-from-band-center** (too low = no cycles, too high = caps trip — not monotonic); **correlation is a post-score *annotation*, not a factor** (Pearson from scratch). **No ADR, no DB table** in P2 (read-only one-shot, log-table output; `cli/status` template, READER key; new `ScreenerConfig`). Honest caveat: correlation needs observed history → mostly `n/a` for novel candidates until `cli/observe` is broadened.
+
+**Counter-target:** `top_sell` is **asymmetric** — only the BUY-fill counter changes (→ SELL at `grid_ceiling = levels[-1].price`); SELL-fill counter unchanged. (Symmetric `bottom_buy` rejected — no operator demand.) `counter_target_mode` field on `GridLevels`, **read each tick, NOT anchored** in `GridState` (change without re-anchoring). Auto-apply exclusion is **automatic** (non-numeric → not in `_WHITELISTED_NUMERIC_KEYS` → rejected) — just a doc comment + a pin test. `cycle_matcher` unaffected (pairs by amount). Honest trade-off: fewer/larger cycles + **inventory-accumulation risk in a grinding downtrend** (SELLs cluster at the ceiling, don't fill until full recovery).
+
+**Cross-cutting:** the contract-first staging worked — all three consumers independently specified the *same* `get_ohlc_bars` signature. **ADR numbering:** P1's blueprints + these (auditor, counter-target) all independently claimed "ADR-022" — **P1 + P2 need one global ADR sequence assigned at build time** (~022–028), not all 022. The surgical judge re-earned the pattern: it caught the daily-cap bug that would have invalidated the operator's first audit.
+
 ---
 
 ## P3 — Ops / observability / UX (post-tag, parallelizable with P2)

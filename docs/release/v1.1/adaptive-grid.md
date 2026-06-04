@@ -590,6 +590,14 @@ v1.1 candidate that directly serves the 90%-success aspiration.
 
 ### Auditor / strategy + recommendation evaluation tool
 
+> **⚠️ Resolved blueprint (2026-06-03):** the config-replay half has a settled
+> design + three load-bearing **adversarial-judge corrections** (neuter
+> `max_daily_spend_usd` for replay; override `place_order`'s same-bar fill;
+> warm-start the anchor at bar-0 open) recorded in the **"P2 resolved
+> blueprints" block in `README.md`**. Build against that, not the older
+> discussion below — the un-corrected design silently produces a near-zero-
+> activity audit (the wall-clock daily-cap bug).
+
 **Naming note (2026-05-25):** originally called "backtester" in
 the v1.1 plan; renamed to **auditor** because the tool's role is
 broader than performance replay. It evaluates operator config
