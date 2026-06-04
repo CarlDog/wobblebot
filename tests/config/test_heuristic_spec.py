@@ -26,13 +26,11 @@ class TestLoadShippedSpec:
         spec = load_heuristic_spec(_SHIPPED_SPEC)
         assert len(spec.curve) == 8
         assert spec.fee_floor == pytest.approx(0.52)
-        assert spec.hold_deadband == pytest.approx(0.15)
         # All four guards present and enabled by default.
         assert spec.guards.directional_runaway.enabled
         assert spec.guards.defensive_drawdown.widen_factor == pytest.approx(1.5)
         assert spec.guards.dont_fix_working.cycles_min == 8
         assert spec.guards.fee_floor_calm.near_floor_spacing == pytest.approx(0.68)
-        assert spec.escalation.min_snapshots == 30
 
 
 class TestLoaderErrors:

@@ -1,46 +1,37 @@
-"""HeuristicAdvisorAdapter — Stage 8.5 deterministic ``AdvisorPort``.
+"""HeuristicAdvisorAdapter — deterministic guard layer for the advisor.
 
-A zero-cost, fully-transparent advisor: given a metrics window it
-decides WIDEN / HOLD / TIGHTEN from a configured ideal-spacing-vs-
-volatility curve plus four override guards — no LLM call. It is the
-deterministic half of the heuristic+LLM cascade (see
-``adapters/cascading_advisor.py``) and can also run standalone
-(``engine: heuristic``) for a $0, offline-safe advisor.
+A zero-cost, fully-transparent guard layer: given a metrics window it
+fires one of four override guards (the clear, mechanical calls) and
+defers everything else to the LLM. It is the deterministic half of the
+heuristic+LLM cascade (see ``adapters/cascading_advisor.py``) and can
+also run standalone (``engine: heuristic``) for a $0, offline-safe
+advisor whose only opinions are the guards.
 
-**Two sources of truth, kept in sync deliberately.** The decision
-logic this adapter executes is ALSO documented in prose in
-``config/prompts/quant.md`` (the LLM advisor's system prompt), because
-both halves of the cascade must reason the same way. The *numbers*
-(curve + thresholds) come from a single place — the
-``HeuristicSpec`` loaded from ``advisor.heuristic_file`` — so retuning
-the heuristic is a config edit, not a code change. The *algorithm*
-(the guards, their priority order, how they compose) lives here in
-code; a new guard is a code change with a fixture-battery test by
-design. When you change a threshold's *meaning* (not its value),
-update ``quant.md`` to match.
+**Charter (ADR-022).** The heuristic makes only the *clear* calls — the
+four guards below — and hands every other tick to the LLM as a free
+judge. It deliberately does NOT tune spacing toward a volatility curve:
+that ``vol→spacing`` first-order logic was retired because its ceiling
+sat below the deployed grid, so it mechanically recommended TIGHTEN on
+~every non-guard tick and drowned out the LLM's trackable signal. The
+LLM, called on every non-guard tick, reasons about the regime without a
+prescribed target — see ``config/prompts/quant.md``.
 
-**Decision logic** (validated against the 12-fixture core battery + the
-8-fixture held-out battery in ``tools/probe_advisor.py``, 2026-05-29):
+**Guards** (priority order — the first that fires wins, ``clear_match=True``):
 
-1. ``ideal = curve(volatility)`` (piecewise-linear, flat-clamped at the
-   ends), then clamped to ``>= fee_floor``.
-2. Guards, in priority order — the first that fires wins:
-   - **directional_runaway** (0 cycles + sharp drawdown → HOLD): price
-     ran away; re-anchoring is the fix, not spacing.
-   - **defensive_drawdown** (sharp drawdown, still cycling → WIDEN):
-     capital preservation overrides the calm-tighten instinct.
-   - **dont_fix_working** (high win + cycles, shallow drawdown → HOLD):
-     don't disrupt a configuration that's printing fills.
-   - **fee_floor_calm** (near the fee floor in dead calm → HOLD): can't
-     profitably tighten further; a tiny widen just churns.
-3. First-order: compare ``ideal`` to current spacing. Within
-   ``hold_deadband`` → HOLD; otherwise WIDEN / TIGHTEN to ``ideal``.
+1. **directional_runaway** (0 cycles + sharp drawdown → HOLD): price
+   ran away; re-anchoring is the fix, not spacing.
+2. **defensive_drawdown** (sharp drawdown, still cycling → WIDEN):
+   capital preservation overrides the calm-tighten instinct. Its widen
+   floor still reads the ``_ideal`` curve — the curve's one surviving use.
+3. **dont_fix_working** (high win + cycles, shallow drawdown → HOLD):
+   don't disrupt a configuration that's printing fills.
+4. **fee_floor_calm** (near the fee floor in dead calm → HOLD): can't
+   profitably tighten further; a tiny widen just churns.
 
-Each verdict carries a ``clear_match`` flag (the cascade reads it to
-decide whether to escalate to the LLM): guards and clearly-inside /
-clearly-outside first-order calls are clear matches; calls in the
-ambiguous band around the deadband, thin metrics windows, and the
-no-grid case are not.
+When no guard fires the verdict is a non-clear HOLD (``clear_match=False``,
+reason ``no_guard_fired``): the cascade reads that flag and escalates to
+the LLM. The no-grid case is likewise non-clear (the LLM judges a fresh
+grid's first spacing).
 """
 
 from __future__ import annotations
@@ -80,11 +71,11 @@ class HeuristicVerdict:
 
 
 class HeuristicAdvisorAdapter(AdvisorPort):
-    """Deterministic, config-driven ``AdvisorPort``.
+    """Deterministic, config-driven guard layer (``AdvisorPort``).
 
     Args:
         spec: Validated :class:`HeuristicSpec` (curve + thresholds +
-            guard toggles + escalation band). Load it with
+            guard toggles). Load it with
             ``wobblebot.config.heuristic.load_heuristic_spec``.
         role: Value for ``AdvisorRecommendation.role``. Defaults to
             ``"heuristic"`` so the audit trail distinguishes a
@@ -117,7 +108,6 @@ class HeuristicAdvisorAdapter(AdvisorPort):
         dd = summary.max_drawdown
         win = summary.win_rate
         cycles = summary.cycle_count
-        snapshots = summary.snapshot_count
         guards = self._spec.guards
 
         # No usable current spacing — can't reason about a direction.
@@ -134,8 +124,6 @@ class HeuristicAdvisorAdapter(AdvisorPort):
                 ),
                 confidence="low",
             )
-
-        ideal = self._ideal(vol)
 
         # -- Guard 4: directional runaway (price ran away, 0 round-trips) --
         g4 = guards.directional_runaway
@@ -156,7 +144,9 @@ class HeuristicAdvisorAdapter(AdvisorPort):
         # -- Guard 3: defensive drawdown (sharp drawdown, still cycling) --
         g3 = guards.defensive_drawdown
         if g3.enabled and dd <= g3.threshold:
-            target = max(current * g3.widen_factor, ideal)
+            # The widen floor still reads the vol curve — the curve's one
+            # surviving use after the first-order logic was retired (ADR-022).
+            target = max(current * g3.widen_factor, self._ideal(vol))
             return self._verdict(
                 direction="widen",
                 target=target,
@@ -207,67 +197,29 @@ class HeuristicAdvisorAdapter(AdvisorPort):
                 confidence="high",
             )
 
-        # -- First-order: ideal-vs-current with a hold deadband --
-        return self._first_order(vol=vol, current=current, ideal=ideal, snapshots=snapshots)
-
-    def _first_order(
-        self, *, vol: float, current: float, ideal: float, snapshots: int
-    ) -> HeuristicVerdict:
-        """Direction from ``sign(ideal - current)`` outside the deadband."""
-        gap = (ideal - current) / current
-        abs_gap = abs(gap)
-        clear_match = not self._is_ambiguous(abs_gap, snapshots)
-        confidence: ConfidenceLevel = "high" if clear_match else "low"
-        note = "" if clear_match else " (Borderline / thin metrics — low confidence.)"
-
-        if abs_gap < self._spec.hold_deadband:
-            return self._verdict(
-                direction="hold",
-                target=None,
-                clear_match=clear_match,
-                reason="first_order_hold",
-                rationale=(
-                    f"Spacing {current:.2f}% is within "
-                    f"{self._spec.hold_deadband * 100:.0f}% of the ~{ideal:.2f}% ideal "
-                    f"for {vol * 100:.2f}%/tick volatility — holding "
-                    f"(a small re-grid isn't worth the fees).{note}"
-                ),
-                confidence=confidence,
-            )
-
-        direction: Direction = "widen" if gap > 0 else "tighten"
-        verb = "widening" if direction == "widen" else "tightening"
+        # -- No guard fired: defer to the LLM free judge (ADR-022). The
+        # cascade reads clear_match=False and escalates to the LLM; a
+        # standalone ``engine: heuristic`` advisor simply holds.
         return self._verdict(
-            direction=direction,
-            target=ideal,
-            clear_match=clear_match,
-            reason="first_order_action",
+            direction="hold",
+            target=None,
+            clear_match=False,
+            reason="no_guard_fired",
             rationale=(
-                f"Volatility {vol * 100:.2f}%/tick wants ~{ideal:.2f}% spacing vs "
-                f"current {current:.2f}% — {verb} to {ideal:.2f}%.{note}"
+                "No guard condition met — deferring to the LLM advisor for "
+                "regime-aware judgment; the heuristic makes only the clear calls."
             ),
-            confidence=confidence,
+            confidence="low",
         )
-
-    def _is_ambiguous(self, abs_gap: float, snapshots: int) -> bool:
-        """Cascade escalation signal for a first-order call.
-
-        True when the gap straddles the hold-deadband boundary (the call
-        is borderline) or the metrics window is too thin to trust the
-        volatility estimate the curve keys off. Guards don't use this —
-        they key off realized drawdown / cycles / win rate.
-        """
-        esc = self._spec.escalation
-        if not esc.enabled:
-            return False
-        if snapshots < esc.min_snapshots:
-            return True
-        deadband = self._spec.hold_deadband
-        return deadband * (1 - esc.margin) <= abs_gap <= deadband * (1 + esc.margin)
 
     def _ideal(self, vol: float) -> float:
         """Piecewise-linear ``ideal(vol)``, flat-clamped at the ends and
-        floored at ``fee_floor``."""
+        floored at ``fee_floor``.
+
+        Used only by the ``defensive_drawdown`` guard to set its widen
+        floor — the curve no longer drives any first-order decision
+        (ADR-022).
+        """
         curve = self._spec.curve  # validated: sorted by strictly increasing vol
         floor = self._spec.fee_floor
         if vol <= curve[0].vol:

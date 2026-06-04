@@ -8,10 +8,11 @@ lets an operator retune the heuristic *without a code change*.
 
 What lives in the file (DATA) vs the adapter (LOGIC):
 
-- **File:** the ideal-spacing-vs-volatility ``curve`` (the load-bearing
-  judgment), the ``fee_floor`` and ``hold_deadband`` scalars, each
-  guard's thresholds, per-guard on/off ``enabled`` toggles, and the
-  cascade ``escalation`` band.
+- **File:** the ``fee_floor`` scalar, each guard's thresholds, per-guard
+  on/off ``enabled`` toggles, and the ``curve`` — now read only by the
+  ``defensive_drawdown`` guard for its widen floor (the curve's one
+  surviving use after the vol→spacing first-order logic was retired; see
+  ADR-022).
 - **Adapter (code):** the guard *algorithm*, their *priority order*,
   and how they compose. New guard behaviour is a code change with a
   fixture-battery test — by design (see ``adapters/heuristic_advisor.py``).
@@ -23,19 +24,17 @@ File format (``config/heuristic/quant.yml``)::
       - {vol: 0.002,  spacing: 0.90}
       ...
     fee_floor: 0.52
-    hold_deadband: 0.15
     guards:
       directional_runaway: {enabled: true, threshold: -0.05}
       defensive_drawdown:  {enabled: true, threshold: -0.05, widen_factor: 1.5}
       dont_fix_working:    {enabled: true, win_rate_min: 0.85, cycles_min: 8, drawdown_max: -0.02}
       fee_floor_calm:      {enabled: true, calm_vol: 0.001, near_floor_spacing: 0.68}
-    escalation: {enabled: true, margin: 0.5, min_snapshots: 30}
 
-``curve`` is the only required field — it is the heuristic's core
-judgment and has no sensible default. Every scalar / guard threshold
-defaults in code (guard *semantics* are part of the algorithm), so a
-minimal file need only declare the curve; the committed default lists
-everything for operator transparency.
+``curve`` is required (≥2 points) — it feeds the ``defensive_drawdown``
+guard's widen floor and has no sensible default. Every scalar / guard
+threshold defaults in code (guard *semantics* are part of the
+algorithm), so a minimal file need only declare the curve; the committed
+default lists everything for operator transparency.
 """
 
 from __future__ import annotations
@@ -143,48 +142,17 @@ class HeuristicGuards(BaseModel):
         frozen = True
 
 
-class EscalationConfig(BaseModel):
-    """Cascade escalation tuning (only consulted in ``engine: cascade``).
-
-    The heuristic flags a first-order call as a "non-clear match" — the
-    signal the cascade reads to defer to the LLM — when the gap between
-    current spacing and the vol-ideal sits in an ambiguous band straddling
-    the hold deadband, OR when the metrics window is too thin to trust
-    the volatility estimate.
-
-    - ``margin``: half-width of the ambiguous band as a fraction of
-      ``hold_deadband``. With deadband 0.15 and margin 0.5, gaps whose
-      magnitude lies in ``[0.075, 0.225]`` escalate; clearly-inside
-      (confident HOLD) and clearly-outside (confident action) do not.
-    - ``min_snapshots``: first-order calls computed from fewer than this
-      many price snapshots are treated as low-confidence (escalate).
-      Guards key off realized drawdown / cycles / win rate, not the vol
-      estimate, so they stay clear regardless.
-    - ``enabled``: when false the heuristic never flags ambiguity, so a
-      cascade resolves every case via the heuristic (the LLM fires only
-      on hard failures / cost-cap fallback).
-    """
-
-    enabled: bool = True
-    margin: float = Field(default=0.5, ge=0, le=1)
-    min_snapshots: int = Field(default=30, ge=0)
-
-    class Config:
-        frozen = True
-
-
 class HeuristicSpec(BaseModel):
-    """Operator-tunable spec for the deterministic advisor.
+    """Operator-tunable spec for the deterministic guard layer.
 
-    ``curve`` is required (≥2 points) — it is the heuristic's core
-    judgment with no sensible default. Everything else defaults in code.
+    ``curve`` is required (≥2 points) — it feeds the
+    ``defensive_drawdown`` guard's widen floor and has no sensible
+    default. Everything else defaults in code (ADR-022).
     """
 
     curve: list[CurvePoint] = Field(min_length=2)
     fee_floor: float = Field(default=0.52, gt=0)
-    hold_deadband: float = Field(default=0.15, gt=0, lt=1)
     guards: HeuristicGuards = Field(default_factory=HeuristicGuards)
-    escalation: EscalationConfig = Field(default_factory=EscalationConfig)
 
     class Config:
         frozen = True
@@ -240,7 +208,6 @@ __all__ = [
     "DefensiveDrawdownGuard",
     "DirectionalRunawayGuard",
     "DontFixWorkingGuard",
-    "EscalationConfig",
     "FeeFloorCalmGuard",
     "HeuristicGuards",
     "HeuristicSpec",
