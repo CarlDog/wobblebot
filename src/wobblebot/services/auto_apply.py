@@ -220,6 +220,26 @@ def evaluate_auto_apply(  # pylint: disable=too-many-locals
             )
             continue
 
+        # ADR-019 / ADR-002 defense-in-depth: never auto-apply a spacing BELOW
+        # the operator's configured per-symbol spacing. The floor is the
+        # configured ``current_value`` (from GridConfig.for_coin), so it holds
+        # for ANY advisor -- the heuristic or a future cloud LLM/MoE, which is
+        # NOT curve-bounded and could emit any value. Tightening below the
+        # settled survival floor is the move the backtest proved kills a grid.
+        if key == "spacing_percentage" and coerced < current_value:
+            rejected.append(
+                RejectedKey(
+                    key=key,
+                    proposed=proposed_raw,
+                    reason=(
+                        f"proposed spacing {coerced}% is below the configured "
+                        f"spacing {current_value}% -- tightening below the "
+                        "operator's settled floor is disallowed"
+                    ),
+                )
+            )
+            continue
+
         cap_pct = _cap_for_key(auto_apply_config, key)
         delta_pct = (float(coerced) - float(current_value)) / float(current_value) * 100.0
         if abs(delta_pct) > float(cap_pct):
