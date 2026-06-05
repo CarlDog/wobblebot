@@ -58,7 +58,12 @@ dependencies = [
     # dev venv). `starlette` is listed explicitly so the resolver can't
     # float it. Dependabot proposes coordinated bumps; the CI gate tests them.
     "fastapi==0.136.1",
-    "starlette==1.0.0",
+    # starlette 1.0.1 patches CVE-2026-48710 (missing Host-header validation
+    # poisons request.url.path, bypassing path-based security checks). Low
+    # practical risk here — auth + CSRF are per-route DI, not path-based — but
+    # patched anyway. fastapi 0.136.1 only requires starlette>=0.46.0, so this
+    # is a clean patch bump (no lockstep break with fastapi / uvicorn).
+    "starlette==1.0.1",
     "uvicorn[standard]==0.47.0",
     "jinja2>=3.1.0,<4",
     "python-multipart>=0.0.12,<1",
