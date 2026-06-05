@@ -419,9 +419,11 @@ a new session for a cool-down window; `--ignore-cool-down` bypasses. New ADR.
 **Trigger:** the soak's 4:22am loss-cap trip (a too-low $5 cap → MTM drawdown) —
 a knee-jerk relaunch would have dropped straight back into the losing condition.
 
-**ADR numbering:** the three blueprints above were each independently drafted as
-"ADR-022" (every architect saw ADR-021/DMS as the last). When built they take
-**distinct** numbers in build order (022/023/024), not all 022.
+**ADR numbering (RESOLVED 2026-06-05):** the three blueprints above are assigned, in the
+global v1.1 sequence, as **ADR-023** (reconciler/F1 terminal-order resolution),
+**ADR-024** (session-loss-cap cool-down), and **ADR-025** (pre-placement spread guard) —
+bodies written in `docs/architecture/decisions.md`. (Not all "ADR-022", which is the
+shipped advisor-reorientation ADR.)
 
 ### Mid-session reconciliation
 

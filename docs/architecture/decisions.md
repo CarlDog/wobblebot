@@ -205,6 +205,24 @@ Both are extensions to the existing `AdvisorPort` contract — they don't change
 - ADR-002 — LLM is advisory-only (the invariant this ADR refines).
 - ADR-008 — Observer & Shadow Mode (the Phase 3 sandbox the MoE advisor will iterate against).
 
+**Amendment (2026-06-05 — structural news firewall; makes the news sub-rule enforced, not just stated):**
+This ADR's news sub-rule ("news-derived recommendations are advisory-only even when
+auto-tuning is on") was only ever enforced for a *standalone* news opinion: the Stage 3.4b
+gate blocks `role == "news"` (`auto_apply.py::_BLOCKED_ROLES`). But the MoE arbitrator's
+output is force-tagged `role == "aggregated"` (`moe_advisor.py:161`), which is **not**
+blocked — so a news-driven *number* folded into the reconciled `recommendations` dict can
+auto-apply, violating this ADR's stated intent. Inert today (`auto_apply.enabled = false`);
+real once auto-apply is on. The 2026-06-04 MoE prompt review shipped a *prompt* mitigation
+(`arbitrator.md` Rule 2: reconciled numbers must be justifiable from quant + risk alone),
+but that trusts the arbitrator LLM — this ADR always intended the firewall to be
+**structural**. Ratified fix (kept as an ADR-007 amendment, **not** a new ADR — the
+decision already exists; this only makes it enforced): `MoEAdvisorAdapter` inspects the
+per-expert `expert_opinions` provenance it already carries and tags the aggregated
+suggestion with whether news *materially drove* the reconciled value; the gate blocks (or
+at minimum flags) an aggregated suggestion so tagged. The prompt mitigation stays as
+defense in depth. Tracked as P1 (`docs/release/v1.1/README.md`, the news-firewall row);
+own test reproducing a news-driven aggregated number the structural gate must refuse.
+
 ## ADR-008 — Observer & Shadow Mode (Phase 3 Sandbox)
 **Status:** Accepted (planned for Phase 3 Stage 3.0)
 **Date:** 2026-05-14
@@ -1542,6 +1560,298 @@ effect only when the operator deploys the v1.1 image post-tag and updates the li
 - ADR-019 (the predecessor this executes), ADR-002/012 (advisory-only + apply gate),
   ADR-014 (cost gate).
 
-<!-- ADR-022 is the last in this file; new ADRs append below. -->
+## ADR-023 — Unified Terminal-Order Resolution (Fill-vs-Cancel + Partial-Fill Recovery)
+
+**Status:** Accepted (P1, v1.1 — blueprint settled 2026-06-03; extends ADR-018)
+**Date:** 2026-06-05
+
+**Context:** One untreated order state — `Order.status in (canceled, expired) AND
+filled_amount > 0` — corrupts the ledger at two sites:
+1. **Live (`_detect_fills`, "F1"):** the engine saves a `Trade` + places a counter only
+   when a refreshed order is `closed` (full fill). A partially-filled order that refreshes
+   to `canceled`/`expired` with `filled_amount > 0` drops the matching `Trade` rows (storage
+   under-records a real fill) and skips the counter — corrupting cycle-matcher/dashboard PnL
+   and drifting base-inventory vs Kraken's real holdings. Now *more* likely: shutdown
+   cancel-all and the ADR-021 dead-man's-switch both cancel partially-filled limits, and the
+   2026-06-03 live ADA dust fill confirmed Kraken routinely fragments one ordermin-compliant
+   grid order into sub-ordermin partials.
+2. **Startup (`reconciler`):** marks a storage-only order `canceled` without checking
+   whether it actually *filled* while the daemon was down — the 2026-05-19 orphaned-$10-BTC
+   class (a buy filled overnight while `cli/live` was down; the reconciler never re-derived
+   the dropped fill).
+
+ADR-018 set the reconciliation strategy (diff open-order status at boot) but did not cover
+re-deriving a *dropped partial Trade*; this ADR extends it.
+
+**Decision:** Treat both as one root cause behind a single shared resolver
+(`services/reconciler.py::_resolve_terminal_order`):
+
+1. **Shared resolver.** Given a departed order, `get_order_status` (QueryOrders) →
+   classify `closed` / `partial_cancel` / `clean_cancel`; for the first two, save the
+   `Trade` rows + the terminal-status order. Both `_detect_fills` and the reconciler call
+   it. Read-side helper, no new module.
+2. **QueryOrders, not `ClosedOrders`.** `get_order_status` already exists on the port +
+   adapter and targets a known `exchange_id`; a paged `ClosedOrders` scan is unnecessary.
+   Widen the reconciler's `_AdapterLike` Protocol with `get_order_status`. (Supersedes the
+   un-ratified `ClosedOrders` mention in the old soak deferral note.)
+3. **Counter-replay is placed by the engine, never the reconciler.** The reconciler is
+   constructed after the engine and is documented never to place/cancel (`reconciler.py`);
+   a reconciler `place_order` would breach financial-power fragmentation AND run outside the
+   engine's per-symbol lock. Instead the reconciler adds the order UUID to
+   `ReconciliationReport.needs_counter_order_ids`; `GridEngine.__init__` takes
+   `pending_counters` and places them on the first `_tick` inside the `if not offside:`
+   block (recovery counters inherit offside suppression, ADR-006).
+4. **Retry-on-failure (decisive).** A pending counter that fails placement **stays** in
+   `pending_counters` and retries next tick. Discard-on-failure plus the auto-re-layout
+   guard would re-place a full grid with no counter — *reproducing the very orphan this
+   fixes*.
+5. **Full safety caps at startup.** `_check_safety` reads storage live; there is no
+   uninitialized session accumulator, so caps are correct at boot. No reduced-check mode.
+6. **Idempotency.** The terminal-status `save_order` drops the order from `_detect_fills`'
+   `status=open` candidate filter, so the tick never re-processes it; self-heals across a
+   crash between reconcile and tick (one-boot delay, no double-counter).
+
+**Alternatives considered:**
+- **Patch F1 and the reconciler separately.** Rejected: same root state, two drifting fixes.
+- **Reconciler places the recovery counter directly.** Rejected by the adversarial judge on
+  safety grounds (power-fragmentation breach + runs outside the engine lock + a failed
+  placement re-triggers the auto-re-layout → reproduces the orphan).
+- **`ClosedOrders` paged scan.** Rejected: `get_order_status` is simpler, already exists,
+  targets the exact txid.
+- **A reduced safety-check mode at startup.** Rejected: a first-pass design got this wrong;
+  the live storage read makes full caps correct at boot.
+
+**Consequences:**
+- **Positive:** The 2026-05-19 orphan class and the live partial-Trade-drop are both closed
+  by one helper; ledger + base-inventory stay truthful.
+- **Positive:** Recovery counters obey the same offside + caps + lock discipline as normal
+  grid orders.
+- **Negative / caveat:** `MockExchangeAdapter` can't currently produce canceled+partial; add
+  an `inject_partial_cancel` control method (mirrors `_apply_kraken_order_update`'s
+  field-assignment bypass). Tests per outcome at both sites + a no-double-counter case + the
+  orphan-reproduction regression.
+
+**Compliance:** Extends **ADR-018** (engine reconciliation). Upholds financial-power
+fragmentation (only the engine places orders) and ADR-006 (offside suppression). No
+LLM/withdrawal surface (ADR-002/003 untouched).
+
+**Soak note:** P1, `v1.1` branch; NOT in the frozen v1.0 soak image. Merges to `main` at
+soak-clear; takes effect when the operator deploys the v1.1 image post-tag.
+
+**References:**
+- `docs/release/v1.1/engine.md` — "Order-lifecycle fill-vs-cancel + partial-fill recovery
+  (reconciler + F1) — blueprint" (2026-06-03).
+- ADR-018 (reconciliation strategy this extends), ADR-006 (offside), ADR-021 (the DMS whose
+  cancels make partials more frequent).
+
+## ADR-024 — Session-Loss-Cap Cool-Down
+
+**Status:** Accepted (P1, v1.1 — blueprint settled 2026-06-03)
+**Date:** 2026-06-05
+
+**Context:** When `cli/live` exits on the session loss cap (`exit_code = 1`), nothing stops
+an immediate relaunch straight back into the losing condition. The soak's 4:22am loss-cap
+trip (a too-low $5 cap meeting a mark-to-market drawdown) is exactly the scenario where a
+knee-jerk restart — or a `restart: unless-stopped` policy — would re-enter the bleed.
+
+**Decision:** After a loss-cap exit, refuse to start a new session for a configurable
+cool-down window.
+
+1. **Persist the trip in a new `live.db` table** (one row per loss-cap trip: `tripped_at`
+   + `session_pnl`), written in `_run_loop`'s `finally` (own try/except) when
+   `exit_code == 1`; a pre-loop gate in `_main_async` queries it. `StoragePort` gains
+   `record_cap_trip` + `get_last_cap_trip_at`.
+2. **New exit code 4** for a cool-down refusal — distinct from 2 (creds/config) so restart
+   policies / a future `cli/up` can tell "give up" from "try again later."
+3. **Fail-open** on a storage-read error at the gate (log WARNING, proceed) — fail-closed
+   under `restart: unless-stopped` would crash-loop (the docker rule-6 lesson). The
+   cool-down is a safety *feature*, not a safety-*critical* invariant.
+4. **Scope:** only `exit_code == 1`; never shadow/sandbox (synthetic ledgers).
+   `--ignore-cool-down` is terminal-only (not YAML-settable, so a Portainer redeploy can't
+   standing-bypass it) and does NOT clear the record.
+5. **Default window is the operator's risk call** (the two design passes split 30 vs 60 min
+   from the same evidence) — a config knob set to taste. Gate logic lives in a small
+   `services/cool_down.py` helper for testability.
+
+**Alternatives considered:**
+- **A state file.** Rejected: a second source of truth that drifts from the DB.
+- **Parse the notifications table.** Rejected: `operator_db` is optional (no Discord → no
+  persistence).
+- **Reuse exit code 2.** Rejected: conflates "operator must fix config" with "wait and
+  retry" — restart automation needs to tell them apart.
+- **Fail-closed at the gate.** Rejected: crash-loops under `unless-stopped`.
+
+**Consequences:**
+- **Positive:** A loss-cap trip enforces a deliberate pause instead of an automated
+  re-entry into the losing market.
+- **Positive:** The terminal-only bypass + new exit code make the behavior legible to
+  restart policies.
+- **Negative:** One new table + exit code; `--ignore-cool-down` is the documented escape
+  hatch for a deliberate operator restart.
+
+**Compliance:** Engine-level safety gate; no money-mover, no LLM (ADR-002/003 untouched).
+Honors the docker rule-6 crash-loop guard (fail-open per-feature).
+
+**Soak note:** P1, `v1.1` branch; NOT in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/engine.md` — "Session-loss-cap cool-down — blueprint" (2026-06-03).
+- ADR-021 (DMS), and the soak's 4:22am cap-trip evidence.
+
+## ADR-025 — Pre-Placement Spread Guard
+
+**Status:** Accepted (P1, v1.1 — blueprint settled 2026-06-03)
+**Date:** 2026-06-05
+
+**Context:** The grid places resting limit orders regardless of current market quality. A
+wide bid/ask spread — routine for thin alts off-hours, and a live concern once multi-asset
+ships — means fills happen at dislocated prices, eroding the per-cycle edge. No
+market-quality gate exists today.
+
+**Decision:** Refuse to run a tick when the spread is too wide.
+
+1. **`get_ticker`, not `get_order_book`.** Bid/ask (`a[0]`/`b[0]`) are already in the Kraken
+   Ticker response the adapter fetches every tick (it reads only last/`c[0]` today). A new
+   `get_ticker(symbol) -> Ticker` value object (last/bid/ask + `spread_percentage` + a
+   `bid < ask` validator) extracts the spread at **zero extra API calls**. Chosen over
+   widening `get_current_price` (9 callers, most need only last); `_step_unlocked` calls
+   `get_ticker` in its place → net one read per tick.
+2. **Pre-tick gate, not a 5th `_check_safety` arm.** Spread is a per-symbol market signal,
+   not a per-order invariant; gating the whole tick (a new skip `StepAction`) avoids an
+   N×/tick re-fetch.
+3. **Config:** `max_spread_percentage` on `SafetyConfig` (default 1.0% — never fires on
+   healthy BTC/ETH ~0.01–0.05%; None/0 disables). Per-coin override on `CoinGridConfig`
+   deferred (YAGNI) until a thin alt needs it.
+4. **Log-flood guard:** reuse the offside heartbeat cadence — a sustained wide spread
+   otherwise floods at the 5s tick.
+
+**Alternatives considered:**
+- **`get_order_book` round-trip for depth.** Rejected: bid/ask top-of-book is free from the
+  Ticker call already made; a depth fetch is an extra round-trip for no v1 benefit.
+- **A per-order `_check_safety` arm.** Rejected: re-fetches N×/tick and mis-models spread as
+  a per-order invariant.
+- **Widen `get_current_price` to return bid/ask.** Rejected: 9 callers, most need only last.
+
+**Consequences:**
+- **Positive:** Dislocated-market ticks are skipped before any order rests; matters most for
+  thin alts and multi-asset.
+- **Positive:** Zero added API cost (rides the existing Ticker fetch).
+- **Negative:** Mock adapter gains `set_spread` + a default tight spread so existing engine
+  tests don't trip; Shadow forwards to live.
+
+**Compliance:** Engine-level market-quality gate; no money-mover, no LLM. Uses
+`ExchangePort` per ADR-001.
+
+**Soak note:** P1, `v1.1` branch; NOT in the frozen v1.0 soak image. Higher priority once
+multi-asset ships.
+
+**References:**
+- `docs/release/v1.1/engine.md` — "Slippage / spread guard — blueprint" (2026-06-03).
+
+## ADR-026 — Harvester `--execute` Replay Guard
+
+**Status:** Accepted (P1, v1.1; extends ADR-003/ADR-004)
+**Date:** 2026-06-05
+
+**Context:** `cli/harvest --execute <proposal_id>` runs gates 1–7
+(enabled/lookup/direction/staleness/destination/balance/day-cap) then calls `withdraw()` —
+with **no "already executed for this `proposal_id`" check**. A double-tap, a shell re-run,
+or a retry-after-perceived-hang can withdraw twice; the rolling day-cap is the only
+accidental backstop. The 2026-06-02 plan review flagged this as the highest-blast-radius
+hole in the codebase. It also becomes a hard co-requisite of the P3 web-Execute button,
+which multiplies the double-withdraw vectors (web → `pending_commands` → `cli/harvest`
+poll).
+
+**Decision:** Add a cheap idempotency layer before `withdraw()`, DB-enforced.
+
+1. **A UNIQUE constraint on `transfer_results.proposal_id`** — concurrency-proof, the
+   authoritative guard. The insert fails if a result already exists for the proposal.
+2. **A "layer 0" pre-check:** `SELECT TransferResult WHERE proposal_id = ? AND status IN
+   (pending, completed)` → refuse with a clear message before running the seven gates' side
+   effects.
+3. **Hard prerequisite of web-Execute.** Per the P3 judge (2026-06-03), do NOT ship the web
+   Execute/Approve button without this guard — prefer the DB UNIQUE over an app-layer-only
+   check because the web path adds concurrent dispatchers.
+
+**Alternatives considered:**
+- **App-layer check only.** Rejected as the *sole* guard: two near-simultaneous dispatchers
+  (CLI + web-poll) can both pass the SELECT before either inserts. The DB UNIQUE closes the
+  race.
+- **Rely on the rolling day-cap.** Rejected: it bounds total daily outflow, not a duplicate
+  of one specific proposal — an accidental backstop, not a guard.
+
+**Consequences:**
+- **Positive:** A withdrawal proposal can execute at most once, regardless of double-taps,
+  retries, or a CLI+web race.
+- **Positive:** Unblocks the P3 web-Execute button safely.
+- **Negative:** A migration adding the UNIQUE constraint; the migration must verify existing
+  rows are already unique on `proposal_id`.
+
+**Compliance:** Strengthens **ADR-003** (Harvester is the sole transfer authority) and
+**ADR-004** (withdrawal via `ExchangePort`) by making `--execute` idempotent; no new
+money-mover. Withdraw scope stays on the Harvester key only.
+
+**Soak note:** P1, `v1.1` branch; NOT in the frozen v1.0 soak image. (Not previously in
+`harvester.md`.)
+
+**References:**
+- `docs/release/v1.1/README.md` — P1 "Harvester `--execute` replay guard" row + the P3
+  web-Execute judge corrections (E/F).
+- ADR-003 / ADR-004 (Harvester authority + withdrawal API).
+
+## ADR-027 — Kraken Rate-Limit Backoff
+
+**Status:** Accepted (P1, v1.1; reuses the ADR-015 retry shape)
+**Date:** 2026-06-05
+
+**Context:** The 2026-06-02 global-fetch fix cut OpenOrders call *count* (one batched call
+per tick instead of one per symbol) but not the error *class*: `_unwrap_envelope` still
+raises a generic `ExchangeError` on `EAPI:Rate limit exceeded`, with no transient
+classification or backoff. Worse, shutdown still fires N `CancelOrder` calls back-to-back
+with zero spacing — so a rate-limit storm can recur during the most safety-critical cleanup
+(the DMS-armed shutdown). `retry-policy.md` G4 parked this under "perf"; the soak proved
+it's *resilience*.
+
+**Decision:** Classify and pace around Kraken rate limits.
+
+1. **Classify `EAPI:Rate limit exceeded` as a transient error** (distinct from a permanent
+   `ExchangeError`) and apply a **bounded** backoff-and-retry — reuse the cloud-LLM retry
+   shape from **ADR-015** (capped attempts + jittered backoff) rather than inventing a new
+   one.
+2. **Inter-cancel pacing** in `_cancel_all_open`: space the shutdown `CancelOrder` calls so
+   the cleanup path itself can't re-trigger the storm.
+3. Keep it small and own-tested — a transient-classification unit test + a paced-cancel
+   test.
+
+**Alternatives considered:**
+- **Leave it under "perf" (G4).** Rejected: the soak showed a rate-limit storm during
+  shutdown is a *resilience* failure (orders may not get cancelled), not a latency nicety.
+- **A bespoke backoff.** Rejected: ADR-015 already defines the project's retry/backoff shape
+  for transient transport errors; reuse it for one implementation.
+- **Unbounded retry.** Rejected: a wedged rate-limit must eventually surface, not spin
+  forever during shutdown.
+
+**Consequences:**
+- **Positive:** A transient rate limit no longer aborts a tick or a shutdown cancel as a
+  hard error; the safety-critical cleanup paces itself.
+- **Positive:** One retry/backoff implementation shared with the cloud-LLM path.
+- **Negative:** Bounded backoff adds a small worst-case latency to a rate-limited shutdown —
+  acceptable against the alternative (uncancelled orders).
+
+**Compliance:** Transport-resilience only; no money-mover, no LLM, no new authority. Uses
+`ExchangePort` per ADR-001; mirrors ADR-015's retry policy.
+
+**Soak note:** P1, `v1.1` branch; NOT in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P1 "Kraken rate-limit backoff" row.
+- `docs/architecture/retry-policy.md` — G4 (re-scoped from perf to resilience).
+- ADR-015 (cloud-LLM failover/retry shape reused here).
+
+<!-- ADR-027 is the last in this file; new ADRs append below. -->
+<!-- Reserved (v1.1 P2/P3 — bodies written at build time): ADR-028 historical-replay
+     auditor; ADR-029 configurable counter-order target (top_sell); ADR-030 engine-state
+     visibility table; ADR-031 operator-initiated re-anchor command.
+     See docs/release/v1.1/README.md. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

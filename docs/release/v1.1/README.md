@@ -333,7 +333,7 @@ Design-ahead pass on the five design-worthy P2 items: a shared exploration → a
 
 **Counter-target:** `top_sell` is **asymmetric** — only the BUY-fill counter changes (→ SELL at `grid_ceiling = levels[-1].price`); SELL-fill counter unchanged. (Symmetric `bottom_buy` rejected — no operator demand.) `counter_target_mode` field on `GridLevels`, **read each tick, NOT anchored** in `GridState` (change without re-anchoring). Auto-apply exclusion is **automatic** (non-numeric → not in `_WHITELISTED_NUMERIC_KEYS` → rejected) — just a doc comment + a pin test. `cycle_matcher` unaffected (pairs by amount). Honest trade-off: fewer/larger cycles + **inventory-accumulation risk in a grinding downtrend** (SELLs cluster at the ceiling, don't fill until full recovery).
 
-**Cross-cutting:** the contract-first staging worked — all three consumers independently specified the *same* `get_ohlc_bars` signature. **ADR numbering:** P1's blueprints + these (auditor, counter-target) all independently claimed "ADR-022" — **P1 + P2 need one global ADR sequence assigned at build time** (~022–028), not all 022. The surgical judge re-earned the pattern: it caught the daily-cap bug that would have invalidated the operator's first audit.
+**Cross-cutting:** the contract-first staging worked — all three consumers independently specified the *same* `get_ohlc_bars` signature. **ADR numbering (RESOLVED 2026-06-05):** the placeholder "ADR-022" collision is assigned to one global sequence — **P1** = ADR-023 (reconciler/F1), 024 (cool-down), 025 (spread guard), 026 (harvester replay guard), 027 (rate-limit backoff) + an **ADR-007 amendment** (structural news firewall); **P2** = ADR-028 (auditor), 029 (counter-target); **P3** = ADR-030 (engine-state table), 031 (re-anchor command). ADR-023–027 + the ADR-007 amendment are **written** in `decisions.md`; 028–031 are **reserved** (bodies at build). The surgical judge re-earned the pattern: it caught the daily-cap bug that would have invalidated the operator's first audit.
 
 ---
 
@@ -474,9 +474,9 @@ shared unblock):
 **Cross-cutting:** the surgical judge re-earned the pattern decisively — **two money/state-corrupting bugs
 (F double-withdrawal, E silent-kill/double-dispatch) that no single architect caught**, both born from the
 multi-daemon `pending_commands` fan-out the action-surfaces design introduced. **ADR numbering:** the
-re-anchor chain needs **two** ADRs (engine_state table + re-anchor command); as with P1+P2, every P3
-blueprint independently claimed "ADR-022" → **one global ADR sequence (~022–030) must be assigned at build
-time**, not per-cluster.
+re-anchor chain needs **two** ADRs (engine_state table + re-anchor command); assigned in the global
+sequence (RESOLVED 2026-06-05) as **ADR-030** (engine-state visibility table) + **ADR-031** (operator
+re-anchor command) — reserved, bodies written at build. See the P2 cross-cutting note + `decisions.md`.
 
 ---
 
