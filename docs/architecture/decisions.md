@@ -1848,10 +1848,231 @@ it's *resilience*.
 - `docs/architecture/retry-policy.md` — G4 (re-scoped from perf to resilience).
 - ADR-015 (cloud-LLM failover/retry shape reused here).
 
-<!-- ADR-027 is the last in this file; new ADRs append below. -->
-<!-- Reserved (v1.1 P2/P3 — bodies written at build time): ADR-028 historical-replay
-     auditor; ADR-029 configurable counter-order target (top_sell); ADR-030 engine-state
-     visibility table; ADR-031 operator-initiated re-anchor command.
-     See docs/release/v1.1/README.md. -->
+## ADR-028 — Historical-Replay Auditor (`cli/auditor`)
+
+**Status:** Accepted (P2, v1.1 — blueprint settled 2026-06-03)
+**Date:** 2026-06-05
+
+**Context:** "Should I retune?" is answered today by intuition. The operator has on-disk
+price history (the 2013–2025 + 2026Q1 Kraken dump, plus accumulating `price_snapshots`) but
+no way to replay a proposed `settings.yml` over it and see what the grid *would* have done.
+`cli/shadow` validates a config under *current* market conditions in real time; it cannot
+answer "how would this config have fared over the last 60 days." That gap also blocks an
+objective advisor evaluation (the rec-scoring half, deferred to P4).
+
+**Decision:** A new `tools/auditor.py` (`cli/auditor`) that takes the current `settings.yml`
++ a date range + a seed balance, replays historical bars, and reports fills / fees / gross &
+net PnL / max drawdown / cycle-completion rate. Pure historical replay — no orders placed, no
+Kraken calls except an optional one-shot OHLC range-fill.
+
+1. **Replay through the REAL `GridEngine`.** A new `AuditorExchangeAdapter` (subclass of
+   `MockExchangeAdapter`) walks an iterator of historical bars so the engine exercises
+   production caps / offside / counter logic — the authoritative "what would my engine have
+   done." `:memory:` SQLite, **per-symbol** fresh engine instances. Feed a 4-price sequence
+   per bar (`open → low → high → close`) to recover intra-bar fills.
+2. **Judge-found corrections (load-bearing — the design is wrong without them):**
+   - **Neuter `max_daily_spend_usd` for replay** (or override `_check_safety` to use
+     bar-time, not `datetime.now(UTC)`). Otherwise the daily cap exhausts after the first
+     wall-clock "day" of the run and **refuses every subsequent BUY** — a silent
+     near-zero-activity result that looks like "your config is ultra-conservative." Decisive.
+   - **Override `place_order` to suppress the inherited mock's on-placement immediate-fill**
+     (it fills a counter in the *same* bar when `close` already crosses it, over-counting
+     cycles/fees). Negligible at 1m bars, **material at 1h/4h** — so the auditor is
+     `_Sim`-equivalent only at 1m granularity.
+   - **Warm-start the anchor at bar-0 `open`** (the engine's `_initialize` anchors to
+     `close`; the reference `_Sim` uses `open` → grid levels diverge for the whole replay).
+   - Confirmed sound by the judge: fills occur at the **order's limit price** (`_fill_order`
+     discards the trigger price).
+3. **Honest caveat — directional, not exact.** Intra-bar fill ordering is unknowable, so the
+   audit ranks configs and surfaces trends; it is not a tick-exact backtest.
+
+**Alternatives considered:**
+- **Extend `cli/shadow`.** Rejected: shadow runs forward in real time off live prices; it
+  cannot replay history fast or evaluate a past window.
+- **A bespoke simulator (not the real engine).** Rejected: it would drift from production
+  caps/offside/counter behavior — the whole value is replaying through the *real* engine.
+- **Fold the advisor rec-scoring in now.** Deferred to **P4**: scoring past recommendations
+  needs the `recommendation_outcomes` ledger and a "success" definition.
+
+**Consequences:**
+- **Positive:** "If I'd run this proposed config for the last 60 days, my cycle-completion
+  rate would have been X% vs the current Y%" — data instead of gut.
+- **Positive:** Reuses `GridEngine` + `MockExchangeAdapter` unchanged; the auditor adapter is
+  a thin subclass.
+- **Negative / caveat:** `_Sim`-equivalent only at 1m bar granularity; coarser bars
+  over-count without the place-order override. Directional, not exact (documented).
+
+**Compliance:** Read-only replay; no orders, no withdrawals, no LLM execution. Exercises the
+real engine's safety caps. Distinct from `cli/shadow` (ADR-008).
+
+**Soak note:** P2 (post-tag, strict order — after the OHLC/import spine); `v1.1` branch, NOT
+in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P2 "Auditor — config-replay half" row + the P2 resolved
+  blueprint (auditor corrections 1–3).
+- ADR-006 (grid engine), ADR-008 (shadow mode — the live-time counterpart).
+
+## ADR-029 — Configurable Counter-Order Target (`top_sell`)
+
+**Status:** Accepted (P2, v1.1 — blueprint settled 2026-06-03)
+**Date:** 2026-06-05
+
+**Context:** The grid's counter-order placement is fixed: a filled BUY posts a SELL one
+`spacing` step up, a filled SELL posts a BUY one step down (`spacing_up`). Some operators
+want a "sell into strength at the top of the band" variant rather than always one step up.
+There is no knob for it today.
+
+**Decision:** Add a `counter_target_mode` field on `GridLevels` with two modes —
+`spacing_up` (default, unchanged behavior) and `top_sell`.
+
+1. **`top_sell` is asymmetric.** Only the **BUY-fill** counter changes: a filled BUY posts
+   its SELL at `grid_ceiling = levels[-1].price` (the top of the configured band) instead of
+   one step up. The SELL-fill counter is unchanged. (A symmetric `bottom_buy` was rejected —
+   no operator demand.)
+2. **Read each tick, NOT anchored.** `counter_target_mode` is read live from `GridLevels`; it
+   is **not** snapshotted into `GridState`, so the operator can change it without re-anchoring
+   the grid.
+3. **Auto-apply exclusion is automatic.** `counter_target_mode` is non-numeric, so it falls
+   outside `_WHITELISTED_NUMERIC_KEYS` and is rejected by the auto-apply gate by construction
+   — operator-approval-only. Just a doc comment + a pin test; no new gate code.
+4. **`cycle_matcher` is unaffected** — it pairs fills by amount, not by price target.
+
+**Alternatives considered:**
+- **A symmetric `bottom_buy` mode too.** Rejected: no operator demand; YAGNI.
+- **Snapshot the mode into `GridState`.** Rejected: would force a re-anchor to change the
+  target style; reading it live is cheaper and more flexible.
+- **An adaptive advisor-picks-the-mode-by-regime variant.** Parked (regime track) — out of
+  scope for v1; this ships only the operator-set knob.
+
+**Consequences:**
+- **Positive:** Operators can run a "sell at the ceiling" posture without bespoke code.
+- **Negative / honest trade-off:** `top_sell` yields fewer, larger cycles and carries
+  **inventory-accumulation risk in a grinding downtrend** — SELLs cluster at the ceiling and
+  don't fill until a recovery, so base inventory builds. Documented in `settings.example.yml`
+  + known-limitations.
+
+**Compliance:** A grid-strategy knob; no money-mover, no LLM auto-execution (the field is
+auto-apply-excluded by construction). Within ADR-006 (engine) + ADR-002/012 (advisory
+bounds).
+
+**Soak note:** P2 (post-tag); `v1.1` branch, NOT in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P2 "Configurable counter-order target" row + the P2
+  resolved blueprint (`top_sell` asymmetry).
+- ADR-006 (grid engine), ADR-012 (auto-apply gate the non-numeric key is excluded from).
+
+## ADR-030 — Engine-State Visibility Table
+
+**Status:** Accepted (P3, v1.1 — blueprint settled 2026-06-03)
+**Date:** 2026-06-05
+
+**Context:** The web tier cannot see per-symbol engine state. `cli/web` reads databases only
+(credential-free, ADR-016/017); it has no channel from the running `cli/live` engine, so the
+dashboard shows "all symbols active" even when a symbol is paused or parked offside (the
+documented `cli/operator.py:295-298` gap). The re-anchor chain (ADR-031), the state-aware
+pause/resume buttons, and the banner all need this visibility — it is their shared keystone.
+
+**Decision:** A new `engine_state` table in **operator.db** giving engine→web per-symbol
+visibility.
+
+1. **Schema:** per-symbol `paused, offside, offside_ticks, reference_price, anchored_at,
+   updated_at`, PK `(base, quote)`. New `EngineStateRow` frozen dataclass
+   (`domain/engine_state.py`); `StoragePort.save_engine_state` / `get_engine_states`.
+2. **`cli/live` upserts one row per symbol per tick, best-effort** — like `emit_heartbeat`,
+   it swallows `StorageError` (a visibility write must never break a trading tick) via a new
+   `emit_engine_state` helper in `cli/_common.py`. Per-tick cost is one extra local SQLite
+   write per symbol — trivial (judge claim D confirmed sound).
+3. **`StatusSnapshot` gains `engine_states`; the template applies a freshness guard** — drop
+   rows older than ~3 ticks and fall back to the safe "show pause" default, so a stale or
+   crashed engine never renders as confidently-active.
+
+**Alternatives considered:**
+- **Give `cli/web` a live channel to the engine (socket/IPC).** Rejected: breaks the
+  credential-free, DB-only web tier (ADR-016/017) and adds coupling the heartbeat pattern
+  already avoids.
+- **Infer state from existing tables (orders/trades).** Rejected: paused/offside aren't
+  derivable from order rows; the engine must publish them explicitly.
+- **Fail-closed on the write.** Rejected: a visibility write must be best-effort — never
+  break a trading tick over a dashboard row (the heartbeat precedent).
+
+**Consequences:**
+- **Positive:** Closes the "web sees all symbols active" gap; unblocks the re-anchor chain +
+  state-aware buttons (ADR-031).
+- **Positive:** Best-effort + freshness-guarded, so it can't harm trading and can't mislead
+  when stale.
+- **Negative:** One new table + one write per symbol per tick (trivial, local SQLite).
+
+**Compliance:** Read-publish only; no money-mover, no LLM, no new authority. Preserves the
+credential-free DB-only web tier (ADR-016/017).
+
+**Soak note:** P3 (post-tag, parallel to P2); `v1.1` branch, NOT in the frozen v1.0 soak
+image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P3 resolved blueprints, "THE KEYSTONE — `engine_state`
+  table."
+- ADR-016/017 (web architecture + the credential-free DB-only tier), ADR-031 (the re-anchor
+  command this keystones).
+
+## ADR-031 — Operator-Initiated Re-Anchor Command
+
+**Status:** Accepted (P3, v1.1 — blueprint settled 2026-06-03; depends on ADR-030)
+**Date:** 2026-06-05
+
+**Context:** When the market drifts out of the grid's band, the engine parks the symbol
+offside (ADR-006) and waits — correct, but the operator has no way to say "re-center the grid
+here, now." The only re-anchor today is an implicit restart (re-lays at the persisted
+`reference_price`), which is both blunt and dangerous: a restart bounces the ADR-021 dead
+man's switch.
+
+**Decision:** An in-process `ReanchorCommand`, dispatched through the existing
+`pending_commands` firewall (ADR-002).
+
+1. **In-process, NOT SIGINT+restart.** `ReanchorCommand` drops into the existing firewall with
+   zero machinery change → `_dispatch_reanchor` → a new `GridEngine.request_reanchor(symbol)`
+   run under the per-symbol lock.
+2. **Cancel-FIRST, atomically.** `request_reanchor` cancels the symbol's open orders first; if
+   **any** cancel fails it aborts and returns `(False, msg)` — it never saves a new anchor over
+   still-live orders. Only on a clean cancel does it `save_grid_state(reference_price=current_price)`,
+   clear `_offside_ticks`, and auto-resume if paused.
+3. **Places the new layout itself (judge correction A).** `request_reanchor` lays the initial
+   grid **in-process**, not via the next-tick auto-re-layout gate. That gate sits inside
+   `if not offside:` (`grid_engine.py:376`); if price moved past the band between the
+   price-fetch and the tick, relying on it would **park the symbol with zero live orders,
+   silently — right after the operator explicitly re-anchored.** Placing in-process closes that
+   window.
+
+**Alternatives considered:**
+- **SIGINT + restart to re-anchor.** Rejected: a restart bounces the ADR-021 dead man's switch,
+  and a non-atomic delete-state-then-restart is strictly worse than the in-process path.
+- **Rely on the next-tick auto-re-layout to place the new grid.** Rejected (judge correction
+  A): the `if not offside:` guard can silently leave the operator parked with no orders right
+  after a re-anchor.
+- **Auto re-anchor (no operator in the loop).** Rejected: re-anchoring is a capital decision; it
+  stays operator-initiated through the firewall.
+
+**Consequences:**
+- **Positive:** The operator can deliberately re-center a parked grid without a restart or a DMS
+  bounce.
+- **Positive:** Cancel-first + in-process placement means the symbol never ends up anchored over
+  live orders, nor parked with none.
+- **Negative:** Needs ADR-030's `engine_state` for the banner/visibility surface; own
+  regression test pinning **`save_grid_state` is NOT called when `failed > 0`**.
+
+**Compliance:** Routes through `pending_commands` (ADR-002 firewall intact — the operator
+approves; the engine acts). No money-mover, no LLM execution. Honors ADR-021 (no restart → no
+DMS bounce) and ADR-006 (per-symbol lock, offside semantics).
+
+**Soak note:** P3 (post-tag, parallel to P2); `v1.1` branch, NOT in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P3 resolved blueprints, "Re-anchor chain" (judge correction
+  A).
+- ADR-030 (engine-state keystone), ADR-021 (DMS — why restart is rejected), ADR-002 (firewall),
+  ADR-006 (engine/offside).
+
+<!-- ADR-031 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
