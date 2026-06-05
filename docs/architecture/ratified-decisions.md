@@ -3,7 +3,7 @@
 This file records design decisions that have been **ratified — do not relitigate
 without an ADR** — but that are operational/implementation-level rather than
 cross-cutting architectural commitments. The formal architectural decisions live
-in [`decisions.md`](decisions.md) (ADR-001 … ADR-027; ADR-020 deferred); the always-loaded summary
+in [`decisions.md`](decisions.md) (ADR-001 … ADR-031; ADR-020 deferred); the always-loaded summary
 of layer rules and conventions lives in the repo-root `CLAUDE.md`.
 
 These were previously inlined in `CLAUDE.md`'s Project Status section; they were
