@@ -847,3 +847,81 @@ class TestExecuteFailureModes:
             assert any("rejected the request" in r.message for r in caplog.records)
         finally:
             await storage.close()
+
+
+@pytest.mark.asyncio
+class TestExecuteIdempotency:
+    """Issue #12: a proposal already submitted must not be withdrawn a
+    second time (every gate re-passes after the first wire clears). A prior
+    *failed* attempt — Kraken rejected it, no money moved — may be retried."""
+
+    async def test_already_submitted_refuses_without_withdraw(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A pre-existing pending result for the same proposal id blocks a
+        second --execute, and CRITICALLY does not call withdraw()."""
+        from wobblebot.ports.harvester import TransferResult as _TR
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            # An in-flight withdrawal already submitted for THIS proposal.
+            await storage.save_transfer_result(
+                _TR(
+                    proposal_id="p-test",
+                    transaction_id="AGBSO6T-UFMTTQ-I7KGS6",
+                    status="pending",
+                    executed_amount=Decimal("100"),
+                    direction="exchange_to_bank",
+                    asset="USD",
+                    timestamp=_Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+                ),
+            )
+            adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
+            config = _full_config(harvester=_enabled_harvester())
+            with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+                rc = await _execute_command(
+                    adapter=adapter,
+                    storage=storage,
+                    config=config,
+                    proposal_id="p-test",
+                )
+            assert rc == 1
+            assert adapter.withdraw_calls == []  # no double-withdraw
+            assert any("already executed" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
+    async def test_prior_failed_result_allows_retry(self) -> None:
+        """A failed attempt left no money in flight, so a fresh --execute of
+        the same proposal proceeds and submits."""
+        from wobblebot.ports.harvester import TransferResult as _TR
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            await storage.save_transfer_result(
+                _TR(
+                    proposal_id="p-test",
+                    transaction_id=f"failed-{uuid4()}",
+                    status="failed",
+                    executed_amount=Decimal("100"),
+                    direction="exchange_to_bank",
+                    asset="USD",
+                    timestamp=_Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+                ),
+            )
+            adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
+            config = _full_config(harvester=_enabled_harvester())
+            rc = await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=config,
+                proposal_id="p-test",
+            )
+            assert rc == 0
+            assert len(adapter.withdraw_calls) == 1  # retry proceeds
+        finally:
+            await storage.close()

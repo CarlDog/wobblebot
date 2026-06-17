@@ -330,6 +330,30 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
+    # 2b. Idempotency guard (issue #12): refuse a repeat withdrawal for a
+    # proposal that was already submitted. Every gate below re-passes on a
+    # second --execute (balance + day-cap still have headroom once the first
+    # wire clears), so a duplicate ``--execute <id>`` would double-submit to
+    # Kraken /Withdraw. A prior ``failed`` row does NOT block — Kraken rejected
+    # it, no money moved, so a retry is legitimate; a ``pending``/``completed``
+    # row means funds are already in flight, so we refuse. Withdrawals are rare,
+    # so scope by asset and filter in Python rather than widen the storage port.
+    prior_results = await storage.get_transfer_results(asset=proposal.asset)
+    already_submitted = next(
+        (r for r in prior_results if r.proposal_id == proposal_id and r.status != "failed"),
+        None,
+    )
+    if already_submitted is not None:
+        _LOGGER.error(
+            "proposal already executed; refusing to double-withdraw",
+            extra={
+                "proposal_id": proposal_id,
+                "prior_transaction_id": already_submitted.transaction_id,
+                "prior_status": already_submitted.status,
+            },
+        )
+        return 1
+
     # 3. Direction gate (caught during the Stage 4.5 integration audit).
     # Kraken's /0/private/Withdraw is exchange→bank only. Deposits are
     # operator-pushed from the bank side using Kraken's deposit
