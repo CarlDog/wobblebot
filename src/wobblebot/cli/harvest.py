@@ -290,20 +290,23 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     forensic table regardless of success/failure.
 
     Defense layers (any failure aborts with exit 1; no money moved
-    unless we reach step 7):
+    unless we reach step 9):
     1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
        beyond the per-call flag).
     2. Proposal must exist in the harvest db.
-    3. Proposal direction must be ``exchange_to_bank``. Deposits
+    3. Proposal must not already have a non-``failed`` ``TransferResult``
+       (idempotency guard — refuses a repeat ``--execute`` of the same
+       ``proposal_id``).
+    4. Proposal direction must be ``exchange_to_bank``. Deposits
        (``bank_to_exchange``) cannot be executed through Kraken's API
        — they're operator-pushed from the bank side using Kraken's
        deposit instructions. The harvester surfaces deposit proposals
        only as a signal that the operator should manually fund.
-    4. Proposal must not be stale (≤ ``proposal_max_age_hours``).
-    5. Destination label must resolve in
+    5. Proposal must not be stale (≤ ``proposal_max_age_hours``).
+    6. Destination label must resolve in
        ``HarvesterConfig.withdrawal_destinations[proposal.asset]``.
-    6. Current exchange balance must cover the proposed amount.
-    7. Day-cap must still have headroom — ``today_total_withdrawn_usd
+    7. Current exchange balance must cover the proposed amount.
+    8. Day-cap must still have headroom — ``today_total_withdrawn_usd
        + proposal.amount ≤ max_withdrawal_per_day_usd``.
 
     After all checks pass, calls ``adapter.withdraw()`` and persists
@@ -330,7 +333,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 2b. Idempotency guard (issue #12): refuse a repeat withdrawal for a
+    # 3. Idempotency guard (issue #12): refuse a repeat withdrawal for a
     # proposal that was already submitted. Every gate below re-passes on a
     # second --execute (balance + day-cap still have headroom once the first
     # wire clears), so a duplicate ``--execute <id>`` would double-submit to
@@ -354,7 +357,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 3. Direction gate (caught during the Stage 4.5 integration audit).
+    # 4. Direction gate (caught during the Stage 4.5 integration audit).
     # Kraken's /0/private/Withdraw is exchange→bank only. Deposits are
     # operator-pushed from the bank side using Kraken's deposit
     # instructions (account number + routing number visible in Kraken
@@ -376,7 +379,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 3. Staleness check
+    # 5. Staleness check
     now = datetime.now(UTC)
     age = now - proposal.created_at.dt
     max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
@@ -391,7 +394,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 4. Destination label resolution
+    # 6. Destination label resolution
     destination = config.harvester.withdrawal_destinations.get(proposal.asset)
     if not destination:
         _LOGGER.error(
@@ -404,7 +407,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 6. Current balance check. Step 3 already guaranteed
+    # 7. Current balance check. Step 4 already guaranteed
     # direction == "exchange_to_bank", so this fires unconditionally.
     current_balance = await _read_usd_balance(adapter)
     if current_balance is None:
@@ -420,7 +423,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 7. Day-cap fresh check
+    # 8. Day-cap fresh check
     today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
     if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
         _LOGGER.error(
@@ -433,7 +436,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 7. Execute via Kraken /Withdraw
+    # 9. Execute via Kraken /Withdraw
     _LOGGER.info(
         "executing withdrawal via Kraken /Withdraw",
         extra={
@@ -498,7 +501,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 8. Persist success
+    # 10. Persist success
     result = TransferResult(
         proposal_id=proposal.proposal_id,
         transaction_id=refid,

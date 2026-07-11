@@ -91,7 +91,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("3.00"),
         output_per_million_usd=Decimal("15.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_05,
     ),
     # Opus tier dropped to $5/$25 (verified 2026-05-29 against
     # https://platform.claude.com/docs/en/about-claude/pricing) — the
