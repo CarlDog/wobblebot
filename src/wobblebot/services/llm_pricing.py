@@ -78,6 +78,10 @@ _VERIFIED_2026_01 = date(2026, 1, 15)
 # Newer-model sweep verification (2026-05-29): current flagships + tiers
 # pulled from each provider's official pricing page (see per-entry URLs).
 _VERIFIED_2026_05 = date(2026, 5, 29)
+# Sonnet 4.6 re-verification (2026-07-12): $3/$15 confirmed unchanged
+# against https://platform.claude.com/docs/en/about-claude/pricing
+# (redirect target of docs.claude.com/en/docs/about-claude/pricing).
+_VERIFIED_2026_07 = date(2026, 7, 12)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -91,7 +95,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("3.00"),
         output_per_million_usd=Decimal("15.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07,
     ),
     # Opus tier dropped to $5/$25 (verified 2026-05-29 against
     # https://platform.claude.com/docs/en/about-claude/pricing) — the
