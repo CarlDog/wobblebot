@@ -290,10 +290,14 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     forensic table regardless of success/failure.
 
     Defense layers (any failure aborts with exit 1; no money moved
-    unless we reach step 7):
+    unless every gate passes and we reach the ``adapter.withdraw()``
+    call at step 8):
     1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
        beyond the per-call flag).
     2. Proposal must exist in the harvest db.
+    2b. No prior ``pending``/``completed`` TransferResult may exist for
+       the proposal (idempotency guard — a repeat ``--execute`` must
+       not double-withdraw; a prior ``failed`` row may be retried).
     3. Proposal direction must be ``exchange_to_bank``. Deposits
        (``bank_to_exchange``) cannot be executed through Kraken's API
        — they're operator-pushed from the bank side using Kraken's
@@ -376,7 +380,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 3. Staleness check
+    # 4. Staleness check
     now = datetime.now(UTC)
     age = now - proposal.created_at.dt
     max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
@@ -391,7 +395,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 4. Destination label resolution
+    # 5. Destination label resolution
     destination = config.harvester.withdrawal_destinations.get(proposal.asset)
     if not destination:
         _LOGGER.error(
@@ -433,7 +437,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 7. Execute via Kraken /Withdraw
+    # 8. Execute via Kraken /Withdraw
     _LOGGER.info(
         "executing withdrawal via Kraken /Withdraw",
         extra={
@@ -498,7 +502,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 8. Persist success
+    # 9. Persist success
     result = TransferResult(
         proposal_id=proposal.proposal_id,
         transaction_id=refid,
