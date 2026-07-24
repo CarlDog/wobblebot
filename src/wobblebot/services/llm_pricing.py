@@ -78,21 +78,19 @@ class LLMPricePoint(BaseModel):
 # the CI suite when any entry is >180 days behind today. Anchors are
 # dated to the day because a single month can hold two sweeps.
 #
-# The Phase 6 kickoff anchor (2026-01-15) is gone: its last six entries
-# were re-verified in the 2026-07-23 sweep below.
+# The Phase 6 kickoff anchor (2026-01-15) is gone: all seven of its
+# entries were re-verified in the 2026-07-23 sweep below.
 #
 # Newer-model sweep verification (2026-05-29): current flagships + tiers
 # pulled from each provider's official pricing page (see per-entry URLs).
 _VERIFIED_2026_05 = date(2026, 5, 29)
-# Sonnet 4.6 re-verification (2026-07-12): $3/$15 confirmed unchanged
-# against https://platform.claude.com/docs/en/about-claude/pricing
-# (redirect target of docs.claude.com/en/docs/about-claude/pricing).
-_VERIFIED_2026_07_12 = date(2026, 7, 12)
 # Legacy-entry re-verification sweep (2026-07-23), clearing the last of
-# the 2026-01-15 anchor. Five of six rates confirmed unchanged; the
+# the 2026-01-15 anchor. Six of seven rates confirmed unchanged; the
 # gemini-2.5-flash thoughts override was stale and is now removed (see
-# the Google block). OpenAI rates come from the per-model docs pages
-# (developers.openai.com/api/docs/models/<id>) because the four legacy
+# the Google block). Sources: claude-sonnet-4-6 against
+# https://platform.claude.com/docs/en/about-claude/pricing; the OpenAI
+# rates against the per-model docs pages
+# (developers.openai.com/api/docs/models/<id>), because the four legacy
 # models have been dropped from the top-level pricing table.
 _VERIFIED_2026_07_23 = date(2026, 7, 23)
 
@@ -108,7 +106,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("3.00"),
         output_per_million_usd=Decimal("15.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_12,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     # Opus tier dropped to $5/$25 (verified 2026-05-29 against
     # https://platform.claude.com/docs/en/about-claude/pricing) — the

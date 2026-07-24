@@ -15,12 +15,15 @@ below — they are NOT part of the v1.0 release.
 
 ### LLM pricing re-verification (2026-07-23)
 
-- **Cleared the last of the 2026-01-15 pricing anchor.** The freshness watchdog
+- **Cleared the 2026-01-15 pricing anchor.** The freshness watchdog
   (`test_llm_pricing_freshness`) tripped on 2026-07-14 at the 180-day threshold, failing
-  the whole suite and blocking every open dependency PR. Six entries re-verified against
-  the providers' own pages: `gpt-4o` ($2.50/$10.00), `gpt-4o-mini` ($0.15/$0.60), `o1`
-  ($15.00/$60.00), `o3-mini` ($1.10/$4.40) and `gemini-2.5-pro` ($1.25/$10.00) confirmed
-  unchanged.
+  the whole suite and blocking every open dependency PR. All seven entries re-verified
+  against the providers' own pages; six confirmed unchanged: `claude-sonnet-4-6`
+  ($3.00/$15.00), `gpt-4o` ($2.50/$10.00), `gpt-4o-mini` ($0.15/$0.60), `o1`
+  ($15.00/$60.00), `o3-mini` ($1.10/$4.40), and `gemini-2.5-pro` ($1.25/$10.00 at the
+  ≤200k tier we bill against). `claude-sonnet-4-6` had been re-verified separately on
+  2026-07-12; confirming it again in this sweep folds it onto the same anchor, so the
+  pricing table is byte-identical to the one on `main` and won't conflict at merge.
 - **Fixed: `gemini-2.5-flash` was over-billing thinking tokens by 1.4x.** It carried a
   $3.50/1M thoughts override — correct when Flash was in preview and billed thinking
   separately from its then-$0.60 output rate. Google has since folded the two together
