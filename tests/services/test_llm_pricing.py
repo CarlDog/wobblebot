@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from wobblebot.services import llm_pricing
 from wobblebot.services.llm_pricing import (
     LLMPricePoint,
     PricingLookupError,
@@ -104,20 +105,49 @@ class TestCostFor:
         cost = cost_for("openai", "o1", tokens_in=100, tokens_out=200, tokens_reasoning=1000)
         assert cost == Decimal("0.073500")
 
-    def test_reasoning_uses_explicit_override(self) -> None:
-        # gemini-2.5-flash: $0.30 in, $2.50 out, $3.50 reasoning (override).
+    def test_reasoning_uses_explicit_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Exercises the override branch against a SYNTHETIC price point
+        # rather than a live table entry. As of 2026-07-23 no real entry
+        # overrides — Google folded gemini-2.5-flash's separate thoughts
+        # rate into its output rate — but the branch must keep working for
+        # the next provider that unbundles, so the test outlives whatever
+        # the table happens to say today.
         # 1000 in → 1000 * 0.30 / 1M = $0.0003
         # 1000 out → 1000 * 2.50 / 1M = $0.0025
-        # 1000 reasoning at $3.50 / 1M = $0.0035
+        # 1000 reasoning at the $3.50 override / 1M = $0.0035
         # total = $0.0063
+        monkeypatch.setitem(
+            llm_pricing._PRICING,
+            ("google", "synthetic-thoughts-billed-separately"),
+            LLMPricePoint(
+                provider="google",
+                model="synthetic-thoughts-billed-separately",
+                input_per_million_usd=Decimal("0.30"),
+                output_per_million_usd=Decimal("2.50"),
+                reasoning_per_million_usd=Decimal("3.50"),
+                verified_date=date(2026, 7, 23),
+            ),
+        )
         cost = cost_for(
             "google",
-            "gemini-2.5-flash",
+            "synthetic-thoughts-billed-separately",
             tokens_in=1000,
             tokens_out=1000,
             tokens_reasoning=1000,
         )
         assert cost == Decimal("0.006300")
+
+    def test_no_live_entry_overrides_reasoning_rate(self) -> None:
+        # Guards the claim made in the module docstring and in
+        # test_reasoning_uses_explicit_override above. If a provider
+        # unbundles thinking again and someone adds an override, this
+        # fails and points them at both places to update.
+        overriding = [p for p in all_price_points() if p.reasoning_per_million_usd is not None]
+        assert overriding == [], (
+            "A price point now overrides reasoning_per_million_usd: "
+            f"{[(p.provider, p.model) for p in overriding]}. Update the "
+            "llm_pricing module docstring and this test's premise."
+        )
 
     def test_zero_tokens_is_zero_cost(self) -> None:
         cost = cost_for("anthropic", "claude-sonnet-4-6", 0, 0)
