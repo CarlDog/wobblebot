@@ -472,10 +472,14 @@ class TestAdvisorHappyPath:
         rows = await storage.get_llm_calls()
         assert rows[0].tokens_out == 100
         assert rows[0].tokens_reasoning == 300
-        # gemini-2.5-flash: $0.30/1M in, $2.50/1M out, $3.50/1M thoughts
-        # 100*0.30/1M + 100*2.50/1M + 300*3.50/1M
-        # = 0.00003 + 0.00025 + 0.00105 = 0.00133
-        assert rows[0].cost_usd == Decimal("0.001330")
+        # gemini-2.5-flash: $0.30/1M in, $2.50/1M out. Thoughts bill at the
+        # output rate — Google folded thinking into "Output price (including
+        # thinking tokens)" (re-verified 2026-07-23), so there is no separate
+        # thoughts rate. Still additive: the 300 thought tokens are charged
+        # on top of the 100 output tokens, not folded into them.
+        # 100*0.30/1M + 100*2.50/1M + 300*2.50/1M
+        # = 0.00003 + 0.00025 + 0.00075 = 0.00103
+        assert rows[0].cost_usd == Decimal("0.001030")
 
     async def test_prose_wrapping_json(self, storage: SQLiteStorageAdapter) -> None:
         wrapped = (
