@@ -24,9 +24,12 @@ Convention for thinking-mode pricing:
                 / 1_000_000)
 
     ``reasoning_per_million_usd=None`` means "fall back to output
-    rate" (which is what Anthropic + OpenAI bill in practice). Google
-    Gemini 2.5 charges a different rate for thoughts so the
-    Gemini entries override.
+    rate", which is what every provider in the table currently bills.
+    The override column is retained because Gemini 2.5 Flash did charge
+    a separate thoughts rate during preview; Google has since folded
+    thinking into the output rate ("Output price (including thinking
+    tokens)"), so no entry overrides today. Keep the column — it costs
+    nothing and the next provider to unbundle will need it.
 """
 
 from __future__ import annotations
@@ -71,17 +74,27 @@ class LLMPricePoint(BaseModel):
         frozen = True
 
 
-# Anchor verified_date for Phase 6 kickoff. Operators bump per entry as
-# they re-verify. The freshness test fails the CI suite when any entry
-# is >180 days behind today.
-_VERIFIED_2026_01 = date(2026, 1, 15)
+# Operators bump per entry as they re-verify. The freshness test fails
+# the CI suite when any entry is >180 days behind today. Anchors are
+# dated to the day because a single month can hold two sweeps.
+#
+# The Phase 6 kickoff anchor (2026-01-15) is gone: its last six entries
+# were re-verified in the 2026-07-23 sweep below.
+#
 # Newer-model sweep verification (2026-05-29): current flagships + tiers
 # pulled from each provider's official pricing page (see per-entry URLs).
 _VERIFIED_2026_05 = date(2026, 5, 29)
 # Sonnet 4.6 re-verification (2026-07-12): $3/$15 confirmed unchanged
 # against https://platform.claude.com/docs/en/about-claude/pricing
 # (redirect target of docs.claude.com/en/docs/about-claude/pricing).
-_VERIFIED_2026_07 = date(2026, 7, 12)
+_VERIFIED_2026_07_12 = date(2026, 7, 12)
+# Legacy-entry re-verification sweep (2026-07-23), clearing the last of
+# the 2026-01-15 anchor. Five of six rates confirmed unchanged; the
+# gemini-2.5-flash thoughts override was stale and is now removed (see
+# the Google block). OpenAI rates come from the per-model docs pages
+# (developers.openai.com/api/docs/models/<id>) because the four legacy
+# models have been dropped from the top-level pricing table.
+_VERIFIED_2026_07_23 = date(2026, 7, 23)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -95,7 +108,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("3.00"),
         output_per_million_usd=Decimal("15.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07,
+        verified_date=_VERIFIED_2026_07_12,
     ),
     # Opus tier dropped to $5/$25 (verified 2026-05-29 against
     # https://platform.claude.com/docs/en/about-claude/pricing) — the
@@ -141,15 +154,23 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         verified_date=_VERIFIED_2026_05,
     ),
     # --- OpenAI ---
-    # https://openai.com/api/pricing — chat models + o-series reasoning.
     # o-series: reasoning tokens billed at output rate.
+    # NOTE (2026-07-23): the four models below are no longer listed on the
+    # top-level pricing page (developers.openai.com/api/docs/pricing, which
+    # is where openai.com/api/pricing and platform.openai.com/docs/pricing
+    # now redirect) — that page shows only the gpt-5.x line. They are still
+    # live and priced on their own docs pages, so verify each at
+    # developers.openai.com/api/docs/models/<model-id>. Rates below were
+    # confirmed unchanged there on 2026-07-23; only dated snapshots
+    # (gpt-4o-2024-08-06, o1-2024-12-17, o3-mini-2025-01-31) carry a
+    # "Deprecated" tag, not the floating aliases we bill against.
     ("openai", "gpt-4o"): LLMPricePoint(
         provider="openai",
         model="gpt-4o",
         input_per_million_usd=Decimal("2.50"),
         output_per_million_usd=Decimal("10.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     ("openai", "gpt-4o-mini"): LLMPricePoint(
         provider="openai",
@@ -157,7 +178,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("0.15"),
         output_per_million_usd=Decimal("0.60"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     ("openai", "o1"): LLMPricePoint(
         provider="openai",
@@ -165,7 +186,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("15.00"),
         output_per_million_usd=Decimal("60.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     ("openai", "o3-mini"): LLMPricePoint(
         provider="openai",
@@ -173,7 +194,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("1.10"),
         output_per_million_usd=Decimal("4.40"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     # 2026-05-29 verified against developers.openai.com/api/docs/models/*.
     # gpt-5 family + o-series are reasoning models; reasoning tokens bill at
@@ -219,25 +240,32 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         verified_date=_VERIFIED_2026_05,
     ),
     # --- Google ---
-    # https://ai.google.dev/pricing — Gemini 2.5 family. Gemini Flash
-    # in thinking mode bills thoughts at a higher rate than regular
-    # output, so reasoning_per_million_usd is explicit (additive to
-    # output per the convention).
+    # https://ai.google.dev/gemini-api/docs/pricing — Gemini 2.5 family.
+    # Pro rates are the <=200k small-prompt tier (>200k is $2.50/$15.00;
+    # our prompts are ~1k tokens), matching the gen-3 entries below.
+    #
+    # 2026-07-23: gemini-2.5-flash previously carried a $3.50/1M thoughts
+    # override, correct when Flash was in preview and billed thinking
+    # separately from its then-$0.60 output rate. Google has since folded
+    # the two together — the page now reads "Output price (including
+    # thinking tokens)" at $2.50 — so the override was double-counting
+    # thinking at 1.4x the real rate. Dropped to None (falls back to
+    # output) per this module's convention.
     ("google", "gemini-2.5-pro"): LLMPricePoint(
         provider="google",
         model="gemini-2.5-pro",
         input_per_million_usd=Decimal("1.25"),
         output_per_million_usd=Decimal("10.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_01,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     ("google", "gemini-2.5-flash"): LLMPricePoint(
         provider="google",
         model="gemini-2.5-flash",
         input_per_million_usd=Decimal("0.30"),
         output_per_million_usd=Decimal("2.50"),
-        reasoning_per_million_usd=Decimal("3.50"),
-        verified_date=_VERIFIED_2026_01,
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_07_23,
     ),
     # Gemini 3.x (verified 2026-05-29 against ai.google.dev/gemini-api/docs/
     # pricing). Unlike 2.5-flash, gen-3 bills thinking tokens at the OUTPUT
