@@ -98,6 +98,18 @@ dev = [
     "pylint-pydantic==0.4.1",
     "types-pyyaml==6.0.12.20260510",
     "python-dotenv==1.2.2",
+    # Test-only HTTP client for `starlette.testclient`, which does
+    # `import httpx2 as httpx` and falls back to plain `httpx` with a
+    # StarletteDeprecationWarning. That fallback is not usable here: the
+    # warning subclasses **UserWarning**, not DeprecationWarning, so the
+    # `ignore::DeprecationWarning` entry under filterwarnings below does
+    # NOT exempt it and the bare "error" entry turns it fatal. Without
+    # httpx2 installed, all 12 tests/web/ modules fail collection on
+    # starlette >= 1.2.0 (1.1.0 still imports `httpx` unconditionally) —
+    # the sole reason the starlette security bumps sat unmerged from
+    # 17 Jun. Inert on the 1.0.x pinned here. Runtime `httpx` stays in
+    # [project.dependencies]; the Anthropic adapter uses it directly.
+    "httpx2==2.9.0",
 ]
 
 [project.urls]
