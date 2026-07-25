@@ -5,8 +5,8 @@ condensed battery of intent-routing probes against the operator's
 NAS-hosted Ollama, and reports per-model timing + schema-pass rate.
 
 Designed for finding the fastest + most reliable model for the
-cpu-only deployment profile. Targets http://your-nas:11434 by
-default; override via --base-url.
+cpu-only deployment profile. Targets $OLLAMA_BASE_URL, falling back to
+http://localhost:11434; override via --base-url.
 
 Bypasses the suitability blocklist (so e.g. phi4-mini-reasoning,
 llava, etc. could be probed if pulled — though they're filtered
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -224,8 +225,8 @@ def main() -> int:
     parser.add_argument(
         "--base-url",
         type=str,
-        default="http://your-nas:11434",
-        help="Ollama base URL. Default: http://your-nas:11434",
+        default=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+        help="Ollama base URL. Default: $OLLAMA_BASE_URL or http://localhost:11434.",
     )
     parser.add_argument(
         "--prompt-file",
