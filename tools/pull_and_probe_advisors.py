@@ -42,7 +42,9 @@ import httpx
 # etc. that the advisor prompt + LLM responses routinely contain.
 _UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
-_DEFAULT_BASE_URL = "http://your-nas:11434"
+_DEFAULT_BASE_URL = os.environ.get(
+    "OLLAMA_BASE_URL", "http://localhost:11434"
+)  # set OLLAMA_BASE_URL to target a remote Ollama host
 _DEFAULT_TIMEOUT_SECONDS = 600.0
 
 # Candidate manifest for the advisor sweep. q8_0 throughout for
