@@ -1,5 +1,11 @@
 # WobbleBot
 
+<!-- markdownlint-disable MD033 -->
+<!-- fleet-confidence -->
+![code confidence](https://img.shields.io/badge/code_confidence-fair-orange) <sub>· claude-fable-5 · 2026-07-26 · [details](../../issues/19)</sub>
+<!-- /fleet-confidence -->
+<!-- markdownlint-enable MD033 -->
+
 **Deterministic, safety-first micro-trading system on Kraken using hexagonal architecture.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
