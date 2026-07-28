@@ -2073,6 +2073,96 @@ DMS bounce) and ADR-006 (per-symbol lock, offside semantics).
 - ADR-030 (engine-state keystone), ADR-021 (DMS — why restart is rejected), ADR-002 (firewall),
   ADR-006 (engine/offside).
 
-<!-- ADR-031 is the last in this file; new ADRs append below. -->
+## ADR-032 — Cost-Basis Sell Guard (Average Cost); Retire `EmergencyStopConfig`
+
+**Status:** Accepted (v1.1 branch)
+**Date:** 2026-07-27
+
+**Context:** Every executed fill is persisted in `trades` with its real price, fee, and cost —
+but no sell decision reads it. Sells are placed by pure grid geometry (ADR-006): counter-SELLs
+sit one spacing above their own BUY and are profitable by construction, but three paths can
+realize a loss against what was actually paid: (1) initial-layout SELLs against pre-held or
+prior-session inventory, (2) the auto re-layout re-placing the full ladder at the persisted
+anchor, (3) an operator re-anchor after a drawdown — which the dashboard's drift/age banner
+actively recommends. "Bought high before a drop" therefore converts unrealized drawdown into
+realized loss with no guard. Meanwhile the one knob that *looks* like protection —
+`safety.emergency_stop.max_loss_percentage` — is parsed and enforced by nobody (the real
+session halt reads `live.max_session_loss_usd`); the v1.1 P1 backlog already flagged it as a
+silent dead safety knob.
+
+**Decision:** A fifth `_check_safety` arm — the **sell guard** — defers any SELL whose
+net-of-fees unit proceeds fall more than `safety.sell_guard.max_loss_percentage` below the
+symbol's **average cost basis**, while every other placement continues. `EmergencyStopConfig`
+is deleted.
+
+1. **Average-cost basis, replayed from `trades`.** Pure math in `domain/cost_basis.py`
+   (`replay_average_cost`, `assess_sell`): BUYs capitalize their fee into basis; SELLs reduce
+   holdings at the running average; quantity clamps at zero, so sell volume beyond tracked
+   holdings (pre-existing inventory) reduces nothing. The storage read, per-symbol cache
+   (invalidated on new fills), and throttled logging live in `services/cost_basis.py`
+   (`SellGuard`). The fee rate is a *parameter* — domain imports no config.
+2. **Fees are structural, not a knob.** Basis carries the BUY fee; the assessment nets the
+   maker fee off the proposed SELL price, so a sell at exactly the buy price scores ≈ 0.52%
+   loss. The default tolerance (1.0%) sits deliberately above that structural floor.
+3. **Unknown basis ⇒ allow + WARN once per symbol.** Zero tracked quantity (fresh deployment,
+   pre-existing bags with no recorded BUYs) must never freeze the sell ladder.
+4. **Uniform gating; "deferred," not "refused."** All SELL placements — initial layout,
+   counters, auto re-layout, and ADR-031's future in-process re-anchor placement — flow through
+   the same `_check_safety` arm and inherit it for free. A guard block counts into a new
+   `StepResult.sells_deferred`, NOT `refusals`: the hard-cap meaning of `refusals` (and
+   preflight's `refusals != 0 → exit 1`) is preserved. Logging is transition + 240-tick
+   heartbeat (the ADR-006 offside pattern), never a per-tick WARN flood.
+5. **Retire `EmergencyStopConfig` rather than wire it.** Its documented role — halt all trading
+   on excess loss — is already served by the enforced, twice-soak-hardened
+   `live.max_session_loss_usd` mark-to-market cap; wiring a second percentage-based halt would
+   create two competing session-halt knobs with undefined precedence, and keeping
+   `emergency_stop.max_loss_percentage` next to `sell_guard.max_loss_percentage` would put two
+   identically named knobs with different semantics in one `safety:` block — worse than the
+   current lie. `min_exchange_balance_usd` similarly duplicates protection the session cap and
+   the Harvester's `min_exchange_liquidity_usd` already provide, at the cost of a new exchange
+   round-trip inside the hot safety path.
+
+**Alternatives considered:**
+- **FIFO lot basis.** Rejected: the repo already carries two FIFO matchers with diverging
+  semantics (`cycle_matcher`, `metrics.compute_cycle_stats`); a third would be a maintenance
+  hazard, and FIFO lets one ancient cheap lot authorize a low sell that average cost would
+  flag. Average cost is order-independent, cheap, and matches the operator's intuition.
+- **Drive the guard off `match_cycles`.** Rejected: `cycle_matcher` drops SELLs with no cheaper
+  unmatched BUY as "orphans" — loss-making sells are invisible to it *by construction*, which
+  is exactly the population this guard exists for.
+- **Wire `emergency_stop` as the guard.** Rejected per decision 5 — session-halt semantics are
+  the wrong shape; the operator asked for "trades continue, loss-realizing sells don't."
+- **Per-order min-price floor config.** Rejected: a static floor doesn't track what was
+  actually paid and goes stale on every re-anchor.
+
+**Consequences:**
+- **Positive:** "Bought high before a drop" no longer converts to realized loss silently — the
+  ladder's BUY side and profitable SELLs keep trading while underwater SELLs wait for recovery
+  or an explicit, informed re-anchor.
+- **Positive:** The `safety:` block stops lying — every key in it is enforced.
+- **Negative:** A deferred counter-SELL is not retried (its triggering fill is consumed); that
+  inventory sits without a resting SELL until re-layout or re-anchor. Surfaced via
+  `sells_deferred`, the guard heartbeat, and the basis-aware re-anchor banner.
+- **Negative:** Average cost blends: heavy underwater legacy inventory can defer otherwise
+  profitable fresh cycles until the average recovers. The tolerance knob governs; operators
+  with mixed bags can widen it or disable per deployment.
+- **Migration:** Operator `settings.yml` files carrying `emergency_stop:` are flagged as stale
+  keys by the schema-drift test; `sell_guard:` has full defaults, so absent config loads clean.
+
+**Compliance:** Enforcement lives inside Bot Core (`_check_safety`), never an adapter — per the
+financial-power-fragmentation invariant. `domain/` stays pure (no config/services imports).
+Amends ADR-006 decisions 1–2 *context*: sells now consult basis before placement; offside
+stay-parked semantics are untouched.
+
+**Soak note:** v1.1 branch, NOT in the frozen v1.0 soak image.
+
+**References:**
+- `docs/release/v1.1/README.md` — P1 row "`EmergencyStopConfig`: wire or document" (this ADR
+  resolves it: retire).
+- ADR-006 (grid geometry / offside — the placement semantics amended), ADR-031 (re-anchor
+  command — inherits the guard), ADR-005 (Position model stays deferred; the trades ledger is
+  the basis source).
+
+<!-- ADR-032 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
