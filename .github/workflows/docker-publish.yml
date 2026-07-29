@@ -3,11 +3,14 @@ name: CI & Publish to GHCR
 # Two jobs, gated:
 #   test           — black/isort --check + pylint + mypy + pytest (unit;
 #                    schema-drift + filterwarnings=error included). Runs on
-#                    every push to main, every pull request (incl. Dependabot
-#                    bumps), and manual dispatch.
+#                    every push to main AND v1.1 (the active dev branch —
+#                    otherwise development ships ungated), every pull request
+#                    (incl. Dependabot bumps), and manual dispatch.
 #   build-and-push — needs: test, so a red test job BLOCKS the publish.
-#                    Publishes to GHCR only on push-to-main / workflow_dispatch,
-#                    never on PRs. Closes the "image published from unvalidated
+#                    Publishes to GHCR only from main (ref-pinned below) via
+#                    push / workflow_dispatch, never on PRs and never from
+#                    v1.1 — the branch trigger above must not leak :v1.1
+#                    images. Closes the "image published from unvalidated
 #                    main commit" gap — local pre-commit hooks are bypassable
 #                    and don't gate the publish; this does.
 #
@@ -23,6 +26,7 @@ on:
   push:
     branches:
       - main
+      - v1.1
     paths:
       - 'src/**'
       - 'tests/**'
@@ -82,8 +86,9 @@ jobs:
 
   build-and-push:
     needs: test
-    # Publish only on a real main build / manual dispatch — never on a PR.
-    if: github.event_name != 'pull_request'
+    # Publish only from main — never on a PR, and never from the v1.1 push
+    # trigger (which exists to gate tests, not to publish images).
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
