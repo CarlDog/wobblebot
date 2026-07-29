@@ -684,8 +684,11 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             limit: Maximum rows to return. ``None`` means unbounded.
 
         Returns:
-            Matching rows ordered by ``created_at`` ASC so the oldest
-            unforwarded event posts first.
+            Matching rows newest-first (``created_at`` DESC, ``id`` as
+            tiebreak), so ``limit`` returns the *newest* N rows — what
+            the web notifications page and bell badge need. Consumers
+            that must process chronologically (``cli/operator``'s
+            Discord forwarder) reverse the result.
 
         Raises:
             StorageError: If retrieval fails.

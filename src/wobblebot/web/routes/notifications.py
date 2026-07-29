@@ -55,9 +55,10 @@ async def _load_snapshot(operator_storage: StoragePort) -> NotificationsSnapshot
         rows = await operator_storage.get_notifications(forwarded=None, limit=_NOTIFICATIONS_LIMIT)
     except StorageError as exc:
         return NotificationsSnapshot(error=f"failed to query notifications: {exc}")
-    # Newest first for the page.
-    sorted_rows = sorted(rows, key=lambda n: n.created_at.dt, reverse=True)
-    return NotificationsSnapshot(notifications=tuple(sorted_rows))
+    # The port returns newest-first, so the rows are already in page order
+    # and the limit keeps the newest 100 (not the oldest 100, which would
+    # freeze this page once the table outgrows the limit).
+    return NotificationsSnapshot(notifications=tuple(rows))
 
 
 @router.get("/notifications", response_class=HTMLResponse)

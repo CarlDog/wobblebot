@@ -134,7 +134,9 @@ async def _forward_pending_notifications(
         _LOGGER.warning("forwarder: get_notifications failed", extra={"error": str(exc)})
         return 0
     forwarded = 0
-    for row in rows:
+    # Rows arrive newest-first (port contract); post oldest-first so the
+    # Discord channel reads chronologically.
+    for row in reversed(rows):
         if row.id is None:  # defensive; persisted rows always have an id
             continue
         try:

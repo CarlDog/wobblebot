@@ -126,21 +126,25 @@ async def test_mark_forwarded_idempotent_re_mark_updates_timestamp(
 # --------------------------------------------------------------------- #
 
 
-async def test_get_notifications_orders_by_created_at_asc(
+async def test_get_notifications_orders_newest_first(
     storage: SQLiteStorageAdapter,
 ) -> None:
     a_id = await storage.save_notification(_notification(title="A"))
     b_id = await storage.save_notification(_notification(title="B"))
     c_id = await storage.save_notification(_notification(title="C"))
     rows = await storage.get_notifications()
-    assert [r.id for r in rows] == [a_id, b_id, c_id]
+    assert [r.id for r in rows] == [c_id, b_id, a_id]
 
 
-async def test_get_notifications_respects_limit(storage: SQLiteStorageAdapter) -> None:
-    for _ in range(5):
-        await storage.save_notification(_notification())
+async def test_get_notifications_limit_returns_newest_rows(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    # Regression (fleet-review #19 finding 3): ASC + LIMIT returned the
+    # OLDEST rows, so the web bell badge froze at the first event ever
+    # written once the table outgrew the query limit.
+    ids = [await storage.save_notification(_notification()) for _ in range(5)]
     rows = await storage.get_notifications(limit=2)
-    assert len(rows) == 2
+    assert [r.id for r in rows] == [ids[4], ids[3]]
 
 
 # --------------------------------------------------------------------- #

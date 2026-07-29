@@ -1016,7 +1016,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if forwarded is not None:
             sql += " WHERE forwarded = ?"
             params.append(1 if forwarded else 0)
-        sql += " ORDER BY created_at ASC"
+        # Newest first, so LIMIT returns the newest N (the web page and bell
+        # badge depend on this); id breaks created_at ties deterministically.
+        sql += " ORDER BY created_at DESC, id DESC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
