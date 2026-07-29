@@ -43,7 +43,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   # Opt into Node.js 24 ahead of GitHub's forced transition on
-  # 2026-06-02. The actions/checkout@v4 + docker/* actions used
+  # 2026-06-02. The actions/checkout@v6 + docker/* actions used
   # below already ship Node.js 24-compatible code paths; this
   # exercises them now so any incompatibility surfaces here
   # rather than as a surprise CI failure on the deadline.
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
@@ -88,7 +88,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
