@@ -286,6 +286,12 @@ class _FailingStorage(StoragePort):
     async def get_last_status_report_taken_at(self, channel_id, user_id):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def record_cap_trip(self, tripped_at, session_pnl_usd):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_last_cap_trip_at(self):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
 
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:

@@ -71,6 +71,7 @@ from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPor
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.operator_service import OperatorService
 from wobblebot.services.reconciler import apply_reconciliation
@@ -612,6 +613,20 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     extra={"error": str(exc)},
                 )
         session_pnl = ended_value_usd - started_value_usd if ended_known else Decimal("0")
+        if exit_code == 1:
+            # ADR-024: record the trip for the next session's cool-down
+            # gate. Own try/except -- a storage failure here must not
+            # mask the cap-trip session-end logging/notification below,
+            # and the gate itself fails open on a read error, so a
+            # failed write here just means the NEXT session isn't gated
+            # (same fail-soft posture, not a crash-loop risk).
+            try:
+                await storage.record_cap_trip(Timestamp(dt=datetime.now(UTC)), session_pnl)
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to record cap trip for cool-down gate",
+                    extra={"error": str(exc)},
+                )
         duration_seconds = round(time.monotonic() - started_at, 1)
         ending_usd_str = str(ended_usd) if ended_known else "unknown"
         ending_value_str = str(ended_value_usd) if ended_known else "unknown"
@@ -663,7 +678,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
 # ---------------------------------------------------------------------------
 
 
-async def _main_async(config: WobbleBotConfig) -> int:
+async def _main_async(  # pylint: disable=too-many-locals
+    config: WobbleBotConfig, *, ignore_cool_down: bool = False
+) -> int:
     if config.live is None:
         _LOGGER.error("settings.yml is missing the `live:` section")
         return 2
@@ -679,6 +696,39 @@ async def _main_async(config: WobbleBotConfig) -> int:
 
     storage = SQLiteStorageAdapter(config.live.db)
     await storage.connect()
+
+    # ADR-024: refuse to start a new session for a configurable window
+    # after the last session-loss-cap exit (exit_code=1) -- an
+    # immediate restart (operator knee-jerk, or a `restart:
+    # unless-stopped` policy) would otherwise re-enter the same losing
+    # condition (the soak's 4:22am cap-trip-then-restart incident).
+    # `--ignore-cool-down` is the terminal-only, one-time bypass; it
+    # does not clear the record. Fail-OPEN on a storage-read error
+    # (log + proceed) -- this is a safety *feature*, not a safety-
+    # *critical* invariant, and failing closed would crash-loop under
+    # `restart: unless-stopped` (docker rule 6).
+    if not ignore_cool_down:
+        try:
+            last_trip_at = await storage.get_last_cap_trip_at()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "cool-down check failed to read cap_trips; proceeding",
+                extra={"error": str(exc)},
+            )
+            last_trip_at = None
+        status = check_cool_down(
+            last_trip_at, now=datetime.now(UTC), window_minutes=config.live.cool_down_minutes
+        )
+        if status.active:
+            _LOGGER.error(
+                "session-loss-cap cool-down in effect; refusing to start",
+                extra={
+                    "resumes_at": status.resumes_at.isoformat() if status.resumes_at else None,
+                },
+            )
+            await storage.close()
+            return 4
+
     adapter = KrakenAdapter(config=kraken_config)
 
     exit_code = await partition_or_exit(
@@ -863,6 +913,15 @@ def main() -> int:
     parser.add_argument("--max-orders-per-coin", type=int, default=None)
     parser.add_argument("--max-daily-spend-usd", type=Decimal, default=None)
     parser.add_argument("--log-format", choices=("plain", "json"), default=None)
+    # ADR-024: terminal-only bypass for one deliberate restart during an
+    # active cool-down window. Not YAML-settable -- a Portainer redeploy
+    # or a `restart: unless-stopped` policy can't standing-bypass it,
+    # and it does NOT clear the recorded trip.
+    parser.add_argument(
+        "--ignore-cool-down",
+        action="store_true",
+        help="Bypass the session-loss-cap cool-down window for this one restart (ADR-024).",
+    )
     args = parser.parse_args()
 
     try:
@@ -879,7 +938,7 @@ def main() -> int:
     log_file_path = config.live.log_file_path if config.live else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    run_with_clean_exit(_main_async(config, ignore_cool_down=args.ignore_cool_down), logger=_LOGGER)
 
 
 if __name__ == "__main__":

@@ -407,4 +407,19 @@ CREATE TABLE IF NOT EXISTS status_report_history (
     taken_at        TEXT NOT NULL,
     PRIMARY KEY (channel_id, user_id)
 );
+
+-- ---------------------------------------------------------------- --
+-- cap_trips — session-loss-cap cool-down record (ADR-024)           --
+-- ---------------------------------------------------------------- --
+-- One row per cli/live session that exits on the session-loss cap
+-- (exit_code=1). The pre-loop cool-down gate reads the newest row's
+-- tripped_at to decide whether to refuse a new session. Append-only;
+-- never pruned by cli/maintenance (a handful of rows a year at most).
+-- Lives in live.db. Never written by cli/shadow (synthetic ledger,
+-- ADR-024 decision 4).
+CREATE TABLE IF NOT EXISTS cap_trips (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tripped_at      TEXT NOT NULL,
+    session_pnl_usd TEXT NOT NULL
+);
 """

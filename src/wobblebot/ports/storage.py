@@ -4,8 +4,15 @@ This port defines the contract for storing and retrieving domain entities.
 Adapters implement this interface for specific storage backends (SQLite, Postgres, etc.).
 """
 
+# pylint: disable=too-many-lines
+# One cohesive ABC for the whole storage contract; splitting it would
+# fragment a single interface across files for no organizational gain
+# (unlike sqlite_storage.py, which had genuinely separable SQL/row-
+# mapping concerns to extract into sibling modules).
+
 from abc import ABC, abstractmethod
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from wobblebot.domain.grid import GridState
@@ -980,6 +987,33 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             Anchor timestamp, or ``None`` if no status_report has run
             for this (channel, user) pair before. Callers use this to
             decide lookback (None → 24h default).
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
+    async def record_cap_trip(self, tripped_at: Timestamp, session_pnl_usd: Decimal) -> None:
+        """Append a session-loss-cap trip record (ADR-024).
+
+        Called by ``cli/live`` when a session ends with ``exit_code=1``.
+        Never called by ``cli/shadow`` (synthetic ledger, out of scope
+        per ADR-024 decision 4).
+
+        Args:
+            tripped_at: Wallclock the cap trip was detected (UTC).
+            session_pnl_usd: The session's mark-to-market PnL at trip time.
+
+        Raises:
+            StorageError: On persistence failure.
+        """
+
+    @abstractmethod
+    async def get_last_cap_trip_at(self) -> Timestamp | None:
+        """Return the most recent ``record_cap_trip`` timestamp, or ``None``.
+
+        The pre-loop cool-down gate (``services/cool_down.py``) reads
+        this to decide whether a new session may start.
 
         Raises:
             StorageError: On retrieval failure.

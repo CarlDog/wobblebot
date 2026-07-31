@@ -131,6 +131,15 @@ class LiveConfig(BaseModel):
     # move money. ``null`` disables it. NOTE: Kraken's timer is account-
     # wide, so it cancels manually-placed orders on the same account too.
     dead_mans_switch_seconds: int | None = Field(default=60)
+    # ADR-024: after a session-loss-cap exit (exit_code=1), refuse to
+    # start a new session for this many minutes -- an immediate restart
+    # (knee-jerk operator, or a `restart: unless-stopped` policy) would
+    # otherwise re-enter the same losing condition (the soak's 4:22am
+    # cap-trip-then-restart incident). Scoped to exit_code==1 only; never
+    # applies to cli/shadow (synthetic ledger). `null` disables the gate
+    # entirely. The terminal-only `--ignore-cool-down` flag bypasses one
+    # deliberate restart without changing this config.
+    cool_down_minutes: float | None = Field(default=60.0, gt=0)
 
     class Config:
         frozen = True

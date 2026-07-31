@@ -1402,6 +1402,39 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             parsed = parsed.replace(tzinfo=UTC)
         return parsed
 
+    async def record_cap_trip(self, tripped_at: Timestamp, session_pnl_usd: Decimal) -> None:
+        """Append a session-loss-cap trip record (ADR-024)."""
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                "INSERT INTO cap_trips (tripped_at, session_pnl_usd) VALUES (?, ?)",
+                (tripped_at.dt.astimezone(UTC).isoformat(), str(session_pnl_usd)),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to record cap trip: {exc}") from exc
+
+    async def get_last_cap_trip_at(self) -> Timestamp | None:
+        """Return the most recent cap-trip timestamp, or ``None``."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT tripped_at FROM cap_trips ORDER BY id DESC LIMIT 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read last cap trip: {exc}") from exc
+        if row is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(row[0])
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return Timestamp(dt=parsed)
+
 
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,
