@@ -17,8 +17,36 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
+from wobblebot.web.routes.advisor import _as_float
 
 pytestmark = pytest.mark.unit
+
+
+class TestAsFloat:
+    def test_normal_number_passes_through(self) -> None:
+        assert _as_float(1.5) == 1.5
+        assert _as_float(2) == 2.0
+        assert _as_float("3.25") == 3.25
+
+    def test_none_and_bool_reject(self) -> None:
+        assert _as_float(None) is None
+        assert _as_float(True) is None
+        assert _as_float(False) is None
+
+    def test_non_numeric_rejects(self) -> None:
+        assert _as_float("not a number") is None
+        assert _as_float([1, 2]) is None
+
+    def test_nan_and_infinity_reject(self) -> None:
+        """json.loads accepts bare NaN/Infinity/-Infinity tokens, and
+        float() on any of them doesn't raise — _as_float must filter them
+        out itself rather than relying on the try/except."""
+        assert _as_float(float("nan")) is None
+        assert _as_float(float("inf")) is None
+        assert _as_float(float("-inf")) is None
+        assert _as_float("NaN") is None
+        assert _as_float("Infinity") is None
+        assert _as_float("-Infinity") is None
 
 
 @pytest_asyncio.fixture
@@ -181,6 +209,34 @@ class TestAdvisorRoute:
             assert resp.status_code == 200
             assert "below-floor" in resp.text  # dim class on the card
             assert "below floor" in resp.text  # the badge label
+
+    @pytest.mark.asyncio
+    async def test_non_finite_proposed_spacing_is_not_tagged_below_floor(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """A garbled -Infinity proposal must not spuriously trip below_floor.
+
+        json.loads accepts bare -Infinity/Infinity/NaN tokens, and
+        float("-inf") is a valid, non-raising float. Unchecked, `-inf` reads
+        as "less than" any finite current_spacing, so the row would render
+        `below-floor` + a tooltip literally saying "Proposed -inf% is
+        tighter than...". `_as_float` now rejects non-finite values (same
+        class of fix as services/auto_apply._coerce_numeric)."""
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="BTC/USD",
+                recommendations={"spacing_percentage": float("-inf")},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" not in resp.text
+            assert "below floor" not in resp.text
 
     @pytest.mark.asyncio
     async def test_at_or_above_floor_is_not_tagged(

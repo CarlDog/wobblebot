@@ -18,6 +18,7 @@ when ``advise_storage`` is ``None``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Request
@@ -72,13 +73,23 @@ class AdvisorSnapshot:
 
 
 def _as_float(value: object) -> float | None:
-    """Coerce a JSON-ish numeric to float; None on bool / non-numeric."""
+    """Coerce a JSON-ish numeric to float; None on bool / non-numeric / non-finite.
+
+    NaN/Infinity rejection is load-bearing here too (same class of bug as
+    ``services/auto_apply._coerce_numeric``): ``json.loads`` accepts bare
+    ``NaN``/``Infinity`` tokens, and ``float("nan")`` is a valid,
+    non-raising float. Left unchecked, a garbled LLM recommendation would
+    render as "nan%"/"inf%" in the template — and since NaN comparisons
+    always return False, ``below_floor`` in ``_to_row`` would silently
+    read False for exactly the value most worth flagging as suspect.
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)  # type: ignore[arg-type]
+        coerced = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+    return coerced if math.isfinite(coerced) else None
 
 
 def _to_row(suggestion: AdvisorSuggestion) -> AdvisorRow:
