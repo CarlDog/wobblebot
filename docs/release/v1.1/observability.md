@@ -4,6 +4,54 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### Stale-heartbeat Discord push alert
+
+**What:** extend `cli/operator`'s existing forwarder loop (`_forwarder_loop`,
+~2s cadence, already storage- and Discord-wired) to also read
+`daemon_heartbeats` each cycle via the existing
+`services.daemon_health.fetch_daemon_freshness` /
+`derive_thresholds_from_config` — the same staleness definition `/health`
+and the Docker-healthcheck script already use, not a new hardcoded
+multiplier. On a fresh→stale transition for any daemon, emit a
+`Notification` via the existing `notify()` helper.
+
+**Why high value, buildable now:** the 2026-07-20 host-wide NAS reboot left
+`cli/live` + `cli/harvest` dead for 11 days (deliberate `restart:"no"` on
+those two — the money-path daemons shouldn't blind-auto-resume unsupervised
+after an uncontrolled restart) while every `restart:unless-stopped` daemon
+came back automatically and the dashboard looked healthy the entire time.
+Nobody noticed until a manual Portainer log pull. `/health`'s
+heartbeat-freshness table already had the data to show this; nothing pushed
+it. Unlike most entries in this file, this needs no deferral condition — no
+baseline period, no new table/route, no ADR: it's a same-process extension
+of code that already exists, and it directly closes the gap that let this
+exact incident go unnoticed.
+
+**Implementation notes:**
+- Must live in `cli/operator`, not in `cli/live`'s or `cli/harvest`'s own
+  tick loop — a dead process can't self-report, and "dead container after a
+  host reboot" (not "wedged but alive") is precisely the failure mode this
+  is for. `operator.db` (home of `daemon_heartbeats`) is already on the
+  shared data volume every container mounts, so `cli/operator` can read
+  every daemon's freshness without new plumbing.
+- Debounce: alert on the stale *transition*, plus a slower repeat while it
+  stays down — not a fresh warning every ~2s poll cycle for the entire
+  outage (mirror the anomaly detector's dedup window below).
+- Severity: consider `error`/`critical` for `live`/`harvest` (the
+  `restart:"no"` money-path daemons) vs `warning` for the other six —
+  their staleness isn't equally consequential.
+
+**Relationship to the anomaly detector below:** this is liveness-only
+(heartbeat-not-fresh) and ships now; the anomaly detector is behavioral
+(statistical drift in what a *live* daemon is writing) and stays gated on
+~30 days of baseline. Neither supersedes the other — note this explicitly
+whenever the anomaly detector actually ships, so the two don't drift into
+overlapping, inconsistent staleness definitions.
+
+**Trigger:** the standard P3 gate only (soak passes → tag v1.0 → `main`
+unfreezes) — no additional baseline period or new infrastructure required
+on top of that, unlike the anomaly detector below.
+
 ### Anomaly detector daemon — cross-DB outlier watcher
 
 **What:** a new long-running daemon (``cli/anomaly`` or similar)
