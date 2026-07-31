@@ -11,7 +11,7 @@ def test_wobblebot_import() -> None:
     """Test that the main wobblebot package can be imported."""
     import wobblebot
 
-    assert wobblebot.__version__ == "0.1.0"
+    assert wobblebot.__version__ == "1.0.0"
     assert wobblebot.__author__ == "WobbleBot Team"
 
 

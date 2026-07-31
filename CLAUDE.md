@@ -8,14 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 completion date. Do NOT duplicate project status here (per the documentation-discipline
 rule); this section is a pointer, not a changelog.
 
-- **Current:** Phase 8 (Hardening & v1.0 Release). Phases 1–7 + Stages 8.0–8.3 closed;
-  **Stage 8.4.E v1.0 soak in progress**, with Stage 8.5 (advisor heuristic+LLM cascade,
-  closed 2026-05-29) and Stage 8.6 (advisor hardening + grid widen to 3%, closed
-  2026-05-30; ADR-019 ratified) landed as pre-soak value-adds. The gating soak runs on
-  the NAS Docker deployment, restarting ~2026-06-01 post-move, now on the widened grid.
-  Phase 9 (Kraken Securities equities) is committed to start after the v1.0 tag.
-- **Detail:** per-phase closing summaries at `docs/planning/phase-{2..7}-summary.md`;
-  the day-by-day soak log lives in roadmap Stage 8.4.E.
+- **Current:** **Phase 8 complete — `v1.0.0` tagged 2026-07-31** (`docs/planning/phase-8-summary.md`).
+  The gating soak (Stage 8.4.E, started 2026-05-18) ran ~10 weeks on the NAS Docker
+  deployment and passed its stated exit criteria (engine-coverage + reconciliation-across-restarts
+  + all-daemon-cycles + no fund-losing hard-stops), including a clean recovery from an
+  11-day host-wide NAS reboot discovered 2026-07-31. **`v1.0.0` is `main` exactly as it
+  stood at tag time** — substantial additional work (ADR-022 advisor reorientation, web UI
+  expansion, two fleet-review passes) already exists on the `v1.1` branch but was
+  deliberately NOT merged into this tag; development continues there per
+  `docs/release/v1.1/README.md`. Phase 9 (Kraken Securities equities) follows v1.1, not
+  immediately after this tag.
+- **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
+  the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
+  onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
   (future improvements), `docs/release/v1.0-soak-runbook.md`.
 - **Running real-money cost: $0.085018** (full breakdown in roadmap + phase summaries).
