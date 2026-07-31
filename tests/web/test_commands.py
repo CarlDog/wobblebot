@@ -326,3 +326,47 @@ class TestConfirm:
         assert row2 is not None
         assert row2.status == "approved"  # unchanged
         assert row2.confirmed_at == first_confirmed_at  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_expired_ttl_is_refused_not_approved(self, storage: SQLiteStorageAdapter) -> None:
+        """Fleet-review #19 finding 6: a decision arriving after
+        ttl_expires_at must not approve/reject — it transitions to
+        `expired` instead, mirroring cli/operator's TTL expirer
+        (_expire_stale_pending_commands), rather than acting on a
+        decision that arrived too late."""
+        from datetime import UTC, datetime, timedelta
+        from uuid import UUID
+
+        from wobblebot.domain.value_objects import Timestamp
+
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            pid = self._create_pause(client)
+            confirm_page = client.get(f"/commands/{pid}/confirm")
+            token = csrf_from(confirm_page.text)
+
+            # Backdate the TTL, as if the confirm tab sat open past it.
+            row = await storage.get_pending_command(UUID(pid))
+            assert row is not None
+            past = row.model_copy(
+                update={"ttl_expires_at": Timestamp(dt=datetime.now(UTC) - timedelta(minutes=1))}
+            )
+            await storage.save_pending_command(past)
+
+            resp = client.post(
+                f"/commands/{pid}/confirm",
+                data={"decision": "approve", "csrf_token": token},
+            )
+            assert resp.status_code == 200
+            assert "expired" in resp.text.lower()
+
+        row2 = await storage.get_pending_command(UUID(pid))
+        assert row2 is not None
+        assert row2.status == "expired"
+        assert row2.confirming_user_id is None
+        assert row2.confirmed_at is None

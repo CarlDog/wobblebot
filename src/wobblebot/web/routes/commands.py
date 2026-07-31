@@ -331,6 +331,41 @@ async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positio
         )
 
     now = Timestamp(dt=datetime.now(UTC))
+
+    # Fleet-review #19 finding 6: nothing else gates this route on the
+    # TTL — a confirm tab left open past ttl_expires_at (the daemon-side
+    # expirer, cli/operator._expire_stale_pending_commands, may not have
+    # swept it yet in a web-only deployment) could still approve/reject a
+    # decision that arrived too late. Mirror the expirer's own transition
+    # instead of acting on a stale decision.
+    if pending.ttl_expires_at.dt <= now.dt:
+        expired = pending.model_copy(update={"status": "expired"})
+        try:
+            await storage.save_pending_command(expired)
+        except StorageError as exc:
+            return templates.TemplateResponse(
+                request,
+                "command_result.html",
+                {
+                    "pending": pending,
+                    "username": user.username,
+                    "already": False,
+                    "error": f"failed to persist expiry: {exc}",
+                    "operator_tz": prefs.timezone,
+                },
+                status_code=500,
+            )
+        return templates.TemplateResponse(
+            request,
+            "command_result.html",
+            {
+                "pending": expired,
+                "username": user.username,
+                "already": False,
+                "operator_tz": prefs.timezone,
+            },
+        )
+
     new_status = "approved" if decision == "approve" else "rejected"
     updated = pending.model_copy(
         update={

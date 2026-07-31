@@ -16,6 +16,12 @@
       (the operator may have approved or rejected via Discord first).
       No further action taken.
     </p>
+  {% elif pending.status == "expired" %}
+    <p class="muted">
+      This command's confirmation window expired before your decision
+      arrived. No action was taken — it was neither approved nor
+      rejected.
+    </p>
   {% else %}
     <p class="muted">
       {% if pending.status == "approved" %}
