@@ -17,7 +17,7 @@
 #   docker build -f docker/Dockerfile -t wobblebot:dev .
 
 # ---------- Stage 1: builder ----------
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -41,7 +41,7 @@ COPY src/ ./src/
 RUN pip wheel --no-cache-dir --wheel-dir /wheels .
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Streaming-friendly output (Docker captures stderr per daemon)
 # and no .pyc cruft in the layered image.

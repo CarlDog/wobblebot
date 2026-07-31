@@ -68,6 +68,36 @@ below — they are NOT part of the v1.0 release.
 
 ## [Unreleased]
 
+### LLM pricing re-verification (2026-07-23)
+
+- **Cleared the 2026-01-15 pricing anchor.** The freshness watchdog
+  (`test_llm_pricing_freshness`) tripped on 2026-07-14 at the 180-day threshold, failing
+  the whole suite and blocking every open dependency PR — including the Starlette security
+  bumps. All seven entries re-verified against the providers' own pages; six confirmed
+  unchanged: `claude-sonnet-4-6` ($3.00/$15.00), `gpt-4o` ($2.50/$10.00), `gpt-4o-mini`
+  ($0.15/$0.60), `o1` ($15.00/$60.00), `o3-mini` ($1.10/$4.40), and `gemini-2.5-pro`
+  ($1.25/$10.00 at the ≤200k tier we bill against).
+- **Fixed: `gemini-2.5-flash` was over-billing thinking tokens by 1.4x.** It carried a
+  $3.50/1M thoughts override — correct when Flash was in preview and billed thinking
+  separately from its then-$0.60 output rate. Google has since folded the two together
+  ("Output price (including thinking tokens)", $2.50/1M), so the override was charging
+  thoughts at $3.50 against a rate that already included them.
+  `reasoning_per_million_usd` is now `None` (falls back to output) per the module
+  convention. Recorded cost for a 100-in/100-out/300-thought Flash call drops from
+  $0.001330 to $0.001030.
+- **No live entry overrides the reasoning rate any more.** The override column stays —
+  the next provider to unbundle will need it — and `test_reasoning_uses_explicit_override`
+  now exercises that branch against a synthetic price point instead of a real entry, so
+  it no longer depends on what providers happen to bill. New
+  `test_no_live_entry_overrides_reasoning_rate` guards the docstring's claim and points
+  at both places to update if that changes.
+- **OpenAI source URL corrected.** `openai.com/api/pricing` now 403s, and its successor
+  (`developers.openai.com/api/docs/pricing`) lists only the gpt-5.x line — the four legacy
+  models are priced on their individual `docs/models/<id>` pages. Noted inline so the next
+  re-verification doesn't hit the same dead end. Only dated snapshots
+  (`gpt-4o-2024-08-06`, `o1-2024-12-17`, `o3-mini-2025-01-31`) are tagged Deprecated; the
+  floating aliases we bill against are live.
+
 ### Stage 8.6 (2026-05-30) — Advisor hardening + grid widen (pre-soak)
 
 Acts on the grid-backtest verdict before the v1.0 gating soak. Rescoped
