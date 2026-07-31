@@ -82,6 +82,8 @@ grid:
 # ============================================================================
 # These are checked inside GridEngine BEFORE any place_order call.
 # Refusals are logged + counted in StepResult.refusals; they never raise.
+# The sell_guard's own deferrals count separately in StepResult.sells_deferred
+# (never a hard-cap refusal -- see ADR-032).
 safety:
   # Generic TEMPLATE caps — size these to YOUR balance + coin count before
   # going live (two-sided ceiling = coins × levels × order_size; keep
@@ -93,10 +95,13 @@ safety:
   max_per_coin_exposure_usd: 100.0    # per-coin cap
   max_orders_per_coin: 20             # count cap, per-coin
 
-  emergency_stop:
+  # ADR-032 cost-basis sell guard: defers (never cancels) a SELL whose
+  # net-of-fees proceeds fall more than max_loss_percentage below the
+  # symbol's replayed average cost basis. Enforced (unlike the retired
+  # emergency_stop block) -- every key here is actually read.
+  sell_guard:
     enabled: true
-    max_loss_percentage: 20.0         # informational; not yet wired
-    min_exchange_balance_usd: 0       # informational; not yet wired
+    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.52%
 
 # ============================================================================
 # Scheduled task cadences (Stage 3.3 Slice C.0)

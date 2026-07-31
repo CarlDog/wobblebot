@@ -23,7 +23,7 @@ from wobblebot.config.cli import HarvestConfig
 from wobblebot.config.grid import GridConfig, GridLevels
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import NotifierError
@@ -56,11 +56,6 @@ def _wob_config(*, harvester_enabled: bool = False) -> WobbleBotConfig:
             max_daily_spend_usd=Decimal("100000"),
             max_per_coin_exposure_usd=Decimal("100000"),
             max_orders_per_coin=100,
-            emergency_stop=EmergencyStopConfig(
-                enabled=True,
-                max_loss_percentage=Decimal("20"),
-                min_exchange_balance_usd=Decimal("0"),
-            ),
         ),
         harvester=HarvesterConfig(
             enabled=harvester_enabled,

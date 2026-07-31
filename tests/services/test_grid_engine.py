@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from datetime import UTC
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -16,7 +16,8 @@ from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import CoinGridConfig
-from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.domain.models import Trade
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services.grid_engine import GridEngine
 
@@ -229,6 +230,75 @@ class TestFillsAndCounters:
         assert len(trades) == 1
         assert trades[0].side is OrderSide.BUY
         assert trades[0].price.amount == Decimal("49500")
+
+
+# ---------------------------------------------------------------------------
+# Cost-basis sell guard — ADR-032
+# ---------------------------------------------------------------------------
+
+
+async def _save_buy_trade(storage: SQLiteStorageAdapter, *, price: str, amount: str = "1") -> None:
+    px = Decimal(price)
+    qty = Decimal(amount)
+    await storage.save_trade(
+        Trade(
+            id=f"basis-buy-{price}",
+            order_id=f"basis-order-{price}",
+            symbol=BTC_USD,
+            side=OrderSide.BUY,
+            price=Price(amount=px, currency=BTC_USD.quote),
+            amount=Amount(value=qty, asset=BTC_USD.base),
+            fee=Decimal("0"),
+            cost=px * qty,
+            executed_at=Timestamp(dt=datetime(2026, 1, 1, tzinfo=UTC)),
+        )
+    )
+
+
+class TestSellGuard:
+    async def test_initial_layout_defers_sells_below_cost_basis(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # Prior-session BUY history establishes a basis (60000) far above
+        # where the grid is about to lay out (50000) -- exactly ADR-032's
+        # trigger #1 ("initial-layout SELLs against pre-held inventory").
+        await _save_buy_trade(storage, price="60000")
+        exchange = _exchange(price="50000", balance_btc="10")
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "initialized"
+        assert result.placed == 3  # the three BUY levels
+        assert result.sells_deferred == 3  # the three SELL levels, all below 60000
+        assert result.refusals == 0
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        assert all(o.side is OrderSide.BUY for o in opens)
+
+    async def test_disabled_sell_guard_places_everything(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        await _save_buy_trade(storage, price="60000")
+        exchange = _exchange(price="50000", balance_btc="10")
+        engine = GridEngine(
+            exchange, storage, _grid_config(), _safety_config(sell_guard_enabled=False)
+        )
+
+        result = await engine.step(BTC_USD)
+
+        assert result.placed == 6
+        assert result.sells_deferred == 0
+
+    async def test_unknown_basis_places_sells_normally(self, storage: SQLiteStorageAdapter) -> None:
+        # No trade history at all -- the guard must not freeze a fresh
+        # deployment's initial layout (ADR-032 decision 3).
+        exchange = _exchange(price="50000", balance_btc="10")
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.placed == 6
+        assert result.sells_deferred == 0
 
 
 # ---------------------------------------------------------------------------

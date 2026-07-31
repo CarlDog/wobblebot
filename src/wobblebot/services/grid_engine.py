@@ -40,7 +40,7 @@ from datetime import UTC, datetime, time
 from decimal import Decimal
 from typing import Literal
 
-from wobblebot.config.grid import CoinGridConfig, GridConfig
+from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, CoinGridConfig, GridConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.grid import (
@@ -55,6 +55,9 @@ from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cost_basis import SellGuard
+
+_PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
 
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
@@ -96,6 +99,11 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
       signal.
     - ``"skipped_disabled"`` — the per-coin config has ``enabled: false``;
       no exchange or storage interaction occurred.
+
+    ``sells_deferred`` (ADR-032) counts SELL placements the cost-basis
+    sell guard deferred — deliberately separate from ``refusals``, whose
+    hard-cap meaning (``preflight``'s ``refusals != 0 -> exit 1``) must
+    stay reserved for the four exposure/spend caps.
     """
 
     symbol: Symbol
@@ -104,6 +112,7 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
     counters_placed: int = 0
     placed: int = 0
     refusals: int = 0
+    sells_deferred: int = 0
     offside: bool = False
     trade_ids: list[str] = field(default_factory=list)
 
@@ -136,6 +145,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         self._storage = storage
         self._config = grid_config
         self._safety = safety_config
+        # ADR-032 cost-basis sell guard. Constructed here (not injected)
+        # so every existing GridEngine(...) call site picks it up for
+        # free — the maker fee rate is the code-resident constant per
+        # the four-homes safety-carve-out (pricing/fees stay code), the
+        # tolerance is the one operator-tunable knob.
+        self._sell_guard = SellGuard(
+            storage,
+            max_loss_percentage=safety_config.sell_guard.max_loss_percentage,
+            maker_fee_rate=KRAKEN_MAKER_FEE_RATE,
+        )
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
         # pause is per-session — a cli/live restart resets it. Keeping it
@@ -343,10 +362,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         placed = 0
         refusals = 0
+        sells_deferred = 0
         for level in levels:
-            placed_ok = await self._try_place(symbol, level, coin_cfg)
-            if placed_ok:
+            outcome = await self._try_place(symbol, level, coin_cfg)
+            if outcome == "placed":
                 placed += 1
+            elif outcome == "sell_deferred":
+                sells_deferred += 1
             else:
                 refusals += 1
         _LOGGER.info(
@@ -356,6 +378,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 "reference_price": str(state.reference_price),
                 "levels_placed": placed,
                 "refusals": refusals,
+                "sells_deferred": sells_deferred,
             },
         )
         return StepResult(
@@ -363,6 +386,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             action="initialized",
             placed=placed,
             refusals=refusals,
+            sells_deferred=sells_deferred,
         )
 
     # ------------------------------------------------------------------ subsequent ticks
@@ -393,6 +417,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         counters_placed = 0
         refusals = 0
         placed = 0
+        sells_deferred = 0
         if not offside:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
             for filled in fills:
@@ -405,9 +430,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 # cycle would slowly accumulate or shed inventory and
                 # bleed value through the spread.
                 counter_amount = Amount(value=filled.filled_amount, asset=filled.amount.asset)
-                placed_ok = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
-                if placed_ok:
+                outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+                if outcome == "placed":
                     counters_placed += 1
+                elif outcome == "sell_deferred":
+                    sells_deferred += 1
                 else:
                     refusals += 1
 
@@ -436,9 +463,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     },
                 )
                 for level in levels:
-                    placed_ok = await self._try_place(symbol, level, coin_cfg)
-                    if placed_ok:
+                    outcome = await self._try_place(symbol, level, coin_cfg)
+                    if outcome == "placed":
                         placed += 1
+                    elif outcome == "sell_deferred":
+                        sells_deferred += 1
                     else:
                         refusals += 1
         elif fills:
@@ -490,6 +519,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             counters_placed=counters_placed,
             placed=placed,
             refusals=refusals,
+            sells_deferred=sells_deferred,
             offside=offside,
             trade_ids=trade_ids,
         )
@@ -586,6 +616,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 for trade in trades_by_order.get(refreshed.exchange_id, []):
                     await self._storage.save_trade(trade)
                     saved_trade_ids.append(trade.id)
+                if trades_by_order.get(refreshed.exchange_id):
+                    # ADR-032: a newly-saved trade changes this symbol's
+                    # cost basis, so the sell guard must not reuse a
+                    # cache computed before it.
+                    self._sell_guard.invalidate(symbol)
                 _LOGGER.info(
                     "grid fill",
                     extra={
@@ -604,23 +639,23 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         level: GridLevel,
         coin_cfg: CoinGridConfig,
         amount: Amount | None = None,
-    ) -> bool:
-        """Run safety checks then place. Returns True if placed, False if
-        refused. Refusals are logged and never raise.
+    ) -> _PlaceOutcome:
+        """Run safety checks then place. Refusals/deferrals are logged
+        and never raise.
 
         ``amount`` overrides the default USD-budget-derived sizing — used
         for counter orders, which must match the filled order's base
         amount (ADR-006 decision 2).
 
-        Two refusal paths, both treated identically (log + return False):
-        - **Internal safety cap.** ``_check_safety`` returns ok=False.
-        - **Exchange-side refusal.** ``InsufficientBalance`` from the
-          adapter (Kraken returns ``EOrder:Insufficient funds``). This
-          happens routinely on the SELL side when the account doesn't
-          hold the base asset yet — common during initial layout
-          before any cycles have run. Treating it as a refusal lets the
-          BUY side still place; once a BUY fills and produces base
-          inventory, subsequent SELL counters at that level will succeed.
+        Three non-placed outcomes:
+        - ``"refused"`` — an internal safety cap (``_check_safety``
+          returns ok=False) or an exchange-side ``InsufficientBalance``
+          (Kraken's ``EOrder:Insufficient funds``, routine on the SELL
+          side before any cycle has produced base inventory).
+        - ``"sell_deferred"`` (ADR-032) — the cost-basis sell guard
+          deferred a SELL priced enough below the symbol's average cost
+          to realize a loss beyond tolerance. Deliberately distinct from
+          a refusal: it never counts toward a hard-cap exit code.
 
         Storage is fully up-to-date between successive ``_try_place``
         calls within one ``step`` (the per-symbol lock prevents
@@ -640,7 +675,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "reason": decision.reason,
                 },
             )
-            return False
+            return "refused"
+
+        if level.side is OrderSide.SELL and self._safety.sell_guard.enabled:
+            assessment = await self._sell_guard.assess(symbol, level.price)
+            if not assessment.allowed:
+                return "sell_deferred"
+
         try:
             await self._place_level(symbol, level, coin_cfg, amount=amount)
         except InsufficientBalance as exc:
@@ -655,8 +696,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "available": str(exc.available),
                 },
             )
-            return False
-        return True
+            return "refused"
+        return "placed"
 
     async def _place_level(
         self,

@@ -434,7 +434,7 @@ grid:
       levels_below: 3
       order_size_usd: 10
 safety:
-  emergency_stop:
+  sell_guard:
     enabled: true
 """
 

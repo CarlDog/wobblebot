@@ -5,6 +5,7 @@ This layer contains pure domain logic with zero external I/O dependencies.
 All domain models, value objects, and deterministic business rules live here.
 """
 
+from wobblebot.domain.cost_basis import CostBasis, SellAssessment, assess_sell, replay_average_cost
 from wobblebot.domain.exceptions import (
     DailySpendCapExceeded,
     ExposureLimitExceeded,
@@ -56,4 +57,9 @@ __all__ = [
     "grid_spacing",
     "is_offside",
     "next_counter_action",
+    # Cost basis (ADR-032)
+    "CostBasis",
+    "SellAssessment",
+    "replay_average_cost",
+    "assess_sell",
 ]

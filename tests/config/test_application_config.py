@@ -30,11 +30,6 @@ _BASE_REQUIRED: dict[str, object] = {
         "max_daily_spend_usd": "100",
         "max_per_coin_exposure_usd": "50",
         "max_orders_per_coin": 10,
-        "emergency_stop": {
-            "enabled": True,
-            "max_loss_percentage": "5",
-            "min_exchange_balance_usd": "0",
-        },
     },
 }
 

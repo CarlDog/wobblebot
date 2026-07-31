@@ -13,12 +13,20 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
-class EmergencyStopConfig(BaseModel):
-    """Conditions under which the engine halts all trading."""
+class SellGuardConfig(BaseModel):
+    """ADR-032 cost-basis sell guard.
+
+    Defers a SELL whose net-of-fees proceeds fall more than
+    ``max_loss_percentage`` below the symbol's replayed average cost
+    basis, while every other placement continues. Replaces
+    ``EmergencyStopConfig`` (retired by ADR-032): that knob's documented
+    halt-all-trading role was already served by the enforced
+    ``live.max_session_loss_usd`` mark-to-market cap and was parsed by
+    nobody. Full defaults — absent config loads clean.
+    """
 
     enabled: bool = True
-    max_loss_percentage: Decimal = Field(gt=Decimal("0"), le=Decimal("100"))
-    min_exchange_balance_usd: Decimal = Field(ge=Decimal("0"))
+    max_loss_percentage: Decimal = Field(default=Decimal("1.0"), gt=Decimal("0"), le=Decimal("100"))
 
     class Config:
         frozen = True
@@ -33,7 +41,7 @@ class SafetyConfig(BaseModel):
     max_daily_spend_usd: Decimal = Field(gt=Decimal("0"))
     max_per_coin_exposure_usd: Decimal = Field(gt=Decimal("0"))
     max_orders_per_coin: int = Field(gt=0)
-    emergency_stop: EmergencyStopConfig
+    sell_guard: SellGuardConfig = Field(default_factory=SellGuardConfig)
 
     class Config:
         frozen = True

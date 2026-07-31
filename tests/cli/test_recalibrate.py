@@ -156,10 +156,9 @@ def _write_minimal_settings(path: Path) -> None:
           max_daily_spend_usd: 100.0
           max_per_coin_exposure_usd: 50.0
           max_orders_per_coin: 20
-          emergency_stop:
+          sell_guard:
             enabled: true
             max_loss_percentage: 20.0
-            min_exchange_balance_usd: 0
         live:
           symbols:
             - BTC/USD
@@ -270,10 +269,9 @@ class TestRunCommit:
               max_daily_spend_usd: 100.0
               max_per_coin_exposure_usd: 50.0
               max_orders_per_coin: 20
-              emergency_stop:
+              sell_guard:
                 enabled: true
                 max_loss_percentage: 20.0
-                min_exchange_balance_usd: 0
             """)
         settings.write_text(body, encoding="utf-8")
         cfg = _load_config(settings)

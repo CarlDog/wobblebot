@@ -25,7 +25,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig, SellGuardConfig
 
 
 def grid_config(
@@ -54,8 +54,8 @@ def safety_config(
     max_daily: str = "100000",
     max_per_coin: str = "100000",
     max_orders: int = 100,
-    max_loss_pct: str = "20",
-    min_balance: str = "0",
+    sell_guard_enabled: bool = True,
+    max_loss_pct: str = "1.0",
 ) -> SafetyConfig:
     """Permissive default — individual tests tighten one cap to test it."""
     return SafetyConfig(
@@ -63,9 +63,8 @@ def safety_config(
         max_daily_spend_usd=Decimal(max_daily),
         max_per_coin_exposure_usd=Decimal(max_per_coin),
         max_orders_per_coin=max_orders,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
+        sell_guard=SellGuardConfig(
+            enabled=sell_guard_enabled,
             max_loss_percentage=Decimal(max_loss_pct),
-            min_exchange_balance_usd=Decimal(min_balance),
         ),
     )
