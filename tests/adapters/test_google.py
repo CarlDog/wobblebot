@@ -563,6 +563,24 @@ class TestAssistant:
         assert isinstance(result, IntentQuery)
         assert isinstance(result.query, StatusQuery)
 
+    async def test_unpriced_model_wraps_as_assistant_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # Fleet-review #19 finding 7: an unpriced model must surface as
+        # AssistantError, not a raw PricingLookupError escaping past
+        # wrap_provider_errors. The estimate now runs inside
+        # wrap_provider_errors on the assistant path too, so the lookup
+        # miss is translated before it escapes — and the HTTP call never
+        # fires.
+        def handler(_r: httpx.Request) -> httpx.Response:  # pragma: no cover
+            raise AssertionError("HTTP call must not fire when pricing lookup fails")
+
+        adapter = _build_assistant(
+            httpx.MockTransport(handler), storage, model="gemini-nonexistent-unpriced"
+        )
+        with pytest.raises(AssistantError, match="pricing unavailable"):
+            await adapter.parse_intent(_ctx())
+
     async def test_non_operator_prompt_rejected(self) -> None:
         with pytest.raises(AssistantError, match="operator-role"):
             GoogleAssistantAdapter(

@@ -412,7 +412,7 @@ async def wrap_provider_errors(
 async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     *,
     ctx: CloudCallContext,
-    estimated_cost_usd: Decimal,
+    estimate_cost_fn: Callable[[], Decimal],
     call_fn: Callable[[], Awaitable[dict[str, Any]]],
     extract_tokens: Callable[[dict[str, Any]], TokenTuple],
     parse_text_fn: Callable[[dict[str, Any]], str],
@@ -437,8 +437,15 @@ async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many
     Args:
         ctx: Cost-context bundle (storage / tracker / cost+retry
             configs / role / provider / model).
-        estimated_cost_usd: Output of
-            :func:`estimate_cost_ceiling` for the gate check.
+        estimate_cost_fn: Zero-arg callable that calls
+            :func:`estimate_cost_ceiling` for the gate check. Invoked
+            *inside* :func:`wrap_provider_errors` (fleet-review #19
+            finding 7) so an unpriced model's ``PricingLookupError``
+            translates to ``AssistantError`` instead of escaping past
+            every caller's error boundary and crash-looping the
+            daemon — the exact failure this repo already fixed once
+            on the advisor side (see ``adapters/anthropic.py``'s
+            ``estimate_cost_ceiling`` call site).
         call_fn: Zero-arg async returning the provider's response
             envelope (already JSON-decoded). Typically a closure that
             calls the provider's ``post_*`` helper.
@@ -459,6 +466,7 @@ async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many
             parse failure, or schema validation failure.
     """
     async with wrap_provider_errors(provider_name, AssistantError):
+        estimated_cost_usd = estimate_cost_fn()
         envelope = await execute_cloud_call(
             ctx=ctx,
             estimated_cost_usd=estimated_cost_usd,
