@@ -33,6 +33,7 @@ import httpx
 import pytest
 
 from wobblebot.adapters.kraken_exchange import (
+    _TRADES_HISTORY_MAX_PAGES,
     KrakenAdapter,
     _quantize_decimal,
 )
@@ -52,6 +53,7 @@ _CANNED_ASSETS_RESPONSE: dict[str, Any] = {
     "result": {
         "XXBT": {"altname": "XBT", "decimals": 10, "display_decimals": 5, "status": "enabled"},
         "ZUSD": {"altname": "USD", "decimals": 4, "display_decimals": 2, "status": "enabled"},
+        "XETH": {"altname": "ETH", "decimals": 10, "display_decimals": 5, "status": "enabled"},
     },
 }
 
@@ -66,6 +68,17 @@ _CANNED_ASSETPAIRS_RESPONSE: dict[str, Any] = {
             "pair_decimals": 1,
             "lot_decimals": 8,
             "ordermin": "0.0001",
+            "costmin": "0.5",
+            "status": "online",
+        },
+        "XETHZUSD": {
+            "altname": "ETHUSD",
+            "wsname": "ETH/USD",
+            "base": "XETH",
+            "quote": "ZUSD",
+            "pair_decimals": 2,
+            "lot_decimals": 8,
+            "ordermin": "0.001",
             "costmin": "0.5",
             "status": "online",
         },
@@ -689,6 +702,100 @@ class TestGetTradeHistory:
         adapter = _make_adapter(handler)
         eth_trades = await adapter.get_trade_history(symbol=Symbol(base="ETH", quote="USD"))
         assert eth_trades == []
+
+    async def test_paginates_when_target_symbol_falls_off_first_page(self) -> None:
+        # Fleet-review #19 finding 8: a busy multi-symbol account can push a
+        # target symbol's trades past Kraken's 50-per-page TradesHistory
+        # window. Page 0 is all ETH (not what we want); the BTC trade only
+        # shows up on page 1 (ofs=1). Fetching page 0 alone must not
+        # silently return an empty/short result — it has to walk ofs.
+        def handler(request: httpx.Request) -> httpx.Response:
+            ofs = int(_post_body(request).get("ofs", "0"))
+            if ofs == 0:
+                return httpx.Response(
+                    200,
+                    json={
+                        "error": [],
+                        "result": {
+                            "trades": {
+                                "TETH": {
+                                    "ordertxid": "OGE",
+                                    "pair": "XETHZUSD",
+                                    "time": 2000.0,
+                                    "type": "buy",
+                                    "price": "3000",
+                                    "cost": "3",
+                                    "fee": "0.01",
+                                    "vol": "0.001",
+                                },
+                            },
+                            "count": 2,
+                        },
+                    },
+                )
+            assert ofs == 1
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "trades": {
+                            "TBTC": {
+                                "ordertxid": "OGB",
+                                "pair": "XXBTZUSD",
+                                "time": 1000.0,
+                                "type": "buy",
+                                "price": "50000",
+                                "cost": "50",
+                                "fee": "0.13",
+                                "vol": "0.001",
+                            },
+                        },
+                        "count": 2,
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        btc_trades = await adapter.get_trade_history(symbol=Symbol(base="BTC", quote="USD"))
+        assert [t.id for t in btc_trades] == ["TBTC"]
+
+    async def test_pagination_stops_at_max_pages_safety_bound(self) -> None:
+        # Kraken's own `count` never catches up to `offset` (a pathological
+        # or misreported account) — the page cap must still bound the
+        # number of private requests rather than looping forever.
+        call_count = [0]
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "trades": {
+                            f"T{call_count[0]}": {
+                                "ordertxid": "OG",
+                                "pair": "XETHZUSD",
+                                "time": float(call_count[0]),
+                                "type": "buy",
+                                "price": "3000",
+                                "cost": "3",
+                                "fee": "0.01",
+                                "vol": "0.001",
+                            },
+                        },
+                        "count": 999999,
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        btc_trades = await adapter.get_trade_history(
+            symbol=Symbol(base="BTC", quote="USD"), limit=200
+        )
+        assert btc_trades == []
+        assert call_count[0] == _TRADES_HISTORY_MAX_PAGES
 
 
 # ---------------------------------------------------------------------------

@@ -65,6 +65,16 @@ from wobblebot.ports.exchange import ExchangePort
 
 _API_VERSION = "0"
 
+# TradesHistory returns ~50 trades per page, account-wide (no pair filter).
+# A busy multi-symbol account can push a target symbol's trades past the
+# first page, so get_trade_history paginates via `ofs` — bounded by this
+# page cap so a thin symbol amid heavy volume on other pairs can't turn
+# one fill-detection call into an unbounded run of private requests (the
+# 2026-06-02 per-symbol OpenOrders rate-limit storm is the cautionary
+# precedent). 20 pages (~1000 raw trades) comfortably covers the current
+# grid_engine.py caller's limit=200 across the account's traded symbols.
+_TRADES_HISTORY_MAX_PAGES = 20
+
 # Colloquial-naming aliases between our domain vocabulary and Kraken's
 # altname vocabulary. These are conventions we *choose* — Kraken's data
 # doesn't tell us "BTC means the same thing as XBT". Anything not listed
@@ -368,23 +378,42 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
     ) -> list[Trade]:
         """Fetch recent trades from Kraken; client-side filter by symbol.
 
-        Kraken's ``TradesHistory`` returns up to 50 entries per page by
-        default. We pass no time filter — the most recent ``limit``
-        trades after symbol filtering are returned. Larger ``limit``
-        callers should paginate; Stage 2.2's engine asks for at most
-        200 trades after detecting a small fill batch, so a single page
-        suffices in normal operation.
+        Kraken's ``TradesHistory`` returns up to 50 entries per page,
+        account-wide (no pair filter) and no time filter, newest first.
+        Fleet-review #19 finding 8: fetching only page 0 silently capped
+        every caller at the 50 most recent ACCOUNT-WIDE trades — on a
+        busy multi-symbol day a target symbol's trades can fall entirely
+        off that single page, leaving permanent, unrecoverable gaps in
+        the trades table (PnL, cycle-matching, and fee records). This
+        now walks ``ofs`` pages until either ``limit`` symbol-matching
+        trades are collected, Kraken's own ``count`` says history is
+        exhausted, or ``_TRADES_HISTORY_MAX_PAGES`` is hit (the safety
+        bound documented at that constant).
         """
         await self._ensure_pair_metadata()
-        result = await self._private_post("/0/private/TradesHistory")
-        trades_map = result.get("trades", {})
-        if not isinstance(trades_map, dict):
-            raise ExchangeError("Kraken TradesHistory response missing 'trades' object")
         trades: list[Trade] = []
-        for txid, entry in trades_map.items():
-            trade = self._build_trade_from_kraken(txid, entry)
-            if symbol is None or trade.symbol == symbol:
-                trades.append(trade)
+        offset = 0
+        total_count: int | None = None
+        for _ in range(_TRADES_HISTORY_MAX_PAGES):
+            result = await self._private_post("/0/private/TradesHistory", {"ofs": offset})
+            trades_map = result.get("trades", {})
+            if not isinstance(trades_map, dict):
+                raise ExchangeError("Kraken TradesHistory response missing 'trades' object")
+            if not trades_map:
+                break
+            for txid, entry in trades_map.items():
+                trade = self._build_trade_from_kraken(txid, entry)
+                if symbol is None or trade.symbol == symbol:
+                    trades.append(trade)
+            offset += len(trades_map)
+            if total_count is None:
+                raw_count = result.get("count")
+                if isinstance(raw_count, (int, float)):
+                    total_count = int(raw_count)
+            if total_count is not None and offset >= total_count:
+                break
+            if len(trades) >= limit:
+                break
         # Most-recent first to match the ExchangePort convention.
         trades.sort(key=lambda t: t.executed_at.dt, reverse=True)
         return trades[:limit]
