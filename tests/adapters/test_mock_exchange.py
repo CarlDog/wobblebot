@@ -249,6 +249,51 @@ class TestOrderManagement:
             await exch.set_dead_mans_switch(-5)
 
 
+class TestInjectPartialCancel:
+    """ADR-023 test control: state the mock's normal full-fill-on-cross
+    matching can't produce (a canceled order carrying a nonzero
+    filled_amount)."""
+
+    async def test_partial_fill_removes_from_open_and_records_trade(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000"))  # doesn't cross, stays open
+
+        trade = exch.inject_partial_cancel(order, filled_amount=Decimal("0.04"))
+
+        assert trade is not None
+        assert trade.amount.value == Decimal("0.04")
+        assert trade.order_id == order.exchange_id
+        assert await exch.get_open_orders() == []
+
+    async def test_get_order_status_reports_canceled_with_fill(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000", amount="0.1"))
+        exch.inject_partial_cancel(order, filled_amount=Decimal("0.04"))
+
+        refreshed = await exch.get_order_status(order)
+
+        assert refreshed.status == "canceled"
+        assert refreshed.filled_amount == Decimal("0.04")
+
+    async def test_zero_fill_is_a_clean_cancel_no_trade(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000"))
+
+        trade = exch.inject_partial_cancel(order, filled_amount=Decimal("0"))
+
+        assert trade is None
+        refreshed = await exch.get_order_status(order)
+        assert refreshed.status == "canceled"
+        assert refreshed.filled_amount == Decimal("0")
+        assert await exch.get_trade_history() == []
+
+    async def test_no_exchange_id_raises(self) -> None:
+        exch = MockExchangeAdapter()
+        unsubmitted = _buy_order()
+        with pytest.raises(ExchangeError, match="no exchange_id"):
+            exch.inject_partial_cancel(unsubmitted, filled_amount=Decimal("0.01"))
+
+
 class TestWithdraw:
     async def test_withdraw_decrements_balance(self) -> None:
         exch = MockExchangeAdapter(starting_balances={"USD": Decimal("1000")})

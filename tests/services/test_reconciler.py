@@ -18,9 +18,9 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
-from wobblebot.ports.exceptions import ExchangeError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.services.reconciler import (
     ReconciliationPlan,
     ReconciliationReport,
@@ -165,11 +165,27 @@ async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
 
 
 class _FakeAdapter:
-    """Minimal adapter shape for apply_reconciliation."""
+    """Minimal adapter shape for apply_reconciliation.
 
-    def __init__(self, *, open_orders: list[Order], fail: bool = False) -> None:
+    ``terminal_orders`` maps ``exchange_id`` -> the order
+    ``get_order_status`` should return (ADR-023). Absent from the map
+    defaults to a genuine clean cancel (``filled_amount=0``) so
+    existing storage-only tests need no changes. ``trades`` feeds
+    ``get_trade_history`` for the recovered-fill path.
+    """
+
+    def __init__(
+        self,
+        *,
+        open_orders: list[Order],
+        fail: bool = False,
+        terminal_orders: dict[str, Order] | None = None,
+        trades: list[Trade] | None = None,
+    ) -> None:
         self._open = open_orders
         self._fail = fail
+        self._terminal_orders = terminal_orders or {}
+        self._trades = trades or []
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
         if self._fail:
@@ -179,6 +195,18 @@ class _FakeAdapter:
         return [
             o for o in self._open if o.symbol.base == symbol.base and o.symbol.quote == symbol.quote
         ]
+
+    async def get_order_status(self, order: Order) -> Order:
+        if order.exchange_id and order.exchange_id in self._terminal_orders:
+            return self._terminal_orders[order.exchange_id]
+        return order.model_copy(update={"status": "canceled", "filled_amount": Decimal("0")})
+
+    async def get_trade_history(
+        self, symbol: Symbol | None = None, limit: int = 100
+    ) -> list[Trade]:
+        if symbol is None:
+            return list(self._trades)
+        return [t for t in self._trades if t.symbol == symbol][:limit]
 
 
 @pytest.mark.asyncio
@@ -269,3 +297,120 @@ class TestApplyReconciliation:
         # business, not the engine's.
         assert report.orphan_count == 0
         assert report.orphan_summaries == ()
+
+
+# --------------------------------------------------------------------- #
+# ADR-023: recovered fills on storage-only orders                       #
+# --------------------------------------------------------------------- #
+
+
+def _trade_for(order: Order, *, filled_amount: str) -> Trade:
+    return Trade(
+        id=f"T-{order.exchange_id}",
+        order_id=order.exchange_id or "",
+        symbol=order.symbol,
+        side=order.side,
+        price=order.price,
+        amount=Amount(value=Decimal(filled_amount), asset=order.symbol.base),
+        fee=Decimal("0"),
+        cost=order.price.amount * Decimal(filled_amount),
+        executed_at=Timestamp(dt=datetime.now(UTC)),
+    )
+
+
+@pytest.mark.asyncio
+class TestApplyReconciliationRecoveredFills:
+    async def test_full_fill_recovered_not_marked_canceled(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The 2026-05-19 orphan class: a BUY fully filled while the
+        daemon was down. Old behavior would mark it canceled and drop
+        the trade; ADR-023 recovers it instead."""
+        stale = _order(exchange_id="FILLED-1")
+        await storage.save_order(stale)
+        closed = stale.model_copy(update={"status": "closed", "filled_amount": stale.amount.value})
+        trade = _trade_for(closed, filled_amount=str(stale.amount.value))
+        adapter = _FakeAdapter(open_orders=[], terminal_orders={"FILLED-1": closed}, trades=[trade])
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.storage_canceled_count == 0
+        assert report.recovered_fill_count == 1
+        assert report.needs_counter_order_ids == (stale.id,)
+        roundtripped = await storage.get_order(stale.id)
+        assert roundtripped is not None
+        assert roundtripped.status == "closed"
+        assert roundtripped.filled_amount == stale.amount.value
+        trades = await storage.get_trades(symbol=stale.symbol)
+        assert len(trades) == 1
+
+    async def test_partial_cancel_recovered_f1_case(self, storage: SQLiteStorageAdapter) -> None:
+        """F1: an order that partially filled before a cancel/expiry.
+        Kraken reports status=canceled WITH filled_amount > 0 -- the
+        state the old code silently dropped."""
+        stale = _order(exchange_id="PARTIAL-1")
+        await storage.save_order(stale)
+        partial_qty = stale.amount.value / 2
+        canceled_with_fill = stale.model_copy(
+            update={"status": "canceled", "filled_amount": partial_qty}
+        )
+        trade = _trade_for(canceled_with_fill, filled_amount=str(partial_qty))
+        adapter = _FakeAdapter(
+            open_orders=[],
+            terminal_orders={"PARTIAL-1": canceled_with_fill},
+            trades=[trade],
+        )
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.recovered_fill_count == 1
+        assert report.storage_canceled_count == 0
+        assert report.needs_counter_order_ids == (stale.id,)
+        roundtripped = await storage.get_order(stale.id)
+        assert roundtripped is not None
+        assert roundtripped.status == "canceled"
+        assert roundtripped.filled_amount == partial_qty
+        trades = await storage.get_trades(symbol=stale.symbol)
+        assert len(trades) == 1
+        assert trades[0].amount.value == partial_qty
+
+    async def test_clean_cancel_still_marked_canceled_no_counter(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        stale = _order(exchange_id="CLEAN-1")
+        await storage.save_order(stale)
+        adapter = _FakeAdapter(open_orders=[])  # default: filled_amount=0
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.storage_canceled_count == 1
+        assert report.recovered_fill_count == 0
+        assert report.needs_counter_order_ids == ()
+
+    async def test_storage_persistence_failure_on_recovered_fill_is_counted(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A storage failure while persisting a recovered fill must be
+        logged + counted, not silently swallowed or raised -- one bad
+        row doesn't block boot."""
+        stale = _order(exchange_id="FAIL-SAVE-1")
+        await storage.save_order(stale)
+        closed = stale.model_copy(update={"status": "closed", "filled_amount": stale.amount.value})
+        trade = _trade_for(closed, filled_amount=str(stale.amount.value))
+        adapter = _FakeAdapter(
+            open_orders=[], terminal_orders={"FAIL-SAVE-1": closed}, trades=[trade]
+        )
+
+        class _FailingSaveStorage(SQLiteStorageAdapter):
+            async def save_order(self, order: Order) -> None:  # type: ignore[override]
+                raise StorageError("simulated save failure")
+
+        failing_storage = _FailingSaveStorage(":memory:")
+        # Reuse the same underlying connection so get_open_orders still
+        # sees the row `storage` just saved.
+        failing_storage._conn = storage._conn  # type: ignore[attr-defined] # pylint: disable=protected-access
+
+        report = await apply_reconciliation(adapter, failing_storage)
+
+        assert report.storage_persistence_failures == 1
+        assert report.recovered_fill_count == 0

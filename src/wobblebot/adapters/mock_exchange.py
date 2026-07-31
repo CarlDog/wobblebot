@@ -73,6 +73,10 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         self._trade_history: list[Trade] = []
         self._order_counter = 0
         self._trade_counter = 0
+        # ADR-023 test control: exchange_id -> the order get_order_status
+        # should return, overriding the normal open/trade-history lookup.
+        # Populated only by inject_partial_cancel.
+        self._terminal_overrides: dict[str, Order] = {}
         # ADR-021: the mock has no server-side timer and holds no real
         # resting orders, so set_dead_mans_switch is a no-op — but we
         # record the last value so engine-loop tests can assert the loop
@@ -96,6 +100,48 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         for symbol, price in ticks:
             fills.extend(self.set_price(symbol, price))
         return fills
+
+    def inject_partial_cancel(self, order: Order, *, filled_amount: Decimal) -> Trade | None:
+        """Test control: simulate a partial fill followed by a
+        cancel/expiry (ADR-023's "F1" case) — state the mock's normal
+        full-fill-on-price-cross matching can't produce (it only fills
+        completely or not at all).
+
+        Removes ``order`` from the open set if resting there, records a
+        matching partial ``Trade`` when ``filled_amount > 0``, and makes
+        the next ``get_order_status(order)`` call return
+        ``status="canceled"`` with ``filled_amount`` set — mirroring
+        what Kraken's QueryOrders reports for a real
+        partial-fill-then-cancel (see
+        ``kraken_exchange._apply_kraken_order_update``). ``filled_amount
+        == 0`` (a genuine clean cancel) records no trade and returns
+        ``None``.
+
+        Returns the injected ``Trade``, or ``None`` for a clean cancel.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot inject a partial cancel for an order with no exchange_id")
+        self._open_orders.pop(order.exchange_id, None)
+        self._terminal_overrides[order.exchange_id] = order.model_copy(
+            update={"status": "canceled", "filled_amount": filled_amount}
+        )
+        if filled_amount <= 0:
+            return None
+        self._trade_counter += 1
+        cost = order.price.amount * filled_amount
+        trade = Trade(
+            id=f"MOCK-TRD-{self._trade_counter:06d}",
+            order_id=order.exchange_id,
+            symbol=order.symbol,
+            side=order.side,
+            price=order.price,
+            amount=Amount(value=filled_amount, asset=order.symbol.base),
+            fee=cost * self._fee_rate,
+            cost=cost,
+            executed_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        self._trade_history.append(trade)
+        return trade
 
     # ----------------------------------------------------------------- ExchangePort
 
@@ -182,6 +228,8 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
     async def get_order_status(self, order: Order) -> Order:
         if not order.exchange_id:
             raise ExchangeError("Cannot get status for an order with no exchange_id")
+        if order.exchange_id in self._terminal_overrides:
+            return self._terminal_overrides[order.exchange_id]
         if order.exchange_id in self._open_orders:
             return self._open_orders[order.exchange_id]
         # Order is no longer open - look it up in our trade history.

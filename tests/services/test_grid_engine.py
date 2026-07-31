@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -16,7 +17,8 @@ from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import CoinGridConfig
-from wobblebot.domain.models import Trade
+from wobblebot.domain.grid import GridState
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services.grid_engine import GridEngine
@@ -1002,3 +1004,199 @@ class TestCancelOpenOrders:
         engine = GridEngine(exch, storage, _grid_config(), _safety_config())
         with pytest.raises(ExchangeError):
             await engine.cancel_open_orders(symbol=BTC_USD)
+
+
+# ---------------------------------------------------------------------------
+# ADR-023: unified terminal-order resolution (F1 + reconciler recovery)
+# ---------------------------------------------------------------------------
+
+
+class TestF1PartialFillRecovery:
+    async def test_partial_fill_before_cancel_recovers_trade_and_sized_counter(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The F1 case: an order partially fills, then refreshes to
+        canceled/expired instead of closed. The old status=="closed"-only
+        check silently dropped this; the shared resolver now recovers it."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # init: BUYs at 48500/49000/49500
+
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        target_buy = next(
+            o for o in opens if o.side is OrderSide.BUY and o.price.amount == Decimal("49500")
+        )
+        partial_qty = target_buy.amount.value / 2
+        exchange.inject_partial_cancel(target_buy, filled_amount=partial_qty)
+        # Keep price below the counter's target (50000) so the mock's
+        # own price-cross matching doesn't immediately re-fill the
+        # counter the instant it's placed.
+        exchange.set_price(BTC_USD, Decimal("49500"))
+
+        result = await engine.step(BTC_USD)
+
+        assert result.fills == 1
+        assert result.counters_placed == 1
+        assert len(result.trade_ids) == 1
+
+        trades = await storage.get_trades(symbol=BTC_USD)
+        assert len(trades) == 1
+        assert trades[0].amount.value == partial_qty
+
+        stale_order = await storage.get_order(target_buy.id)
+        assert stale_order is not None
+        assert stale_order.status == "canceled"
+        assert stale_order.filled_amount == partial_qty
+
+        # Counter is a SELL one spacing above the fill price, sized to
+        # the PARTIAL amount -- not the order's full nominal size.
+        opens_after = await storage.get_open_orders(symbol=BTC_USD)
+        counter = next(o for o in opens_after if o.price.amount == Decimal("50000"))
+        assert counter.side is OrderSide.SELL
+        assert counter.amount.value == partial_qty
+
+    async def test_clean_cancel_no_fill_no_counter(self, storage: SQLiteStorageAdapter) -> None:
+        """A genuine clean cancel (filled_amount stays 0) must not be
+        treated as a fill -- no trade, no counter."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        target_buy = next(o for o in opens if o.side is OrderSide.BUY)
+        exchange.inject_partial_cancel(target_buy, filled_amount=Decimal("0"))
+
+        result = await engine.step(BTC_USD)
+
+        assert result.fills == 0
+        assert result.counters_placed == 0
+        assert result.trade_ids == []
+        stale_order = await storage.get_order(target_buy.id)
+        assert stale_order is not None
+        assert stale_order.status == "canceled"
+        assert stale_order.filled_amount == Decimal("0")
+
+
+class TestPendingCounters:
+    def _recovered_order(self, *, side: OrderSide = OrderSide.BUY, price: str = "49500") -> Order:
+        return Order(
+            id=uuid4(),
+            exchange_id=f"RECOVERED-{price}",
+            symbol=BTC_USD,
+            side=side,
+            price=Price(amount=Decimal(price), currency="USD"),
+            amount=Amount(value=Decimal("1"), asset="BTC"),
+            status="closed",
+            filled_amount=Decimal("1"),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+
+    async def _seed_grid_state(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_grid_state(
+            GridState(
+                symbol=BTC_USD,
+                reference_price=Decimal("50000"),
+                spacing_percentage=Decimal("1.0"),
+                levels_above=3,
+                levels_below=3,
+                created_at=Timestamp(dt=datetime.now(UTC)),
+            )
+        )
+
+    async def test_recovered_fill_places_counter_on_first_tick(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        recovered = self._recovered_order()
+        await storage.save_order(recovered)
+        await self._seed_grid_state(storage)
+        # Price below the counter's target (50000) so the mock's own
+        # price-cross matching doesn't immediately re-fill it on placement.
+        engine = GridEngine(
+            _exchange(price="49500"),
+            storage,
+            _grid_config(),
+            _safety_config(),
+            pending_counters=[recovered.id],
+        )
+
+        result = await engine.step(BTC_USD)
+
+        assert result.placed == 1
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        sells = [o for o in opens if o.side is OrderSide.SELL]
+        assert any(o.price.amount == Decimal("50000") for o in sells)
+
+    async def test_different_symbol_pending_counter_untouched(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        eth_usd = Symbol(base="ETH", quote="USD")
+        recovered = self._recovered_order()  # BTC/USD
+        await storage.save_order(recovered)
+        await self._seed_grid_state(storage)
+        await storage.save_grid_state(
+            GridState(
+                symbol=eth_usd,
+                reference_price=Decimal("3000"),
+                spacing_percentage=Decimal("1.0"),
+                levels_above=3,
+                levels_below=3,
+                created_at=Timestamp(dt=datetime.now(UTC)),
+            )
+        )
+        exchange = MockExchangeAdapter(
+            starting_balances={
+                "USD": Decimal("100000"),
+                "BTC": Decimal("10"),
+                "ETH": Decimal("10"),
+            },
+            # BTC below the pending counter's target (50000) so it
+            # doesn't immediately self-fill on placement.
+            starting_prices={BTC_USD: Decimal("49500"), eth_usd: Decimal("3000")},
+        )
+        engine = GridEngine(
+            exchange,
+            storage,
+            _grid_config(),
+            _safety_config(),
+            pending_counters=[recovered.id],
+        )
+
+        # Step the OTHER symbol first -- must not touch the BTC pending counter.
+        await engine.step(eth_usd)
+        opens_btc = await storage.get_open_orders(symbol=BTC_USD)
+        assert opens_btc == []
+
+        # Now step BTC -- the pending counter places.
+        result = await engine.step(BTC_USD)
+        assert result.placed == 1
+
+    async def test_failed_pending_counter_retries_not_discarded(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Decision 4: a refused placement stays queued and retries next
+        tick -- discarding it would let the auto-re-layout guard
+        re-place a full grid with no counter, reproducing the orphan."""
+        recovered = self._recovered_order()
+        await storage.save_order(recovered)
+        await self._seed_grid_state(storage)
+        # Total exposure cap below the configured per-order size (10) so
+        # the counter placement is refused regardless of open-order count.
+        tight_safety = _safety_config(max_total="1")
+        engine = GridEngine(
+            _exchange(), storage, _grid_config(), tight_safety, pending_counters=[recovered.id]
+        )
+
+        first = await engine.step(BTC_USD)
+        assert first.placed == 0
+        # The tight cap also blocks the auto-re-layout guard's fallback
+        # placement (same safety-check codepath) -- both are refused,
+        # but the load-bearing assertion is the pending set itself.
+        assert first.refusals >= 1
+        assert recovered.id in engine._pending_counter_ids  # pylint: disable=protected-access
+
+        # Same tight cap, second tick: still refused, proving the pending
+        # counter survived the first failure instead of being dropped.
+        second = await engine.step(BTC_USD)
+        assert second.placed == 0
+        assert second.refusals >= 1
+        assert recovered.id in engine._pending_counter_ids  # pylint: disable=protected-access

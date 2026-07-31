@@ -26,9 +26,14 @@ calls for the same symbol serialize, while different symbols can
 proceed in parallel (per ADR-006 decision 5).
 
 Reconciliation against orders that exist on the exchange but not in
-storage (manual operator intervention, prior crash mid-placement) is
-deferred to a later slice along with the periodic-N-tick cadence
-described in ADR-006 decision 3.
+storage happens once at daemon startup (``services/reconciler.py``,
+ADR-018). A storage-only order recovered with a real fill (ADR-023 —
+the order left the open set while the daemon was down, either fully or
+partially filled before a cancel/expiry) is queued as a
+``pending_counters`` UUID at construction time; this engine places the
+matching counter-order on the first tick for that symbol, retrying on
+a later tick if placement is refused (never discarded — see
+:meth:`_place_pending_counters`).
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, CoinGridConfig, GridConfig
 from wobblebot.config.safety import SafetyConfig
@@ -56,6 +62,7 @@ from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Tim
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cost_basis import SellGuard
+from wobblebot.services.reconciler import _resolve_terminal_order
 
 _PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
 
@@ -134,12 +141,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
     is rebuilt fresh on each instance.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         exchange: ExchangePort,
         storage: StoragePort,
         grid_config: GridConfig,
         safety_config: SafetyConfig,
+        pending_counters: list[UUID] | None = None,
     ) -> None:
         self._exchange = exchange
         self._storage = storage
@@ -155,6 +163,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             max_loss_percentage=safety_config.sell_guard.max_loss_percentage,
             maker_fee_rate=KRAKEN_MAKER_FEE_RATE,
         )
+        # ADR-023: order UUIDs the startup reconciler recovered a real
+        # fill for (ReconciliationReport.needs_counter_order_ids). Each
+        # needs a counter-order placed; a failed placement stays here
+        # and retries next tick rather than being discarded (decision 4).
+        self._pending_counter_ids: set[UUID] = set(pending_counters or [])
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
         # pause is per-session — a cli/live restart resets it. Keeping it
@@ -420,6 +433,19 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         sells_deferred = 0
         if not offside:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
+
+            # ADR-023: place any counters the startup reconciler queued
+            # for this symbol before anything else this tick, so the
+            # auto-re-layout guard below sees them as already-open and
+            # doesn't spuriously re-place the full grid on top.
+            if self._pending_counter_ids:
+                pc_placed, pc_refusals, pc_deferred = await self._place_pending_counters(
+                    symbol, spacing, coin_cfg
+                )
+                placed += pc_placed
+                refusals += pc_refusals
+                sells_deferred += pc_deferred
+
             for filled in fills:
                 target = next_counter_action(filled.side, filled.price.amount, spacing)
                 # Per ADR-006 decision 2 the counter is sized to the filled
@@ -524,6 +550,46 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             trade_ids=trade_ids,
         )
 
+    async def _place_pending_counters(
+        self, symbol: Symbol, spacing: Decimal, coin_cfg: CoinGridConfig
+    ) -> tuple[int, int, int]:
+        """Place counter-orders queued by startup reconciliation (ADR-023).
+
+        Each pending UUID names a storage order the reconciler recovered
+        a real fill for (fully or partially, before a cancel/expiry) while
+        this daemon was down. Orders for a *different* symbol are left
+        untouched — they'll place on that symbol's own tick. A placement
+        that's refused or sell-guard-deferred stays in the pending set and
+        retries next tick (decision 4: discarding it would let the
+        auto-re-layout guard re-place a full grid with no counter,
+        reproducing the very orphan this recovers).
+
+        Returns ``(placed, refusals, sells_deferred)``.
+        """
+        placed = refusals = sells_deferred = 0
+        for order_id in list(self._pending_counter_ids):
+            order = await self._storage.get_order(order_id)
+            if order is None:
+                _LOGGER.error(
+                    "pending recovery counter references a missing storage order; dropping",
+                    extra={"order_id": str(order_id)},
+                )
+                self._pending_counter_ids.discard(order_id)
+                continue
+            if order.symbol != symbol:
+                continue
+            target = next_counter_action(order.side, order.price.amount, spacing)
+            counter_amount = Amount(value=order.filled_amount, asset=order.amount.asset)
+            outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+            if outcome == "placed":
+                placed += 1
+                self._pending_counter_ids.discard(order_id)
+            elif outcome == "sell_deferred":
+                sells_deferred += 1
+            else:
+                refusals += 1
+        return placed, refusals, sells_deferred
+
     # ------------------------------------------------------------------ helpers
 
     async def _fill_candidates(
@@ -591,6 +657,15 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         ``symbol`` instead of issuing a per-symbol ``TradesHistory`` call.
         ``None`` falls back to a per-symbol fetch (single-symbol callers /
         shadow / tests / a failed shared fetch this tick).
+
+        Each candidate is resolved via the shared
+        ``services.reconciler._resolve_terminal_order`` (ADR-023): an
+        order with ``filled_amount > 0`` is treated as filled whether it
+        refreshed to ``closed`` (full fill) or ``canceled``/``expired``
+        (a partial fill before the cancel/expiry, the "F1" case a plain
+        ``status == "closed"`` check used to silently drop). A clean
+        cancel/expire (``filled_amount == 0``) is saved with its real
+        status but produces no trade and no counter.
         """
         candidates = await self._fill_candidates(symbol, exchange_open_orders)
         if not candidates:
@@ -609,14 +684,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         filled: list[Order] = []
         saved_trade_ids: list[str] = []
         for candidate in candidates:
-            refreshed = await self._exchange.get_order_status(candidate)
-            await self._storage.save_order(refreshed)
-            if refreshed.status == "closed" and refreshed.exchange_id is not None:
-                filled.append(refreshed)
-                for trade in trades_by_order.get(refreshed.exchange_id, []):
+            resolution = await _resolve_terminal_order(self._exchange, candidate, trades_by_order)
+            await self._storage.save_order(resolution.order)
+            if resolution.needs_counter:
+                filled.append(resolution.order)
+                for trade in resolution.trades:
                     await self._storage.save_trade(trade)
                     saved_trade_ids.append(trade.id)
-                if trades_by_order.get(refreshed.exchange_id):
+                if resolution.trades:
                     # ADR-032: a newly-saved trade changes this symbol's
                     # cost basis, so the sell guard must not reuse a
                     # cache computed before it.
@@ -625,10 +700,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "grid fill",
                     extra={
                         "symbol": str(symbol),
-                        "side": refreshed.side.value,
-                        "price": str(refreshed.price.amount),
-                        "amount": str(refreshed.amount.value),
-                        "exchange_id": refreshed.exchange_id,
+                        "side": resolution.order.side.value,
+                        "price": str(resolution.order.price.amount),
+                        "amount": str(resolution.order.filled_amount),
+                        "exchange_id": resolution.order.exchange_id,
+                        "terminal_status": resolution.order.status,
                     },
                 )
         return filled, saved_trade_ids
