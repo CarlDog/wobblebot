@@ -259,6 +259,70 @@ class TestProfileOverlayTypoGuard:
         with pytest.raises(ValueError, match="grid.coins.BTC.spacing_percentag"):
             resolve_config(raw, profile_name="btc-tight")
 
+    def test_typo_inside_list_of_submodels_raises(self) -> None:
+        """advisor.experts is list[ExpertConfig] — a typo inside a list
+        ITEM (not the list field name itself) must still be caught, since
+        deep_merge replaces the whole list wholesale (the moe-advisor /
+        cloud-only-moe example profiles use exactly this shape)."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "moe-typo": {
+                    "advisor": {
+                        "experts": [
+                            {
+                                "name": "quant",
+                                "provider": "ollama",
+                                "model": "qwen2.5:3b",
+                                "role": "quant",
+                                "prompt_file": "config/prompts/quant.md",
+                                "inference_params": {"temperture": 0.9},
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+        with pytest.raises(ValueError, match=r"advisor\.experts\[0\]\.inference_params\.temperture"):
+            resolve_config(raw, profile_name="moe-typo")
+
+    def test_valid_list_of_submodels_does_not_raise(self) -> None:
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "moe-ok": {
+                    "advisor": {
+                        "experts": [
+                            {
+                                "name": "quant",
+                                "provider": "ollama",
+                                "model": "qwen2.5:3b",
+                                "role": "quant",
+                                "prompt_file": "config/prompts/quant.md",
+                                "inference_params": {"temperature": 0.9},
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+        merged = resolve_config(raw, profile_name="moe-ok")
+        assert merged["advisor"]["experts"][0]["inference_params"]["temperature"] == 0.9
+
+    def test_rootmodel_backed_section_overlay_does_not_false_positive(self) -> None:
+        """schedules is a RootModel[dict[str, timedelta]] — its own keys
+        (schedule names) are free-form and must not be checked against
+        RootModel's internal 'root' field name, which would false-positive
+        on any legitimate per-profile schedule override."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "fast-news": {"schedules": {"news": "5m"}},
+            },
+        }
+        merged = resolve_config(raw, profile_name="fast-news")
+        assert merged["schedules"]["news"] == "5m"
+
     def test_real_example_profiles_all_pass_the_guard(self) -> None:
         """Every profile shipped in config/settings.example.yml must
         validate cleanly — this is the regression net against the guard

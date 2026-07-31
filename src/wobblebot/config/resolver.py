@@ -33,7 +33,7 @@ from __future__ import annotations
 from types import NoneType, UnionType
 from typing import Any, Union, get_args, get_origin
 
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 
 from wobblebot.config.loader import WobbleBotConfig
 
@@ -61,6 +61,76 @@ def _dict_value_model(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
+def _list_item_model(annotation: Any) -> type[BaseModel] | None:
+    """If ``annotation`` is ``list[SomeModel]``, return ``SomeModel``.
+
+    Used for fields like ``advisor.experts: list[ExpertConfig]`` — a
+    profile overlay replaces the whole list (deep_merge's "lists override
+    entirely"), but each replacement item still validates against
+    ``SomeModel`` so a typo inside a list item isn't invisible to the
+    guard just because it arrived via a list instead of a dict.
+    """
+    if get_origin(annotation) is list:
+        args = get_args(annotation)
+        if len(args) == 1 and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+            return args[0]
+    return None
+
+
+def _root_model_dict_value_model(target: type[BaseModel]) -> type[BaseModel] | None:
+    """For a ``RootModel`` subclass, resolve its wrapped ``dict[str, SubModel]``.
+
+    ``target`` is itself free-form-keyed (e.g. ``SchedulesConfig`` over
+    ``dict[str, timedelta]``) — its only declared field is named
+    ``"root"``, which is never a real schema key, so callers must not
+    check overlay keys against it directly. Returns ``None`` when the
+    wrapped type has no nested model to validate (a scalar-valued root
+    like ``timedelta`` — the whole section is then opaque).
+    """
+    root_field = target.model_fields.get("root")
+    if root_field is None:
+        return None
+    return _dict_value_model(root_field.annotation)
+
+
+def _paths_under_dict_value_model(
+    value: dict[str, Any], value_model: type[BaseModel], path: str
+) -> list[str]:
+    """Recurse into each dict entry's value against ``value_model``.
+
+    The dict's own keys are free-form (a coin symbol, a schedule name, ...)
+    and aren't checked against a schema; only each entry's value is.
+    """
+    bad_paths: list[str] = []
+    for sub_key, sub_value in value.items():
+        if isinstance(sub_value, dict):
+            bad_paths.extend(
+                _unknown_overlay_paths(sub_value, value_model, prefix=f"{path}.{sub_key}")
+            )
+    return bad_paths
+
+
+def _paths_for_dict_value(value: dict[str, Any], target: Any, path: str) -> list[str]:
+    """Resolve an overlay dict ``value`` against its field's ``target`` type.
+
+    ``target`` may be a fixed-field submodel, a ``RootModel``-wrapped
+    free-form section, or a ``dict[str, SubModel]`` mapping — each needs
+    a different walk, factored out here so the main loop in
+    ``_unknown_overlay_paths`` stays flat.
+    """
+    if isinstance(target, type) and issubclass(target, BaseModel):
+        if issubclass(target, RootModel):
+            value_model = _root_model_dict_value_model(target)
+            return (
+                []
+                if value_model is None
+                else _paths_under_dict_value_model(value, value_model, path)
+            )
+        return _unknown_overlay_paths(value, target, prefix=path)
+    value_model = _dict_value_model(target)
+    return [] if value_model is None else _paths_under_dict_value_model(value, value_model, path)
+
+
 def _unknown_overlay_paths(
     overlay: dict[str, Any], model_cls: type[BaseModel], *, prefix: str = ""
 ) -> list[str]:
@@ -74,8 +144,11 @@ def _unknown_overlay_paths(
     the session runs on base-config limits while the operator believes
     the profile is active. This walks the overlay's dotted key paths
     against ``model_cls``'s actual fields (recursing into nested
-    sub-models and ``dict[str, SubModel]`` sections like ``grid.coins``)
-    so a typo surfaces as a loud config error instead of vanishing.
+    sub-models, ``dict[str, SubModel]`` sections like ``grid.coins``,
+    ``list[SubModel]`` sections like ``advisor.experts``, and unwrapping
+    ``RootModel``-backed free-form sections like ``schedules`` so their
+    own keys aren't mistaken for fixed field names) so a typo surfaces
+    as a loud config error instead of vanishing.
     """
     bad_paths: list[str] = []
     for key, value in overlay.items():
@@ -84,19 +157,18 @@ def _unknown_overlay_paths(
         if field is None:
             bad_paths.append(path)
             continue
-        if not isinstance(value, dict):
-            continue
         target = _strip_optional(field.annotation)
-        if isinstance(target, type) and issubclass(target, BaseModel):
-            bad_paths.extend(_unknown_overlay_paths(value, target, prefix=path))
-            continue
-        value_model = _dict_value_model(target)
-        if value_model is not None:
-            for sub_key, sub_value in value.items():
-                if isinstance(sub_value, dict):
-                    bad_paths.extend(
-                        _unknown_overlay_paths(sub_value, value_model, prefix=f"{path}.{sub_key}")
-                    )
+
+        if isinstance(value, list):
+            item_model = _list_item_model(target)
+            if item_model is not None:
+                for idx, item in enumerate(value):
+                    if isinstance(item, dict):
+                        bad_paths.extend(
+                            _unknown_overlay_paths(item, item_model, prefix=f"{path}[{idx}]")
+                        )
+        elif isinstance(value, dict):
+            bad_paths.extend(_paths_for_dict_value(value, target, path))
     return bad_paths
 
 
