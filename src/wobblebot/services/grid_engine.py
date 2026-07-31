@@ -59,6 +59,7 @@ from wobblebot.domain.grid import (
 )
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cost_basis import SellGuard
@@ -784,9 +785,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
         Three non-placed outcomes:
         - ``"refused"`` — an internal safety cap (``_check_safety``
-          returns ok=False) or an exchange-side ``InsufficientBalance``
+          returns ok=False), an exchange-side ``InsufficientBalance``
           (Kraken's ``EOrder:Insufficient funds``, routine on the SELL
-          side before any cycle has produced base inventory).
+          side before any cycle has produced base inventory), or a
+          generic ``ExchangeError`` -- notably Kraken's client-side
+          ``ordermin``/``costmin`` rejection (a fixed ``order_size_usd``
+          ÷ a risen price can slide the computed volume under a pair's
+          fixed-quantity minimum, e.g. DOGE's 50-unit ordermin at low
+          prices). Before this was caught here it propagated out of
+          ``_try_place`` uncaught, aborting every remaining level in
+          the same layout/re-layout loop instead of just the one
+          doomed order.
         - ``"sell_deferred"`` (ADR-032) — the cost-basis sell guard
           deferred a SELL priced enough below the symbol's average cost
           to realize a loss beyond tolerance. Deliberately distinct from
@@ -829,6 +838,21 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "asset": exc.asset,
                     "required": str(exc.required),
                     "available": str(exc.available),
+                },
+            )
+            return "refused"
+        except ExchangeError as exc:
+            # Kraken's client-side ordermin/costmin rejection (and any
+            # other exchange-side refusal) lands here -- must not
+            # propagate, or it aborts every remaining level in the same
+            # layout/re-layout loop instead of skipping just this one.
+            _LOGGER.warning(
+                "order refused by exchange",
+                extra={
+                    "symbol": str(symbol),
+                    "side": level.side.value,
+                    "price": str(level.price),
+                    "error": str(exc),
                 },
             )
             return "refused"

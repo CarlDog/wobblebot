@@ -48,6 +48,22 @@ class _FetchFailExchange(MockExchangeAdapter):
         raise ExchangeError("kraken OpenOrders unavailable")
 
 
+class _OrderminRejectingExchange(MockExchangeAdapter):
+    """MockExchangeAdapter that rejects placement at one specific price,
+    simulating Kraken's client-side ordermin/costmin ExchangeError."""
+
+    def __init__(self, *args: object, reject_price: Decimal, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._reject_price = reject_price
+
+    async def place_order(self, order):  # type: ignore[no-untyped-def]
+        if order.price.amount == self._reject_price:
+            raise ExchangeError(
+                f"Order volume below ordermin for {order.symbol} at {self._reject_price}"
+            )
+        return await super().place_order(order)
+
+
 @pytest_asyncio.fixture
 async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
     adapter = SQLiteStorageAdapter(":memory:")
@@ -1007,8 +1023,35 @@ class TestCancelOpenOrders:
 
 
 # ---------------------------------------------------------------------------
-# ADR-023: unified terminal-order resolution (F1 + reconciler recovery)
+# Ordermin/costmin ExchangeError handling (v1.1 backlog: engine
+# ordermin-awareness)
 # ---------------------------------------------------------------------------
+
+
+class TestExchangeErrorDuringPlacement:
+    async def test_ordermin_rejection_refuses_one_level_not_the_whole_tick(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A generic ExchangeError (Kraken's client-side ordermin/costmin
+        rejection) from one level's placement must not propagate and
+        abort every remaining level in the same layout loop -- it was
+        silently doing exactly that before this was caught."""
+        exchange = _OrderminRejectingExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+            reject_price=Decimal("49500"),  # one of the three BUY levels
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "initialized"
+        assert result.placed == 5  # 6 levels minus the one rejected
+        assert result.refusals == 1
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        prices = {o.price.amount for o in opens}
+        assert Decimal("49500") not in prices
+        assert Decimal("49000") in prices  # sibling levels still placed
 
 
 class TestF1PartialFillRecovery:
