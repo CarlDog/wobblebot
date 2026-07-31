@@ -137,7 +137,7 @@ def _log_result(suggestion: AdvisorSuggestion, result: AutoApplyResult) -> None:
         )
 
 
-async def _run(  # pylint: disable=too-many-return-statements
+async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
     args: argparse.Namespace, config: WobbleBotConfig
 ) -> int:
     if config.advise is None:
