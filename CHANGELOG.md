@@ -3,13 +3,18 @@
 All notable changes to WobbleBot are documented in this file. Format
 is a modified [Keep a Changelog](https://keepachangelog.com/en/1.0.0/);
 versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
-Pre-v1.0.0, v1.0-bound entries land under `[Unreleased]` until the v1.0
-tag exists; per-stage receipts in
-[`docs/planning/roadmap.md`](docs/planning/roadmap.md) carry the
-canonical completion dates. **v1.1 work is being developed on the `v1.1`
-branch in parallel with the v1.0 gating soak** (`main` stays frozen at
-the soak commit until v1.0 is tagged); those entries land under `[v1.1]`
-below — they are NOT part of the v1.0 release.
+Per-stage receipts in [`docs/planning/roadmap.md`](docs/planning/roadmap.md)
+carry the canonical completion dates.
+
+**`v1.0.0` was tagged 2026-07-31** (see the `[1.0.0]` section below and
+`docs/planning/phase-8-summary.md`). **v1.1 development continues on the
+`v1.1` branch**, deliberately not merged into this tag — those entries
+land under `[v1.1]` below until they eventually merge. New direct-to-`main`
+changes (post-tag hotfixes) land under `[Unreleased]`.
+
+## [Unreleased]
+
+Nothing yet.
 
 ## [v1.1] — Unreleased (on the `v1.1` branch; not yet merged to main)
 
@@ -66,7 +71,7 @@ below — they are NOT part of the v1.0 release.
   remain the detail; the roadmap's v1.1-track section points here. (The owed v1.1
   consolidation pass.)
 
-## [Unreleased]
+## [1.0.0] - 2026-07-31
 
 ### LLM pricing re-verification (2026-07-23)
 
@@ -3083,22 +3088,8 @@ Closing summary at [`docs/planning/phase-2-summary.md`](docs/planning/phase-2-su
   distinguishes never-held from held-but-zero.
 - Pydantic mypy plugin enabled in `pyproject.toml` (load-bearing).
 
-## [v1.0.0] — TBD
-
-Per the [roadmap](docs/planning/roadmap.md), v1.0.0 lands at the end
-of Phase 5 with: micro-grid trading engine, Kraken adapter (live),
-multi-asset support, Strategy Advisor (single-LLM and MoE) with
-guarded auto-tuning, Harvester with passive and active withdrawal
-modes, centralized Orchestrator, Data Collector v2, observability
-layer (structured logging, metrics, dashboard), Docker Compose
-deployment, and complete documentation.
-
-### Known limitations planned for v1.0.0
-
-- Restart / reconciliation logic is basic; manual checks required
-  after restarts until Phase 5 introduces robust reconciliation.
-- Advisor JSON schema is draft; future schema versions may be
-  incompatible with earlier ones.
-- Automated bank deposits (bank → Kraken) are not supported in
-  v1.0.0 — only Kraken → bank withdrawals via the Harvester (per
-  ADR-004).
+**[This stale pre-Phase-8 `[v1.0.0] — TBD` placeholder, written when v1.0.0
+was expected to land at the end of the original Phase 5, has been retired
+— see the real `[1.0.0] - 2026-07-31` section above, `docs/planning/phase-8-summary.md`,
+and `docs/release/v1.0-known-limitations.md` for the actual, current release
+content.]**
