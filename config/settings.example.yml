@@ -262,12 +262,14 @@ sandbox:
 #
 # Two source types ship in v1:
 #   - RSS feeds (no auth, any feed URL works)
-#   - CryptoCompare News (free tier; requires CRYPTOCOMPARE_API_KEY)
+#   - CryptoCompare News (disabled by default — CoinDesk Data retired
+#     the free API tier 2026-05-21; requires a paid subscription now)
 #
 # The original ADR-007 plan named CryptoPanic + Whale-alert; both went
-# paid-only after the ADR was written, so v1 pivots to RSS +
-# CryptoCompare. NewsPort stays abstract — operators can plug in paid
-# sources later if they want.
+# paid-only after the ADR was written, so v1 pivoted to RSS +
+# CryptoCompare — which has since ALSO gone paid-only (see below).
+# NewsPort stays abstract — operators can plug in paid sources if
+# they want the extra coverage.
 #
 # Per-source dedup means leaving overlapping feeds enabled is safe;
 # the storage layer keeps one row per (source, external_id) pair.
@@ -303,12 +305,16 @@ news:
       url: "https://blog.kraken.com/feed/"
       enabled: true
 
-  # CryptoCompare News (aggregator; free tier requires API key).
-  # Substantially overlaps with RSS coverage. Keep enabled for 90 days
-  # then evaluate whether the additional source diversity earns its
-  # place vs. simply running more RSS feeds.
+  # CryptoCompare News (aggregator). ADR-010's 90-day free-tier
+  # evaluation (due 2026-08-13) concluded early: CoinDesk Data (the
+  # CryptoCompare rebrand) retired free API access entirely on
+  # 2026-05-21, so every fetch now fails with a Type 99 "over your
+  # rate limit, upgrade your account" response regardless of poll
+  # cadence. Disabled by default — RSS coverage substantially
+  # overlaps and is unaffected. Set enabled: true (and get a paid
+  # CoinDesk Data plan) if you want this source back.
   cryptocompare:
-    enabled: true
+    enabled: false
     lang: EN
     # categories: "BTC|ETH"            # optional pipe-separated filter
 
