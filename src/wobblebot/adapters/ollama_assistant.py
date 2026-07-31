@@ -451,9 +451,14 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             )
 
         if thinking_mode or content_empty:
+            # thinking, then content — extract_last_json_object takes the
+            # LAST parseable candidate, and reasoning text routinely echoes
+            # draft/example JSON (fleet-review #19 finding 5). Putting
+            # `content` last means the model's actual final answer wins
+            # over anything quoted earlier in its chain-of-thought.
             combined = content
             if thinking_present:
-                combined = (combined + "\n" + raw_thinking_field).strip()
+                combined = (raw_thinking_field + "\n" + combined).strip()
             try:
                 return extract_last_json_object(combined)
             except OllamaJsonExtractError as exc:

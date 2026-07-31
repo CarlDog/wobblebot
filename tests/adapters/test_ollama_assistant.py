@@ -551,6 +551,42 @@ class TestThinkingMode:
             await adapter.aclose()
         assert isinstance(intent, IntentCommand)
 
+    async def test_final_content_wins_over_draft_json_in_thinking(self) -> None:
+        """Fleet-review #19 finding 5: when BOTH fields are populated, the
+        real answer lives in message.content and the chain-of-thought in
+        `thinking` may itself echo a draft/example JSON object.
+        extract_last_json_object takes the LAST candidate, so `content`
+        must be concatenated last or the draft silently wins."""
+        draft_json = json.dumps(
+            {"kind": "command", "command": {"kind": "pause", "symbol": "ETH/USD"}}
+        )
+        final_json = json.dumps(
+            {"kind": "command", "command": {"kind": "pause", "symbol": "BTC/USD"}}
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_chat_envelope(
+                    final_json,
+                    thinking=(
+                        f"Let me sketch a candidate first: {draft_json}\n"
+                        "On reflection, the operator meant BTC; here's my real answer."
+                    ),
+                ),
+            )
+
+        # Thinking-mode name pattern so the combined-extraction branch runs
+        # even though message.content is non-empty.
+        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:14b")
+        try:
+            intent = await adapter.parse_intent(_context())
+        finally:
+            await adapter.aclose()
+        assert isinstance(intent, IntentCommand)
+        assert isinstance(intent.command, PauseCommand)
+        assert intent.command.symbol == Symbol(base="BTC", quote="USD")
+
 
 # --------------------------------------------------------------------- #
 # Error paths                                                           #

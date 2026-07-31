@@ -813,3 +813,53 @@ class TestSplitResponseEnvelope:
         finally:
             await adapter.aclose()
         assert rec.recommendations == {"order_size_usd": 8}
+
+    async def test_final_response_wins_over_draft_json_in_thinking(self) -> None:
+        """Fleet-review #19 finding 5: when BOTH fields are populated, the
+        real answer lives in `response` and the chain-of-thought in
+        `thinking` may itself echo a draft/example JSON object (a common
+        pattern — models reason by sketching a candidate answer first).
+        extract_last_json_object takes the LAST candidate, so `response`
+        must be concatenated last or the draft silently wins."""
+        draft_json = json.dumps(
+            {
+                "role": "quant",
+                "recommendations": {"spacing_percentage": 99.0},
+                "rationale": "draft — not the final answer",
+                "confidence": "low",
+            }
+        )
+        final_json = json.dumps(
+            {
+                "role": "quant",
+                "recommendations": {"spacing_percentage": 1.5},
+                "rationale": "final answer",
+                "confidence": "high",
+            }
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_split_response(
+                    response=final_json,
+                    thinking=(
+                        f"Let me sketch a candidate first: {draft_json}\n"
+                        "On reflection, that spacing is too wide; here's my real answer."
+                    ),
+                ),
+            )
+
+        # Thinking-mode name pattern so the combined-extraction branch runs
+        # even though `response` is non-empty.
+        adapter = OllamaAdapter(
+            model="deepseek-r1:14b",
+            prompt=_make_prompt(),
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            rec = await adapter.get_recommendation(_make_summary())
+        finally:
+            await adapter.aclose()
+        assert rec.recommendations == {"spacing_percentage": 1.5}
+        assert rec.rationale == "final answer"

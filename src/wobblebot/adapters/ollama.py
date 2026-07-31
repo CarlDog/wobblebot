@@ -262,9 +262,14 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         #    `thinking` even when format=json is requested. Treat the
         #    combined text as a thinking-mode response and extract.
         if thinking_mode or response_empty:
+            # thinking, then response — extract_last_json_object takes the
+            # LAST parseable candidate, and reasoning text routinely echoes
+            # draft/example JSON (fleet-review #19 finding 5). Putting
+            # `response` last means the model's actual final answer wins
+            # over anything quoted earlier in its chain-of-thought.
             combined = raw_response
             if thinking_present:
-                joined = (combined + "\n" + raw_thinking).strip()
+                joined = (raw_thinking + "\n" + combined).strip()
                 combined = joined
             try:
                 inner = extract_last_json_object(combined)
