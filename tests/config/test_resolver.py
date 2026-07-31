@@ -283,7 +283,9 @@ class TestProfileOverlayTypoGuard:
                 },
             },
         }
-        with pytest.raises(ValueError, match=r"advisor\.experts\[0\]\.inference_params\.temperture"):
+        with pytest.raises(
+            ValueError, match=r"advisor\.experts\[0\]\.inference_params\.temperture"
+        ):
             resolve_config(raw, profile_name="moe-typo")
 
     def test_valid_list_of_submodels_does_not_raise(self) -> None:
