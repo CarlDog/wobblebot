@@ -809,7 +809,7 @@ async def _handle_unparseable(  # pylint: disable=too-many-arguments
 # --------------------------------------------------------------------- #
 
 
-async def _handle_reaction(
+async def _handle_reaction(  # pylint: disable=too-many-return-statements
     event: ReactionEvent,
     *,
     operator_storage: StoragePort,
@@ -844,6 +844,33 @@ async def _handle_reaction(
         return  # already transitioned (idempotency vs duplicate reaction)
 
     now = Timestamp(dt=datetime.now(UTC))
+
+    # Fleet-review #19 finding 6 (Discord-side follow-up): a reaction can
+    # arrive after ttl_expires_at if it lands between _ttl_expirer_loop
+    # sweeps (the loop's own poll interval is the exposure window here,
+    # narrower than the web route's had been, but not zero). Mirror
+    # _expire_stale_pending_commands's own transition — status only, no
+    # confirming_user_id/confirmed_at, since nothing was actually
+    # confirmed — instead of acting on a decision that arrived too late.
+    if pending.ttl_expires_at.dt <= now.dt:
+        expired = pending.model_copy(update={"status": "expired"})
+        try:
+            await operator_storage.save_pending_command(expired)
+            _LOGGER.info(
+                "pending command expired (reaction arrived after TTL)",
+                extra={
+                    "pending_id": str(pending_id),
+                    "command_kind": pending.command.kind,
+                    "ttl_expires_at": pending.ttl_expires_at.dt.isoformat(),
+                },
+            )
+        except StorageError as exc:
+            _LOGGER.error(
+                "reaction handler: save_pending_command (expiry) failed",
+                extra={"pending_id": str(pending_id), "error": str(exc)},
+            )
+        return
+
     if event.emoji == CONFIRM_EMOJI:
         updated = pending.model_copy(
             update={

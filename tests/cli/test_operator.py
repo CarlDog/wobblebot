@@ -413,7 +413,7 @@ class TestHandleReaction:
             status="awaiting_confirmation",
             channel_id="C-1",
             requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC)),
+            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
             created_at=Timestamp(dt=datetime.now(UTC)),
         )
         await storage.save_pending_command(pending)
@@ -443,7 +443,7 @@ class TestHandleReaction:
             status="awaiting_confirmation",
             channel_id="C-1",
             requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC)),
+            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
             created_at=Timestamp(dt=datetime.now(UTC)),
         )
         await storage.save_pending_command(pending)
@@ -461,6 +461,43 @@ class TestHandleReaction:
         fetched = await storage.get_pending_command(pending_id)
         assert fetched is not None
         assert fetched.status == "rejected"
+
+    async def test_expired_reaction_transitions_to_expired_not_approved(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Fleet-review #19 finding 6, Discord-side follow-up: a reaction
+        arriving after ttl_expires_at (landed between _ttl_expirer_loop
+        sweeps) must not approve/reject — it transitions to `expired`
+        instead, same as the web route's fix."""
+        from wobblebot.ports.operator import PendingCommand
+
+        pending_id = uuid4()
+        pending = PendingCommand(
+            id=pending_id,
+            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
+            status="awaiting_confirmation",
+            channel_id="C-1",
+            requesting_user_id="U-1",
+            ttl_expires_at=Timestamp(dt=datetime.now(UTC) - timedelta(minutes=1)),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await storage.save_pending_command(pending)
+        pending_map: dict[str, UUID] = {"msg-1": pending_id}
+
+        event = ReactionEvent(
+            message_id="msg-1",
+            channel_id="C-1",
+            user_id="U-2",
+            emoji=CONFIRM_EMOJI,
+            action="add",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+        )
+        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
+        fetched = await storage.get_pending_command(pending_id)
+        assert fetched is not None
+        assert fetched.status == "expired"
+        assert fetched.confirming_user_id is None
+        assert fetched.confirmed_at is None
 
     async def test_unknown_message_id_ignored(self, storage: SQLiteStorageAdapter) -> None:
         # Empty map; reaction does not crash
