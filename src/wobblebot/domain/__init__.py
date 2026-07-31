@@ -26,7 +26,7 @@ from wobblebot.domain.grid import (
     next_counter_action,
 )
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
 
 __all__ = [
     # Exceptions
@@ -48,6 +48,7 @@ __all__ = [
     "Price",
     "Amount",
     "OrderSide",
+    "Ticker",
     "Timestamp",
     # Grid
     "GridLevel",

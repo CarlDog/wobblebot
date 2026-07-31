@@ -1200,3 +1200,57 @@ class TestPendingCounters:
         assert second.placed == 0
         assert second.refusals >= 1
         assert recovered.id in engine._pending_counter_ids  # pylint: disable=protected-access
+
+
+# ---------------------------------------------------------------------------
+# ADR-025: pre-placement spread guard
+# ---------------------------------------------------------------------------
+
+
+class TestSpreadGuard:
+    async def test_wide_spread_skips_tick_no_placement(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _exchange()
+        exchange.set_spread(BTC_USD, Decimal("5.0"))  # well past the 1.0% default
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "skipped_wide_spread"
+        assert await storage.get_grid_state(BTC_USD) is None
+        assert await storage.get_open_orders(symbol=BTC_USD) == []
+
+    async def test_narrow_spread_proceeds_normally(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _exchange()
+        exchange.set_spread(BTC_USD, Decimal("0.01"))
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "initialized"
+        assert result.placed == 6
+
+    async def test_disabled_guard_never_gates(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _exchange()
+        exchange.set_spread(BTC_USD, Decimal("50.0"))  # absurdly wide
+        safety = _safety_config()
+        safety = safety.model_copy(update={"max_spread_percentage": None})
+        engine = GridEngine(exchange, storage, _grid_config(), safety)
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "initialized"
+
+    async def test_spread_narrows_after_skip_resumes_normally(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _exchange()
+        exchange.set_spread(BTC_USD, Decimal("5.0"))
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        first = await engine.step(BTC_USD)
+        assert first.action == "skipped_wide_spread"
+
+        exchange.set_spread(BTC_USD, Decimal("0.01"))
+        second = await engine.step(BTC_USD)
+        assert second.action == "initialized"
+        assert second.placed == 6

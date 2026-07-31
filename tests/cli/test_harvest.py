@@ -76,6 +76,9 @@ class _StubExchange(ExchangePort):
     async def get_current_price(self, symbol):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 
+    async def get_ticker(self, symbol):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("not used by harvest")
+
     async def place_order(self, order):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 

@@ -196,6 +196,54 @@ class TestGetCurrentPrice:
 
 
 @pytest.mark.asyncio
+class TestGetTicker:
+    """ADR-025: last/bid/ask from the same /0/public/Ticker response."""
+
+    async def test_btc_usd_happy_path(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["path"] = request.url.path
+            captured["pair"] = request.url.params.get("pair")
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "XXBTZUSD": {
+                            "a": ["79035.20000", "1", "1.000"],
+                            "b": ["79035.10000", "1", "1.000"],
+                            "c": ["79033.80000", "0.00156715"],
+                        }
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            ticker = await adapter.get_ticker(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+        assert captured == {"method": "GET", "path": "/0/public/Ticker", "pair": "XBTUSD"}
+        assert ticker.last == Decimal("79033.80000")
+        assert ticker.bid == Decimal("79035.10000")
+        assert ticker.ask == Decimal("79035.20000")
+
+    async def test_empty_result_raises(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"error": [], "result": {}})
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="no ticker data"):
+                await adapter.get_ticker(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+
+@pytest.mark.asyncio
 class TestGetBalances:
     async def test_happy_path_translates_kraken_codes(self) -> None:
         captured: dict[str, Any] = {}

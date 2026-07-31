@@ -58,6 +58,7 @@ from wobblebot.domain.value_objects import (
     OrderSide,
     Price,
     Symbol,
+    Ticker,
     Timestamp,
 )
 from wobblebot.ports.exceptions import ExchangeError
@@ -233,6 +234,27 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         # "current price" per docs/reference/kraken-api-reference.md.
         last_price_str = ticker["c"][0]
         return Price(amount=Decimal(last_price_str), currency=symbol.quote)
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        """Fetch last/bid/ask via the same ``/0/public/Ticker`` endpoint
+        ``get_current_price`` already calls (ADR-025) -- ``a``/``b``/``c``
+        (ask/bid/close) are all present in one response, so this adds no
+        extra round-trip when called instead of (or alongside)
+        ``get_current_price``.
+        """
+        altname = _symbol_to_kraken_altname(symbol)
+        result = await self._public_get("/0/public/Ticker", {"pair": altname})
+        if not result:
+            raise ExchangeError(f"Kraken returned no ticker data for pair {altname!r}")
+        raw = next(iter(result.values()))
+        # ``a``/``b`` are [price, whole_lot_volume, lot_volume]; a[0]/b[0]
+        # are the best ask/bid per docs/reference/kraken-api-reference.md.
+        return Ticker(
+            symbol=symbol,
+            last=Decimal(raw["c"][0]),
+            bid=Decimal(raw["b"][0]),
+            ask=Decimal(raw["a"][0]),
+        )
 
     async def get_ohlc(
         self,

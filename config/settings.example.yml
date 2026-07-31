@@ -103,6 +103,11 @@ safety:
     enabled: true
     max_loss_percentage: 1.0          # structural floor from fees alone is ~0.52%
 
+  # ADR-025 pre-placement spread guard: skip the whole tick (no order
+  # placement attempted) when the symbol's bid-ask spread exceeds this.
+  # Default never fires on healthy BTC/ETH (~0.01-0.05%); null disables.
+  max_spread_percentage: 1.0
+
 # ============================================================================
 # Scheduled task cadences (Stage 3.3 Slice C.0)
 # ============================================================================

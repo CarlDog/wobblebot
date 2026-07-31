@@ -50,6 +50,9 @@ class _FailingExchange(ExchangePort):
     async def get_current_price(self, symbol: Symbol) -> Price:
         raise ExchangeError(self._message)
 
+    async def get_ticker(self, symbol: Symbol):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def get_balances(self) -> list[Balance]:
         raise ExchangeError(self._message)
 

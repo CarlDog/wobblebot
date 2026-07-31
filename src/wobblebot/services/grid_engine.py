@@ -58,7 +58,7 @@ from wobblebot.domain.grid import (
     next_counter_action,
 )
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cost_basis import SellGuard
@@ -82,7 +82,9 @@ _OFFSIDE_SUMMARY_EVERY_TICKS = 240
 _SPEND_COMMITTED_STATUSES: frozenset[str] = frozenset({"open", "pending", "closed"})
 
 
-StepAction = Literal["initialized", "stepped", "skipped_disabled", "skipped_paused"]
+StepAction = Literal[
+    "initialized", "stepped", "skipped_disabled", "skipped_paused", "skipped_wide_spread"
+]
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,9 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
       signal.
     - ``"skipped_disabled"`` — the per-coin config has ``enabled: false``;
       no exchange or storage interaction occurred.
+    - ``"skipped_wide_spread"`` (ADR-025) — the symbol's bid-ask spread
+      exceeded ``safety.max_spread_percentage``; no order placed or
+      cancelled this tick, storage untouched.
 
     ``sells_deferred`` (ADR-032) counts SELL placements the cost-basis
     sell guard deferred — deliberately separate from ``refusals``, whose
@@ -181,6 +186,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # parked, once on recovery) instead of a WARNING every tick. Absent
         # / 0 means the symbol is onside.
         self._offside_ticks: dict[Symbol, int] = {}
+        # ADR-025: same transition + heartbeat pattern for consecutive
+        # wide-spread-skip ticks.
+        self._wide_spread_ticks: dict[Symbol, int] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -235,7 +243,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if self.is_paused(symbol):
             return StepResult(symbol=symbol, action="skipped_paused")
 
-        current_price = (await self._exchange.get_current_price(symbol)).amount
+        # ADR-025: bid/ask ride the same market-data call the engine
+        # already made for the current price -- zero extra API cost.
+        ticker = await self._exchange.get_ticker(symbol)
+        current_price = ticker.last
+        if self._is_spread_too_wide(symbol, ticker):
+            return StepResult(symbol=symbol, action="skipped_wide_spread")
 
         grid_state = await self._storage.get_grid_state(symbol)
         if grid_state is None:
@@ -244,6 +257,52 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         return await self._tick(
             symbol, current_price, grid_state, coin_cfg, exchange_open_orders, exchange_trades
         )
+
+    def _is_spread_too_wide(self, symbol: Symbol, ticker: Ticker) -> bool:
+        """ADR-025 pre-tick market-quality gate.
+
+        A market-quality signal, not a per-order safety-cap invariant —
+        gates the whole tick rather than a 5th ``_check_safety`` arm, so
+        no order is even attempted against a dislocated market. Uses
+        the same transition + heartbeat logging pattern as offside
+        (ADR-006): one WARNING on entry, a periodic INFO summary while
+        it persists, never a WARNING every tick.
+        """
+        max_spread = self._safety.max_spread_percentage
+        if max_spread is None or ticker.spread_percentage <= max_spread:
+            if self._wide_spread_ticks.pop(symbol, 0):
+                _LOGGER.info(
+                    "spread back to normal; resuming",
+                    extra={
+                        "symbol": str(symbol),
+                        "spread_percentage": str(ticker.spread_percentage),
+                    },
+                )
+            return False
+
+        consecutive = self._wide_spread_ticks.get(symbol, 0) + 1
+        self._wide_spread_ticks[symbol] = consecutive
+        if consecutive == 1:
+            _LOGGER.warning(
+                "spread too wide; skipping tick",
+                extra={
+                    "symbol": str(symbol),
+                    "spread_percentage": str(ticker.spread_percentage),
+                    "max_spread_percentage": str(max_spread),
+                    "bid": str(ticker.bid),
+                    "ask": str(ticker.ask),
+                },
+            )
+        elif consecutive % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
+            _LOGGER.info(
+                "still skipping ticks; spread remains wide",
+                extra={
+                    "symbol": str(symbol),
+                    "spread_percentage": str(ticker.spread_percentage),
+                    "consecutive_wide_spread_ticks": consecutive,
+                },
+            )
+        return True
 
     # ------------------------------------------------------------------ operator control (5.4)
 

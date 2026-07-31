@@ -84,6 +84,39 @@ class TestPriceAndBalances:
         assert sorted(b.asset for b in balances) == ["BTC", "USD"]
 
 
+class TestGetTicker:
+    """ADR-025 pre-placement spread guard test control."""
+
+    async def test_requires_seeded_price(self) -> None:
+        exch = MockExchangeAdapter()
+        with pytest.raises(ExchangeError, match="No market price"):
+            await exch.get_ticker(BTC_USD)
+
+    async def test_default_spread_is_tight(self) -> None:
+        exch = MockExchangeAdapter(starting_prices={BTC_USD: Decimal("50000")})
+        ticker = await exch.get_ticker(BTC_USD)
+        assert ticker.last == Decimal("50000")
+        assert ticker.bid < ticker.last < ticker.ask
+        assert ticker.spread_percentage < Decimal("1.0")
+
+    async def test_set_spread_overrides_default(self) -> None:
+        exch = MockExchangeAdapter(starting_prices={BTC_USD: Decimal("50000")})
+        exch.set_spread(BTC_USD, Decimal("5.0"))
+        ticker = await exch.get_ticker(BTC_USD)
+        assert abs(ticker.spread_percentage - Decimal("5.0")) < Decimal("0.001")
+
+    async def test_set_spread_is_per_symbol(self) -> None:
+        eth_usd = Symbol(base="ETH", quote="USD")
+        exch = MockExchangeAdapter(
+            starting_prices={BTC_USD: Decimal("50000"), eth_usd: Decimal("3000")}
+        )
+        exch.set_spread(BTC_USD, Decimal("5.0"))
+        btc_ticker = await exch.get_ticker(BTC_USD)
+        eth_ticker = await exch.get_ticker(eth_usd)
+        assert abs(btc_ticker.spread_percentage - Decimal("5.0")) < Decimal("0.001")
+        assert eth_ticker.spread_percentage < Decimal("1.0")
+
+
 class TestOrderPlacement:
     async def test_buy_requires_quote_balance(self) -> None:
         exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10")})

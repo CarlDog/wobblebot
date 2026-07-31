@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OHLCBar, Price, Symbol
+from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Ticker
 
 
 class ExchangePort(ABC):
@@ -43,6 +43,26 @@ class ExchangePort(ABC):
 
         Raises:
             ExchangeError: If price cannot be retrieved
+        """
+        pass
+
+    @abstractmethod
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        """Get the top-of-book snapshot (last/bid/ask) for a symbol.
+
+        ADR-025: bid/ask ride the same market-data call as
+        ``get_current_price`` on a real exchange (Kraken's Ticker
+        response already carries all three) -- implementations should
+        not add an extra round-trip to serve this.
+
+        Args:
+            symbol: Trading pair
+
+        Returns:
+            Top-of-book snapshot.
+
+        Raises:
+            ExchangeError: If the ticker cannot be retrieved.
         """
         pass
 

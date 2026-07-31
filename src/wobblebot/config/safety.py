@@ -42,6 +42,13 @@ class SafetyConfig(BaseModel):
     max_per_coin_exposure_usd: Decimal = Field(gt=Decimal("0"))
     max_orders_per_coin: int = Field(gt=0)
     sell_guard: SellGuardConfig = Field(default_factory=SellGuardConfig)
+    # ADR-025 pre-placement spread guard: skip the whole tick (not a
+    # per-order safety-cap arm) when the symbol's bid-ask spread is too
+    # wide -- a market-quality signal, not a per-order invariant. Default
+    # 1.0% never fires on healthy BTC/ETH (~0.01-0.05%); None disables.
+    max_spread_percentage: Decimal | None = Field(
+        default=Decimal("1.0"), gt=Decimal("0"), le=Decimal("100")
+    )
 
     class Config:
         frozen = True

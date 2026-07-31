@@ -34,6 +34,7 @@ from wobblebot.domain.value_objects import (
     OrderSide,
     Price,
     Symbol,
+    Ticker,
     Timestamp,
 )
 from wobblebot.ports.exceptions import ExchangeError
@@ -41,6 +42,12 @@ from wobblebot.ports.exchange import ExchangePort
 
 # Sensible Kraken-ish defaults; override per-instance if needed.
 _DEFAULT_FEE_RATE = Decimal("0.0026")
+
+# ADR-025: a tight, healthy default spread (comfortably under any
+# sensible max_spread_percentage) so existing engine tests that never
+# call set_spread don't trip the guard now that GridEngine calls
+# get_ticker every tick instead of get_current_price.
+_DEFAULT_SPREAD_PERCENTAGE = Decimal("0.02")
 
 
 class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
@@ -82,6 +89,9 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         # record the last value so engine-loop tests can assert the loop
         # armed/disarmed it (None until the first call).
         self.last_dead_mans_switch_seconds: int | None = None
+        # ADR-025: per-symbol spread override for get_ticker; absent
+        # symbols use _DEFAULT_SPREAD_PERCENTAGE.
+        self._spread_pct: dict[Symbol, Decimal] = {}
 
     # ----------------------------------------------------------------- mock controls
 
@@ -93,6 +103,13 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         """
         self._prices[symbol] = price
         return self._match_open_orders(symbol)
+
+    def set_spread(self, symbol: Symbol, spread_percentage: Decimal) -> None:
+        """Test control: override the bid-ask spread (as a percentage of
+        mid-price) ``get_ticker`` reports for ``symbol`` (ADR-025).
+        Absent symbols use a tight, healthy default.
+        """
+        self._spread_pct[symbol] = spread_percentage
 
     def run_scenario(self, ticks: Iterable[tuple[Symbol, Decimal]]) -> list[Trade]:
         """Apply a sequence of (symbol, price) ticks. Returns all fills."""
@@ -149,6 +166,14 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         if symbol not in self._prices:
             raise ExchangeError(f"No market price set for {symbol}")
         return Price(amount=self._prices[symbol], currency=symbol.quote)
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        if symbol not in self._prices:
+            raise ExchangeError(f"No market price set for {symbol}")
+        last = self._prices[symbol]
+        spread_pct = self._spread_pct.get(symbol, _DEFAULT_SPREAD_PERCENTAGE)
+        half_spread = last * spread_pct / Decimal("100") / Decimal("2")
+        return Ticker(symbol=symbol, last=last, bid=last - half_spread, ask=last + half_spread)
 
     async def get_ohlc(
         self,

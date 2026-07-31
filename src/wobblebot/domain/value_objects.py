@@ -9,7 +9,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Symbol(BaseModel):
@@ -78,6 +78,37 @@ class Price(BaseModel):
         """Pydantic config."""
 
         frozen = True  # Make immutable
+
+
+class Ticker(BaseModel):
+    """Top-of-book market snapshot (ADR-025 pre-placement spread guard).
+
+    ``spread_percentage`` is derived from ``bid``/``ask`` at
+    construction (mid-price basis) rather than stored input, so it can
+    never drift from the two prices it describes.
+    """
+
+    symbol: Symbol
+    last: Decimal = Field(..., gt=0, description="Last-trade price")
+    bid: Decimal = Field(..., gt=0, description="Best bid (highest buy order)")
+    ask: Decimal = Field(..., gt=0, description="Best ask (lowest sell order)")
+
+    @model_validator(mode="after")
+    def _validate_bid_below_ask(self) -> "Ticker":
+        if self.bid >= self.ask:
+            raise ValueError(f"bid ({self.bid}) must be less than ask ({self.ask})")
+        return self
+
+    @property
+    def spread_percentage(self) -> Decimal:
+        """Bid-ask spread as a percentage of the mid-price."""
+        mid = (self.bid + self.ask) / Decimal("2")
+        return (self.ask - self.bid) / mid * Decimal("100")
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
 
 
 class Amount(BaseModel):
