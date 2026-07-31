@@ -216,6 +216,63 @@ class TestRunHappyPath:
 
 
 @pytest.mark.asyncio
+class TestCrossCoinGuard:
+    """fleet-review #19 F1: a suggestion applies only to its own coin."""
+
+    async def _store(self, advise_db: str, suggestion: AdvisorSuggestion) -> None:
+        storage = SQLiteStorageAdapter(advise_db)
+        await storage.connect()
+        try:
+            await storage.save_advisor_suggestion(suggestion)
+        finally:
+            await storage.close()
+
+    async def test_id_selection_derives_symbol_from_suggestion(
+        self, advise_db: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No --symbol + --recommendation-id: the ETH suggestion must be
+        evaluated against ETH, not advise.symbols[0] (BTC)."""
+        await self._store(advise_db, _suggestion(rec_id="r-eth", symbol="ETH/USD"))
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.apply"):
+            rc = await _run(_args(recommendation_id="r-eth"), config)
+        assert rc == 0
+        derived = [r for r in caplog.records if "derived from suggestion" in r.message]
+        assert derived and getattr(derived[0], "symbol", None) == "ETH/USD"
+        evaluated = [r for r in caplog.records if r.message == "evaluated suggestion"]
+        assert evaluated and getattr(evaluated[0], "symbol", None) == "ETH"
+
+    async def test_id_selection_refuses_explicit_symbol_mismatch(
+        self, advise_db: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await self._store(advise_db, _suggestion(rec_id="r-eth", symbol="ETH/USD"))
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.apply"):
+            rc = await _run(_args(recommendation_id="r-eth", symbol="BTC/USD"), config)
+        assert rc == 2
+        assert any("different symbol" in r.message for r in caplog.records)
+
+    async def test_unverifiable_suggestion_requires_explicit_symbol(
+        self, advise_db: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await self._store(advise_db, _suggestion(rec_id="r-blank", symbol=""))
+        config = _full_config(advise_db_path=advise_db)
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.apply"):
+            rc = await _run(_args(recommendation_id="r-blank"), config)
+        assert rc == 2
+        assert any("no usable symbol" in r.message for r in caplog.records)
+
+    async def test_unverifiable_suggestion_proceeds_on_explicit_symbol(
+        self, advise_db: str
+    ) -> None:
+        """Explicit --symbol is the operator taking responsibility."""
+        await self._store(advise_db, _suggestion(rec_id="r-blank", symbol=""))
+        config = _full_config(advise_db_path=advise_db)
+        rc = await _run(_args(recommendation_id="r-blank", symbol="BTC/USD"), config)
+        assert rc == 0
+
+
+@pytest.mark.asyncio
 class TestRunFailureModes:
     async def test_missing_advise_section_exits_2(self) -> None:
         config = WobbleBotConfig(

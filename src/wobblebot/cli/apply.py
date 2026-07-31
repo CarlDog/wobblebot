@@ -203,6 +203,51 @@ async def _run(  # pylint: disable=too-many-return-statements
             )
         return 2
 
+    # Cross-coin guard: a suggestion applies only to the coin it was
+    # generated for. Without this, an id-selected ETH suggestion delta-checked
+    # against BTC's grid could land in the wrong coin's config (or fall
+    # through to grid.default) with a clean-looking audit row.
+    raw_symbol = suggestion.input_summary.get("symbol")
+    suggestion_symbol: Symbol | None = None
+    if isinstance(raw_symbol, str) and raw_symbol:
+        try:
+            suggestion_symbol = Symbol.from_string(raw_symbol)
+        except ValueError:
+            suggestion_symbol = None
+    if suggestion_symbol is None:
+        if args.symbol is None:
+            _LOGGER.error(
+                "suggestion carries no usable symbol; pass --symbol to state the target explicitly",
+                extra={
+                    "recommendation_id": suggestion.recommendation.recommendation_id,
+                    "input_summary_symbol": repr(raw_symbol),
+                },
+            )
+            return 2
+        # Explicit --symbol with an unverifiable suggestion: the operator has
+        # stated the target; proceed on their authority.
+    elif suggestion_symbol != symbol:
+        if args.symbol is not None:
+            _LOGGER.error(
+                "suggestion is for a different symbol than --symbol; refusing",
+                extra={
+                    "recommendation_id": suggestion.recommendation.recommendation_id,
+                    "suggestion_symbol": str(suggestion_symbol),
+                    "requested_symbol": str(symbol),
+                },
+            )
+            return 2
+        # --recommendation-id without --symbol: the suggestion's own symbol is
+        # the target — not advise.symbols[0]'s guess.
+        _LOGGER.info(
+            "target symbol derived from suggestion",
+            extra={
+                "recommendation_id": suggestion.recommendation.recommendation_id,
+                "symbol": str(suggestion_symbol),
+            },
+        )
+        symbol = suggestion_symbol
+
     current_grid = config.grid.for_coin(symbol.base)
     result = evaluate_auto_apply(
         suggestion,
