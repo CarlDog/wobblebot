@@ -17,6 +17,56 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-07-31 — Monthly advisor-model-review bake-off #1: champion holds
+
+First challenger bake-off under the monthly advisor-model-review routine
+(fleet-kit `fleet/routines/wobblebot-advisor-model-review.md`; standing state
+in wobblebot#22, candidate list in wobblebot#23). Primary instrument:
+`tools/probe_freejudge.py` — 14 no-guard fixtures × 3 same-day runs per model
+(42 judgments), champion re-run the same day as the constant baseline. The
+8-fixture heldout battery ran once per model as directional context only (per
+the 2026-06-04 methodology note below, most of it never escalates in
+production). Candidates pre-filtered by the routine's ≤3× per-call cost gate:
+gemini-3.5/3.6-flash (~7-8×) and gpt-5.5 ($5/$30) were priced but not probed.
+
+**Freejudge, 3 runs × 14 fixtures (42 judgments), 2026-07-31:**
+
+| Model | OK | SUBOPT | UNSAFE | ERR | $/call (measured) | mean s/call | heldout /24 (1 run) |
+|---|---|---|---|---|---|---|---|
+| **gpt-5-mini** (champion) | **81%** | 17% | **2%** (1) | 0 | $0.0023 | 14.2 | 8 (1 WRONG) |
+| gpt-5.4-mini | 88% | 5% | 7% (3) | 0 | $0.0016 | **1.5** | 8 (0 WRONG) |
+| gpt-5.4-nano | 74% | 10% | 12% (5) | 2 | $0.0005 | 1.7 | **14** (0 WRONG) |
+| claude-haiku-4-5 | — | — | — | — | $0.0011 | 2.9 | — |
+
+**Verdict: no switch — gpt-5-mini stays.** Per the routine's §5 thresholds no
+challenger files: `gpt-5.4-mini` is +7 OK points, 0.68× cost, and ~10× faster,
+but carries **3× the champion's UNSAFE count** (`slightly_tight_but_healthy`
+×2, `whipsaw_midspacing` ×1 — tighten-into-risk, the exact failure class the
+seat is judged on), failing both the UNSAFE-halved and the OK+10 criteria.
+`gpt-5.4-nano` is worse on both axes (its best-in-field heldout 14/24 is the
+hold-more bias flattering the maintainer curve, not judgment). Watch item:
+5.4-mini's latency/cost profile is attractive — re-test next generation.
+
+**Champion self-drift (files as a finding): gpt-5-mini improved upstream.**
+Today's 3-run profile OK 81% / UNSAFE 2% vs the stored 2026-06-04 baseline
+OK 62% / UNSAFE 20% (84 judgments) — both axes moved >10 pts, including clean
+passes on `moderate_drawdown_below_guard` (2 of 3 runs) and
+`whipsaw_midspacing` (all runs), the fixtures behind the June tighten-bias
+concern. The 2026-07-31 numbers are the new stored baseline in wobblebot#22.
+Heldout context: 8/24 with one WRONG (`heldout_drawdown_overrides_calm`,
+tightened into a drawdown) vs June's 19.8/24 4-run mean — single-run,
+guard-resolved-in-production battery; tracked, not actioned.
+
+**claude-haiku-4-5: incomplete — Anthropic API credit balance exhausted
+mid-bake-off** (HTTP 400 "credit balance too low"; run 1 clean, run 2 partial,
+run 3 + heldout all-ERROR; 31/50 calls failed). No verdict. Re-run ~$0.15
+after topping up, if wanted — its valid run 1 showed OK 8/14 with 2 UNSAFE,
+not obviously champion-class.
+
+Cloud spend, whole bake-off incl. failures: **$0.27** (isolated
+`data/probe_llm_cost.db`; artifacts in `data/advisor_probe_results/2026-07/`).
+Soak freeze holds — nothing deployed or reconfigured; recommendation only.
+
 ## Rev 2026-06-04 — Cloud free-judge escalation model: gpt-5-mini (ADR-022)
 
 When the advisor was reoriented to **guards + LLM free judge** (ADR-022),
