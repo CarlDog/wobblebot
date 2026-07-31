@@ -159,7 +159,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         return lock
 
     async def step(
-        self, symbol: Symbol, *, exchange_open_orders: list[Order] | None = None
+        self,
+        symbol: Symbol,
+        *,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
     ) -> StepResult:
         """Advance the engine by one tick for ``symbol``.
 
@@ -173,12 +177,25 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         which keeps multi-coin sessions under Kraken's private-API rate
         limit. When ``None`` (single-symbol callers / shadow / tests), fill
         detection fetches per-symbol as before.
+
+        ``exchange_trades``: an optional whole-account trade-history
+        snapshot the caller fetched once this tick (fleet-review #19
+        finding 8 follow-up), mirroring ``exchange_open_orders`` — a tick
+        where several symbols fill simultaneously would otherwise call
+        ``TradesHistory`` (now paginated, up to 20 pages) once per filling
+        symbol. When provided it is filtered to ``symbol`` instead of a
+        per-symbol exchange call. ``None`` falls back to a per-symbol
+        fetch (single-symbol callers / shadow / tests / a failed shared
+        fetch this tick).
         """
         async with self._lock_for(symbol):
-            return await self._step_unlocked(symbol, exchange_open_orders)
+            return await self._step_unlocked(symbol, exchange_open_orders, exchange_trades)
 
     async def _step_unlocked(
-        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+        self,
+        symbol: Symbol,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
     ) -> StepResult:
         coin_cfg = self._config.for_coin(symbol.base)
         if not coin_cfg.enabled:
@@ -192,7 +209,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if grid_state is None:
             return await self._initialize(symbol, current_price, coin_cfg)
 
-        return await self._tick(symbol, current_price, grid_state, coin_cfg, exchange_open_orders)
+        return await self._tick(
+            symbol, current_price, grid_state, coin_cfg, exchange_open_orders, exchange_trades
+        )
 
     # ------------------------------------------------------------------ operator control (5.4)
 
@@ -360,6 +379,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         state: GridState,
         coin_cfg: CoinGridConfig,
         exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
     ) -> StepResult:
         levels = compute_grid_levels(
             reference_price=state.reference_price,
@@ -369,7 +389,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         offside = is_offside(current_price, levels)
 
-        fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders)
+        fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders, exchange_trades)
         counters_placed = 0
         refusals = 0
         placed = 0
@@ -476,14 +496,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     # ------------------------------------------------------------------ helpers
 
-    async def _detect_fills(
-        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
-    ) -> tuple[list[Order], list[str]]:
-        """Diff storage's open set against the exchange's; record fills.
+    async def _fill_candidates(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None
+    ) -> list[Order]:
+        """Storage-open orders no longer confirmed live on the exchange.
 
-        Returns ``(filled_orders, saved_trade_ids)`` — the orders that
-        transitioned out of the open set this tick (status refreshed
-        from the exchange) and the trade IDs persisted as a result.
+        Pure diff (one storage read +, absent a shared snapshot, one
+        exchange read) — no trade-history call. Split out from
+        ``_detect_fills`` so ``has_pending_fill_candidates`` can answer
+        "does this symbol need trade history this tick" without a
+        network round-trip to ``TradesHistory``.
 
         ``exchange_open_orders``: when provided (a whole-account snapshot
         the caller fetched once this tick), it is filtered to ``symbol``
@@ -500,14 +522,56 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         else:
             exchange_open = [o for o in exchange_open_orders if o.symbol == symbol]
         live_ids = {o.exchange_id for o in exchange_open if o.exchange_id}
+        return [o for o in stored_open if o.exchange_id and o.exchange_id not in live_ids]
 
-        candidates = [o for o in stored_open if o.exchange_id and o.exchange_id not in live_ids]
+    async def has_pending_fill_candidates(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+    ) -> bool:
+        """``True`` if ``symbol`` has a storage-open order not confirmed
+        live on the exchange — i.e. this tick will need trade history to
+        resolve a possible fill.
+
+        Callers juggling several symbols in one tick (``cli/live``) use
+        this to decide, before running any symbol's ``step``, whether a
+        single shared ``TradesHistory`` fetch is worth making this tick —
+        mirroring the ``exchange_open_orders`` consolidation so a tick
+        with several simultaneous fills doesn't call ``TradesHistory``
+        (now paginated, up to 20 pages) once per filling symbol
+        (fleet-review #19 finding 8 follow-up).
+        """
+        candidates = await self._fill_candidates(symbol, exchange_open_orders)
+        return bool(candidates)
+
+    async def _detect_fills(
+        self,
+        symbol: Symbol,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
+    ) -> tuple[list[Order], list[str]]:
+        """Diff storage's open set against the exchange's; record fills.
+
+        Returns ``(filled_orders, saved_trade_ids)`` — the orders that
+        transitioned out of the open set this tick (status refreshed
+        from the exchange) and the trade IDs persisted as a result.
+
+        ``exchange_open_orders``: see :meth:`_fill_candidates`.
+
+        ``exchange_trades``: when provided (a whole-account trade-history
+        snapshot the caller fetched once this tick), it is filtered to
+        ``symbol`` instead of issuing a per-symbol ``TradesHistory`` call.
+        ``None`` falls back to a per-symbol fetch (single-symbol callers /
+        shadow / tests / a failed shared fetch this tick).
+        """
+        candidates = await self._fill_candidates(symbol, exchange_open_orders)
         if not candidates:
             return [], []
 
         # Fetch trade history once and index by exchange_id; cheaper than
         # one round-trip per fill, and sufficient for Stage 2.2 volumes.
-        recent_trades = await self._exchange.get_trade_history(symbol=symbol, limit=200)
+        if exchange_trades is None:
+            recent_trades = await self._exchange.get_trade_history(symbol=symbol, limit=200)
+        else:
+            recent_trades = [t for t in exchange_trades if t.symbol == symbol]
         trades_by_order: dict[str, list[Trade]] = {}
         for trade in recent_trades:
             trades_by_order.setdefault(trade.order_id, []).append(trade)

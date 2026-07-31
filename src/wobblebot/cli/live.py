@@ -65,7 +65,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
@@ -223,11 +223,43 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         tick_open_orders = None
+
+    # One global TradesHistory fetch per tick, shared across every symbol
+    # that has a fill candidate this tick (fleet-review #19 finding 8
+    # follow-up). TradesHistory is now paginated (up to 20 pages) to find
+    # a thin symbol's trades among heavy volume on others; without this
+    # consolidation, a tick where several symbols fill simultaneously
+    # would page that same account-wide history once per filling symbol —
+    # the same rate-limit-storm shape the OpenOrders consolidation above
+    # already fixed once (2026-06-02). Checking candidates is pure
+    # storage + the already-fetched open-orders snapshot, no network call,
+    # so this costs nothing on the (typical) no-fill tick. A shared-fetch
+    # failure falls back to each symbol's own per-symbol fetch, same as
+    # before this consolidation existed.
+    tick_trades: list[Trade] | None = None
+    if tick_open_orders is not None:
+        needs_trades = False
+        for symbol in live.symbols:
+            if await engine.has_pending_fill_candidates(symbol, tick_open_orders):
+                needs_trades = True
+                break
+        if needs_trades:
+            try:
+                tick_trades = await adapter.get_trade_history(limit=200 * len(live.symbols))
+            except WobbleBotPortError as exc:
+                _LOGGER.warning(
+                    "tick trade-history fetch failed; falling back to per-symbol fetch",
+                    extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+                )
+                tick_trades = None
+
     for symbol in live.symbols:
         if tick_open_orders is None:
             break
         try:
-            result = await engine.step(symbol, exchange_open_orders=tick_open_orders)
+            result = await engine.step(
+                symbol, exchange_open_orders=tick_open_orders, exchange_trades=tick_trades
+            )
             # Per-symbol per-tick output is DEBUG so the operator's
             # terminal doesn't flood at the 5s default cadence. The
             # actually-interesting events (fills, cap trips, session

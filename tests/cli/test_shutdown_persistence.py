@@ -465,6 +465,7 @@ class TestPerTickBalanceResilience:
         from unittest.mock import AsyncMock
 
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         # _run_one_tick should NOT raise; should return False (no cap trip).
         adapter = MagicMock()
@@ -627,6 +628,7 @@ class TestSessionLossCapAccountsForAssetConversion:
                 offside=False,
             )
         )
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
@@ -672,6 +674,7 @@ class TestSessionLossCapAccountsForAssetConversion:
                 action="held", fills=0, counters_placed=0, placed=0, refusals=0, offside=False
             )
         )
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
