@@ -578,6 +578,18 @@ main.content {
   color: #4dd0e1;
 }
 
+/* v1.1 "update available" footer indicator -- accent-colored by
+   default (not just on hover) so it reads as "something new" at a
+   glance, reusing the existing hover-accent color rather than adding
+   a new one. */
+.app-footer-update {
+  color: #4dd0e1;
+}
+
+.app-footer-update:hover {
+  text-decoration: underline;
+}
+
 h1 {
   font-size: 24px;
   font-weight: 600;

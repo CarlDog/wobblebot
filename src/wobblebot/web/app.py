@@ -29,10 +29,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 from starlette.types import Scope
 
+from wobblebot import __version__
 from wobblebot.config.cli import TradingMode, WebConfig
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
+from wobblebot.services.release_checker import ReleaseCheckResult
 from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
     CSRF_FORM_FIELD,
@@ -137,6 +139,19 @@ def _csrf_input(request: Request) -> Markup:
     return Markup(f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{token}">')
 
 
+def _release_check_status(request: Request) -> ReleaseCheckResult | None:
+    """Jinja2 global exposing the latest release-check result to the footer.
+
+    A callable global (matching ``csrf_input``'s pattern) rather than
+    a static value set at app-build time: the background poller in
+    ``cli/web`` updates ``app.state.release_check_result`` throughout
+    the process's lifetime, so this must read it live, at render time.
+    ``None`` when the check hasn't completed yet (or is disabled) —
+    the footer template treats that the same as "no update available".
+    """
+    return getattr(request.app.state, "release_check_result", None)
+
+
 def create_app(  # pylint: disable=too-many-arguments
     *,
     config: WebConfig,
@@ -173,7 +188,13 @@ def create_app(  # pylint: disable=too-many-arguments
     """
     app = FastAPI(
         title="WobbleBot Dashboard",
-        version="0.7.1",
+        # v1.1 fix: was hardcoded "0.7.1", silently drifting from
+        # pyproject.toml's real version on every release. The footer's
+        # "update available" indicator makes this load-bearing now —
+        # comparing the running version against GitHub's latest
+        # release is meaningless if the running-version string itself
+        # is stale.
+        version=__version__,
         # NOTE: Swagger UI (/docs) + /openapi.json are served by FastAPI
         # itself and do NOT pass through the per-route require_user auth —
         # an unauthenticated client that can reach the app can read the
@@ -222,6 +243,14 @@ def create_app(  # pylint: disable=too-many-arguments
     # can pull it via the dependencies module.
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["csrf_input"] = _csrf_input
+    # v1.1: footer "update available" indicator. A callable global
+    # (like csrf_input) since the underlying state changes over the
+    # process's lifetime via a background poller cli/web wires up
+    # separately (see cli/web.py's _serve_async) -- create_app itself
+    # never makes a network call, so tests constructing the app never
+    # accidentally poll GitHub.
+    templates.env.globals["release_check"] = _release_check_status
+    app.state.release_check_result = None
     # Operator-facing presentation globals — surface fields that
     # every template may need without threading them through each
     # route's context dict.

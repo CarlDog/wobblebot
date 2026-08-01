@@ -306,6 +306,76 @@ class TestServeDeprivedEnv:
 
 
 # --------------------------------------------------------------------- #
+# _release_check_loop (v1.1 footer "update available" background poll) #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestReleaseCheckLoop:
+    async def test_runs_immediately_and_updates_app_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """run_poll_loop runs a cycle BEFORE its first sleep, so the
+        footer has a real result within the first request rather than
+        waiting a full interval. The fake check sets stop_event itself
+        so this test exercises exactly one cycle, deterministically,
+        with no real sleeping."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from wobblebot.services.release_checker import ReleaseCheckResult
+
+        calls = {"n": 0}
+        stop_event = asyncio.Event()
+
+        async def fake_check_for_update(version: str) -> ReleaseCheckResult:
+            calls["n"] += 1
+            stop_event.set()
+            return ReleaseCheckResult(
+                update_available=True,
+                current_version=version,
+                latest_version="9.9.9",
+                release_url="https://example.com/releases/9.9.9",
+            )
+
+        monkeypatch.setattr(cli_web, "check_for_update", fake_check_for_update)
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        await cli_web._release_check_loop(app, 6.0, stop_event)  # type: ignore[arg-type]
+
+        assert calls["n"] == 1
+        result = app.state.release_check_result
+        assert result.update_available is True
+        assert result.latest_version == "9.9.9"
+
+    async def test_no_update_result_stored_when_none_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from wobblebot.services.release_checker import ReleaseCheckResult
+
+        stop_event = asyncio.Event()
+
+        async def fake_check_for_update(version: str) -> ReleaseCheckResult:
+            stop_event.set()
+            return ReleaseCheckResult(
+                update_available=False,
+                current_version=version,
+                latest_version=version,
+                release_url=None,
+            )
+
+        monkeypatch.setattr(cli_web, "check_for_update", fake_check_for_update)
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        await cli_web._release_check_loop(app, 6.0, stop_event)  # type: ignore[arg-type]
+
+        assert app.state.release_check_result.update_available is False
+
+
+# --------------------------------------------------------------------- #
 # Parser surface — argparse dispatch                                    #
 # --------------------------------------------------------------------- #
 

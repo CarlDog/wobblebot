@@ -673,6 +673,14 @@ class WebConfig(BaseModel):
     # Set to null to suppress the link entirely.
     kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/home", min_length=1)
 
+    # v1.1: footer "update available" indicator. Polls GitHub's public
+    # releases API from the SERVER (never the browser — keeps operator
+    # dashboard activity from leaking to GitHub) at a long cadence.
+    # Default on; an operator who prefers zero outbound calls can flip
+    # it off.
+    release_check_enabled: bool = True
+    release_check_interval_hours: float = Field(default=6.0, gt=0.0, le=168.0)
+
     # ---- cross-DB paths -------------------------------------------- #
 
     # The dashboard reads from up to five DBs. operator.db is required

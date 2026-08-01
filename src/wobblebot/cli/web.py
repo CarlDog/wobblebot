@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
 import logging
 import os
@@ -41,13 +42,16 @@ from typing import Any
 
 import httpx
 import uvicorn
+from fastapi import FastAPI
 
+from wobblebot import __version__
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     collect_overrides,
     identity,
     load_operator_env,
+    run_poll_loop,
     run_with_clean_exit,
     safe_shutdown,
 )
@@ -58,6 +62,7 @@ from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.daemon_health import derive_thresholds_from_config
 from wobblebot.services.kraken_health import KrakenHealthProbe
+from wobblebot.services.release_checker import check_for_update
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 
@@ -249,12 +254,56 @@ async def _close_storages(adapters: list[SQLiteStorageAdapter]) -> None:
             pass
 
 
+async def _release_check_loop(
+    app: FastAPI, interval_hours: float, stop_event: asyncio.Event
+) -> None:
+    """Background task: poll GitHub for a newer release on a cadence.
+
+    v1.1 footer "update available" indicator. Runs the first check
+    immediately on startup (``run_poll_loop`` checks work before its
+    first sleep) so the footer has a real result within the first
+    request rather than waiting a full interval. ``check_for_update``
+    never raises, so no per-cycle try/except is needed here.
+    """
+
+    async def _one_check() -> None:
+        result = await check_for_update(__version__)
+        app.state.release_check_result = result
+        if result.update_available:
+            _LOGGER.info(
+                "newer wobblebot release available",
+                extra={
+                    "current_version": result.current_version,
+                    "latest_version": result.latest_version,
+                    "release_url": result.release_url,
+                },
+            )
+
+    await run_poll_loop(
+        _one_check,
+        interval_seconds=interval_hours * 3600.0,
+        stop_event=stop_event,
+    )
+
+
 async def _serve_async(config: WobbleBotConfig) -> int:
     bootstrap = await _bootstrap_app(config)
     if isinstance(bootstrap, int):
         return bootstrap
     app, adapters, kraken_http = bootstrap
     assert config.web is not None  # _bootstrap_app guarantees this
+
+    # v1.1: background release-check poller. Started here (not inside
+    # create_app) so the many tests that construct create_app() via
+    # TestClient never accidentally poll GitHub -- only the real serve
+    # path does. Its own stop_event since cli/web has no daemon-wide
+    # one (uvicorn owns the shutdown signal via server.serve()).
+    release_check_stop = asyncio.Event()
+    release_check_task: asyncio.Task[None] | None = None
+    if config.web.release_check_enabled:
+        release_check_task = asyncio.create_task(
+            _release_check_loop(app, config.web.release_check_interval_hours, release_check_stop)
+        )
 
     uv_config = uvicorn.Config(
         app,
@@ -300,6 +349,11 @@ async def _serve_async(config: WobbleBotConfig) -> int:
     try:
         await server.serve()
     finally:
+        release_check_stop.set()
+        if release_check_task is not None:
+            release_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await release_check_task
         await safe_shutdown(
             [
                 ("close_web_storages", lambda: _close_storages(adapters)),

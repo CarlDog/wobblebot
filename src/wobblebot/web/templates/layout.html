@@ -133,6 +133,21 @@
          target="_blank" rel="noopener noreferrer">
         github.com/CarlDog/wobblebot
       </a>
+      {# v1.1: "update available" indicator. release_check(request) reads
+         the live app.state result the cli/web background poller
+         maintains (services/release_checker.py) -- omitted entirely
+         when there's no update, per the operator-decided placement
+         (line 2, after the repo link, " · "-separated). #}
+      {% set rc = release_check(request) %}
+      {% if rc and rc.update_available %}
+        ·
+        <a class="app-footer-link app-footer-update"
+           href="{{ rc.release_url or 'https://github.com/CarlDog/wobblebot/releases' }}"
+           target="_blank" rel="noopener noreferrer"
+           title="v{{ rc.latest_version }} available (running v{{ rc.current_version }})">
+          ↑ Update available
+        </a>
+      {% endif %}
     </div>
   </footer>
   {# Fill-toast stack — bottom-right popups when an order fills. Driven by
