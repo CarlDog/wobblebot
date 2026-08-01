@@ -133,128 +133,31 @@
          target="_blank" rel="noopener noreferrer">
         github.com/CarlDog/wobblebot
       </a>
+      {# v1.1: "update available" indicator. release_check(request) reads
+         the live app.state result the cli/web background poller
+         maintains (services/release_checker.py) -- omitted entirely
+         when there's no update, per the operator-decided placement
+         (line 2, after the repo link, " · "-separated). #}
+      {% set rc = release_check(request) %}
+      {% if rc and rc.update_available %}
+        ·
+        <a class="app-footer-link app-footer-update"
+           href="{{ rc.release_url or 'https://github.com/CarlDog/wobblebot/releases' }}"
+           target="_blank" rel="noopener noreferrer"
+           title="v{{ rc.latest_version }} available (running v{{ rc.current_version }})">
+          ↑ Update available
+        </a>
+      {% endif %}
     </div>
   </footer>
+  {# Fill-toast stack — bottom-right popups when an order fills. Driven by
+     the poller below (polls /status/recent-fills.json, diffs against a
+     localStorage watermark). Empty until a fill lands. #}
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 </div>
 
-{# Nav-icon alert dots. Two independent pollers driving the same
-   visual treatment (.has-alert on the nav-icon → red dot via CSS).
-
-   Bell: compares server's latest-notification timestamp to
-   localStorage's "last seen" timestamp; shows the dot when newer.
-   The /notifications page sets last-seen on visit to clear the dot.
-
-   Health: hits /health/overall.json on the same cadence; shows the
-   dot when overall status is not green (yellow or red). The page
-   itself shows the granular traffic-light. #}
-<script>
-  window.updateBellBadge = async function () {
-    try {
-      const r = await fetch('/notifications/latest-timestamp');
-      if (!r.ok) return;
-      const { latest_at } = await r.json();
-      const bell = document.getElementById('nav-bell');
-      if (!bell) return;
-      const lastSeen = localStorage.getItem('wobblebot_last_seen_notifications') || '1970-01-01';
-      if (latest_at && latest_at > lastSeen) {
-        bell.classList.add('has-alert');
-      } else {
-        bell.classList.remove('has-alert');
-      }
-    } catch (e) {
-      // Silent — bell badge isn't critical UX.
-    }
-  };
-  window.updateBellBadge();
-  setInterval(window.updateBellBadge, 30000);
-
-  window.updateHealthBadge = async function () {
-    try {
-      const r = await fetch('/health/overall.json');
-      if (!r.ok) return;
-      const { overall } = await r.json();
-      const health = document.getElementById('nav-health');
-      if (!health) return;
-      // Tiered dot since 2026-05-23: yellow=degraded, red=error,
-      // no dot when green. The status-card traffic light was
-      // removed in the same change — this is now the only health
-      // indicator in the chrome.
-      health.classList.remove('has-alert-yellow', 'has-alert-red');
-      if (overall === 'yellow') {
-        health.classList.add('has-alert-yellow');
-      } else if (overall === 'red') {
-        health.classList.add('has-alert-red');
-      }
-    } catch (e) {
-      // Silent — health dot isn't critical UX; the /health page is
-      // the source of truth.
-    }
-  };
-  window.updateHealthBadge();
-  setInterval(window.updateHealthBadge, 30000);
-
-  // User menu dropdown — toggle on trigger click; close on outside
-  // click and on Escape. Keeps the trigger's aria-expanded in sync.
-  (function () {
-    const trigger = document.getElementById('user-menu-trigger');
-    const dropdown = document.getElementById('user-menu-dropdown');
-    if (!trigger || !dropdown) return;
-    function setOpen(open) {
-      dropdown.hidden = !open;
-      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-    trigger.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setOpen(dropdown.hidden);
-    });
-    document.addEventListener('click', function (e) {
-      if (!dropdown.hidden && !trigger.contains(e.target) && !dropdown.contains(e.target)) {
-        setOpen(false);
-      }
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !dropdown.hidden) {
-        setOpen(false);
-        trigger.focus();
-      }
-    });
-  })();
-
-  // Theme switcher — three buttons (Light/Dark/Auto) inside the user
-  // menu dropdown. Stores choice in localStorage; the early-init
-  // script in base.html applies it BEFORE the stylesheet loads to
-  // prevent flash-of-wrong-theme. "Auto" removes the explicit
-  // override so the CSS media query (prefers-color-scheme) wins.
-  // Click-through cycler: each click advances light → dark → auto → light.
-  (function () {
-    const root = document.documentElement;
-    const cycler = document.getElementById('theme-cycler');
-    const order = ['light', 'dark', 'auto'];
-    function applyTheme(theme) {
-      if (theme === 'auto') {
-        root.removeAttribute('data-theme');
-      } else {
-        root.setAttribute('data-theme', theme);
-      }
-      if (cycler) {
-        // Drives the .theme-cycler-icon-{light,dark,auto} CSS
-        // visibility selectors so only the current mode's icon
-        // shows next to the "Theme" label.
-        cycler.dataset.currentTheme = theme;
-      }
-    }
-    if (cycler) {
-      cycler.addEventListener('click', function () {
-        const current = cycler.dataset.currentTheme || 'auto';
-        const next = order[(order.indexOf(current) + 1) % order.length];
-        try { localStorage.setItem('wobblebot_theme', next); } catch (e) {}
-        applyTheme(next);
-      });
-    }
-    // Initial: reflect stored preference (or "auto" if none).
-    var stored = 'auto';
-    try { stored = localStorage.getItem('wobblebot_theme') || 'auto'; } catch (e) {}
-    applyTheme(stored);
-  })();
-</script>
+{# Nav-icon alert dots + fill toasts + user menu + theme cycler.
+   External file (not inline) per the v1.1 CSP fix — script-src is
+   'self' only. See static/nav.js for behavior notes. #}
+<script src="/static/nav.js"></script>
 {% endblock %}

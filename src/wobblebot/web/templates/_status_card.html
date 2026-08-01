@@ -24,49 +24,41 @@
     </div>
   {% endfor %}
 
+  {# Session card (v1.1, ADR-024): a durable signal for the last
+     session-loss-cap trip, so a trip that fires while the operator
+     misses the bell/Discord ping is still visible on next dashboard
+     load instead of only having existed as a transient notification. #}
+  {% if snapshot.last_cap_trip %}
+    {% set pnl = snapshot.last_cap_trip.session_pnl_usd %}
+    <div class="session-cap-banner {% if snapshot.cool_down_active %}session-cap-active{% else %}session-cap-cleared{% endif %}" role="status">
+      <strong>{% if snapshot.cool_down_active %}⚠ Session-loss cap tripped{% else %}Session-loss cap trip (cleared){% endif %}</strong>
+      — {{ snapshot.last_cap_trip_age_seconds | humanize_duration }} ago,
+      session PnL {% if pnl < 0 %}-${{ "%.2f"|format(-pnl) }}{% else %}${{ "%.2f"|format(pnl) }}{% endif %}.
+      {% if snapshot.cool_down_active %}
+        Cooling down until {{ snapshot.cool_down_resumes_at | tz_format(operator_tz, "%H:%M %Z") }}
+        — no new session may start before then.
+      {% else %}
+        Cool-down has cleared; sessions may resume normally.
+      {% endif %}
+    </div>
+  {% endif %}
+
   <div class="card" id="status-card">
     <div class="card-header">
       <div class="card-title">
         Trading Status
-        {# v1.0 hardcoded LIVE; cli/shadow will get its own page +
-           SHADOW (purple) variant of this badge once the shadow
-           dashboard is built (v1.1). The CSS already supports both
-           variants so the template flip is the only future work. #}
-        <span class="mode-badge mode-badge-live">LIVE</span>
+        {# Trading-mode badge, driven by the `trading_mode` Jinja global
+           — sourced from `application.mode` (the SINGLE deployment-mode
+           config, read by cli/web). The SAME UI is reused for live /
+           shadow / sandbox (no separate dashboard); the active mode
+           renders the matching badge variant. CSS ships all three. #}
+        <span class="mode-badge mode-badge-{{ trading_mode }}">{{ trading_mode|upper }}</span>
         {# Health-icon-on-status-card removed 2026-05-23 — health
            status now lives ONLY on the navbar's heart-pulse icon as a
            tiered colored dot (yellow=degraded, red=error, no dot when
            healthy). Single source of truth for health UX, consistent
            with the bell's red-dot alert pattern. The /health page is
            still the granular drill-down. #}
-        {# Today's PnL — sum of realized cycle.net_pnl whose SELL
-           fired today (UTC). Anchored to the right edge of the
-           card-title row. Color + arrow follow the same green ▲ /
-           red ▼ vocabulary as the price-trend arrows on the
-           per-symbol headers. #}
-        {# %.4f + 1/100¢ threshold: cycles trade ~$0.0001–$0.20 NET,
-           so 2dp rounding hides real signal (a $0.0035 day reads
-           "$0.00"). Threshold stays nonzero so exact zero still
-           renders flat. #}
-        {% if snapshot.today_realized_pnl is not none %}
-          {% set pnl = snapshot.today_realized_pnl %}
-          {% if pnl > 0.0001 %}
-            <span class="today-pnl today-pnl-positive"
-                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: +${{ "%.4f"|format(pnl) }} <span aria-hidden="true">▲</span>
-            </span>
-          {% elif pnl < -0.0001 %}
-            <span class="today-pnl today-pnl-negative"
-                  title="Realized PnL today: sum of completed cycles (BUY+SELL pairs) whose SELL fired today UTC">
-              Today: -${{ "%.4f"|format(-pnl) }} <span aria-hidden="true">▼</span>
-            </span>
-          {% else %}
-            <span class="today-pnl today-pnl-flat"
-                  title="Realized PnL today (within rounding noise)">
-              Today: $0.0000
-            </span>
-          {% endif %}
-        {% endif %}
       </div>
       <div class="card-meta">
         {% if snapshot.last_fill_age_seconds is not none %}
@@ -83,6 +75,45 @@
         </button>
       </div>
     </div>
+    {# Account scoreboard — "answers first": account value + free USD +
+       in-positions + today/lifetime PnL. Money cells come from observe.db's
+       latest balance snapshot (credential-free per ADR-016) and degrade to
+       "—" when it's unwired; the PnL cells come from live.db cycles. Renders
+       whenever there's balance OR realized-PnL data. #}
+    {% if snapshot.account_value_usd is not none
+          or snapshot.today_realized_pnl is not none
+          or snapshot.lifetime_realized_pnl is not none %}
+    <div class="scoreboard">
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.account_value_usd is not none %}${{ "%.2f"|format(snapshot.account_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">account value{% if snapshot.balance_as_of %} · as of {{ snapshot.balance_as_of | tz_format(operator_tz, "%H:%M %Z") }}{% endif %}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.free_usd is not none %}${{ "%.2f"|format(snapshot.free_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">free USD</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{% if snapshot.held_value_usd is not none %}${{ "%.2f"|format(snapshot.held_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-label">in positions</div>
+      </div>
+      <div class="metric">
+        {% if snapshot.today_realized_pnl is not none %}
+          {% set t = snapshot.today_realized_pnl %}
+          <div class="metric-value{% if t > 0.0001 %} metric-pos{% elif t < -0.0001 %} metric-neg{% endif %}"
+               title="Realized PnL from cycles whose SELL fired today">{% if t < -0.0001 %}-${{ "%.4f"|format(-t) }}{% elif t > 0.0001 %}+${{ "%.4f"|format(t) }}{% else %}$0.0000{% endif %}</div>
+        {% else %}<div class="metric-value">—</div>{% endif %}
+        <div class="metric-label">today's PnL</div>
+      </div>
+      <div class="metric">
+        {% if snapshot.lifetime_realized_pnl is not none %}
+          {% set l = snapshot.lifetime_realized_pnl %}
+          <div class="metric-value{% if l > 0.0001 %} metric-pos{% elif l < -0.0001 %} metric-neg{% endif %}"
+               title="All-time realized PnL across every completed cycle">{% if l < -0.0001 %}-${{ "%.4f"|format(-l) }}{% elif l > 0.0001 %}+${{ "%.4f"|format(l) }}{% else %}$0.0000{% endif %}</div>
+        {% else %}<div class="metric-value">—</div>{% endif %}
+        <div class="metric-label">lifetime PnL</div>
+      </div>
+    </div>
+    {% endif %}
     {% if not snapshot.live_wired %}
       <p class="placeholder">
         The web UI's <code>live_db</code> path is unset; open orders +
@@ -119,6 +150,20 @@
                 {% elif trend == "down" %}
                   <span class="trend-down" title="trending down over last 15m">▼</span>
                 {% endif %}
+              {% endif %}
+              {# Price sparkline (2h): line = recent price, shaded band =
+                 the open-order ladder, dot = current price (red when it's
+                 left the band = parked/offside). Absent < 2 price points. #}
+              {% set spark = snapshot.sparklines.get(symbol) %}
+              {% if spark %}
+                <svg class="sparkline{% if spark.offside %} sparkline-offside{% endif %}"
+                     viewBox="0 0 100 24" width="100" height="24" aria-hidden="true">
+                  {% if spark.band_y is not none %}
+                    <rect class="spark-band" x="0" y="{{ spark.band_y }}" width="100" height="{{ spark.band_h }}"></rect>
+                  {% endif %}
+                  <polyline class="spark-line" points="{{ spark.points }}" fill="none"></polyline>
+                  <circle class="spark-marker" cx="{{ spark.marker_x }}" cy="{{ spark.marker_y }}" r="2.2"></circle>
+                </svg>
               {% endif %}
             </div>
             <div class="symbol-actions">
@@ -157,7 +202,7 @@
               <colgroup>
                 <col style="width: 80px">
                 <col>
-                <col style="width: 140px">
+                <col style="width: 90px">
                 <col style="width: 140px">
                 <col style="width: 110px">
               </colgroup>
@@ -165,18 +210,22 @@
                 <tr>
                   <th class="center">side</th>
                   <th class="num">price</th>
+                  <th class="num" title="Signed % distance from current market price: +ve = market is ABOVE the order (a BUY needs price to fall to fill; a SELL is already in the money)">vs mkt</th>
                   <th class="num">amount</th>
-                  <th class="num">filled</th>
                   <th class="num">age</th>
                 </tr>
               </thead>
               <tbody>
+                {# Current market price for this section's symbol; the
+                   per-order "vs mkt" delta is each order's signed %
+                   distance from it. Same for every row, so set once. #}
+                {% set cur = snapshot.current_prices.get(symbol) %}
                 {% for o in sym_orders %}
                   <tr>
                     <td class="center"><span class="tag {% if o.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ o.side.value }}</span></td>
                     <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
+                    <td class="num">{% if cur %}{{ "%+.2f"|format((cur - o.price.amount) / o.price.amount * 100) }}%{% else %}—{% endif %}</td>
                     <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
-                    <td class="num">{{ "%.8f"|format(o.filled_amount) }}</td>
                     <td class="num">{{ snapshot.order_ages.get(o.id|string, 0) | humanize_duration }}</td>
                   </tr>
                 {% endfor %}

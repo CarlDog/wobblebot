@@ -13,19 +13,22 @@ rule); this section is a pointer, not a changelog.
   deployment and passed its stated exit criteria (engine-coverage + reconciliation-across-restarts
   + all-daemon-cycles + no fund-losing hard-stops), including a clean recovery from an
   11-day host-wide NAS reboot discovered 2026-07-31. **`v1.0.0` is `main` exactly as it
-  stood at tag time** — substantial additional work (ADR-022 advisor reorientation, web UI
-  expansion, two fleet-review passes) already exists on the `v1.1` branch but was
-  deliberately NOT merged into this tag; development continues there per
-  `docs/release/v1.1/README.md`. Phase 9 (Kraken Securities equities) follows v1.1, not
-  immediately after this tag.
+  stood at tag time.** The work developed since on the `v1.1` branch (ADR-022 advisor
+  reorientation, web UI expansion, two fleet-review passes, and P1's safety-hardening
+  backlog — see `docs/release/v1.1/README.md`) **merges to `main` as `2.0.0`, not `1.1.0`**
+  (a breaking config-schema change — `EmergencyStopConfig` removed, ADR-032 — plus ADR-022's
+  full advisor-architecture replacement warrant the major bump; see `CHANGELOG.md`).
+  **P1 is COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2) and merged
+  2026-08-01 — P2 (data-infrastructure spine), P3 (ops/UX), and P4 (advisor-feedback,
+  data-gated) remain unstarted. Phase 9 (Kraken Securities equities) follows, not
+  immediately after this merge.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
   onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
   (future improvements), `docs/release/v1.0-soak-runbook.md`.
-- **Running real-money cost: $0.085018** (full breakdown in roadmap + phase summaries).
-- Test counts, lint scores, and src-file counts are authoritative in the roadmap's
-  per-stage entries — not duplicated here, to avoid drift.
+- Test counts, lint scores, src-file counts, and the real-money cost ledger are
+  authoritative in the roadmap's per-stage entries — not duplicated here, to avoid drift.
 
 **Before any non-trivial work:** read `docs/planning/roadmap.md`, confirm the request
 matches the current stage, and name any drift before starting. If asked for Stage N+1
@@ -120,6 +123,7 @@ tests/         # Mirrors src/ structure
 - `domain/` must not import from `adapters/`, `services/`, or `cli/`. Run `grep -r "from wobblebot.adapters" src/wobblebot/domain/` — output should be empty.
 - Dependencies flow inward only: adapters depend on ports, services depend on ports + domain, nothing depends on adapters.
 - All cross-module wiring happens via constructor dependency injection of port interfaces.
+- **Documented exception — LLM plumbing.** The cloud-LLM adapters (`adapters/openai.py`, `anthropic.py`, `google.py`, their `*_assistant.py` variants) and `adapters/moe_advisor.py` import shared *leaf* helpers from `services/` (`llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry`, `aggregators`). This bends "nothing flows out of adapters" but creates **no import cycle** — those helpers never import the adapters back — and centralizes one cost-gate / retry / pricing implementation instead of copying it per provider. This is the one sanctioned outward edge; new LLM adapters may reuse these helpers, but don't introduce fresh adapter→service dependencies outside this plumbing.
 
 ### Financial Power Fragmentation (Safety Design)
 
@@ -222,6 +226,18 @@ to every project. The wobblebot-specific items below extend it:
   Operator `.env` and `settings.yml` keys are a subset of their
   example counterparts; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` for
   bidirectional strict mode in CI.
+- **`settings.example.yml` reflects reality.** The drift test catches KEY
+  drift but **not** value/comment staleness or dead pairs (`grid.coins.*`
+  is exempt) — verified 2026-06-04 after the example silently carried stale
+  per-coin overrides + a retired MATIC pair across several commits. On any
+  strategy change, sync the example's affected values + comments in the SAME
+  commit, and confirm no retired pairs linger (MATIC→POL). The example is a
+  generic **template** (sensible defaults), **not** a mirror of live values:
+  operator-specific caps/balances and the 4 identity fields
+  (`operator.auth.*`, `harvester.withdrawal_destinations`) stay
+  generic/placeholder. (Targeted enforcement tests — structural-parity,
+  valid-pairs, value-invariant — are the durable guard; see
+  `tests/config/`.)
 - **Per-stage receipts have completion dates.** Every closed stage
   in `docs/planning/roadmap.md` carries a ✅ date. Phase summary
   document exists if the phase had real-money or architectural
@@ -234,8 +250,8 @@ to every project. The wobblebot-specific items below extend it:
   Don't relitigate; do flag if a new ADR superseded one. New ADRs
   added during the phase get a one-line mention.
 - **Real-money cost ledger updated.** If any live-money operations
-  ran, the running total in the "Project Status" section reflects
-  reality (currently $0.085018).
+  ran, the running total in `docs/planning/roadmap.md` (the
+  authoritative ledger) reflects reality.
 
 ### Quarterly (wobblebot extras)
 

@@ -13,6 +13,7 @@ from wobblebot.services.aggregators import (
     aggregate_arbitrator,
     aggregate_voting,
     aggregate_weighted_confidence,
+    news_materially_drove,
 )
 
 pytestmark = pytest.mark.unit
@@ -293,6 +294,111 @@ class TestNewsRoleParticipation:
         result = aggregate_weighted_confidence(opinions)
         # Both high → (1.0*3 + 2.0*3) / 6 = 1.5
         assert result.recommendations["spacing_percentage"] == pytest.approx(1.5)
+
+
+class TestNewsMateriallyDrove:
+    """ADR-007 amendment (structural news firewall) -- the per-key
+    nearest-value heuristic ``news_materially_drove`` computes for the
+    Stage 3.4b gate."""
+
+    def test_no_news_opinion_never_flags(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.0}),
+            _opinion(role="risk", recommendations={"spacing_percentage": 1.2}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"spacing_percentage": 1.1})
+        assert news_materially_drove(aggregated, opinions) is False
+
+    def test_news_sole_source_for_key_flags(self) -> None:
+        """Neither quant nor risk proposed this key at all -- the
+        aggregated value can only have come from news."""
+        opinions = [
+            _opinion(role="quant", recommendations={}),
+            _opinion(role="risk", recommendations={}),
+            _opinion(role="news", recommendations={"spacing_percentage": 1.5}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"spacing_percentage": 1.5})
+        assert news_materially_drove(aggregated, opinions) is True
+
+    def test_aggregate_closer_to_news_value_flags(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.0}),
+            _opinion(role="news", recommendations={"spacing_percentage": 2.0}),
+        ]
+        # 1.9 is 0.9 from quant, 0.1 from news -- news is the closer match.
+        aggregated = _opinion(role="aggregated", recommendations={"spacing_percentage": 1.9})
+        assert news_materially_drove(aggregated, opinions) is True
+
+    def test_aggregate_closer_to_non_news_value_does_not_flag(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.0}),
+            _opinion(role="news", recommendations={"spacing_percentage": 2.0}),
+        ]
+        # 1.1 is 0.1 from quant, 0.9 from news -- quant is the closer match.
+        aggregated = _opinion(role="aggregated", recommendations={"spacing_percentage": 1.1})
+        assert news_materially_drove(aggregated, opinions) is False
+
+    def test_exact_tie_does_not_flag(self) -> None:
+        """Benefit of the doubt goes to 'not news-driven' on a tie."""
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.0}),
+            _opinion(role="news", recommendations={"spacing_percentage": 2.0}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"spacing_percentage": 1.5})
+        assert news_materially_drove(aggregated, opinions) is False
+
+    def test_key_news_did_not_propose_is_ignored(self) -> None:
+        """News has no opinion on order_size_usd -- quant/risk moving it
+        must never flag, regardless of how far the aggregate lands."""
+        opinions = [
+            _opinion(role="quant", recommendations={"order_size_usd": 10.0}),
+            _opinion(role="risk", recommendations={"order_size_usd": 30.0}),
+            _opinion(role="news", recommendations={}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"order_size_usd": 30.0})
+        assert news_materially_drove(aggregated, opinions) is False
+
+    def test_only_one_of_several_keys_flagging_is_enough(self) -> None:
+        opinions = [
+            _opinion(
+                role="quant",
+                recommendations={"spacing_percentage": 1.0, "order_size_usd": 10.0},
+            ),
+            _opinion(
+                role="news",
+                recommendations={"spacing_percentage": 2.0},
+            ),
+        ]
+        aggregated = _opinion(
+            role="aggregated",
+            # spacing tracks news; order_size_usd tracks quant exactly.
+            recommendations={"spacing_percentage": 1.95, "order_size_usd": 10.0},
+        )
+        assert news_materially_drove(aggregated, opinions) is True
+
+    def test_empty_aggregated_recommendations_no_flag(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"spacing_percentage": 1.0}),
+            _opinion(role="news", recommendations={"spacing_percentage": 2.0}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={})
+        assert news_materially_drove(aggregated, opinions) is False
+
+    def test_non_numeric_key_matches_news_value_flags(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"posture": "hold"}),
+            _opinion(role="news", recommendations={"posture": "defensive"}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"posture": "defensive"})
+        assert news_materially_drove(aggregated, opinions) is True
+
+    def test_non_numeric_key_matches_non_news_value_does_not_flag(self) -> None:
+        opinions = [
+            _opinion(role="quant", recommendations={"posture": "hold"}),
+            _opinion(role="news", recommendations={"posture": "defensive"}),
+        ]
+        aggregated = _opinion(role="aggregated", recommendations={"posture": "hold"})
+        assert news_materially_drove(aggregated, opinions) is False
 
 
 def _summary() -> PerformanceSummary:

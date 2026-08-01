@@ -29,7 +29,7 @@ from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.loader import WobbleBotConfig, load_config
 from wobblebot.config.logging import JsonFormatter, configure_logging
 from wobblebot.config.resolver import deep_merge, resolve_config
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig, SellGuardConfig
 
 __all__ = [
     "AdvisorConfig",
@@ -38,7 +38,6 @@ __all__ = [
     "ArbitratorConfig",
     "AutoApplyConfig",
     "CoinGridConfig",
-    "EmergencyStopConfig",
     "ExpertConfig",
     "ExpertRole",
     "GridConfig",
@@ -51,6 +50,7 @@ __all__ = [
     "ObserveConfig",
     "PreflightConfig",
     "SafetyConfig",
+    "SellGuardConfig",
     "SandboxConfig",
     "ShadowConfig",
     "StatusConfig",

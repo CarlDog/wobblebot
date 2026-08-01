@@ -13,6 +13,7 @@ then breaks before placing any orders — keeping the test deterministic.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -44,9 +45,9 @@ class _RecordingExchange(MockExchangeAdapter):
         self.dms_calls: list[int] = []
         self._fail_cancel = fail_cancel
 
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
         self.dms_calls.append(timeout_seconds)
-        await super().set_dead_mans_switch(timeout_seconds)
+        return await super().set_dead_mans_switch(timeout_seconds)
 
     async def cancel_order(self, order: Order) -> Order:
         if self._fail_cancel:
@@ -127,3 +128,35 @@ async def test_disabled_switch_is_never_touched(storage: SQLiteStorageAdapter) -
     await _run_loop(exch, engine, _live(dead_mans_switch_seconds=None), storage, asyncio.Event())
 
     assert exch.dms_calls == []
+
+
+class _UnconfirmedArmExchange(_RecordingExchange):
+    """Always reports the arm as unconfirmed (mirrors Kraken returning
+    no real future triggerTime despite the call not raising)."""
+
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
+        self.dms_calls.append(timeout_seconds)
+        return None
+
+
+async def test_unconfirmed_arm_logs_warning_and_does_not_crash(
+    storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The 2026-06-02 soak lesson: a confirmed-armed check that never
+    fires must surface, not silently pass. It must also never crash the
+    loop -- the tick still completes and the loop still exits cleanly."""
+    exch = _UnconfirmedArmExchange(
+        starting_balances={"USD": Decimal("1000")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = _engine(exch, storage)
+    engine.request_stop()
+
+    with caplog.at_level(logging.WARNING, logger="wobblebot.cli.live"):
+        code = await _run_loop(exch, engine, _live(), storage, asyncio.Event())
+
+    assert code == 0
+    # Pet with the configured timeout, then disarmed (0) on the clean exit
+    # -- same shape as test_armed_each_tick_and_disarmed_on_clean_exit.
+    assert exch.dms_calls == [60, 0]
+    assert any("not confirmed" in r.message for r in caplog.records)

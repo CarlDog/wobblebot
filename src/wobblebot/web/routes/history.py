@@ -56,8 +56,9 @@ class HistorySnapshot:
 
 async def _load_snapshot(storage: StoragePort) -> HistorySnapshot:
     try:
-        # pending_commands: all rows, oldest-first per the port contract;
-        # we display newest-first by reversing then capping.
+        # pending_commands: oldest-first per its port contract — reversed
+        # below to display newest-first. notifications: already newest-first
+        # per its port contract, and its limit keeps the newest rows.
         pending = await storage.get_pending_commands(limit=_HISTORY_QUERY_LIMIT)
         notifications = await storage.get_notifications(limit=_HISTORY_QUERY_LIMIT)
     except StorageError as exc:
@@ -67,7 +68,7 @@ async def _load_snapshot(storage: StoragePort) -> HistorySnapshot:
             error=f"failed to query operator.db: {exc}",
         )
     pending_newest_first = list(reversed(pending))
-    notifications_newest_first = list(reversed(notifications))
+    notifications_newest_first = list(notifications)
     return HistorySnapshot(
         pending_commands=tuple(pending_newest_first[:_HISTORY_DISPLAY_LIMIT]),
         notifications=tuple(notifications_newest_first[:_HISTORY_DISPLAY_LIMIT]),

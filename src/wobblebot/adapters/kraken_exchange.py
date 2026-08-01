@@ -32,6 +32,13 @@ The adapter synthesizes a ``DRYRUN-<order.id>`` exchange_id so the
 engine's bookkeeping path still works for diagnostic runs.
 """
 
+# pylint: disable=too-many-lines
+# The sole ExchangePort implementation against a single, large REST
+# API (public + private endpoints, signing, per-pair precision
+# metadata, pagination). Splitting it would fragment one cohesive
+# adapter across files for no organizational gain -- same posture as
+# ports/storage.py's disable.
+
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +47,7 @@ import hashlib
 import hmac
 import time
 import urllib.parse
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
@@ -58,12 +65,23 @@ from wobblebot.domain.value_objects import (
     OrderSide,
     Price,
     Symbol,
+    Ticker,
     Timestamp,
 )
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
 _API_VERSION = "0"
+
+# TradesHistory returns ~50 trades per page, account-wide (no pair filter).
+# A busy multi-symbol account can push a target symbol's trades past the
+# first page, so get_trade_history paginates via `ofs` — bounded by this
+# page cap so a thin symbol amid heavy volume on other pairs can't turn
+# one fill-detection call into an unbounded run of private requests (the
+# 2026-06-02 per-symbol OpenOrders rate-limit storm is the cautionary
+# precedent). 20 pages (~1000 raw trades) comfortably covers the current
+# grid_engine.py caller's limit=200 across the account's traded symbols.
+_TRADES_HISTORY_MAX_PAGES = 20
 
 # Colloquial-naming aliases between our domain vocabulary and Kraken's
 # altname vocabulary. These are conventions we *choose* — Kraken's data
@@ -111,6 +129,22 @@ _INSUFFICIENT_FUNDS_MARKERS = ("EOrder:Insufficient funds",)
 # the stable part. Used by ``has_withdraw_scope`` to tell "key lacks the
 # permission" (expected, good) apart from a transport/protocol failure.
 _PERMISSION_DENIED_MARKERS = ("Permission denied",)
+
+# Kraken's rate-limit rejection (ADR-027). Transient -- unlike the two
+# markers above, this is retried with bounded exponential backoff rather
+# than mapped to a different exception or swallowed.
+_RATE_LIMIT_MARKERS = ("EAPI:Rate limit exceeded",)
+
+# ADR-027 backoff knobs. Deliberately mirrors ADR-015's cloud-LLM retry
+# shape (capped attempts + exponential multiplier, same defaults: 3
+# retries, 1s initial, 2x multiplier) rather than inventing a different
+# formula. Implemented locally instead of importing
+# ``services.llm_retry`` -- that would be a fresh adapters -> services
+# edge outside the LLM-adapter plumbing carve-out CLAUDE.md reserves
+# (see "Documented exception -- LLM plumbing").
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_INITIAL_BACKOFF_SECONDS = 1.0
+_RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 
 
 class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
@@ -223,6 +257,27 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         # "current price" per docs/reference/kraken-api-reference.md.
         last_price_str = ticker["c"][0]
         return Price(amount=Decimal(last_price_str), currency=symbol.quote)
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        """Fetch last/bid/ask via the same ``/0/public/Ticker`` endpoint
+        ``get_current_price`` already calls (ADR-025) -- ``a``/``b``/``c``
+        (ask/bid/close) are all present in one response, so this adds no
+        extra round-trip when called instead of (or alongside)
+        ``get_current_price``.
+        """
+        altname = _symbol_to_kraken_altname(symbol)
+        result = await self._public_get("/0/public/Ticker", {"pair": altname})
+        if not result:
+            raise ExchangeError(f"Kraken returned no ticker data for pair {altname!r}")
+        raw = next(iter(result.values()))
+        # ``a``/``b`` are [price, whole_lot_volume, lot_volume]; a[0]/b[0]
+        # are the best ask/bid per docs/reference/kraken-api-reference.md.
+        return Ticker(
+            symbol=symbol,
+            last=Decimal(raw["c"][0]),
+            bid=Decimal(raw["b"][0]),
+            ask=Decimal(raw["a"][0]),
+        )
 
     async def get_ohlc(
         self,
@@ -368,23 +423,42 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
     ) -> list[Trade]:
         """Fetch recent trades from Kraken; client-side filter by symbol.
 
-        Kraken's ``TradesHistory`` returns up to 50 entries per page by
-        default. We pass no time filter — the most recent ``limit``
-        trades after symbol filtering are returned. Larger ``limit``
-        callers should paginate; Stage 2.2's engine asks for at most
-        200 trades after detecting a small fill batch, so a single page
-        suffices in normal operation.
+        Kraken's ``TradesHistory`` returns up to 50 entries per page,
+        account-wide (no pair filter) and no time filter, newest first.
+        Fleet-review #19 finding 8: fetching only page 0 silently capped
+        every caller at the 50 most recent ACCOUNT-WIDE trades — on a
+        busy multi-symbol day a target symbol's trades can fall entirely
+        off that single page, leaving permanent, unrecoverable gaps in
+        the trades table (PnL, cycle-matching, and fee records). This
+        now walks ``ofs`` pages until either ``limit`` symbol-matching
+        trades are collected, Kraken's own ``count`` says history is
+        exhausted, or ``_TRADES_HISTORY_MAX_PAGES`` is hit (the safety
+        bound documented at that constant).
         """
         await self._ensure_pair_metadata()
-        result = await self._private_post("/0/private/TradesHistory")
-        trades_map = result.get("trades", {})
-        if not isinstance(trades_map, dict):
-            raise ExchangeError("Kraken TradesHistory response missing 'trades' object")
         trades: list[Trade] = []
-        for txid, entry in trades_map.items():
-            trade = self._build_trade_from_kraken(txid, entry)
-            if symbol is None or trade.symbol == symbol:
-                trades.append(trade)
+        offset = 0
+        total_count: int | None = None
+        for _ in range(_TRADES_HISTORY_MAX_PAGES):
+            result = await self._private_post("/0/private/TradesHistory", {"ofs": offset})
+            trades_map = result.get("trades", {})
+            if not isinstance(trades_map, dict):
+                raise ExchangeError("Kraken TradesHistory response missing 'trades' object")
+            if not trades_map:
+                break
+            for txid, entry in trades_map.items():
+                trade = self._build_trade_from_kraken(txid, entry)
+                if symbol is None or trade.symbol == symbol:
+                    trades.append(trade)
+            offset += len(trades_map)
+            if total_count is None:
+                raw_count = result.get("count")
+                if isinstance(raw_count, (int, float)):
+                    total_count = int(raw_count)
+            if total_count is not None and offset >= total_count:
+                break
+            if len(trades) >= limit:
+                break
         # Most-recent first to match the ExchangePort convention.
         trades.sort(key=lambda t: t.executed_at.dt, reverse=True)
         return trades[:limit]
@@ -467,7 +541,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         order.mark_canceled()
         return order
 
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """Arm/reset (``timeout_seconds`` > 0) or disable (``0``) Kraken's
         server-side dead man's switch via ``/0/private/CancelAllOrdersAfter``.
 
@@ -483,14 +557,25 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
         Dry-run short-circuits locally: a ``validate=true`` diagnostic run
         must never arm a real timer on the live account.
+
+        Returns Kraken's confirmed ``triggerTime`` (parsed to a UTC
+        ``datetime``), or ``None`` when the switch reports disarmed
+        (``timeout_seconds=0``, or Kraken's response doesn't carry a real
+        future trigger). Previously this response was discarded entirely
+        — the 2026-06-02 soak incident's root cause (a disarm-on-failed-
+        cancel bug) went undiagnosed for a day because nothing had ever
+        confirmed Kraken actually armed anything; see
+        ``tools/check_dead_mans_switch.py``, which now calls this method
+        directly instead of reaching into ``_private_post``.
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
         if self._dry_run:
-            return
-        await self._private_post(
+            return None
+        result = await self._private_post(
             "/0/private/CancelAllOrdersAfter", {"timeout": str(timeout_seconds)}
         )
+        return _parse_dms_trigger_time(result)
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         """Withdraw funds via Kraken's ``/0/private/Withdraw`` endpoint.
@@ -769,13 +854,18 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             ExchangeError: On HTTP error, malformed envelope, or
-                non-empty ``error`` array in the response.
+                non-empty ``error`` array in the response (rate-limit
+                errors are retried per ADR-027 before this is raised).
         """
-        try:
-            response = await self._http.get(path, params=params)
-        except httpx.HTTPError as exc:
-            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-        return self._unwrap_envelope(response, path)
+
+        async def _do() -> dict[str, Any]:
+            try:
+                response = await self._http.get(path, params=params)
+            except httpx.HTTPError as exc:
+                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+            return self._unwrap_envelope(response, path)
+
+        return await self._call_with_rate_limit_retry(_do)
 
     async def _private_post(
         self, path: str, params: dict[str, Any] | None = None, *, require_result: bool = True
@@ -785,26 +875,68 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         Builds the nonce, signs the request, and sets ``API-Key`` /
         ``API-Sign`` headers. The body is form-encoded
         (``application/x-www-form-urlencoded``), which is what Kraken
-        signs over.
+        signs over. The nonce/signature are (re)built on every retry
+        attempt (see ``_call_with_rate_limit_retry``) so a retried
+        request never replays a stale nonce.
 
         Raises:
             ExchangeError: On HTTP error, malformed envelope, or
-                non-empty ``error`` array in the response.
+                non-empty ``error`` array in the response (rate-limit
+                errors are retried per ADR-027 before this is raised).
         """
-        body = dict(params or {})
-        nonce = self._make_nonce()
-        body["nonce"] = nonce
-        signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
-        headers = {
-            "API-Key": self._config.api_key,
-            "API-Sign": signature,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        try:
-            response = await self._http.post(path, data=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-        return self._unwrap_envelope(response, path, require_result=require_result)
+
+        async def _do() -> dict[str, Any]:
+            body = dict(params or {})
+            nonce = self._make_nonce()
+            body["nonce"] = nonce
+            signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
+            headers = {
+                "API-Key": self._config.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            try:
+                response = await self._http.post(path, data=body, headers=headers)
+            except httpx.HTTPError as exc:
+                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+            return self._unwrap_envelope(response, path, require_result=require_result)
+
+        return await self._call_with_rate_limit_retry(_do)
+
+    @staticmethod
+    async def _call_with_rate_limit_retry(
+        fn: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Retry ``fn`` with bounded exponential backoff on a Kraken
+        rate-limit rejection (ADR-027).
+
+        Mirrors ADR-015's cloud-LLM retry shape (capped attempts,
+        exponential backoff) rather than a bespoke formula -- see the
+        ``_RATE_LIMIT_*`` constants. Only ``EAPI:Rate limit exceeded``
+        is transient here; any other ``ExchangeError`` (or any other
+        exception) propagates on the first attempt unchanged. After
+        the retry budget is exhausted, re-raises the last rate-limit
+        ``ExchangeError`` as-is -- callers already handle
+        ``ExchangeError`` from a Kraken call, so this stays a plain
+        transport-resilience retry rather than a new exception type.
+        """
+        last_error: ExchangeError | None = None
+        total_attempts = 1 + _RATE_LIMIT_MAX_RETRIES
+        for attempt in range(total_attempts):
+            try:
+                return await fn()
+            except ExchangeError as exc:
+                if not any(marker in str(exc) for marker in _RATE_LIMIT_MARKERS):
+                    raise
+                last_error = exc
+                if attempt == total_attempts - 1:
+                    break
+                backoff = _RATE_LIMIT_INITIAL_BACKOFF_SECONDS * (
+                    _RATE_LIMIT_BACKOFF_MULTIPLIER**attempt
+                )
+                await asyncio.sleep(backoff)
+        assert last_error is not None
+        raise last_error
 
     @staticmethod
     def _unwrap_envelope(
@@ -890,6 +1022,28 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         secret_bytes = base64.b64decode(self._config.api_secret)
         signature = hmac.new(secret_bytes, mac_input, hashlib.sha512).digest()
         return base64.b64encode(signature).decode("utf-8")
+
+
+def _parse_dms_trigger_time(result: dict[str, Any]) -> datetime | None:
+    """Parse ``CancelAllOrdersAfter``'s ``currentTime``/``triggerTime``
+    into a confirmed-armed signal.
+
+    Kraken returns ``triggerTime="0"`` when the switch is disabled
+    (``timeout=0``) and otherwise an RFC3339 timestamp
+    (``"2026-06-01T00:01:00Z"``) strictly after ``currentTime``. Treat
+    anything else — missing, malformed, or equal to ``currentTime`` —
+    as "not confirmed armed" rather than raising, so a single odd
+    response doesn't crash the per-tick ping loop; the caller decides
+    what to do with ``None``.
+    """
+    trigger = result.get("triggerTime")
+    current = result.get("currentTime")
+    if not trigger or trigger == "0" or trigger == current:
+        return None
+    try:
+        return datetime.fromisoformat(str(trigger).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _quantize_decimal(value: Decimal, decimals: int) -> Decimal:

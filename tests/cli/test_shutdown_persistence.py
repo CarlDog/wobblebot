@@ -28,7 +28,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _cancel_all_open as _cancel_all_open_live
 from wobblebot.cli.shadow import _cancel_all_open as _cancel_all_open_shadow
 from wobblebot.domain.models import Order
-from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, Price, Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -214,7 +214,7 @@ class TestSessionEndResilience:
         # raise at session-end. The test asserts cancel still runs.
         portfolio_log = {"n": 0}
 
-        async def flaky_portfolio(_adapter: Any, _symbols: Any) -> Decimal:
+        async def flaky_portfolio(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             portfolio_log["n"] += 1
             if portfolio_log["n"] == 1:
                 return Decimal("100")
@@ -302,7 +302,7 @@ async def _run_loop_until_shutdown(
     async def fixed_balance(_a: Any) -> Decimal:
         return Decimal("100")
 
-    async def fixed_portfolio(_a: Any, _s: Any) -> Decimal:
+    async def fixed_portfolio(_a: Any, _s: Any, _t: Any = None) -> Decimal:
         return Decimal("100")
 
     monkeypatch.setattr(live_module, "_session_usd_balance", fixed_balance)
@@ -443,7 +443,7 @@ class TestPerTickBalanceResilience:
         from wobblebot.cli.live import _run_one_tick
         from wobblebot.config.cli import LiveConfig
 
-        async def always_fails(_adapter: Any, _symbols: Any) -> Decimal:
+        async def always_fails(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             raise ExchangeError("simulated Kraken /BalanceEx timeout")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", always_fails)
@@ -465,10 +465,16 @@ class TestPerTickBalanceResilience:
         from unittest.mock import AsyncMock
 
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         # _run_one_tick should NOT raise; should return False (no cap trip).
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_ticker = AsyncMock(
+            side_effect=lambda symbol: Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
         result = await _run_one_tick(
             adapter=adapter,
             engine=engine,
@@ -584,6 +590,46 @@ class TestSessionPortfolioValueUsd:
         # get_current_price called only once (deduplication).
         assert adapter.get_current_price.await_count == 1
 
+    async def test_uses_prefetched_ticker_instead_of_refetching(self) -> None:
+        """v1.1 backlog 'per-tick price-fetch dedup': when the caller
+        (``_run_one_tick``) has already fetched a ``Ticker`` for a symbol
+        this tick, this helper must reuse it rather than issuing its own
+        ``get_current_price`` call — the whole point of the dedup."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.kraken_exchange import KrakenAdapter
+        from wobblebot.cli.live import _session_portfolio_value_usd
+        from wobblebot.domain.models import Balance
+
+        adapter = MagicMock(spec=KrakenAdapter)
+        adapter.get_balances = AsyncMock(
+            return_value=[
+                Balance(
+                    asset="USD", total=Decimal("90"), available=Decimal("90"), locked=Decimal("0")
+                ),
+                Balance(
+                    asset="BTC",
+                    total=Decimal("0.0001"),
+                    available=Decimal("0.0001"),
+                    locked=Decimal("0"),
+                ),
+            ]
+        )
+        adapter.get_current_price = AsyncMock(
+            side_effect=AssertionError("must not refetch when a ticker is pre-fetched")
+        )
+        btc = Symbol(base="BTC", quote="USD")
+        tickers = {
+            btc: Ticker(
+                symbol=btc, last=Decimal("100000"), bid=Decimal("99999"), ask=Decimal("100001")
+            )
+        }
+
+        value = await _session_portfolio_value_usd(adapter, (btc,), tickers)
+        # 90 USD + (0.0001 BTC * $100,000) = 100, sourced from the cached
+        # ticker's `last` -- adapter.get_current_price was never touched.
+        assert value == Decimal("100.00000000")
+
 
 class TestSessionLossCapAccountsForAssetConversion:
     """Regression for the 2026-05-22 09:18:31 cli/live crash.
@@ -604,7 +650,7 @@ class TestSessionLossCapAccountsForAssetConversion:
         # Started session at $100 portfolio value (e.g., $100 USD + 0 BTC).
         # A BUY filled mid-tick: now $90 USD + 0.0001 BTC × $100k = still $100.
         # USD balance alone reads -$10; portfolio value reads $0 delta.
-        async def portfolio_value(_adapter: Any, _symbols: Any) -> Decimal:
+        async def portfolio_value(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")  # mark-to-market preserved
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", portfolio_value)
@@ -627,9 +673,15 @@ class TestSessionLossCapAccountsForAssetConversion:
                 offside=False,
             )
         )
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_ticker = AsyncMock(
+            side_effect=lambda symbol: Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
         result = await _run_one_tick(
             adapter=adapter,
             engine=engine,
@@ -654,7 +706,7 @@ class TestSessionLossCapAccountsForAssetConversion:
 
         # Portfolio value dropped from $100 to $90 — a real $10 mark-to-market
         # loss (e.g., held BTC lost value relative to start).
-        async def portfolio_value(_adapter: Any, _symbols: Any) -> Decimal:
+        async def portfolio_value(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("90")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", portfolio_value)
@@ -672,9 +724,15 @@ class TestSessionLossCapAccountsForAssetConversion:
                 action="held", fills=0, counters_placed=0, placed=0, refusals=0, offside=False
             )
         )
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
 
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_ticker = AsyncMock(
+            side_effect=lambda symbol: Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
         result = await _run_one_tick(
             adapter=adapter,
             engine=engine,

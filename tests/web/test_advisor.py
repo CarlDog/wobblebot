@@ -17,8 +17,36 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
+from wobblebot.web.routes.advisor import _as_float
 
 pytestmark = pytest.mark.unit
+
+
+class TestAsFloat:
+    def test_normal_number_passes_through(self) -> None:
+        assert _as_float(1.5) == 1.5
+        assert _as_float(2) == 2.0
+        assert _as_float("3.25") == 3.25
+
+    def test_none_and_bool_reject(self) -> None:
+        assert _as_float(None) is None
+        assert _as_float(True) is None
+        assert _as_float(False) is None
+
+    def test_non_numeric_rejects(self) -> None:
+        assert _as_float("not a number") is None
+        assert _as_float([1, 2]) is None
+
+    def test_nan_and_infinity_reject(self) -> None:
+        """json.loads accepts bare NaN/Infinity/-Infinity tokens, and
+        float() on any of them doesn't raise — _as_float must filter them
+        out itself rather than relying on the try/except."""
+        assert _as_float(float("nan")) is None
+        assert _as_float(float("inf")) is None
+        assert _as_float(float("-inf")) is None
+        assert _as_float("NaN") is None
+        assert _as_float("Infinity") is None
+        assert _as_float("-Infinity") is None
 
 
 @pytest_asyncio.fixture
@@ -46,6 +74,7 @@ def _make_suggestion(
     confidence: str = "medium",
     model: str = "phi4:14b",
     with_experts: bool = False,
+    current_spacing: float | None = None,
 ) -> AdvisorSuggestion:
     rec_kwargs: dict[str, Any] = {
         "recommendation_id": "rec-" + symbol.replace("/", "-"),
@@ -74,10 +103,13 @@ def _make_suggestion(
                 confidence="medium",
             ),
         ]
+    input_summary: dict[str, Any] = {"symbol": symbol}
+    if current_spacing is not None:
+        input_summary["current_grid"] = {"spacing_percentage": current_spacing}
     return AdvisorSuggestion(
         recommendation=AdvisorRecommendation(**rec_kwargs),
         created_at=Timestamp(dt=datetime.now(UTC)),
-        input_summary={"symbol": symbol},
+        input_summary=input_summary,
         model_name=model,
     )
 
@@ -155,6 +187,84 @@ class TestAdvisorRoute:
             assert "Per-Expert Opinions" in resp.text
             assert "quant" in resp.text
             assert "risk" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_below_floor_suggestion_is_dimmed_and_badged(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # Proposes 1.0% while looking at a 3.0% grid -> the auto-apply floor
+        # would reject it, so the card is dimmed and badged.
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="BTC/USD",
+                recommendations={"spacing_percentage": 1.0},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" in resp.text  # dim class on the card
+            assert "below floor" in resp.text  # the badge label
+
+    @pytest.mark.asyncio
+    async def test_non_finite_proposed_spacing_is_not_tagged_below_floor(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """A garbled -Infinity proposal must not spuriously trip below_floor.
+
+        json.loads accepts bare -Infinity/Infinity/NaN tokens, and
+        float("-inf") is a valid, non-raising float. Unchecked, `-inf` reads
+        as "less than" any finite current_spacing, so the row would render
+        `below-floor` + a tooltip literally saying "Proposed -inf% is
+        tighter than...". `_as_float` now rejects non-finite values (same
+        class of fix as services/auto_apply._coerce_numeric)."""
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="BTC/USD",
+                recommendations={"spacing_percentage": float("-inf")},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" not in resp.text
+            assert "below floor" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_at_or_above_floor_is_not_tagged(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        # Spacing == current (at floor) and a widen above it: neither tagged.
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="ETH/USD",
+                recommendations={"spacing_percentage": 3.0},
+                current_spacing=3.0,
+            )
+        )
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(
+                symbol="DOGE/USD",
+                recommendations={"spacing_percentage": 4.0},
+                current_spacing=3.0,
+            )
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+            assert "below-floor" not in resp.text
+            assert "below floor" not in resp.text
 
     @pytest.mark.asyncio
     async def test_lists_multiple_suggestions_newest_first(

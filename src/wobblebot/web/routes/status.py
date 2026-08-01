@@ -27,16 +27,18 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from wobblebot.domain.models import Order, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
+    get_cool_down_minutes,
     get_live_storage,
     get_observe_storage,
     get_templates,
@@ -50,6 +52,23 @@ _PRICE_LOOKBACK_MINUTES = 15
 # Percent change below this threshold renders as "flat" (no arrow).
 # Without a threshold the arrow flickers up/down on stable markets.
 _TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
+# Trade-fetch window. Wide enough to match cycles over the bot's full
+# history (lifetime PnL + correct FIFO pairing) at this capital's volume;
+# mirrors the cost page's all-time fee aggregation. Revisit if the trade
+# count ever approaches this.
+_TRADE_FETCH_LIMIT = 10_000
+# Cap on cycles rendered in the Recent Cycles table (the full set still
+# feeds the lifetime-PnL aggregate). Keeps the table bounded once the
+# match window covers the whole history.
+_RECENT_CYCLES_DISPLAY = 10
+# Cap on fills rendered in the Recent Fills table — symmetric with cycles.
+_RECENT_FILLS_DISPLAY = 10
+# Per-symbol sparkline geometry (a tiny inline SVG on each symbol card:
+# recent price line + grid band + current-price marker). Viewbox units.
+_SPARK_W = 100.0
+_SPARK_H = 24.0
+_SPARK_PAD = 2.0
+_SPARK_LOOKBACK_MINUTES = 120  # 2h of price snapshots
 
 TrendDirection = Literal["up", "down", "flat"]
 ReanchorSeverity = Literal["mild", "moderate", "strong"]
@@ -84,6 +103,25 @@ class ReanchorRecommendation:
     oldest_order_age_seconds: int
     current_price: Decimal
     anchor_price: Decimal
+
+
+@dataclass(frozen=True)
+class Sparkline:
+    """Pre-computed SVG geometry for one symbol's price sparkline.
+
+    The template plugs these straight into an ``<svg viewBox="0 0 100 24">``
+    — a polyline of the recent price series, an optional shaded band
+    spanning the open-order ladder (lowest BUY → highest SELL), and a
+    marker at the current price. ``offside`` flags the marker red when
+    price has left the band (the visual "parked" signal).
+    """
+
+    points: str  # polyline "x,y x,y ..."
+    band_y: float | None  # top of the band rect (None = no open orders)
+    band_h: float | None
+    marker_x: float
+    marker_y: float
+    offside: bool
 
 
 @dataclass(frozen=True)
@@ -127,9 +165,41 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # "Recent Cycles" panel below Recent Fills.
     recent_cycles: tuple[RecentCycle, ...] = field(default_factory=tuple)
     # Sum of cycle.net_pnl across cycles whose SELL fired today (UTC).
-    # The header "Today's PnL" number — None when no realized PnL
+    # The "Today's PnL" scoreboard number — None when no realized PnL
     # has accrued today yet.
     today_realized_pnl: Decimal | None = None
+    # All-time realized cycle PnL (sum of every matched cycle's net_pnl).
+    # None when no cycles have completed.
+    lifetime_realized_pnl: Decimal | None = None
+    # Aggregate account scoreboard (top-of-dashboard strip). Sourced from
+    # observe.db's latest balance snapshot (credential-free per ADR-016)
+    # + the observed prices above. All ``None`` when observe.db is
+    # unwired/empty. ``held_value_usd`` = account_value − free USD (the
+    # "in positions" exposure); ``balance_as_of`` carries the snapshot
+    # time for a freshness stamp.
+    free_usd: Decimal | None = None
+    account_value_usd: Decimal | None = None
+    held_value_usd: Decimal | None = None
+    balance_as_of: datetime | None = None
+    # Per-symbol price sparkline geometry (key = symbol). Symbols with
+    # < 2 price snapshots in the 2h window are absent — the card renders
+    # exactly as before (no misleading single-point line).
+    sparklines: dict[Symbol, Sparkline] = field(default_factory=dict)
+    # Session card (v1.1): the most recent session-loss-cap trip on
+    # record (ADR-024's cap_trips table), so a trip that fires while
+    # the operator misses the bell/Discord ping still has a durable
+    # on-dashboard signal instead of disappearing once the alert
+    # scrolls out of view. ``None`` when no trip has ever been
+    # recorded. Age is precomputed here (not in the template) so
+    # Jinja only formats, never does datetime arithmetic.
+    last_cap_trip: CapTripRecord | None = None
+    last_cap_trip_age_seconds: float | None = None
+    # Whether the ADR-024 cool-down gate is active RIGHT NOW (blocks a
+    # new cli/live session from starting) and, if so, when it lifts.
+    # Both are ``False``/``None`` when no trip is on record, the
+    # cool-down window is operator-disabled, or the window has elapsed.
+    cool_down_active: bool = False
+    cool_down_resumes_at: datetime | None = None
     error: str | None = None
 
 
@@ -228,11 +298,169 @@ async def _load_current_prices(
     return prices, trends
 
 
+def _build_sparkline(  # pylint: disable=too-many-locals
+    series: list[Decimal],
+    band_low: Decimal | None,
+    band_high: Decimal | None,
+    current: Decimal | None,
+) -> Sparkline | None:
+    """Project a price series (+ optional grid band + current) into SVG
+    coords for the ``0 0 _SPARK_W _SPARK_H`` viewbox.
+
+    Returns ``None`` when there aren't >= 2 points to draw a line from.
+    The y-axis is inverted (higher price = lower y) and the domain spans
+    every value that has to fit (series + band edges + current marker).
+    """
+    if len(series) < 2:
+        return None
+    values = list(series)
+    for extra in (band_low, band_high, current):
+        if extra is not None:
+            values.append(extra)
+    lo = min(values)
+    hi = max(values)
+    span = hi - lo
+    inner_h = _SPARK_H - 2 * _SPARK_PAD
+    inner_w = _SPARK_W - 2 * _SPARK_PAD
+
+    def y_of(value: Decimal) -> float:
+        if span == 0:
+            return _SPARK_H / 2
+        frac = float((value - lo) / span)  # 0 = lo (bottom), 1 = hi (top)
+        return _SPARK_PAD + (1.0 - frac) * inner_h
+
+    n = len(series)
+    points = " ".join(
+        f"{_SPARK_PAD + (i / (n - 1)) * inner_w:.1f},{y_of(v):.1f}" for i, v in enumerate(series)
+    )
+
+    band_y: float | None = None
+    band_h: float | None = None
+    if band_low is not None and band_high is not None and band_high >= band_low:
+        band_y = y_of(band_high)
+        band_h = max(y_of(band_low) - band_y, 0.5)
+
+    marker_value = current if current is not None else series[-1]
+    offside = (
+        current is not None
+        and band_low is not None
+        and band_high is not None
+        and (current < band_low or current > band_high)
+    )
+    return Sparkline(
+        points=points,
+        band_y=band_y,
+        band_h=band_h,
+        marker_x=_SPARK_W - _SPARK_PAD,
+        marker_y=y_of(marker_value),
+        offside=offside,
+    )
+
+
+async def _load_price_series(
+    observe_storage: StoragePort | None,
+    symbols: set[Symbol],
+) -> dict[Symbol, list[Decimal]]:
+    """Per-symbol price series (oldest->newest) over the sparkline window.
+
+    Best-effort against observe.db (credential-free per ADR-016); a
+    per-symbol storage failure logs + skips, and symbols with < 2 points
+    are omitted so the sparkline degrades to nothing.
+    """
+    if observe_storage is None or not symbols:
+        return {}
+    cutoff = datetime.now(UTC) - timedelta(minutes=_SPARK_LOOKBACK_MINUTES)
+    out: dict[Symbol, list[Decimal]] = {}
+    for symbol in symbols:
+        try:
+            snaps = await observe_storage.get_price_snapshots(symbol=symbol, start_time=cutoff)
+        except StorageError as exc:
+            _LOGGER.warning(
+                "sparkline series lookup failed; skipping",
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            continue
+        if len(snaps) < 2:
+            continue
+        out[symbol] = [s.price.amount for s in sorted(snaps, key=lambda s: s.observed_at.dt)]
+    return out
+
+
+def _build_sparklines(
+    series_by_symbol: dict[Symbol, list[Decimal]],
+    orders_by_symbol: dict[Symbol, tuple[Order, ...]],
+    prices: dict[Symbol, Decimal],
+) -> dict[Symbol, Sparkline]:
+    """Build per-symbol sparkline geometry. Band = open-order ladder
+    (lowest -> highest order price); absent for parked / no-order symbols."""
+    out: dict[Symbol, Sparkline] = {}
+    for symbol, series in series_by_symbol.items():
+        order_prices = [o.price.amount for o in orders_by_symbol.get(symbol, ())]
+        spark = _build_sparkline(
+            series,
+            min(order_prices) if order_prices else None,
+            max(order_prices) if order_prices else None,
+            prices.get(symbol),
+        )
+        if spark is not None:
+            out[symbol] = spark
+    return out
+
+
+async def _load_balances(observe_storage: StoragePort | None) -> list[Balance]:
+    """Latest balance snapshot from observe.db; ``[]`` when unwired/failed.
+
+    Per ADR-016 the web tier stays credential-free — balances come from
+    the observe.db snapshot cli/observe polls, not a live Kraken call. A
+    storage failure degrades to an empty list (the scoreboard renders
+    "—") rather than 500ing the dashboard.
+    """
+    if observe_storage is None:
+        return []
+    try:
+        return await observe_storage.get_latest_balance_snapshot()
+    except StorageError as exc:
+        _LOGGER.warning("balance snapshot lookup failed; skipping", extra={"error": str(exc)})
+        return []
+
+
+def _compute_balance_metrics(
+    balances: list[Balance],
+    prices: dict[Symbol, Decimal],
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Derive (free_usd, account_value, held_value) from a balance snapshot.
+
+    ``account_value`` = USD total + Σ(held base × observed price);
+    ``free_usd`` = the USD balance's available; ``held_value`` =
+    account − USD total (the "in positions" exposure). Held assets
+    without a known price are omitted from the valuation — a slight
+    undercount beats blocking the whole card on one missing price.
+    Returns all-``None`` when no balance snapshot is available.
+    """
+    if not balances:
+        return (None, None, None)
+    usd_total = Decimal(0)
+    free_usd = Decimal(0)
+    held_value = Decimal(0)
+    for bal in balances:
+        if bal.asset == "USD":
+            usd_total = bal.total
+            free_usd = bal.available
+            continue
+        if bal.total <= 0:
+            continue
+        price = prices.get(Symbol(base=bal.asset, quote="USD"))
+        if price is not None:
+            held_value += bal.total * price
+    return (free_usd, usd_total + held_value, held_value)
+
+
 async def _load_snapshot(  # pylint: disable=too-many-locals
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
     *,
     operator_tz: str = "UTC",
+    cool_down_minutes: float | None = None,
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -242,42 +470,82 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     UTC midnight while the operator's CST clock still read late
     evening on the same calendar day, silently showing "Today: $0.00"
     against cycles that the operator considered today's.
+
+    ``cool_down_minutes`` mirrors ``LiveConfig.cool_down_minutes``
+    (ADR-024) so the session card can show whether a new session is
+    currently gated — ``None`` when the operator disabled the gate
+    or ``cli/web`` wasn't given a ``live:`` config section to read it
+    from (the trip itself still shows; only the "gate active" framing
+    is unavailable).
     """
     if live_storage is None:
         return _empty_snapshot(wired=False)
     try:
         open_orders = await live_storage.get_open_orders()
-        # Fetch a wider window for cycle matching; slice the first
-        # 20 for the Recent Fills feed. One query, two views.
-        all_recent = await live_storage.get_trades(limit=100)
+        # Wide window: match cycles over the full trade history for the
+        # lifetime-PnL aggregate + correct FIFO pairing; slice the newest
+        # few for Recent Fills. One query, several views.
+        all_recent = await live_storage.get_trades(limit=_TRADE_FETCH_LIMIT)
     except StorageError as exc:
         return _empty_snapshot(wired=True, error=f"failed to query live.db: {exc}")
-    recent = all_recent[:20]
+    recent = all_recent[:_RECENT_FILLS_DISPLAY]
     cycles = tuple(match_cycles(all_recent))
     today_pnl = today_realized_pnl(cycles, tz_name=operator_tz) if cycles else None
+    lifetime_pnl = sum((c.net_pnl for c in cycles), Decimal(0)) if cycles else None
     last_age: float | None = None
     if recent:
         most_recent = max(recent, key=lambda t: t.executed_at.dt)
         delta = datetime.now(UTC) - most_recent.executed_at.dt
         last_age = delta.total_seconds()
     symbols_with_orders = {o.symbol for o in open_orders}
-    prices, trends = await _load_current_prices(observe_storage, symbols_with_orders)
+    # Latest balance snapshot from observe.db (credential-free per ADR-016).
+    # Held bases join the price-fetch set so the account-value math can
+    # value inventory that isn't currently trading (e.g. parked BTC).
+    balances = await _load_balances(observe_storage)
+    held_symbols = {
+        Symbol(base=b.asset, quote="USD") for b in balances if b.asset != "USD" and b.total > 0
+    }
+    # Fetch prices for EVERY symbol that will render a card (orders ∪
+    # recent trades) plus held bases — so a parked / no-order symbol
+    # (e.g. BTC offside) still shows its price + trend, not a bare name.
+    trade_symbols = {t.symbol for t in recent}
+    prices, trends = await _load_current_prices(
+        observe_storage, symbols_with_orders | held_symbols | trade_symbols
+    )
+    free_usd, account_value, held_value = _compute_balance_metrics(balances, prices)
+    balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
     order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
     reanchor_recs = await _load_reanchor_recommendations(
         live_storage, list(open_orders), prices, order_ages
     )
-    # Union of symbols seen in open orders + recent trades, sorted
-    # by (base, quote) for stable rendering order.
+    last_cap_trip = await _load_last_cap_trip(live_storage)
+    last_cap_trip_age: float | None = None
+    cool_down = check_cool_down(
+        last_cap_trip.tripped_at if last_cap_trip else None,
+        now=now,
+        window_minutes=cool_down_minutes,
+    )
+    if last_cap_trip is not None:
+        last_cap_trip_age = (now - last_cap_trip.tripped_at.dt).total_seconds()
+    # A card renders for every symbol you have orders for, hold a balance
+    # in, or traded recently — so a parked/held coin (e.g. offside BTC)
+    # keeps its card + price even when its last fill ages out of the
+    # display window. Sorted by (base, quote) for stable order.
     all_symbols = tuple(
         sorted(
-            symbols_with_orders | {t.symbol for t in recent},
+            symbols_with_orders | held_symbols | {t.symbol for t in recent},
             key=lambda s: (s.base, s.quote),
         )
     )
     orders_by_symbol: dict[Symbol, tuple[Order, ...]] = {
         sym: tuple(o for o in open_orders if o.symbol == sym) for sym in all_symbols
     }
+    sparklines = _build_sparklines(
+        await _load_price_series(observe_storage, set(all_symbols)),
+        orders_by_symbol,
+        prices,
+    )
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -289,9 +557,35 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         reanchor_recommendations=reanchor_recs,
         symbols=all_symbols,
         orders_by_symbol=orders_by_symbol,
-        recent_cycles=cycles,
+        recent_cycles=cycles[:_RECENT_CYCLES_DISPLAY],
         today_realized_pnl=today_pnl,
+        lifetime_realized_pnl=lifetime_pnl,
+        free_usd=free_usd,
+        account_value_usd=account_value,
+        held_value_usd=held_value,
+        balance_as_of=balance_as_of,
+        sparklines=sparklines,
+        last_cap_trip=last_cap_trip,
+        last_cap_trip_age_seconds=last_cap_trip_age,
+        cool_down_active=cool_down.active,
+        cool_down_resumes_at=cool_down.resumes_at,
     )
+
+
+async def _load_last_cap_trip(live_storage: StoragePort) -> CapTripRecord | None:
+    """The most recent session-loss-cap trip (ADR-024), or ``None``.
+
+    A storage failure here degrades to "no trip on record" rather than
+    failing the whole snapshot — the session card is a durable-signal
+    nicety, not load-bearing for the rest of the dashboard.
+    """
+    try:
+        return await live_storage.get_last_cap_trip()
+    except StorageError as exc:
+        _LOGGER.warning(
+            "last-cap-trip lookup failed; session card omitted", extra={"error": str(exc)}
+        )
+        return None
 
 
 async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
@@ -364,6 +658,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    cool_down_minutes: float | None = Depends(get_cool_down_minutes),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
 
@@ -371,7 +666,12 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     light was removed 2026-05-23 and the navbar heart-pulse icon's
     tiered dot now polls /health/overall.json directly.
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
+    snapshot = await _load_snapshot(
+        live_storage,
+        observe_storage,
+        operator_tz=prefs.timezone,
+        cool_down_minutes=cool_down_minutes,
+    )
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -392,13 +692,19 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    cool_down_minutes: float | None = Depends(get_cool_down_minutes),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
 
     No health snapshot — the navbar dot owns health UX since
     2026-05-23 (single source of truth via /health/overall.json).
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
+    snapshot = await _load_snapshot(
+        live_storage,
+        observe_storage,
+        operator_tz=prefs.timezone,
+        cool_down_minutes=cool_down_minutes,
+    )
     return templates.TemplateResponse(
         request,
         "_status_card.html",
@@ -407,6 +713,39 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
         },
+    )
+
+
+@router.get("/status/recent-fills.json")
+async def recent_fills_json(
+    user: User = Depends(require_user),  # pylint: disable=unused-argument
+    live_storage: StoragePort | None = Depends(get_live_storage),
+) -> Response:
+    """Compact newest-first JSON of recent fills, for the client toast popper.
+
+    Auth-gated like every status surface. ``live.db`` unwired or a query
+    failure returns an empty list rather than erroring — the toast poll is
+    best-effort UX, never load-bearing.
+    """
+    if live_storage is None:
+        return JSONResponse({"fills": []})
+    try:
+        trades = await live_storage.get_trades(limit=20)
+    except StorageError:
+        return JSONResponse({"fills": []})
+    return JSONResponse(
+        {
+            "fills": [
+                {
+                    "id": t.id,
+                    "symbol": f"{t.symbol.base}/{t.symbol.quote}",
+                    "side": t.side.value,
+                    "price": f"{t.price.amount:.2f}",
+                    "amount": f"{t.amount.value:.8f}",
+                }
+                for t in trades
+            ]
+        }
     )
 
 

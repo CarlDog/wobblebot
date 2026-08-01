@@ -5,7 +5,7 @@ Run as a module::
     python -m wobblebot.cli.maintenance
     python -m wobblebot.cli.maintenance --profile conservative
 
-Long-running daemon with three concurrent scheduled tasks:
+Long-running daemon with four concurrent scheduled tasks:
 
 - **vacuum** — runs SQLite ``VACUUM`` against each configured DB
   on ``schedules.maintenance_vacuum`` cadence (default weekly).
@@ -17,6 +17,13 @@ Long-running daemon with three concurrent scheduled tasks:
   ``schedules.maintenance_backup`` cadence (default daily). Old
   backups beyond the retention horizon are pruned after each
   write.
+- **verify** — v1.1: restoration smoke test against each DB's
+  LATEST backup on ``schedules.maintenance_verify`` cadence
+  (default monthly). ``PRAGMA integrity_check`` + a representative
+  ``SELECT`` against every table; notifies (when ``operator_db`` is
+  wired) on any failure. Backups have been written since Day 1 and
+  never verified before this — a silently-corrupt backup is
+  otherwise only discovered the day it's needed.
 
 Per `stage-8.2-design.md`:
 
@@ -25,10 +32,10 @@ Per `stage-8.2-design.md`:
 - Only `price_snapshots` gets pruned in v1.0 (decision 3).
 - Local-only backups in v1.0 (decision 4).
 
-The three tasks run independently via the Stage 8.0.C
+The four tasks run independently via the Stage 8.0.C
 ``run_poll_loop`` helper — one bad cycle on any task doesn't kill
 the others. Shutdown via SIGINT/SIGTERM flips the shared
-``stop_event``; all three tasks exit at their next loop iteration.
+``stop_event``; all four tasks exit at their next loop iteration.
 
 Per the Phase 8.1 reconciliation work the maintenance daemon
 assumes known-good storage state at boot — no stale-open rows
@@ -46,12 +53,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     emit_heartbeat,
     install_signal_handlers,
     load_operator_env,
+    notify,
     run_poll_loop,
     run_with_clean_exit,
     safe_shutdown,
@@ -61,7 +70,13 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
-from wobblebot.services.backuper import backup_database_locally, prune_old_backups
+from wobblebot.ports.notifier import NotifierPort
+from wobblebot.services.backuper import (
+    backup_database_locally,
+    find_latest_backup,
+    prune_old_backups,
+    verify_backup_restoration,
+)
 from wobblebot.services.maintenance import prune_price_snapshots, vacuum_database
 
 _LOGGER = logging.getLogger("wobblebot.cli.maintenance")
@@ -183,6 +198,65 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
     return success
 
 
+async def _verify_all(maintenance: MaintenanceConfig, notifier: NotifierPort | None) -> int:
+    """Restoration smoke test against each configured DB's LATEST backup.
+
+    Never touches ``target_dbs`` themselves — only the backup copies
+    in ``backup_dir``. A DB with no backup yet (added to
+    ``target_dbs`` after the last backup cycle) is skipped, not
+    treated as a failure; the backup cycle will produce one on its
+    own cadence. Returns count of backups that verified clean.
+    """
+    backup_dir = Path(maintenance.backup_dir)
+    verified = 0
+    for db_str in maintenance.target_dbs:
+        db_stem = Path(db_str).stem
+        latest = find_latest_backup(backup_dir, db_stem=db_stem)
+        if latest is None:
+            _LOGGER.debug(
+                "no backup found to verify yet; skipping",
+                extra={"db_stem": db_stem, "backup_dir": str(backup_dir)},
+            )
+            continue
+        result = verify_backup_restoration(latest)
+        if result.ok:
+            verified += 1
+            _LOGGER.info(
+                "backup verification passed",
+                extra={
+                    "db_stem": db_stem,
+                    "backup_path": str(latest),
+                    "table_count": result.table_count,
+                },
+            )
+            continue
+        _LOGGER.error(
+            "BACKUP VERIFICATION FAILED — restoration smoke test could not read this backup",
+            extra={
+                "db_stem": db_stem,
+                "backup_path": str(latest),
+                "error": result.error,
+            },
+        )
+        await notify(
+            notifier,
+            level="error",
+            title=f"Backup verification failed: {db_stem}",
+            message=(
+                f"The latest backup for {db_stem} ({latest.name}) failed its "
+                f"restoration smoke test: {result.error}. The most recent "
+                "GOOD backup may be older than expected -- investigate before "
+                "relying on this DB's backups."
+            ),
+            context={
+                "db_stem": db_stem,
+                "backup_path": str(latest),
+                "error": result.error,
+            },
+        )
+    return verified
+
+
 # --------------------------------------------------------------------- #
 # Signal handlers                                                       #
 # --------------------------------------------------------------------- #
@@ -214,16 +288,21 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         return 2
 
     # Resolve cadences. Missing schedules fall back to the design-doc
-    # defaults (vacuum 7d, prune 1d, backup 1d).
+    # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d).
     vacuum_interval = _resolve_interval(config, "maintenance_vacuum", timedelta(days=7))
     prune_interval = _resolve_interval(config, "maintenance_prune", timedelta(days=1))
     backup_interval = _resolve_interval(config, "maintenance_backup", timedelta(days=1))
+    verify_interval = _resolve_interval(config, "maintenance_verify", timedelta(days=30))
 
     # Stage 8.4.E follow-up — when operator_db is configured, open it
-    # so the three task cycles can write heartbeat rows. Failure to
+    # so the four task cycles can write heartbeat rows. Failure to
     # open is a warning, not fatal: the daemon still maintains DBs;
     # the /health page just won't see liveness for cli/maintenance.
+    # v1.1: the same connection backs the SqliteNotifierAdapter the
+    # verify cycle uses to report a failed backup — same pattern as
+    # cli/live's notifier wiring.
     operator_storage: SQLiteStorageAdapter | None = None
+    notifier: SqliteNotifierAdapter | None = None
     if maintenance.operator_db is not None:
         operator_storage = SQLiteStorageAdapter(maintenance.operator_db)
         try:
@@ -235,6 +314,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 extra={"path": maintenance.operator_db, "error": str(exc)},
             )
             operator_storage = None
+        else:
+            notifier = SqliteNotifierAdapter(operator_storage)
 
     started_at = time.monotonic()
     stop_event = asyncio.Event()
@@ -247,6 +328,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             "vacuum_interval_seconds": vacuum_interval.total_seconds(),
             "prune_interval_seconds": prune_interval.total_seconds(),
             "backup_interval_seconds": backup_interval.total_seconds(),
+            "verify_interval_seconds": verify_interval.total_seconds(),
             "archive_dir": maintenance.archive_dir,
             "backup_dir": maintenance.backup_dir,
             "prune_source_db": maintenance.prune_source_db,
@@ -258,6 +340,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     vacuum_runs = 0
     prune_total_deleted = 0
     backup_runs = 0
+    verify_runs = 0
 
     async def _vacuum_cycle() -> None:
         nonlocal vacuum_runs
@@ -322,6 +405,22 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             },
         )
 
+    async def _verify_cycle() -> None:
+        nonlocal verify_runs
+        await emit_heartbeat(operator_storage, "cli/maintenance")
+        cycle_started = time.monotonic()
+        _LOGGER.info("verify cycle starting", extra={"db_count": len(maintenance.target_dbs)})
+        ok = await _verify_all(maintenance, notifier)
+        verify_runs += ok
+        _LOGGER.info(
+            "verify cycle complete",
+            extra={
+                "db_count": len(maintenance.target_dbs),
+                "verified": ok,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
+
     try:
         await asyncio.gather(
             run_poll_loop(
@@ -339,6 +438,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 interval_seconds=backup_interval.total_seconds(),
                 stop_event=stop_event,
             ),
+            run_poll_loop(
+                _verify_cycle,
+                interval_seconds=verify_interval.total_seconds(),
+                stop_event=stop_event,
+            ),
         )
     finally:
         if operator_storage is not None:
@@ -353,6 +457,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 "vacuum_runs": vacuum_runs,
                 "prune_rows_deleted_total": prune_total_deleted,
                 "backup_runs": backup_runs,
+                "verify_runs": verify_runs,
             },
         )
     return 0

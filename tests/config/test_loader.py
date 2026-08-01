@@ -33,10 +33,9 @@ safety:
   max_daily_spend_usd: 100.0
   max_per_coin_exposure_usd: 200.0
   max_orders_per_coin: 10
-  emergency_stop:
+  sell_guard:
     enabled: true
     max_loss_percentage: 20.0
-    min_exchange_balance_usd: 50.0
 """
 
 
@@ -51,7 +50,7 @@ class TestLoadConfig:
         assert cfg.grid.default.spacing_percentage == Decimal("1.0")
         assert cfg.grid.coins["DOGE"].order_size_usd == Decimal("15.0")
         assert cfg.safety.max_orders_per_coin == 10
-        assert cfg.safety.emergency_stop.max_loss_percentage == Decimal("20.0")
+        assert cfg.safety.sell_guard.max_loss_percentage == Decimal("20.0")
 
     def test_loads_committed_example(self) -> None:
         # The repo's example file should always parse. If this breaks,
@@ -107,11 +106,7 @@ class TestLoadConfig:
             "  max_total_exposure_usd: 1000\n"
             "  max_daily_spend_usd: 100\n"
             "  max_per_coin_exposure_usd: 200\n"
-            "  max_orders_per_coin: 10\n"
-            "  emergency_stop:\n"
-            "    enabled: true\n"
-            "    max_loss_percentage: 20\n"
-            "    min_exchange_balance_usd: 50\n",
+            "  max_orders_per_coin: 10\n",
             encoding="utf-8",
         )
         with pytest.raises(ValidationError, match="grid"):

@@ -42,7 +42,7 @@ from decimal import Decimal
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OHLCBar, OrderSide, Price, Symbol
+from wobblebot.domain.value_objects import OHLCBar, OrderSide, Price, Symbol, Ticker
 from wobblebot.ports.exchange import ExchangePort
 
 _DEFAULT_MAKER_FEE_RATE = Decimal("0.0026")
@@ -109,6 +109,16 @@ class ShadowExchangeAdapter(ExchangePort):
         price = await self._live.get_current_price(symbol)
         self._mock.set_price(symbol, price.amount)
         return price
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        """Forward to the live exchange (ADR-025) and pump the last price
+        into the mock matcher — same live-tape-coupling contract as
+        ``get_current_price`` above, for callers (``GridEngine``) that
+        call ``get_ticker`` instead.
+        """
+        ticker = await self._live.get_ticker(symbol)
+        self._mock.set_price(symbol, ticker.last)
+        return ticker
 
     async def get_ohlc(
         self,
@@ -184,10 +194,12 @@ class ShadowExchangeAdapter(ExchangePort):
         switch on the operator's REAL Kraken account during a paper-trade
         session, which could cancel their genuine manual orders. There are
         no real resting orders here for a timer to protect, so this does
-        nothing.
+        nothing -- always returns ``None`` (nothing is ever confirmed
+        armed, because nothing is ever armed).
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
+        return None
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError(

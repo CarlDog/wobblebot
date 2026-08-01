@@ -10,14 +10,16 @@ The 2026-06-02 multi-coin soak incident contradicted that: with
 ``dead_mans_switch_seconds=120`` configured, ~15 orders sat open for ~10
 minutes while cli/live was down and the switch never swept them. The
 arming code audits clean statically (config valid, the ping runs before
-the engine steps, ``_private_post`` raises on any Kraken error — and the
-logs showed no arm failures). So this verifies the LIVE behaviour
-directly, because ``set_dead_mans_switch`` discards Kraken's response —
-the bot has never actually confirmed Kraken armed anything.
+the engine steps, the adapter raises on any Kraken error — and the logs
+showed no arm failures). ``set_dead_mans_switch`` used to discard
+Kraken's response entirely, so the bot had never actually confirmed
+Kraken armed anything; it now returns the confirmed ``triggerTime`` (or
+``None``) for exactly this reason -- ``cli/live``'s per-tick ping logs
+the same confirmation this tool prints.
 
-It calls ``CancelAllOrdersAfter`` and prints Kraken's ``currentTime`` and
-``triggerTime``. If ``triggerTime`` is set roughly ``timeout`` seconds
-past ``currentTime``, Kraken accepted the arm. Two modes:
+It calls ``set_dead_mans_switch`` and prints the confirmed
+``triggerTime``. If it's set (not ``None``), Kraken accepted the arm.
+Two modes:
 
     # arm for 60s, read triggerTime, then DISARM (safe — nothing cancels):
     python -m tools.check_dead_mans_switch
@@ -64,46 +66,35 @@ async def _run(timeout: int, watch: bool) -> int:
 
     adapter = KrakenAdapter(config=kraken_config, dry_run=False)
     try:
-        # set_dead_mans_switch() returns None (it discards Kraken's response),
-        # so call the signed-POST helper directly to SEE what Kraken returns.
-        result = await adapter._private_post(  # pylint: disable=protected-access
-            "/0/private/CancelAllOrdersAfter", {"timeout": str(timeout)}
-        )
-        current = result.get("currentTime")
-        trigger = result.get("triggerTime")
-        # Kraken returns triggerTime="0" when disabled; a set timer is a
-        # future timestamp distinct from currentTime.
-        armed = bool(trigger) and str(trigger) not in ("0", str(current))
+        trigger_at = await adapter.set_dead_mans_switch(timeout)
+        armed = trigger_at is not None
         _LOGGER.info(
-            "CancelAllOrdersAfter response",
+            "set_dead_mans_switch response",
             extra={
                 "requested_timeout_seconds": timeout,
-                "currentTime": current,
-                "triggerTime": trigger,
+                "trigger_at": trigger_at.isoformat() if trigger_at else None,
                 "armed": armed,
             },
         )
         if armed:
             _LOGGER.info(
-                "KRAKEN ACCEPTED THE ARM: triggerTime=%s is set ~%ss past currentTime=%s. "
+                "KRAKEN ACCEPTED THE ARM: confirmed trigger_at=%s (~%ss from now). "
                 "The switch IS armed server-side.",
-                trigger,
+                trigger_at,
                 timeout,
-                current,
             )
         else:
             _LOGGER.error(
-                "KRAKEN DID NOT ARM: triggerTime=%s (missing / zero / == currentTime). The "
-                "dead man's switch is NOT functioning — this is the defect.",
-                trigger,
+                "KRAKEN DID NOT ARM: no confirmed trigger time in the response. The "
+                "dead man's switch is NOT functioning — this is the defect."
             )
 
         if watch:
             _LOGGER.warning(
                 "LEFT ARMED (not disarming). Keep a throwaway order open and watch Kraken "
-                "Pro -> Orders: every open order should cancel by triggerTime=%s (~%ss from "
+                "Pro -> Orders: every open order should cancel by trigger_at=%s (~%ss from "
                 "now). If they do NOT, the switch does not fire.",
-                trigger,
+                trigger_at,
                 timeout,
             )
         else:

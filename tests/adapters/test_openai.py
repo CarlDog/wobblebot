@@ -232,10 +232,10 @@ class TestPureHelpers:
             ("gpt-4o", False),
             ("gpt-4o-mini", False),
             ("gpt-3.5-turbo", False),
-            (
-                "gpt-5",
-                False,
-            ),  # NOT folded in — gpt-5 reasoning-shape is a separate unverified question
+            ("gpt-5", True),  # 2026-06-03: reasoning-shape verified via OpenAI docs
+            ("gpt-5-mini", True),  # gpt-5 family folded in
+            ("gpt-5.5", True),  # priced in llm_pricing._PRICING — must classify as reasoning
+            ("gpt-5.5-pro", True),  # priced; pre-fix would have been sent temperature → rejected
         ],
     )
     def test_is_reasoning_model(self, model: str, expected: bool) -> None:
@@ -563,6 +563,25 @@ class TestAssistant:
         result = await adapter.parse_intent(_ctx(current="status?"))
         assert isinstance(result, IntentQuery)
         assert isinstance(result.query, StatusQuery)
+
+    async def test_unpriced_model_wraps_as_assistant_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # Fleet-review #19 finding 7: an unpriced model must surface as
+        # AssistantError, not a raw PricingLookupError escaping past
+        # wrap_provider_errors — the same crash-loop class this module's
+        # advisor path already fixed once (test_unpriced_model_wraps_as_advisor_error
+        # above). The estimate now runs inside wrap_provider_errors on the
+        # assistant path too, so the lookup miss is translated before it
+        # escapes — and the HTTP call never fires.
+        def handler(_r: httpx.Request) -> httpx.Response:  # pragma: no cover
+            raise AssertionError("HTTP call must not fire when pricing lookup fails")
+
+        adapter = _build_assistant(
+            httpx.MockTransport(handler), storage, model="gpt-nonexistent-unpriced"
+        )
+        with pytest.raises(AssistantError, match="pricing unavailable"):
+            await adapter.parse_intent(_ctx())
 
     async def test_multi_turn_messages_in_order(self, storage: SQLiteStorageAdapter) -> None:
         captured: dict[str, object] = {}

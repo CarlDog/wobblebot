@@ -17,7 +17,135 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
-## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT)
+## Rev 2026-07-31 — Monthly advisor-model-review bake-off #1: champion holds
+
+First challenger bake-off under the monthly advisor-model-review routine
+(fleet-kit `fleet/routines/wobblebot-advisor-model-review.md`; standing state
+in wobblebot#22, candidate list in wobblebot#23). Primary instrument:
+`tools/probe_freejudge.py` — 14 no-guard fixtures × 3 same-day runs per model
+(42 judgments), champion re-run the same day as the constant baseline. The
+8-fixture heldout battery ran once per model as directional context only (per
+the 2026-06-04 methodology note below, most of it never escalates in
+production). Candidates pre-filtered by the routine's ≤3× per-call cost gate:
+gemini-3.5/3.6-flash (~7-8×) and gpt-5.5 ($5/$30) were priced but not probed.
+
+**Freejudge, 3 runs × 14 fixtures (42 judgments), 2026-07-31:**
+
+| Model | OK | SUBOPT | UNSAFE | ERR | $/call (measured) | mean s/call | heldout /24 (1 run) |
+|---|---|---|---|---|---|---|---|
+| **gpt-5-mini** (champion) | **81%** | 17% | **2%** (1) | 0 | $0.0023 | 14.2 | 8 (1 WRONG) |
+| gpt-5.4-mini | 88% | 5% | 7% (3) | 0 | $0.0016 | **1.5** | 8 (0 WRONG) |
+| gpt-5.4-nano | 74% | 10% | 12% (5) | 2 | $0.0005 | 1.7 | **14** (0 WRONG) |
+| claude-haiku-4-5 | — | — | — | — | $0.0011 | 2.9 | — |
+
+**Verdict: no switch — gpt-5-mini stays.** Per the routine's §5 thresholds no
+challenger files: `gpt-5.4-mini` is +7 OK points, 0.68× cost, and ~10× faster,
+but carries **3× the champion's UNSAFE count** (`slightly_tight_but_healthy`
+×2, `whipsaw_midspacing` ×1 — tighten-into-risk, the exact failure class the
+seat is judged on), failing both the UNSAFE-halved and the OK+10 criteria.
+`gpt-5.4-nano` is worse on both axes (its best-in-field heldout 14/24 is the
+hold-more bias flattering the maintainer curve, not judgment). Watch item:
+5.4-mini's latency/cost profile is attractive — re-test next generation.
+
+**Champion self-drift (files as a finding): gpt-5-mini improved upstream.**
+Today's 3-run profile OK 81% / UNSAFE 2% vs the stored 2026-06-04 baseline
+OK 62% / UNSAFE 20% (84 judgments) — both axes moved >10 pts, including clean
+passes on `moderate_drawdown_below_guard` (2 of 3 runs) and
+`whipsaw_midspacing` (all runs), the fixtures behind the June tighten-bias
+concern. The 2026-07-31 numbers are the new stored baseline in wobblebot#22.
+Heldout context: 8/24 with one WRONG (`heldout_drawdown_overrides_calm`,
+tightened into a drawdown) vs June's 19.8/24 4-run mean — single-run,
+guard-resolved-in-production battery; tracked, not actioned.
+
+**claude-haiku-4-5: incomplete — Anthropic API credit balance exhausted
+mid-bake-off** (HTTP 400 "credit balance too low"; run 1 clean, run 2 partial,
+run 3 + heldout all-ERROR; 31/50 calls failed). No verdict. Re-run ~$0.15
+after topping up, if wanted — its valid run 1 showed OK 8/14 with 2 UNSAFE,
+not obviously champion-class.
+
+Cloud spend, whole bake-off incl. failures: **$0.27** (isolated
+`data/probe_llm_cost.db`; artifacts in `data/advisor_probe_results/2026-07/`).
+Soak freeze holds — nothing deployed or reconfigured; recommendation only.
+
+## Rev 2026-06-04 — Cloud free-judge escalation model: gpt-5-mini (ADR-022)
+
+When the advisor was reoriented to **guards + LLM free judge** (ADR-022),
+the cascade's escalation target became the model that decides every
+non-guard tick. This bake-off picked it. Driven by
+`tools/probe_advisor.py --provider {openai,anthropic,google}` against the
+8-fixture `heldout` battery (real API calls, isolated `data/probe_llm_cost.db`).
+
+**Methodology note (load-bearing).** Run the held-out fixtures through the
+*real* heuristic and **all 8 are guard-resolved** — so most of the battery
+scores the LLM on cases it never sees in production. The decision-relevant
+subset is the **3 fixtures that escalate post-ADR-022** (`heldout_clear_widen`,
+`heldout_matched`, `heldout_matched_whipsaw` — a clear widen + two matched
+grids that should be left alone). The full-battery score is context; the
+escalate subset is the test.
+
+**Full heldout (curve prompt, 4-run mean /24) + measured cost:**
+
+| Model | mean /24 | $/call | $/day @36 | over-tightens matched? |
+|---|---|---|---|---|
+| **gpt-5-mini** | **19.8** | $0.0028 | ~$0.10 | **no — held both** |
+| claude-haiku-4-5 | 16.2 | $0.0026 | ~$0.09 | no, but tightened *into* a drawdown once |
+| o3 (incumbent) | 14.8 | $0.0086 | ~$0.31 | **yes — 8/8 runs** |
+| gemini-3.5-flash | 14.0 | $0.0158 | ~$0.57 | yes |
+| o3-mini / o4-mini | 11 (n=1) | $0.0079 / $0.0060 | ~$0.25 | yes (o4-mini went below the fee floor) |
+| gemini-2.5-flash | 8 | $0.0051 | ~$0.18 | yes (worst) |
+
+**Escalate subset (free-judge prompt, 12 calls/model):** gpt-5-mini 6/12 OK
+(held the matched grids 6/8, never a wrong-direction call); **o3 0/12 — it
+tightened both matched grids in every run**, under both the curve and the
+free-judge prompt. That compulsive matched-grid tightening is the exact
+pathology ADR-022 fixes.
+
+**Decision: `gpt-5-mini`.** Best judgment on the cases that reach the LLM,
+~⅓ o3's cost, prompt-robust. Counter-intuitive findings worth keeping: (a)
+o3-mini is only ~5% cheaper than o3 — the weaker model burns more reasoning
+tokens, so same-class "minis" don't save money; (b) o4-mini was no better
+than o3-mini. **Caveats:** the escalate subset is only 3 fixtures (thin); all
+scores are non-deterministic single-to-quad runs; the residual gpt-5-mini
+over-tighten is caught by the application-time floor (`8500226`), never
+applied. A purpose-built no-guard battery is the gold-standard follow-up —
+**now built** (`tools/probe_freejudge.py` + `tests/tools/test_freejudge_battery.py`):
+14 ambiguous-middle scenarios, each verified guard-free by the shipped heuristic
+(a CI test, no LLM needed), scored against the bot's **risk model** (OK /
+SUBOPTIMAL / UNSAFE — `forbidden`=the actively-unsafe call) rather than a curve.
+Fixture labels were adversarially reviewed by a 3-lens critic panel (2026-06-04;
+two corrected). Run `python tools/probe_freejudge.py --model gpt-5-mini` to grade a
+candidate on demand (live API, ~6 min for a reasoning model over 14 calls).
+
+**gpt-5-mini on the no-guard battery (6 runs × 14 = 84 judgments, 2026-06-04):**
+OK 52 (62%), SUBOPTIMAL 15, **UNSAFE 17 (20%)**. An initial 2-run sample read a
+rosier UNSAFE=1 on run 1 — that was the optimistic outlier; steady state is ~3
+UNSAFE/run. Three distinct behaviors: **clear cases rock-solid + correct**
+(too-tight→widen, too-wide→tighten 6/6); **ambiguous middle a coin-flip**
+(`well_matched_ranging` 3 hold / 3 tighten — the LLM-consistency footgun in the
+flesh); and **dangerous cases consistently WRONG** — `moderate_drawdown_below_guard`
+tightens 6/6, `developing_downtrend` 5/6, `whipsaw` 4/6, all *tightens into risk*. So
+gpt-5-mini is the best model tested but carries a persistent tighten-bias under the
+free-judge prompt; it is **not immune** to the pathology the 3-fixture escalate subset
+hid.
+
+Why this triggers neither a model change nor (yet) a guard change:
+(a) **Inert by construction.** Every one of those tightens is below the configured
+spacing → the auto-apply floor (`8500226`) rejects it and the dashboard tags it
+"below floor" — tracked, never applied; only widens and holds can land.
+(b) **The guard-tune is a POST-soak candidate, not a soak-time one.** Lowering the
+`defensive_drawdown` threshold (−0.05 → −0.04 catches the 6/6 case; −0.03 also catches
+the 5/6 downtrend — measured 6h-window drawdown frequencies on local BTC history: dd≤−3%
+~6.5%, ≤−4% ~2.7%, ≤−5% ~1.3% of windows) *would* make these correct deterministically,
+but **during the soak it throws away the highest-value learning signal**: the LLM's
+`(situation → recommendation → market outcome)` pairs on exactly the hardest cases —
+the dataset for evaluating the free judge and a future learned arbitrator. With
+`auto_apply` off the wrong tightens cost nothing, so there is no safety reason to
+short-circuit them. The no-guard battery already characterized the failure *offline*
+(its job); the soak collects the live pairs. **Revisit the guard-tune when enabling
+`auto_apply`, informed by real soak outcomes** — the prototype + frequency data are
+filed for that day. (Reference: gpt-4o-mini, non-reasoning, scored OK 10 / SUB 1 / UNSAFE 3.)
+
+## Rev 2026-05-29 — 12-fixture battery + hardened rubric (CURRENT for the local battery)
 
 The 6-fixture battery used by the 2026-05-25 sweep below was
 **superseded** on 2026-05-29, ahead of the CPU-only NAS advisor

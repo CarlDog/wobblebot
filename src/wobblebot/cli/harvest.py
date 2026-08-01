@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -289,10 +290,14 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
     forensic table regardless of success/failure.
 
     Defense layers (any failure aborts with exit 1; no money moved
-    unless we reach step 7):
+    unless every gate passes and we reach the ``adapter.withdraw()``
+    call at step 8):
     1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
        beyond the per-call flag).
     2. Proposal must exist in the harvest db.
+    2b. No prior ``pending``/``completed`` TransferResult may exist for
+       the proposal (idempotency guard — a repeat ``--execute`` must
+       not double-withdraw; a prior ``failed`` row may be retried).
     3. Proposal direction must be ``exchange_to_bank``. Deposits
        (``bank_to_exchange``) cannot be executed through Kraken's API
        — they're operator-pushed from the bank side using Kraken's
@@ -329,6 +334,30 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
+    # 2b. Idempotency guard (issue #12): refuse a repeat withdrawal for a
+    # proposal that was already submitted. Every gate below re-passes on a
+    # second --execute (balance + day-cap still have headroom once the first
+    # wire clears), so a duplicate ``--execute <id>`` would double-submit to
+    # Kraken /Withdraw. A prior ``failed`` row does NOT block — Kraken rejected
+    # it, no money moved, so a retry is legitimate; a ``pending``/``completed``
+    # row means funds are already in flight, so we refuse. Withdrawals are rare,
+    # so scope by asset and filter in Python rather than widen the storage port.
+    prior_results = await storage.get_transfer_results(asset=proposal.asset)
+    already_submitted = next(
+        (r for r in prior_results if r.proposal_id == proposal_id and r.status != "failed"),
+        None,
+    )
+    if already_submitted is not None:
+        _LOGGER.error(
+            "proposal already executed; refusing to double-withdraw",
+            extra={
+                "proposal_id": proposal_id,
+                "prior_transaction_id": already_submitted.transaction_id,
+                "prior_status": already_submitted.status,
+            },
+        )
+        return 1
+
     # 3. Direction gate (caught during the Stage 4.5 integration audit).
     # Kraken's /0/private/Withdraw is exchange→bank only. Deposits are
     # operator-pushed from the bank side using Kraken's deposit
@@ -351,7 +380,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 3. Staleness check
+    # 4. Staleness check
     now = datetime.now(UTC)
     age = now - proposal.created_at.dt
     max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
@@ -366,7 +395,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 4. Destination label resolution
+    # 5. Destination label resolution
     destination = config.harvester.withdrawal_destinations.get(proposal.asset)
     if not destination:
         _LOGGER.error(
@@ -408,7 +437,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 7. Execute via Kraken /Withdraw
+    # 8. Execute via Kraken /Withdraw
     _LOGGER.info(
         "executing withdrawal via Kraken /Withdraw",
         extra={
@@ -473,7 +502,7 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         )
         return 1
 
-    # 8. Persist success
+    # 9. Persist success
     result = TransferResult(
         proposal_id=proposal.proposal_id,
         transaction_id=refid,
@@ -535,6 +564,71 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
         },
     )
     return 0
+
+
+# ADR-003 financial-power-fragmentation: the Harvester key (and ONLY it)
+# may withdraw, and it must be a SEPARATE secret from the trade key. cli/live
+# loads the trade key from this fixed env var (see cli/live).
+_TRADE_KEY_ENV_VAR = "KRAKEN_TRADER_API_KEY"
+
+
+async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig) -> int | None:
+    """Verify the ADR-003 invariants for the Harvester key at startup.
+
+    Defense-in-depth on top of the operator-side .env discipline (the
+    seven per-execute layers still apply regardless):
+
+    1. **Withdraw scope present.** The Harvester key's whole job is to
+       withdraw; a definitive ``has_withdraw_scope() == False`` means the
+       wrong/misconfigured key — refuse.
+    2. **Distinct from the trade key.** If ``KRAKEN_TRADER_API_KEY`` is in
+       this process's env AND equals the Harvester key, financial-power
+       fragmentation has collapsed (one secret can trade AND withdraw) —
+       refuse.
+
+    Fails SOFT on a transient probe error (an ``ExchangeError`` that is NOT
+    a definitive permission-denied): logs + continues rather than
+    crash-looping the daemon under ``restart: unless-stopped`` during a
+    Kraken blip. Returns ``3`` on a definitive violation, ``None`` to proceed.
+    """
+    assert config.harvester is not None  # caller checked
+
+    try:
+        can_withdraw: bool | None = await adapter.has_withdraw_scope()
+    except ExchangeError as exc:
+        _LOGGER.warning(
+            "could not verify Harvester key withdraw scope (transient); continuing",
+            extra={"error": str(exc)},
+        )
+        can_withdraw = None
+    if can_withdraw is False:
+        _LOGGER.error(
+            "Harvester key lacks Kraken Withdraw scope — refusing to start "
+            "(ADR-003); mint a Harvester key with the Withdraw Funds permission",
+            extra={"key_env_var": config.harvester.api_key_env_var},
+        )
+        return 3
+
+    harvest_key = os.environ.get(config.harvester.api_key_env_var)
+    trade_key = os.environ.get(_TRADE_KEY_ENV_VAR)
+    if harvest_key is not None and trade_key is not None and harvest_key == trade_key:
+        _LOGGER.error(
+            "Harvester key is identical to the trade key — refusing to start "
+            "(ADR-003 financial-power-fragmentation); the Harvester key MUST be "
+            "a separate secret with Withdraw scope",
+            extra={
+                "harvester_key_env_var": config.harvester.api_key_env_var,
+                "trade_key_env_var": _TRADE_KEY_ENV_VAR,
+            },
+        )
+        return 3
+    if trade_key is None:
+        _LOGGER.info(
+            "trade key not present in this process's env — key distinctness not "
+            "byte-verified; relying on deployment-level key separation",
+            extra={"trade_key_env_var": _TRADE_KEY_ENV_VAR},
+        )
+    return None
 
 
 async def _main_async(  # pylint: disable=too-many-return-statements,too-many-branches
@@ -606,6 +700,14 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             notifier = None
 
     try:
+        # ADR-003 startup invariants for the Harvester key (withdraw scope
+        # present + distinct from the trade key). Defense-in-depth; a
+        # definitive violation refuses (exit 3) and the finally below cleans
+        # up the adapter + any opened storage.
+        verify_exit = await _verify_harvester_key(adapter, config)
+        if verify_exit is not None:
+            return verify_exit
+
         if execute_proposal_id is not None:
             # Stage 4.4c: one-shot operator-approved execution.
             if storage is None:

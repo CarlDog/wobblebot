@@ -10,11 +10,13 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
+from wobblebot.adapters.kraken_status_news import KrakenStatusAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.news import _build_sources, _poll_source
 from wobblebot.config.cli import (
     CryptoCompareSpec,
+    KrakenStatusSpec,
     NewsConfig,
     NewsDedupConfig,
     RssFeedSpec,
@@ -81,6 +83,7 @@ class TestBuildSources:
                 RssFeedSpec(source_id="rss:a", url="https://a", enabled=False),
             ],
             cryptocompare=CryptoCompareSpec(enabled=False),
+            kraken_status=KrakenStatusSpec(enabled=False),
         )
         assert _build_sources(cfg) == []
 
@@ -91,11 +94,42 @@ class TestBuildSources:
                 RssFeedSpec(source_id="rss:b", url="https://b/feed", enabled=False),
                 RssFeedSpec(source_id="rss:c", url="https://c/feed"),
             ],
+            kraken_status=KrakenStatusSpec(enabled=False),
         )
         sources = _build_sources(cfg)
         try:
             assert [s.source_id for s in sources] == ["rss:a", "rss:c"]
             assert all(isinstance(s, RssNewsAdapter) for s in sources)
+        finally:
+            for src in sources:
+                await src.aclose()  # type: ignore[attr-defined]
+
+    async def test_kraken_status_enabled_by_default(self) -> None:
+        """Unlike RSS (opt-in feeds) or CryptoCompare (paid API, off by
+        default), kraken_status needs no auth and defaults on."""
+        cfg = NewsConfig()
+        sources = _build_sources(cfg)
+        try:
+            assert len(sources) == 1
+            assert isinstance(sources[0], KrakenStatusAdapter)
+            assert sources[0].source_id == "kraken_status"
+        finally:
+            for src in sources:
+                await src.aclose()  # type: ignore[attr-defined]
+
+    async def test_kraken_status_disabled(self) -> None:
+        cfg = NewsConfig(kraken_status=KrakenStatusSpec(enabled=False))
+        assert _build_sources(cfg) == []
+
+    async def test_kraken_status_base_url_passed_through(self) -> None:
+        cfg = NewsConfig(
+            kraken_status=KrakenStatusSpec(enabled=True, base_url="https://status.example.com")
+        )
+        sources = _build_sources(cfg)
+        try:
+            assert len(sources) == 1
+            # pylint: disable=protected-access
+            assert sources[0]._base_url == "https://status.example.com"  # type: ignore[attr-defined]
         finally:
             for src in sources:
                 await src.aclose()  # type: ignore[attr-defined]
@@ -110,7 +144,10 @@ class TestBuildSources:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("CRYPTOCOMPARE_API_KEY", "test-key")
-        cfg = NewsConfig(cryptocompare=CryptoCompareSpec(enabled=True, lang="EN"))
+        cfg = NewsConfig(
+            cryptocompare=CryptoCompareSpec(enabled=True, lang="EN"),
+            kraken_status=KrakenStatusSpec(enabled=False),
+        )
         sources = _build_sources(cfg)
         try:
             assert len(sources) == 1
@@ -125,10 +162,25 @@ class TestBuildSources:
         cfg = NewsConfig(
             rss_feeds=[RssFeedSpec(source_id="rss:a", url="https://a/feed")],
             cryptocompare=CryptoCompareSpec(enabled=True),
+            kraken_status=KrakenStatusSpec(enabled=False),
         )
         sources = _build_sources(cfg)
         try:
             assert [s.source_id for s in sources] == ["rss:a", "cryptocompare"]
+        finally:
+            for src in sources:
+                await src.aclose()  # type: ignore[attr-defined]
+
+    async def test_all_three_source_types_together(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CRYPTOCOMPARE_API_KEY", "test-key")
+        cfg = NewsConfig(
+            rss_feeds=[RssFeedSpec(source_id="rss:a", url="https://a/feed")],
+            cryptocompare=CryptoCompareSpec(enabled=True),
+            kraken_status=KrakenStatusSpec(enabled=True),
+        )
+        sources = _build_sources(cfg)
+        try:
+            assert [s.source_id for s in sources] == ["rss:a", "cryptocompare", "kraken_status"]
         finally:
             for src in sources:
                 await src.aclose()  # type: ignore[attr-defined]

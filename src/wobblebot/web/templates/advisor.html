@@ -9,7 +9,7 @@
 
 {% if snapshot.wired and snapshot.total > 0 %}
   <p class="muted">
-    Showing {{ snapshot.suggestions|length }} of {{ snapshot.total }} suggestions
+    Showing {{ snapshot.rows|length }} of {{ snapshot.total }} suggestions
     (newest first).
   </p>
 {% endif %}
@@ -23,7 +23,7 @@
   </div>
 {% elif snapshot.error %}
   <div class="card"><p class="error">{{ snapshot.error }}</p></div>
-{% elif not snapshot.suggestions %}
+{% elif not snapshot.rows %}
   <div class="card">
     <p class="placeholder">
       No advisor suggestions yet. Start <code>cli/advise</code> to
@@ -31,9 +31,10 @@
     </p>
   </div>
 {% else %}
-  {% for s in snapshot.suggestions %}
+  {% for row in snapshot.rows %}
+    {% set s = row.suggestion %}
     {% set rec = s.recommendation %}
-    <div class="card">
+    <div class="card{% if row.below_floor %} below-floor{% endif %}">
       <div class="card-header">
         <div class="card-title">
           {{ s.input_summary.get("symbol", "?") }} —
@@ -46,6 +47,10 @@
             {% elif rec.confidence == 'medium' %}warn
             {% else %}fail{% endif %}">{{ rec.confidence }}</span> ·
           role={{ rec.role }}
+          {% if row.below_floor %}
+            · <span class="tag floor"
+                title="Proposed {{ row.proposed_spacing }}% is tighter than the {{ row.current_spacing }}% the advisor saw — the auto-apply floor won't apply it.">below floor</span>
+          {% endif %}
         </div>
       </div>
       {% if rec.recommendations %}

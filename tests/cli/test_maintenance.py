@@ -15,8 +15,19 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli import maintenance as cli_maintenance
 from wobblebot.config.cli import MaintenanceConfig
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.ports.notifier import Notification
 
 pytestmark = pytest.mark.unit
+
+
+class _RecordingNotifier:
+    """Captures every notification it's sent, for assertion."""
+
+    def __init__(self) -> None:
+        self.sent: list[Notification] = []
+
+    async def send_notification(self, notification: Notification) -> None:
+        self.sent.append(notification)
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +117,81 @@ class TestBackupAll:
         )
         ok = cli_maintenance._backup_all(cfg)
         assert ok == 0
+
+
+# --------------------------------------------------------------------- #
+# _verify_all (v1.1 restoration smoke test)                             #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestVerifyAll:
+    async def test_verifies_latest_backup_for_each_target(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        cfg = MaintenanceConfig(target_dbs=[str(src)], backup_dir=str(backup_dir))
+        # Produce a real backup via the same path _backup_all uses.
+        assert cli_maintenance._backup_all(cfg) == 1
+
+        verified = await cli_maintenance._verify_all(cfg, None)
+
+        assert verified == 1
+
+    async def test_skips_db_with_no_backup_yet(self, tmp_path: Path) -> None:
+        """A DB added to target_dbs after the last backup cycle has no
+        backup file yet -- this must be skipped, not treated as a
+        verification failure."""
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        cfg = MaintenanceConfig(target_dbs=[str(src)], backup_dir=str(tmp_path / "backups"))
+
+        notifier = _RecordingNotifier()
+        verified = await cli_maintenance._verify_all(cfg, notifier)  # type: ignore[arg-type]
+
+        assert verified == 0
+        assert notifier.sent == []
+
+    async def test_notifies_on_corrupt_backup(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        # A garbled backup file -- simulates a torn/incomplete write.
+        (backup_dir / "live-20260101-0000.db").write_bytes(b"not a real sqlite file" * 50)
+        cfg = MaintenanceConfig(target_dbs=[str(src)], backup_dir=str(backup_dir))
+
+        notifier = _RecordingNotifier()
+        verified = await cli_maintenance._verify_all(cfg, notifier)  # type: ignore[arg-type]
+
+        assert verified == 0
+        assert len(notifier.sent) == 1
+        assert notifier.sent[0].level == "error"
+        assert "live" in notifier.sent[0].title
+
+    async def test_none_notifier_does_not_raise_on_failure(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        (backup_dir / "live-20260101-0000.db").write_bytes(b"garbage" * 50)
+        cfg = MaintenanceConfig(target_dbs=[str(src)], backup_dir=str(backup_dir))
+
+        verified = await cli_maintenance._verify_all(cfg, None)
+
+        assert verified == 0
+
+    async def test_clean_backup_sends_no_notification(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        cfg = MaintenanceConfig(target_dbs=[str(src)], backup_dir=str(backup_dir))
+        cli_maintenance._backup_all(cfg)
+
+        notifier = _RecordingNotifier()
+        await cli_maintenance._verify_all(cfg, notifier)  # type: ignore[arg-type]
+
+        assert notifier.sent == []
 
 
 # --------------------------------------------------------------------- #

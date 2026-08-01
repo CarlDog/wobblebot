@@ -22,6 +22,30 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from wobblebot.domain.value_objects import Symbol
 
 LogFormat = Literal["plain", "json"]
+# The deployment's trading mode — the SINGLE source of truth, set in the
+# `application` config section (NOT per-CLI). Drives the dashboard's
+# mode-badge and, in future, which ledger the data loaders read.
+# `live` = real money (cli/live); `shadow` = live prices + synthetic
+# ledger (cli/shadow); `sandbox` = mock exchange + paper cycle
+# (cli/sandbox).
+TradingMode = Literal["live", "shadow", "sandbox"]
+
+
+class ApplicationConfig(BaseModel):
+    """Application metadata + the deployment-wide trading mode.
+
+    ``mode`` is the single source of truth for whether this deployment
+    is live / shadow / sandbox — read by cli/web for the dashboard
+    mode-badge (and, in future, engine feature-gating). One mode knob,
+    not per-CLI; replaces the earlier informational-only field.
+    """
+
+    name: str = Field(default="WobbleBot", min_length=1)
+    version: str = Field(default="0.1.0", min_length=1)
+    mode: TradingMode = Field(default="live")
+
+    class Config:
+        frozen = True
 
 
 def _coerce_symbol_list(value: object) -> list[Symbol]:
@@ -107,6 +131,15 @@ class LiveConfig(BaseModel):
     # move money. ``null`` disables it. NOTE: Kraken's timer is account-
     # wide, so it cancels manually-placed orders on the same account too.
     dead_mans_switch_seconds: int | None = Field(default=60)
+    # ADR-024: after a session-loss-cap exit (exit_code=1), refuse to
+    # start a new session for this many minutes -- an immediate restart
+    # (knee-jerk operator, or a `restart: unless-stopped` policy) would
+    # otherwise re-enter the same losing condition (the soak's 4:22am
+    # cap-trip-then-restart incident). Scoped to exit_code==1 only; never
+    # applies to cli/shadow (synthetic ledger). `null` disables the gate
+    # entirely. The terminal-only `--ignore-cool-down` flag bypasses one
+    # deliberate restart without changing this config.
+    cool_down_minutes: float | None = Field(default=60.0, gt=0)
 
     class Config:
         frozen = True
@@ -315,6 +348,25 @@ class CryptoCompareSpec(BaseModel):
         frozen = True
 
 
+class KrakenStatusSpec(BaseModel):
+    """Kraken exchange-status feed under ``news.kraken_status`` (v1.1).
+
+    No API key required — status.kraken.com's incident feed is public
+    JSON. Defaults ``enabled=True``: unlike CryptoCompare (paid API,
+    off by default) or RSS (operator must choose feeds), this source
+    needs zero setup and is directly relevant to every Kraken-trading
+    deployment — an exchange-status incident (API degraded, a coin's
+    deposits/withdrawals halted) is exactly the kind of signal the
+    advisor's news expert should see.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://status.kraken.com"
+
+    class Config:
+        frozen = True
+
+
 class NewsDedupConfig(BaseModel):
     """Stage 8.4 follow-up: fuzzy headline dedup for cli/news.
 
@@ -363,6 +415,7 @@ class NewsConfig(BaseModel):
     db: str = "data/wobblebot-news.db"
     rss_feeds: list[RssFeedSpec] = Field(default_factory=list)
     cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
+    kraken_status: KrakenStatusSpec = Field(default_factory=KrakenStatusSpec)
     dedup: NewsDedupConfig = Field(default_factory=NewsDedupConfig)
     log_format: LogFormat = "plain"
     log_file_path: str | None = "data/logs/news.log"
@@ -620,6 +673,14 @@ class WebConfig(BaseModel):
     # Set to null to suppress the link entirely.
     kraken_account_url: str | None = Field(default="https://pro.kraken.com/app/home", min_length=1)
 
+    # v1.1: footer "update available" indicator. Polls GitHub's public
+    # releases API from the SERVER (never the browser — keeps operator
+    # dashboard activity from leaking to GitHub) at a long cadence.
+    # Default on; an operator who prefers zero outbound calls can flip
+    # it off.
+    release_check_enabled: bool = True
+    release_check_interval_hours: float = Field(default=6.0, gt=0.0, le=168.0)
+
     # ---- cross-DB paths -------------------------------------------- #
 
     # The dashboard reads from up to five DBs. operator.db is required
@@ -649,11 +710,14 @@ class WebConfig(BaseModel):
 class MaintenanceConfig(BaseModel):
     """Phase 8.2 — operator-tunable knobs for ``cli/maintenance``.
 
-    Three concurrent scheduled tasks (vacuum / prune+archive /
-    backup) each pull their cadence from ``schedules:`` (keys
+    Four concurrent scheduled tasks (vacuum / prune+archive / backup /
+    verify) each pull their cadence from ``schedules:`` (keys
     ``maintenance_vacuum`` / ``maintenance_prune`` /
-    ``maintenance_backup``); this block holds the per-task
-    parameters those cadences operate against.
+    ``maintenance_backup`` / ``maintenance_verify``); this block holds
+    the per-task parameters those cadences operate against. ``verify``
+    (v1.1) reuses ``target_dbs`` + ``backup_dir`` — no dedicated field
+    of its own — since it's a restoration smoke test against the SAME
+    backups the backup task already produces.
 
     Per ``stage-8.2-design.md`` decision 7 the maintenance daemon
     is operator-started — not auto-spawned by any other daemon.
@@ -724,9 +788,11 @@ class MaintenanceConfig(BaseModel):
 
 __all__ = [
     "AdviseConfig",
+    "ApplicationConfig",
     "AssistantLLMConfig",
     "CryptoCompareSpec",
     "HarvestConfig",
+    "KrakenStatusSpec",
     "LiveConfig",
     "LogFormat",
     "MaintenanceConfig",
@@ -739,5 +805,6 @@ __all__ = [
     "SandboxConfig",
     "ShadowConfig",
     "StatusConfig",
+    "TradingMode",
     "WebConfig",
 ]

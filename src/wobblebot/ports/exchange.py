@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OHLCBar, Price, Symbol
+from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Ticker
 
 
 class ExchangePort(ABC):
@@ -43,6 +43,26 @@ class ExchangePort(ABC):
 
         Raises:
             ExchangeError: If price cannot be retrieved
+        """
+        pass
+
+    @abstractmethod
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        """Get the top-of-book snapshot (last/bid/ask) for a symbol.
+
+        ADR-025: bid/ask ride the same market-data call as
+        ``get_current_price`` on a real exchange (Kraken's Ticker
+        response already carries all three) -- implementations should
+        not add an extra round-trip to serve this.
+
+        Args:
+            symbol: Trading pair
+
+        Returns:
+            Top-of-book snapshot.
+
+        Raises:
+            ExchangeError: If the ticker cannot be retrieved.
         """
         pass
 
@@ -111,7 +131,7 @@ class ExchangePort(ABC):
         pass
 
     @abstractmethod
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """Arm, reset, or disable a server-side dead man's switch (ADR-021).
 
         Sets a countdown timer **on the exchange**: if the client does
@@ -135,6 +155,13 @@ class ExchangePort(ABC):
         Adapters with no such facility (synthetic / simulated execution,
         where no real resting orders are at risk) implement this as a
         documented no-op.
+
+        Returns:
+            The exchange's confirmed trigger time (UTC), so the caller
+            can log or act on whether the arm was actually accepted
+            server-side rather than assuming success. ``None`` when
+            disarming (``timeout_seconds=0``) or when the exchange's
+            response doesn't carry a confirmed future trigger.
 
         Raises:
             ExchangeError: On transport / protocol failure when arming.

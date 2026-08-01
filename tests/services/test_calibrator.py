@@ -12,7 +12,7 @@ from wobblebot.config.cli import LiveConfig, ShadowConfig
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig, SellGuardConfig
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.calibrator import (
     RecalibrationProposal,
@@ -63,18 +63,13 @@ def _safety(
     max_per_coin: str = "50",
     max_orders: int = 20,
     max_loss_pct: str = "20",
-    min_balance: str = "0",
 ) -> SafetyConfig:
     return SafetyConfig(
         max_total_exposure_usd=Decimal(max_total),
         max_daily_spend_usd=Decimal(max_daily),
         max_per_coin_exposure_usd=Decimal(max_per_coin),
         max_orders_per_coin=max_orders,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal(max_loss_pct),
-            min_exchange_balance_usd=Decimal(min_balance),
-        ),
+        sell_guard=SellGuardConfig(enabled=True, max_loss_percentage=Decimal(max_loss_pct)),
     )
 
 
@@ -278,30 +273,7 @@ class TestSafetyScaling:
         )
         paths = {c.yaml_path for c in prop.changes}
         assert "safety.max_orders_per_coin" not in paths
-        assert "safety.emergency_stop.max_loss_percentage" not in paths
-
-    def test_min_balance_zero_does_not_appear(self) -> None:
-        """A zero min-balance floor stays zero; no change emitted."""
-        cfg = _full_config(safety=_safety(min_balance="0"))
-        prop = recalibrate(
-            current_balance=Decimal("100"),
-            target_balance=Decimal("50"),
-            current_config=cfg,
-        )
-        paths = {c.yaml_path for c in prop.changes}
-        assert "safety.emergency_stop.min_exchange_balance_usd" not in paths
-
-    def test_min_balance_nonzero_scales(self) -> None:
-        cfg = _full_config(safety=_safety(min_balance="20"))
-        prop = recalibrate(
-            current_balance=Decimal("100"),
-            target_balance=Decimal("50"),
-            current_config=cfg,
-        )
-        paths = {c.yaml_path: c for c in prop.changes}
-        assert paths["safety.emergency_stop.min_exchange_balance_usd"].proposed_value == Decimal(
-            "10.00"
-        )
+        assert "safety.sell_guard.max_loss_percentage" not in paths
 
 
 # --------------------------------------------------------------------- #
@@ -518,7 +490,7 @@ class TestProposalShape:
                     )
                 },
             ),
-            safety=_safety(min_balance="20"),
+            safety=_safety(),
             live=_live(),
             harvester=_harvester(),
         )
@@ -532,9 +504,9 @@ class TestProposalShape:
         assert "grid.default.order_size_usd" in paths
         assert "grid.coins.DOGE.order_size_usd" in paths
         assert "safety.max_total_exposure_usd" in paths
-        assert "safety.emergency_stop.min_exchange_balance_usd" in paths
         assert "live.max_session_loss_usd" in paths
         assert "harvester.min_exchange_liquidity_usd" in paths
-        # Sanity-check: 11 USD-knob paths (1 default + 1 coin + 3 safety
-        # + 1 floor + 1 live + 4 harvester).
-        assert len(prop.changes) == 11
+        # Sanity-check: 10 USD-knob paths (1 default + 1 coin + 3 safety
+        # + 1 live + 4 harvester). No sell_guard path -- max_loss_percentage
+        # is a percentage, not a USD amount (ADR-032).
+        assert len(prop.changes) == 10

@@ -69,12 +69,6 @@
   /* === Errors === */
   --error-bg: #ffe5e5;
 
-  /* === Form inputs (settings page currently uses dark-on-light;
-        kept as-is for step 1 — the inconsistency lands in step 2) === */
-  --form-input-bg: #1d1f23;
-  --form-input-text: #e4e6eb;
-  --form-input-border: #3a3d42;
-
   /* === Indicators === */
   --bell-unread-dot: #dc2626;
 
@@ -584,6 +578,18 @@ main.content {
   color: #4dd0e1;
 }
 
+/* v1.1 "update available" footer indicator -- accent-colored by
+   default (not just on hover) so it reads as "something new" at a
+   glance, reusing the existing hover-accent color rather than adding
+   a new one. */
+.app-footer-update {
+  color: #4dd0e1;
+}
+
+.app-footer-update:hover {
+  text-decoration: underline;
+}
+
 h1 {
   font-size: 24px;
   font-weight: 600;
@@ -618,32 +624,8 @@ h2 {
   font-weight: 600;
 }
 
-/* Today's PnL — header-row scoreboard on the status card. Anchored
-   to the right edge of the card-title flex row via margin-left:auto.
-   Color + arrow mirror the price-trend arrows (cae4405) so "up =
-   good, down = bad" reads identically whether it's market price
-   or money. */
-.today-pnl {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 600;
-  font-feature-settings: "tnum"; /* tabular numerals — digits don't shift width */
-}
-
-.today-pnl-positive {
-  color: var(--trend-up);
-}
-
-.today-pnl-negative {
-  color: var(--trend-down);
-}
-
-.today-pnl-flat {
-  color: var(--text-secondary);
-}
-
-/* Per-cycle PnL in the Recent Cycles table. Same color vocabulary
-   as the Today's header so the operator's eye flows naturally
+/* Per-cycle PnL in the Recent Cycles table. Same color vocabulary as
+   the scoreboard PnL cells so the operator's eye flows naturally
    between aggregate (top) and per-cycle (bottom). */
 .cycle-pnl-positive {
   color: var(--trend-up);
@@ -826,6 +808,30 @@ h2 {
   font-weight: 600;
 }
 
+/* Per-symbol price sparkline — tiny inline SVG in the card header:
+   line = recent price, shaded band = open-order ladder, dot = current
+   price (green inside the band, red when offside/parked). */
+.sparkline {
+  display: block;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.spark-band {
+  fill: var(--surface-hover);
+}
+.spark-line {
+  stroke: var(--text-secondary);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.spark-marker {
+  fill: var(--trend-up);
+}
+.sparkline-offside .spark-marker {
+  fill: var(--trend-down);
+}
+
 /* Recent-fills value column color-coding — red for BUYs (USD
    flowed out of the account into the position), green for SELLs
    (USD flowed in). Reuses the trend arrow colors which are
@@ -873,6 +879,36 @@ h2 {
   color: var(--banner-strong-text);
 }
 
+/* Session card (v1.1, ADR-024): last loss-cap trip, so it stays
+   visible on the dashboard even if the operator missed the bell.
+   Active cool-down reuses the "strong" (red) tier since a new
+   session genuinely cannot start yet; a cleared trip is a quieter
+   "mild" (yellow) historical note. */
+.session-cap-banner {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 4px solid;
+}
+
+.session-cap-banner strong {
+  font-weight: 600;
+}
+
+.session-cap-active {
+  background: var(--banner-strong-bg);
+  border-color: var(--banner-strong-border);
+  color: var(--banner-strong-text);
+}
+
+.session-cap-cleared {
+  background: var(--banner-mild-bg);
+  border-color: var(--banner-mild-border);
+  color: var(--banner-mild-text);
+}
+
 .metric {
   margin-bottom: 12px;
 }
@@ -888,6 +924,111 @@ h2 {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+/* Account scoreboard — the top-of-status-card "answers first" strip: a
+   flex row of .metric cells separated from the body by a hairline (not
+   its own card chrome, since it lives inside the status card). Wraps on
+   narrow widths. */
+.scoreboard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 36px;
+  padding-bottom: 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.scoreboard .metric {
+  margin-bottom: 0;
+}
+
+/* PnL metric coloring — same green-up / red-down vocabulary as the
+   per-symbol trend arrows + the recent-cycles table. */
+.metric-value.metric-pos {
+  color: var(--trend-up);
+  font-feature-settings: "tnum";
+}
+
+.metric-value.metric-neg {
+  color: var(--trend-down);
+  font-feature-settings: "tnum";
+}
+
+/* Inline-SVG-free bar chart (CSS bars) — e.g. /cost daily spend. Bars
+   grow from a flex-end baseline; height is an inline % of the tallest
+   bar. Exact values live in the companion table + each bar's title. */
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 120px;
+  margin: 8px 0 16px;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.bar {
+  width: 100%;
+  max-width: 48px;
+  min-height: 2px;
+  background: var(--color-link);
+  border-radius: 3px 3px 0 0;
+  transition: height 200ms ease;
+}
+
+.bar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fill toasts — bottom-right popups when an order fills. Newest stacks at
+   the bottom; each slides in, holds ~6s, slides out. Left rail colored by
+   money-flow (BUY = USD out / red, SELL = USD in / green), matching the
+   Recent Fills value column. */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+.toast {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-dropdown);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.toast-show {
+  opacity: 1;
+  transform: translateX(0);
+}
+.toast-buy {
+  border-left-color: var(--trend-down);
+}
+.toast-sell {
+  border-left-color: var(--trend-up);
 }
 
 table.data td.num,
@@ -911,14 +1052,6 @@ table.data.compact td {
   font-size: 13px;
 }
 
-/* NOTE: .muted is declared twice — once here and once in the settings
-   page block below with a different value. The settings block wins
-   via cascade order. Variable refactor preserves this behavior pending
-   a focused cleanup; flagged for the dark-mode commit. */
-.muted {
-  color: var(--text-secondary);
-}
-
 .tag {
   display: inline-block;
   padding: 2px 8px;
@@ -933,6 +1066,15 @@ table.data.compact td {
 .tag.warn { background: var(--tag-warn-bg); color: var(--tag-warn-text); }
 .tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
 .tag.info { background: var(--tag-info-bg); color: var(--tag-info-text); }
+/* Neutral, informational — NOT an error. Marks an advisor suggestion the
+   auto-apply floor will never apply (ADR-022); kept visible for tracking. */
+.tag.floor { background: var(--tag-default-bg); color: var(--text-primary); font-weight: 500; }
+
+/* A suggestion whose proposed spacing is below what the advisor saw: the
+   floor rejects it, so de-emphasise the card (still readable, restores on
+   hover) without hiding the raw recommendation. */
+.card.below-floor { opacity: 0.6; }
+.card.below-floor:hover { opacity: 0.9; }
 
 /* Dedicated "link" column on /news. Narrow column whose only job is
    to carry the article-link pill for rows that have a URL. Empty cell
@@ -1309,9 +1451,11 @@ table.data th {
   width: 100%;
   max-width: 360px;
   padding: 6px 8px;
-  background: var(--form-input-bg);
-  color: var(--form-input-text);
-  border: 1px solid var(--form-input-border);
+  /* Themed like every other input (was a hardcoded dark-on-light bg —
+     the settings-page inconsistency flagged in-code; now consistent). */
+  background: var(--surface-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font: inherit;
 }
@@ -1322,9 +1466,7 @@ table.data th {
   color: var(--text-muted);
 }
 
-/* Second .muted declaration — wins via cascade order over the
-   earlier .muted rule that uses --text-secondary. Pre-existing
-   duplicate flagged for cleanup in step 2 of the theme work. */
+/* Muted helper — dimmer than body text, for timestamps + chrome. */
 .muted {
   color: var(--text-muted);
   font-size: 13px;
@@ -1454,4 +1596,59 @@ table.data th {
   /* Purple — deliberately distinct from any real-money color so the
      operator can never confuse a shadow window with a live one. */
   background: #7c3aed;
+}
+.mode-badge-sandbox {
+  /* Slate — a neutral "mock / paper cycle" tone, distinct from both
+     the real-money red and the shadow purple. */
+  background: #475569;
+}
+
+/* ---- Responsive (narrow / mobile) ------------------------------------
+   Minimal pass so the dashboard is usable on a phone: wide data tables
+   scroll inside their card instead of blowing out the viewport, the
+   navbar tightens + its primary links scroll horizontally rather than
+   crowding, and content padding shrinks. Not a hamburger nav — just
+   "doesn't break below ~700px". */
+@media (max-width: 700px) {
+  main.content {
+    padding: 16px 12px;
+  }
+
+  .topnav-inner {
+    padding: 0 12px;
+    gap: 12px;
+  }
+
+  /* Primary nav links scroll sideways instead of wrapping/crowding. */
+  nav.primary {
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox — hide the scrollbar chrome */
+  }
+  nav.primary::-webkit-scrollbar {
+    display: none;
+  }
+  nav.primary a {
+    white-space: nowrap;
+  }
+
+  /* Let a wide 6-7-column table scroll horizontally within its card
+     rather than forcing the whole page wider than the screen. */
+  .card {
+    overflow-x: auto;
+  }
+
+  .scoreboard {
+    gap: 8px 20px;
+  }
+
+  .emergency-stop-row {
+    width: 90%;
+  }
+
+  /* Sparklines crowd the per-symbol header on a phone — hide them. */
+  .sparkline {
+    display: none;
+  }
 }

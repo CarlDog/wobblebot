@@ -140,10 +140,11 @@ def _build_adapter(
     retry_config: LLMRetryConfig | None = None,
     tracker: SessionCostTracker | None = None,
     prompt: Prompt | None = None,
+    model: str = "claude-sonnet-4-6",
 ) -> AnthropicAssistantAdapter:
     client = httpx.AsyncClient(transport=transport)
     return AnthropicAssistantAdapter(
-        model="claude-sonnet-4-6",
+        model=model,
         prompt=prompt or _operator_prompt(),
         api_key="sk-test",
         storage=storage,
@@ -425,6 +426,23 @@ class TestRetryAndFailure:
         assert len(rows) == 1
         assert rows[0].success is False
         assert rows[0].error_kind == "http_400"
+
+    async def test_unpriced_model_wraps_as_assistant_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # Fleet-review #19 finding 7: an unpriced model must surface as
+        # AssistantError, not a raw PricingLookupError escaping past
+        # wrap_provider_errors — the same crash-loop class already fixed
+        # once on the advisor side (test_openai.TestAdvisorFailures.
+        # test_unpriced_model_wraps_as_advisor_error).
+        def handler(_r: httpx.Request) -> httpx.Response:  # pragma: no cover
+            raise AssertionError("HTTP call must not fire when pricing lookup fails")
+
+        adapter = _build_adapter(
+            httpx.MockTransport(handler), storage, model="claude-nonexistent-unpriced"
+        )
+        with pytest.raises(AssistantError, match="pricing unavailable"):
+            await adapter.parse_intent(_context())
 
 
 # --------------------------------------------------------------------- #

@@ -93,6 +93,10 @@ _VERIFIED_2026_05 = date(2026, 5, 29)
 # (developers.openai.com/api/docs/models/<id>), because the four legacy
 # models have been dropped from the top-level pricing table.
 _VERIFIED_2026_07_23 = date(2026, 7, 23)
+# Advisor-model-review candidate sweep (2026-07-31): entries added so the
+# monthly routine's bake-off can probe them under the ADR-014 gate
+# (wobblebot#23). Sources per entry.
+_VERIFIED_2026_07_31 = date(2026, 7, 31)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -221,6 +225,25 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         reasoning_per_million_usd=None,
         verified_date=_VERIFIED_2026_05,
     ),
+    # gpt-5.4 mini/nano tiers verified 2026-07-31 against
+    # developers.openai.com/api/docs/models/gpt-5.4-mini and /gpt-5.4-nano.
+    # Reasoning models; reasoning bills at the output rate -> None.
+    ("openai", "gpt-5.4-mini"): LLMPricePoint(
+        provider="openai",
+        model="gpt-5.4-mini",
+        input_per_million_usd=Decimal("0.75"),
+        output_per_million_usd=Decimal("4.50"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_07_31,
+    ),
+    ("openai", "gpt-5.4-nano"): LLMPricePoint(
+        provider="openai",
+        model="gpt-5.4-nano",
+        input_per_million_usd=Decimal("0.20"),
+        output_per_million_usd=Decimal("1.25"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_07_31,
+    ),
     ("openai", "o3"): LLMPricePoint(
         provider="openai",
         model="o3",
@@ -292,6 +315,19 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         output_per_million_usd=Decimal("9.00"),
         reasoning_per_million_usd=None,
         verified_date=_VERIFIED_2026_05,
+    ),
+    # Verified 2026-07-31 against ai.google.dev/gemini-api/docs/pricing
+    # ("Output price (including thinking tokens)" -> None). NOTE: the whole
+    # gen-3.5+ flash line sits at ~7x gpt-5-mini per call at freejudge token
+    # volumes — priced for completeness, outside the escalation seat's
+    # current cost class (routine threshold: <=3x champion).
+    ("google", "gemini-3.6-flash"): LLMPricePoint(
+        provider="google",
+        model="gemini-3.6-flash",
+        input_per_million_usd=Decimal("1.50"),
+        output_per_million_usd=Decimal("7.50"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_07_31,
     ),
 }
 

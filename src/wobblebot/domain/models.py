@@ -324,3 +324,26 @@ class CycleStats(BaseModel):
         """Pydantic config."""
 
         frozen = True
+
+
+class CapTripRecord(BaseModel):
+    """One session-loss-cap trip (ADR-024).
+
+    Storage row shape for ``cap_trips`` — read back by the pre-loop
+    cool-down gate (``services/cool_down.py``, timestamp only) and by
+    the dashboard's session card (both fields, so the operator sees
+    what the session's PnL was at the moment it tripped, not just
+    that it happened).
+
+    Attributes:
+        tripped_at: Wallclock the cap trip was detected (UTC).
+        session_pnl_usd: The session's mark-to-market PnL at trip time.
+    """
+
+    tripped_at: Timestamp
+    session_pnl_usd: Decimal
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True

@@ -151,6 +151,9 @@ class TestHappyPath:
         assert quant.call_count == 1
         assert risk.call_count == 1
         assert news.call_count == 1
+        # News lost the vote (1.2 wins 2-1) -- the ADR-007 amendment
+        # flag must not fire when news didn't actually drive the value.
+        assert result.news_materially_drove is False
 
     async def test_per_expert_opinions_attached(self) -> None:
         """The aggregated recommendation must carry every expert's raw
@@ -221,6 +224,50 @@ class TestHappyPath:
         elapsed = time.monotonic() - before
         # Parallel: ~0.1s. Sequential would be ~0.3s. Allow generous wiggle.
         assert elapsed < 0.25, f"calls appear sequential ({elapsed:.2f}s)"
+
+
+@pytest.mark.asyncio
+class TestNewsMateriallyDroveIntegration:
+    """ADR-007 amendment: the adapter must actually set
+    ``news_materially_drove`` on the final aggregated recommendation,
+    not just carry logic nobody calls (services/aggregators.py's
+    ``news_materially_drove`` has its own dedicated unit tests)."""
+
+    async def test_flags_when_news_dominates_weighted_average(self) -> None:
+        # quant (low confidence, weight 1) vs news (high confidence,
+        # weight 3): weighted avg = (1.0*1 + 2.0*3) / 4 = 1.75 -- closer
+        # to news's 2.0 (distance 0.25) than quant's 1.0 (distance 0.75).
+        quant = _StubExpert(
+            opinion=_rec(
+                role="quant", recommendations={"spacing_percentage": 1.0}, confidence="low"
+            )
+        )
+        news = _StubExpert(
+            opinion=_rec(
+                role="news", recommendations={"spacing_percentage": 2.0}, confidence="high"
+            )
+        )
+        adapter = MoEAdvisorAdapter(
+            experts=[_entry("quant", "quant", quant), _entry("news", "news", news)],
+            aggregator="weighted_confidence",
+        )
+
+        result = await adapter.get_recommendation(_summary())
+
+        assert result.recommendations["spacing_percentage"] == pytest.approx(1.75)
+        assert result.news_materially_drove is True
+
+    async def test_no_news_expert_never_flags(self) -> None:
+        quant = _StubExpert(opinion=_rec(role="quant", recommendations={"spacing_percentage": 1.0}))
+        risk = _StubExpert(opinion=_rec(role="risk", recommendations={"spacing_percentage": 1.2}))
+        adapter = MoEAdvisorAdapter(
+            experts=[_entry("quant", "quant", quant), _entry("risk", "risk", risk)],
+            aggregator="weighted_confidence",
+        )
+
+        result = await adapter.get_recommendation(_summary())
+
+        assert result.news_materially_drove is False
 
 
 @pytest.mark.asyncio

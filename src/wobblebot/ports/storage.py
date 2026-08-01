@@ -4,13 +4,20 @@ This port defines the contract for storing and retrieving domain entities.
 Adapters implement this interface for specific storage backends (SQLite, Postgres, etc.).
 """
 
+# pylint: disable=too-many-lines
+# One cohesive ABC for the whole storage contract; splitting it would
+# fragment a single interface across files for no organizational gain
+# (unlike sqlite_storage.py, which had genuinely separable SQL/row-
+# mapping concerns to extract into sibling modules).
+
 from abc import ABC, abstractmethod
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -460,12 +467,21 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         row raises StorageError (the caller should fetch by id and
         skip rather than retry blindly).
 
+        ADR-026 replay guard: at most one non-``failed`` result may
+        exist per ``proposal_id`` (a partial UNIQUE index — a prior
+        ``failed`` row does not block a legitimate retry). This is the
+        DB-enforced backstop beneath ``cli/harvest``'s app-layer
+        pre-check; a second insert for an already-executed proposal
+        raises ``StorageError`` rather than silently recording a
+        duplicate.
+
         Args:
             result: TransferResult to save.
 
         Raises:
             StorageError: If save fails (including UNIQUE violation
-                on ``transaction_id``).
+                on ``transaction_id`` or the ADR-026 ``proposal_id``
+                replay guard).
         """
 
     @abstractmethod
@@ -684,8 +700,11 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             limit: Maximum rows to return. ``None`` means unbounded.
 
         Returns:
-            Matching rows ordered by ``created_at`` ASC so the oldest
-            unforwarded event posts first.
+            Matching rows newest-first (``created_at`` DESC, ``id`` as
+            tiebreak), so ``limit`` returns the *newest* N rows — what
+            the web notifications page and bell badge need. Consumers
+            that must process chronologically (``cli/operator``'s
+            Discord forwarder) reverse the result.
 
         Raises:
             StorageError: If retrieval fails.
@@ -977,6 +996,47 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             Anchor timestamp, or ``None`` if no status_report has run
             for this (channel, user) pair before. Callers use this to
             decide lookback (None → 24h default).
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
+    async def record_cap_trip(self, tripped_at: Timestamp, session_pnl_usd: Decimal) -> None:
+        """Append a session-loss-cap trip record (ADR-024).
+
+        Called by ``cli/live`` when a session ends with ``exit_code=1``.
+        Never called by ``cli/shadow`` (synthetic ledger, out of scope
+        per ADR-024 decision 4).
+
+        Args:
+            tripped_at: Wallclock the cap trip was detected (UTC).
+            session_pnl_usd: The session's mark-to-market PnL at trip time.
+
+        Raises:
+            StorageError: On persistence failure.
+        """
+
+    @abstractmethod
+    async def get_last_cap_trip_at(self) -> Timestamp | None:
+        """Return the most recent ``record_cap_trip`` timestamp, or ``None``.
+
+        The pre-loop cool-down gate (``services/cool_down.py``) reads
+        this to decide whether a new session may start.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
+    async def get_last_cap_trip(self) -> CapTripRecord | None:
+        """Return the most recent cap-trip record (timestamp + PnL), or ``None``.
+
+        The dashboard's session card reads this to show the operator
+        what happened at the last trip, not just that one occurred —
+        the cool-down gate only needs the timestamp
+        (:meth:`get_last_cap_trip_at`), but the web tier needs the PnL
+        too.
 
         Raises:
             StorageError: On retrieval failure.

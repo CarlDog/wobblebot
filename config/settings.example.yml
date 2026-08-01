@@ -21,9 +21,13 @@
 application:
   name: "WobbleBot"
   version: "0.1.0"
-  # mode: sandbox | dev | live-low-risk | production
-  # Currently informational only; Phase 5 may use it to gate features.
-  mode: "sandbox"
+  # The deployment's trading mode — the SINGLE source of truth.
+  #   live    = real money (cli/live)
+  #   shadow  = live prices + synthetic ledger (cli/shadow)
+  #   sandbox = mock exchange + paper cycle (cli/sandbox)
+  # cli/web reads this for the dashboard mode-badge; Phase 5+ may also
+  # gate engine features on it.
+  mode: "live"
 
 # ============================================================================
 # Exchange connection (Kraken)
@@ -47,65 +51,62 @@ grid:
     # Widened 2026-05-30 from 1.0% -> 3.0% (Stage 8.6). The grid backtest
     # found 1% spacing catastrophic in trends and ~3% the least-bad — its
     # value is downtrend SURVIVAL, not higher profit (per-cycle yield is
-    # ~flat across spacings; wider just bleeds less when wrong). BTC is the
-    # only live symbol and reads this default. Full rationale:
+    # ~flat across spacings; wider just bleeds less when wrong). Multi-coin
+    # runs put every configured alt on this uniform default. Full rationale:
     # docs/reference/grid-strategy-research-synthesis-2026-05-30.md.
     spacing_percentage: 3.0   # delta between adjacent levels, % of reference price
     levels_above: 3           # SELL levels above the anchor
     levels_below: 3           # BUY levels below the anchor
-    order_size_usd: 10.0      # USD budget per order; per-pair quantization happens at submit
+    order_size_usd: 5.0       # USD budget per order; per-pair quantization happens at submit
 
+  # Multi-coin runs put every configured alt on the uniform `default` above —
+  # no per-coin spacing overrides. Add an entry here only to shadow `default`
+  # for one coin; an entry with `enabled: false` SKIPS that coin even if it's
+  # listed in a `symbols:` list. (Spacing must exceed 0.52% = 2 × Kraken's
+  # 0.26% maker fee, or a cycle loses money on every round trip — the engine
+  # validator rejects anything tighter at load.)
   coins:
     DOGE:
-      spacing_percentage: 2.0
+      # $6, not the $5 default: Kraken's DOGE ordermin is a fixed 50 DOGE,
+      # and at $5 the live volume (order_size_usd / price) fell to 49.99
+      # DOGE when DOGE drifted to ~$0.10 (2026-06-02 soak) -> Kraken
+      # refused it. $6 clears 50 DOGE up to ~$0.12. Geometry else = default.
+      spacing_percentage: 3.0
       levels_above: 3
       levels_below: 3
-      order_size_usd: 15.0
+      order_size_usd: 6.0
       enabled: true
-    ADA:
-      spacing_percentage: 1.5
-      levels_above: 4
-      levels_below: 4
-      order_size_usd: 12.0
-      enabled: false
-    SOL:
-      spacing_percentage: 1.0
-      levels_above: 5
-      levels_below: 5
-      order_size_usd: 10.0
-      enabled: false
-    MATIC:
-      spacing_percentage: 1.5
-      levels_above: 4
-      levels_below: 4
-      order_size_usd: 10.0
-      enabled: false
-    ETH:
-      # spacing_percentage must exceed 0.52% (= 2 × Kraken's 0.26% maker
-      # fee) for cycles to be profitable. Soak finding 2026-05-20: the
-      # prior default of 0.5% was below that threshold and would lose
-      # money on every completed cycle. 1.0% leaves a comfortable margin.
-      spacing_percentage: 1.0
-      levels_above: 6
-      levels_below: 6
-      order_size_usd: 20.0
-      enabled: false
 
 # ============================================================================
 # Safety caps (engine-enforced, non-negotiable)
 # ============================================================================
 # These are checked inside GridEngine BEFORE any place_order call.
 # Refusals are logged + counted in StepResult.refusals; they never raise.
+# The sell_guard's own deferrals count separately in StepResult.sells_deferred
+# (never a hard-cap refusal -- see ADR-032).
 safety:
+  # Generic TEMPLATE caps — size these to YOUR balance + coin count before
+  # going live (two-sided ceiling = coins × levels × order_size; keep
+  # max_daily_spend below your free USD). This file is a starting template,
+  # not a mirror of any live deployment — your tuned values live in the
+  # gitignored settings.yml.
   max_total_exposure_usd: 100.0       # global cap across all coins
   max_daily_spend_usd: 100.0          # BUY-side commits per UTC day
   max_per_coin_exposure_usd: 100.0    # per-coin cap
   max_orders_per_coin: 20             # count cap, per-coin
 
-  emergency_stop:
+  # ADR-032 cost-basis sell guard: defers (never cancels) a SELL whose
+  # net-of-fees proceeds fall more than max_loss_percentage below the
+  # symbol's replayed average cost basis. Enforced (unlike the retired
+  # emergency_stop block) -- every key here is actually read.
+  sell_guard:
     enabled: true
-    max_loss_percentage: 20.0         # informational; not yet wired
-    min_exchange_balance_usd: 0       # informational; not yet wired
+    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.52%
+
+  # ADR-025 pre-placement spread guard: skip the whole tick (no order
+  # placement attempted) when the symbol's bid-ask spread exceeds this.
+  # Default never fires on healthy BTC/ETH (~0.01-0.05%); null disables.
+  max_spread_percentage: 1.0
 
 # ============================================================================
 # Scheduled task cadences (Stage 3.3 Slice C.0)
@@ -131,6 +132,7 @@ schedules:
   maintenance_vacuum: 7d              # cli/maintenance (Stage 8.2): VACUUM cadence
   maintenance_prune: 1d               # cli/maintenance: price_snapshots prune+archive cadence
   maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
+  maintenance_verify: 30d             # cli/maintenance (v1.1): backup restoration smoke test cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -152,6 +154,13 @@ live:
   # NOTE: account-wide — also cancels orders you placed manually on the
   # same account.
   dead_mans_switch_seconds: 60
+  # ADR-024: after a session-loss-cap exit (exit_code=1), refuse to start
+  # a new session for this many minutes -- an immediate restart (operator
+  # knee-jerk, or a `restart: unless-stopped` policy) would otherwise
+  # re-enter the same losing condition. Scoped to exit_code==1 only;
+  # never applies to cli/shadow. Set ~null~ to disable. The terminal-only
+  # `--ignore-cool-down` flag bypasses one deliberate restart.
+  cool_down_minutes: 60.0
   log_format: plain                   # plain | json
   # Rotating-file log with daily rotation (7-day retention). Soak-period
   # follow-up (2026-05-25) wired this through every long-running daemon
@@ -271,12 +280,14 @@ sandbox:
 #
 # Two source types ship in v1:
 #   - RSS feeds (no auth, any feed URL works)
-#   - CryptoCompare News (free tier; requires CRYPTOCOMPARE_API_KEY)
+#   - CryptoCompare News (disabled by default — CoinDesk Data retired
+#     the free API tier 2026-05-21; requires a paid subscription now)
 #
 # The original ADR-007 plan named CryptoPanic + Whale-alert; both went
-# paid-only after the ADR was written, so v1 pivots to RSS +
-# CryptoCompare. NewsPort stays abstract — operators can plug in paid
-# sources later if they want.
+# paid-only after the ADR was written, so v1 pivoted to RSS +
+# CryptoCompare — which has since ALSO gone paid-only (see below).
+# NewsPort stays abstract — operators can plug in paid sources if
+# they want the extra coverage.
 #
 # Per-source dedup means leaving overlapping feeds enabled is safe;
 # the storage layer keeps one row per (source, external_id) pair.
@@ -312,14 +323,27 @@ news:
       url: "https://blog.kraken.com/feed/"
       enabled: true
 
-  # CryptoCompare News (aggregator; free tier requires API key).
-  # Substantially overlaps with RSS coverage. Keep enabled for 90 days
-  # then evaluate whether the additional source diversity earns its
-  # place vs. simply running more RSS feeds.
+  # CryptoCompare News (aggregator). ADR-010's 90-day free-tier
+  # evaluation (due 2026-08-13) concluded early: CoinDesk Data (the
+  # CryptoCompare rebrand) retired free API access entirely on
+  # 2026-05-21, so every fetch now fails with a Type 99 "over your
+  # rate limit, upgrade your account" response regardless of poll
+  # cadence. Disabled by default — RSS coverage substantially
+  # overlaps and is unaffected. Set enabled: true (and get a paid
+  # CoinDesk Data plan) if you want this source back.
   cryptocompare:
-    enabled: true
+    enabled: false
     lang: EN
     # categories: "BTC|ETH"            # optional pipe-separated filter
+
+  # Kraken's own exchange-status incident feed (v1.1). Public JSON,
+  # no API key -- polls status.kraken.com/api/v2/incidents.json.
+  # Enabled by default: an exchange-status incident (API degraded, a
+  # coin's deposits/withdrawals halted) is directly relevant to a bot
+  # trading on Kraken, unlike general market news.
+  kraken_status:
+    enabled: true
+    base_url: "https://status.kraken.com"
 
   # Stage 8.4 follow-up: cross-source syndication dedup. Storage's
   # UNIQUE(source, external_id) catches same-source reposts; this
@@ -685,6 +709,11 @@ web:
   # operators in non-US regions or who prefer the trade view may
   # override. Set to null to suppress the link entirely.
   kraken_account_url: "https://pro.kraken.com/app/home"
+  # v1.1 footer "update available" indicator. Polls GitHub's public
+  # releases API from the SERVER (never the browser) on this cadence.
+  # Default on; set to false for zero outbound calls.
+  release_check_enabled: true
+  release_check_interval_hours: 6.0
   # ---- cross-DB paths ----
   # operator.db is REQUIRED (users table + pending_commands +
   # notifications + llm_calls). The other four are optional per the
@@ -702,11 +731,12 @@ web:
 # ============================================================================
 # Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
 # ============================================================================
-# Long-running daemon with three concurrent scheduled tasks:
-# vacuum / prune+archive / backup. Operator-started; not auto-spawned
-# by any other daemon. Cadences pulled from `schedules:` block above
-# (maintenance_vacuum / maintenance_prune / maintenance_backup) with
-# per-task defaults (7d / 1d / 1d) when missing.
+# Long-running daemon with four concurrent scheduled tasks:
+# vacuum / prune+archive / backup / verify. Operator-started; not
+# auto-spawned by any other daemon. Cadences pulled from `schedules:`
+# block above (maintenance_vacuum / maintenance_prune /
+# maintenance_backup / maintenance_verify) with per-task defaults
+# (7d / 1d / 1d / 30d) when missing.
 #
 # Per stage-8.2-design.md decision 3 only `price_snapshots` gets
 # pruned in v1.0. Every audit table (orders, trades, llm_calls, etc.)
@@ -716,6 +746,10 @@ web:
 # `.backup` API produces atomic point-in-time copies without
 # locking cli/live's writers. Operator can rclone/rsync the
 # backup_dir to offsite storage if they want.
+#
+# v1.1: `verify` runs a restoration smoke test (PRAGMA integrity_check
+# + a representative SELECT per table) against each DB's LATEST
+# backup, and notifies (via operator_db below, if set) on failure.
 maintenance:
   # Every DB the daemon should VACUUM + back up. Add the operator's
   # active DBs; missing files are skipped (logged WARNING) so partial
@@ -952,10 +986,14 @@ profiles:
   # docker-compose.yml sets that env var alongside this profile.
   #
   # The advisor's LLM escalation target is a single cloud reasoning model
-  # (o3), not a local MoE: MoE on CPU multiplies latency by N experts and
-  # no local model cleared the bar anyway. The cascade keeps cost low by
-  # calling o3 only on the hard cases; the heuristic handles the rest.
-  # Requires the top-level `llm:` block + OPENAI_API_KEY in the env.
+  # (gpt-5-mini), not a local MoE: MoE on CPU multiplies latency by N
+  # experts and no local model cleared the bar anyway. Post-ADR-022 the
+  # heuristic makes only the clear guard calls and escalates every other
+  # tick to gpt-5-mini as a free judge — chosen over o3 in a 2026-06-04
+  # bake-off (better judgment on the escalate cases at ~1/3 the cost,
+  # ~$0.10/day; see docs/reference/advisor-llm-models.md). Cost stays
+  # gate-bounded by the top-level `llm:` block. Requires that block +
+  # OPENAI_API_KEY in the env.
   cpu-only:
     operator:
       assistant:
@@ -969,16 +1007,16 @@ profiles:
     advisor:
       engine: cascade
       heuristic_file: "config/heuristic/quant.yml"
-      # Escalation target for ambiguous ticks (and the fallback's "what
-      # the LLM would have said" — never reached when the heuristic is
-      # confident, which is most ticks).
+      # Escalation target for every non-guard tick (and the fallback's
+      # "what the LLM would have said" when it errors / hits the cost cap).
+      # The heuristic only resolves the clear guard cases now (ADR-022).
       type: single
       provider: openai
-      model: o3
+      model: gpt-5-mini
       prompt_file: "config/prompts/quant.md"
       inference_params:
-        temperature: 1.0       # o3 is a reasoning model — it ignores low temps
-        # 4000 covers o3's hidden reasoning tokens + the JSON answer
+        temperature: 1.0       # gpt-5-mini is a reasoning model — it ignores low temps
+        # 4000 covers the model's hidden reasoning tokens + the JSON answer
         # (reasoning shares the completion budget).
         max_tokens: 4000
         timeout_seconds: 120

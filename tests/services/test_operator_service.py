@@ -17,7 +17,7 @@ from wobblebot.config.grid import CoinGridConfig, GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Amount, Symbol, Timestamp
-from wobblebot.ports.exceptions import OperatorError
+from wobblebot.ports.exceptions import ExchangeError, OperatorError
 from wobblebot.ports.operator import (
     CancelOpenOrdersCommand,
     GridConfigQuery,
@@ -49,6 +49,27 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 BTC_USD = Symbol(base="BTC", quote="USD")
 ETH_USD = Symbol(base="ETH", quote="USD")
+
+
+class _FetchFailExchange(MockExchangeAdapter):
+    """MockExchangeAdapter whose open-order fetch always raises ExchangeError."""
+
+    async def get_open_orders(self, symbol=None):  # type: ignore[no-untyped-def]
+        raise ExchangeError("kraken OpenOrders down")
+
+
+class _OneCancelFailsExchange(MockExchangeAdapter):
+    """Cancels every order except the first attempt, which raises (partial failure)."""
+
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._cancel_attempts = 0
+
+    async def cancel_order(self, order):  # type: ignore[no-untyped-def]
+        self._cancel_attempts += 1
+        if self._cancel_attempts == 1:
+            raise ExchangeError("transient cancel failure")
+        return await super().cancel_order(order)
 
 
 def _grid_config() -> GridConfig:
@@ -255,6 +276,54 @@ class TestCancelOpenOrders:
         assert result.side_effects["cancelled"] == 6
         assert result.side_effects["failed"] == 0
 
+    async def test_cancel_reports_failure_when_fetch_fails(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        # During a Kraken outage the open-order fetch fails. The operator must
+        # see an explicit failure ("may still be LIVE"), NOT a false all-clear
+        # of "Cancelled 0; 0 failed" — the orders are still on the exchange.
+        exch = _FetchFailExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(CancelOpenOrdersCommand(symbol=BTC_USD))
+        assert result.success is False
+        assert "may still be LIVE" in result.message
+        assert result.side_effects["fetch_failed"] is True
+
+    async def test_cancel_partial_failure_is_not_success(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        # 5 cancel, 1 fail must report success=False so the operator retries —
+        # the old `cancelled > 0 or failed == 0` flagged this green.
+        exch = _OneCancelFailsExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # 6 orders placed
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(CancelOpenOrdersCommand(symbol=BTC_USD))
+        assert result.success is False
+        assert result.side_effects["cancelled"] == 5
+        assert result.side_effects["failed"] == 1
+
 
 class TestStop:
     async def test_stop_marks_engine(
@@ -411,6 +480,80 @@ class TestStatusQuery:
         # net = (76760-76000) * 0.000131 - 0.025 - 0.025
         #     = 760 * 0.000131 - 0.05
         #     = 0.09956 - 0.05 = 0.04956
+        assert status.session_pnl > 0.04
+        assert status.session_pnl < 0.06
+
+    async def test_busy_day_does_not_truncate_an_early_cycle(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        """v1.1 fix: ``get_trades(limit=100)`` silently dropped a cycle's
+        BUY+SELL if 100+ MORE RECENT trades existed the same day (a
+        plausible multi-coin trading day) -- the oldest legs truncate
+        out of a newest-first fetch and PnL undercounts with no error.
+        Seeds a real BTC cycle early today, then 150 later filler
+        trades on a second symbol; the early cycle's PnL must still be
+        counted with the fixed (much higher) fetch limit.
+        """
+        from uuid import uuid4
+
+        from wobblebot.domain.models import Trade
+        from wobblebot.domain.value_objects import Amount, Price
+
+        now = datetime.now(UTC)
+        today_at = now.replace(minute=0, second=0, microsecond=0)
+
+        # The real cycle: BUY then SELL, both early today.
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="buy",
+                price=Price(amount=Decimal("76000"), currency="USD"),
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("9.956"),
+                executed_at=Timestamp(dt=today_at.replace(hour=1, minute=0)),
+            )
+        )
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="sell",
+                price=Price(amount=Decimal("76760"), currency="USD"),
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("10.055"),
+                executed_at=Timestamp(dt=today_at.replace(hour=1, minute=30)),
+            )
+        )
+        # 150 later filler trades (a busy multi-coin day), all AFTER the
+        # real cycle -- a `limit=100` newest-first fetch would push the
+        # real cycle's two trades entirely out of the window.
+        for i in range(150):
+            await storage.save_trade(
+                Trade(
+                    id=f"T-filler-{i}",
+                    order_id=f"O-filler-{i}",
+                    symbol=ETH_USD,
+                    side="buy",
+                    price=Price(amount=Decimal("3000"), currency="USD"),
+                    amount=Amount(value=Decimal("0.01"), asset="ETH"),
+                    fee=Decimal("0.01"),
+                    cost=Decimal("30"),
+                    executed_at=Timestamp(
+                        dt=today_at.replace(hour=2, minute=0) + timedelta(minutes=i)
+                    ),
+                )
+            )
+
+        svc = await _service(storage, exchange_with_btc_and_eth)
+        status = await svc.answer_query(StatusQuery())
+        # Same cycle as the test above: net PnL ~= 0.04956.
         assert status.session_pnl > 0.04
         assert status.session_pnl < 0.06
 

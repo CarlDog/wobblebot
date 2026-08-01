@@ -36,7 +36,7 @@ from wobblebot.ports.exceptions import (
     WobbleBotPortError,
 )
 from wobblebot.ports.exchange import ExchangePort
-from wobblebot.ports.harvester import HarvesterPort, TransferProposal, TransferResult
+from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.news import NewsPort
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.operator import (
@@ -101,7 +101,6 @@ __all__ = [
     "AppliedSuggestion",
     "ConfidenceLevel",
     # Phase 4+ ports
-    "HarvesterPort",
     "TransferProposal",
     "TransferResult",
     # Phase 5 — operator interaction (ADR-013)

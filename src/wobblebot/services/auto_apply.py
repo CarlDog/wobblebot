@@ -12,11 +12,16 @@ Gate rules (per ADR-007 + the AutoApplyConfig docstring):
    logged with reason ``"auto-apply disabled"``. The whole point of
    the flag is that the operator opts in.
 2. **``recommendation.role == "news"``** → blanket reject. News-derived
-   recommendations are advisory-only regardless of bounds. ``aggregated``
-   suggestions that *included* a news opinion in ``expert_opinions``
-   still auto-apply because the aggregated role is metrics-driven
-   (news is one of several inputs; the aggregation IS the
-   metrics-driven synthesis).
+   recommendations are advisory-only regardless of bounds.
+2b. **``recommendation.role == "aggregated"`` and
+   ``recommendation.news_materially_drove``** → blanket reject (ADR-007
+   amendment, 2026-07-31). An aggregated suggestion is normally
+   metrics-driven even when a news opinion contributed — but when a
+   news opinion is the closer match to the reconciled value on at
+   least one key (or the sole source for it), the aggregation didn't
+   launder out news's influence; it structurally carried it through.
+   ``MoEAdvisorAdapter`` computes this flag from ``expert_opinions``,
+   the same audit-trail data the gate already has access to.
 3. **Whitelist** of mutable keys: ``spacing_percentage`` and
    ``order_size_usd``. Both have ``max_*_change_percentage`` caps in
    ``AutoApplyConfig`` and a clear current-value baseline in
@@ -52,8 +57,12 @@ _WHITELISTED_NUMERIC_KEYS = ("spacing_percentage", "order_size_usd")
 _LEVEL_KEYS = ("levels_above", "levels_below")
 
 # Roles whose recommendations never auto-apply, per ADR-007.
-# ``"aggregated"`` is intentionally NOT here — the MoE's aggregated
-# output is metrics-driven even when a news expert contributed.
+# ``"aggregated"`` is intentionally NOT here — most aggregated output
+# is metrics-driven even when a news expert contributed. The narrower
+# case where news specifically drove the reconciled value is caught
+# below via ``recommendation.news_materially_drove`` (ADR-007
+# amendment, structural news firewall), not by blocking the role
+# wholesale.
 _BLOCKED_ROLES: frozenset[str] = frozenset({"news"})
 
 
@@ -175,6 +184,25 @@ def evaluate_auto_apply(  # pylint: disable=too-many-locals
             proposed_grid=current_grid,
         )
 
+    if role == "aggregated" and suggestion.recommendation.news_materially_drove:
+        return AutoApplyResult(
+            enabled=True,
+            role_eligible=False,
+            symbol=symbol,
+            rejected_keys=[
+                RejectedKey(
+                    key=k,
+                    proposed=v,
+                    reason=(
+                        "aggregated recommendation blocked by the ADR-007 amendment: "
+                        "a news opinion materially drove this reconciled value"
+                    ),
+                )
+                for k, v in recommendations.items()
+            ],
+            proposed_grid=current_grid,
+        )
+
     applied: list[AppliedKey] = []
     rejected: list[RejectedKey] = []
     grid_overrides: dict[str, Decimal | int] = {}
@@ -216,6 +244,26 @@ def evaluate_auto_apply(  # pylint: disable=too-many-locals
                     key=key,
                     proposed=proposed_raw,
                     reason=f"proposed value {coerced} must be > 0",
+                )
+            )
+            continue
+
+        # ADR-019 / ADR-002 defense-in-depth: never auto-apply a spacing BELOW
+        # the operator's configured per-symbol spacing. The floor is the
+        # configured ``current_value`` (from GridConfig.for_coin), so it holds
+        # for ANY advisor -- the heuristic or a future cloud LLM/MoE, which is
+        # NOT curve-bounded and could emit any value. Tightening below the
+        # settled survival floor is the move the backtest proved kills a grid.
+        if key == "spacing_percentage" and coerced < current_value:
+            rejected.append(
+                RejectedKey(
+                    key=key,
+                    proposed=proposed_raw,
+                    reason=(
+                        f"proposed spacing {coerced}% is below the configured "
+                        f"spacing {current_value}% -- tightening below the "
+                        "operator's settled floor is disallowed"
+                    ),
                 )
             )
             continue
@@ -268,20 +316,32 @@ def _current_value(grid: GridLevels, key: str) -> Decimal:
 
 def _coerce_numeric(value: Any) -> Decimal | None:
     """Coerce LLM-emitted numerics (float/int/str) into ``Decimal`` for
-    bounded comparison. Returns None on non-numerics or NaN."""
+    bounded comparison. Returns None on non-numerics, NaN, or Infinity.
+
+    The NaN/Inf rejection is load-bearing: ``json.loads`` accepts bare
+    ``NaN`` / ``Infinity`` tokens, and ``Decimal(str(float("nan")))`` is a
+    *valid, non-raising* ``Decimal("NaN")``. Left unchecked it flows past
+    the ``coerced is None`` reject in ``evaluate_auto_apply`` and crashes
+    the downstream ``<= 0`` bound check with ``decimal.InvalidOperation``
+    — inside the ADR-002 auto-apply safety boundary, whose contract is
+    "never raises on bad input." ``is_finite()`` filters NaN/±Inf/sNaN so
+    a garbled recommendation degrades to a ``RejectedKey`` instead.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float, Decimal)):
         try:
-            return Decimal(str(value))
+            coerced = Decimal(str(value))
         except (ArithmeticError, ValueError):
             return None
-    if isinstance(value, str):
+    elif isinstance(value, str):
         try:
-            return Decimal(value)
+            coerced = Decimal(value)
         except (ArithmeticError, ValueError):
             return None
-    return None
+    else:
+        return None
+    return coerced if coerced.is_finite() else None
 
 
 def _cap_for_key(config: AutoApplyConfig, key: str) -> Decimal:

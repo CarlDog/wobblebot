@@ -49,7 +49,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
 from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -117,8 +117,10 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 await self._conn.execute("PRAGMA synchronous = NORMAL")
             await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
+            await _migrate_advisor_suggestions_news_materially_drove(self._conn)
             await _migrate_news_items_publisher_url(self._conn)
             await _migrate_price_snapshots_unique(self._conn)
+            await _migrate_transfer_results_unique_proposal_id(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -555,8 +557,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 INSERT INTO advisor_suggestions (
                     recommendation_id, created_at, role,
                     recommendations, rationale, confidence,
-                    input_summary, model_name, expert_opinions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    input_summary, model_name, expert_opinions,
+                    news_materially_drove
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     suggestion.recommendation.recommendation_id,
@@ -568,6 +571,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     json.dumps(suggestion.input_summary),
                     suggestion.model_name,
                     serialize_expert_opinions(suggestion.recommendation.expert_opinions),
+                    1 if suggestion.recommendation.news_materially_drove else 0,
                 ),
             )
             await conn.commit()
@@ -749,6 +753,21 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 ),
             )
             await conn.commit()
+        except aiosqlite.IntegrityError as exc:
+            await conn.rollback()
+            if "transfer_results.proposal_id" in str(exc):
+                # ADR-026 replay guard tripped: a non-failed TransferResult
+                # already exists for this proposal. Distinguish this from a
+                # generic write failure so the caller (cli/harvest) logs
+                # something an operator can act on immediately.
+                raise StorageError(
+                    f"Refusing to save transfer result for proposal "
+                    f"{result.proposal_id}: a non-failed result already exists "
+                    "(ADR-026 replay guard)"
+                ) from exc
+            raise StorageError(
+                f"Failed to save transfer result {result.transaction_id}: {exc}"
+            ) from exc
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(
@@ -1016,7 +1035,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if forwarded is not None:
             sql += " WHERE forwarded = ?"
             params.append(1 if forwarded else 0)
-        sql += " ORDER BY created_at ASC"
+        # Newest first, so LIMIT returns the newest N (the web page and bell
+        # badge depend on this); id breaks created_at ties deterministically.
+        sql += " ORDER BY created_at DESC, id DESC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -1400,6 +1421,44 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             parsed = parsed.replace(tzinfo=UTC)
         return parsed
 
+    async def record_cap_trip(self, tripped_at: Timestamp, session_pnl_usd: Decimal) -> None:
+        """Append a session-loss-cap trip record (ADR-024)."""
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                "INSERT INTO cap_trips (tripped_at, session_pnl_usd) VALUES (?, ?)",
+                (tripped_at.dt.astimezone(UTC).isoformat(), str(session_pnl_usd)),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to record cap trip: {exc}") from exc
+
+    async def get_last_cap_trip_at(self) -> Timestamp | None:
+        """Return the most recent cap-trip timestamp, or ``None``."""
+        record = await self.get_last_cap_trip()
+        return record.tripped_at if record is not None else None
+
+    async def get_last_cap_trip(self) -> CapTripRecord | None:
+        """Return the most recent cap-trip record (timestamp + PnL), or ``None``."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT tripped_at, session_pnl_usd FROM cap_trips ORDER BY id DESC LIMIT 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read last cap trip: {exc}") from exc
+        if row is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(row[0])
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return CapTripRecord(tripped_at=Timestamp(dt=parsed), session_pnl_usd=Decimal(row[1]))
+
 
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,
@@ -1417,6 +1476,29 @@ async def _migrate_advisor_suggestions_expert_opinions(
         await conn.execute(
             "ALTER TABLE advisor_suggestions "
             "ADD COLUMN expert_opinions TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
+async def _migrate_advisor_suggestions_news_materially_drove(
+    conn: aiosqlite.Connection,
+) -> None:
+    """Add the ``news_materially_drove`` column (ADR-007 amendment, v1.1).
+
+    Same shape as ``_migrate_advisor_suggestions_expert_opinions`` --
+    ``SCHEMA`` already declares the column for new DBs; operators on a
+    pre-amendment table need the ``ALTER``. Existing rows default to 0
+    (not news-driven) -- correct for the forensic record since the
+    flag didn't exist when those rows were written, and re-computing it
+    retroactively isn't possible without the original per-expert
+    opinions in a comparable shape.
+    """
+    async with conn.execute("PRAGMA table_info(advisor_suggestions)") as cursor:
+        cols = {row[1] async for row in cursor}
+    if "news_materially_drove" not in cols:
+        await conn.execute(
+            "ALTER TABLE advisor_suggestions "
+            "ADD COLUMN news_materially_drove INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (news_materially_drove IN (0, 1))"
         )
 
 
@@ -1493,4 +1575,50 @@ async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
     await conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_price_snapshots_unique "
         "ON price_snapshots(symbol_base, symbol_quote, observed_at)"
+    )
+
+
+async def _migrate_transfer_results_unique_proposal_id(
+    conn: aiosqlite.Connection,
+) -> None:
+    """DB-enforced idempotency guard for ``cli/harvest --execute`` (ADR-026).
+
+    A partial UNIQUE index -- at most one non-``failed`` ``TransferResult``
+    per ``proposal_id``, matching cli/harvest's existing app-layer
+    pre-check (a prior ``failed`` row does not block a legitimate
+    retry, so the index must not either). This is the "highest-blast-
+    radius hole in the codebase" the 2026-06-02 plan review flagged: a
+    double-tap, shell re-run, or hang-retry could double-withdraw with
+    only the app-layer SELECT-then-INSERT check in the way, which two
+    near-simultaneous dispatchers can both pass before either inserts.
+    The DB constraint is the concurrency-proof backstop underneath it.
+
+    Unlike ``_migrate_price_snapshots_unique``, existing duplicate rows
+    here are NOT junk to silently collapse -- a duplicate non-failed
+    ``proposal_id`` could be the forensic record of a real past
+    double-withdrawal, and deleting one to satisfy the constraint would
+    destroy that evidence. If duplicates are found, log loudly and
+    leave the index un-created (the guard stays absent, not silently
+    "fixed") until an operator investigates and resolves the rows by
+    hand -- this fires on every connect until then, which is the point.
+    """
+    async with conn.execute("""
+        SELECT proposal_id, COUNT(*) FROM transfer_results
+        WHERE status != 'failed'
+        GROUP BY proposal_id
+        HAVING COUNT(*) > 1
+        """) as cursor:
+        duplicates = list(await cursor.fetchall())
+    if duplicates:
+        _LOGGER.error(
+            "transfer_results has %d proposal_id(s) with more than one non-failed "
+            "result -- the ADR-026 replay guard cannot be enabled until these are "
+            "investigated and resolved by hand (possible past double-withdrawal)",
+            len(duplicates),
+            extra={"duplicate_proposal_ids": [row[0] for row in duplicates]},
+        )
+        return
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_results_unique_proposal "
+        "ON transfer_results(proposal_id) WHERE status != 'failed'"
     )

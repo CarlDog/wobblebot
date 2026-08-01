@@ -34,6 +34,7 @@ never imports this module.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -144,12 +145,14 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         system_prompt = self._build_system_prompt(context)
         messages = self._build_messages(context)
         prompt_text = system_prompt + "\n\n" + "\n".join(m["content"] for m in messages)
-        estimate = estimate_cost_ceiling(
-            provider="anthropic",
-            model=self._model,
-            prompt_text=prompt_text,
-            max_tokens=self._max_tokens,
-        )
+
+        def _estimate() -> Decimal:
+            return estimate_cost_ceiling(
+                provider="anthropic",
+                model=self._model,
+                prompt_text=prompt_text,
+                max_tokens=self._max_tokens,
+            )
 
         body: dict[str, Any] = {
             "model": self._model,
@@ -179,7 +182,7 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
         )
         return await execute_assistant_call(
             ctx=ctx,
-            estimated_cost_usd=estimate,
+            estimate_cost_fn=_estimate,
             call_fn=_call,
             extract_tokens=extract_anthropic_tokens,
             parse_text_fn=lambda env: parse_text_blocks(env.get("content", []) or []),

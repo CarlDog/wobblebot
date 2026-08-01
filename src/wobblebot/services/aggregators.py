@@ -353,6 +353,66 @@ async def aggregate_arbitrator(
     return result.model_copy(update={"role": "arbitrator"})
 
 
+def news_materially_drove(
+    aggregated: AdvisorRecommendation, opinions: list[AdvisorRecommendation]
+) -> bool:
+    """ADR-007 amendment: did a news opinion drive the aggregated value?
+
+    Structural, not LLM-trusting -- the prompt mitigation
+    (``config/prompts/arbitrator.md`` Rule 2) asks the arbitrator to
+    self-police "reconciled numbers must be justifiable from quant +
+    risk alone"; this function doesn't take the LLM's word for it. It
+    only inspects the final aggregated ``recommendations`` dict plus
+    the raw per-expert ``opinions`` -- no re-derivation of aggregation
+    math, so it works uniformly across ``voting`` /
+    ``weighted_confidence`` / ``arbitrator`` alike (the arbitrator's
+    free-form synthesis has no formula to re-run anyway).
+
+    Per key in ``aggregated.recommendations``: if a news opinion
+    proposed a value for that key, the key is news-influenced when
+    either (a) no non-news expert proposed a value for it at all (news
+    is the sole source), or (b) the aggregated value is numerically
+    closer to news's proposed value than to any non-news expert's
+    proposed value for that key. Returns ``True`` if ANY key is
+    news-influenced. A tie (equally close to both) does not flag --
+    benefit of the doubt goes to "not news-driven."
+
+    Args:
+        aggregated: The MoE's final reconciled recommendation (role
+            not yet forced to ``"aggregated"`` -- caller's concern).
+        opinions: The per-expert opinions that fed the aggregator.
+
+    Returns:
+        ``True`` iff at least one key's reconciled value tracks a
+        news opinion more closely than the non-news experts.
+    """
+    news_ops = [op for op in opinions if op.role == "news"]
+    if not news_ops:
+        return False
+    non_news_ops = [op for op in opinions if op.role != "news"]
+
+    for key, agg_value in aggregated.recommendations.items():
+        news_values = [op.recommendations[key] for op in news_ops if key in op.recommendations]
+        if not news_values:
+            continue
+        non_news_values = [
+            op.recommendations[key] for op in non_news_ops if key in op.recommendations
+        ]
+        if not non_news_values:
+            return True  # news is the sole source for this key
+        if not _all_numeric([agg_value, *news_values, *non_news_values]):
+            # Non-numeric key: news-influenced iff the aggregate matches
+            # a news-proposed value but no non-news-proposed value.
+            if agg_value in news_values and agg_value not in non_news_values:
+                return True
+            continue
+        nearest_news = min(abs(float(agg_value) - float(v)) for v in news_values)
+        nearest_non_news = min(abs(float(agg_value) - float(v)) for v in non_news_values)
+        if nearest_news < nearest_non_news:
+            return True
+    return False
+
+
 def _arbitrator_context(opinions: list[AdvisorRecommendation]) -> str:
     """Serialize per-expert opinions as a context block for the arbitrator."""
     serialized = [

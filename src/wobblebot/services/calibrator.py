@@ -19,9 +19,6 @@ enumerating every proposed change.
 - ``safety.max_total_exposure_usd``
 - ``safety.max_daily_spend_usd``
 - ``safety.max_per_coin_exposure_usd``
-- ``safety.emergency_stop.min_exchange_balance_usd`` (skipped when 0
-  — multiplying zero by any ratio is still zero; no point listing
-  a no-op change in the proposal)
 - ``live.max_session_loss_usd``
 - ``harvester.min_exchange_liquidity_usd``
 - ``harvester.topup_threshold_usd``
@@ -36,7 +33,7 @@ not USD amounts):
 - ``grid.default.levels_above`` / ``levels_below`` and per-coin
   overrides (counts)
 - ``safety.max_orders_per_coin`` (count)
-- ``safety.emergency_stop.max_loss_percentage`` (already a percentage)
+- ``safety.sell_guard.max_loss_percentage`` (already a percentage)
 - ``live.max_runtime_minutes`` (time, not money)
 - ``shadow.initial_balances`` keys OTHER than USD (BTC / ETH etc are
   asset units, not USD)
@@ -252,18 +249,9 @@ def _safety_changes(config: WobbleBotConfig, ratio: Decimal) -> Iterable[Recalib
         if change is not None:
             yield change
 
-    # emergency_stop.min_exchange_balance_usd: scale only if non-zero.
-    # Zero is "no minimum balance enforced"; scaling stays zero.
-    floor = safety.emergency_stop.min_exchange_balance_usd
-    if floor > Decimal("0"):
-        proposed = _scaled(floor, ratio)
-        change = _change_if_different(
-            yaml_path="safety.emergency_stop.min_exchange_balance_usd",
-            current=floor,
-            proposed=proposed,
-        )
-        if change is not None:
-            yield change
+    # sell_guard.max_loss_percentage is a percentage, not a USD amount —
+    # nothing to scale (ADR-032; replaces the retired EmergencyStopConfig,
+    # which had a USD floor here).
 
 
 def _live_changes(config: WobbleBotConfig, ratio: Decimal) -> Iterable[RecalibrationChange]:

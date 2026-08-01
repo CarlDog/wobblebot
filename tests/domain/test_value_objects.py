@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
 
 
 class TestSymbol:
@@ -74,6 +74,47 @@ class TestPrice:
         price = Price(amount=Decimal("100"), currency="USD")
         with pytest.raises(ValidationError):
             price.amount = Decimal("200")  # type: ignore
+
+
+class TestTicker:
+    """Tests for Ticker value object (ADR-025)."""
+
+    def test_ticker_creation(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        ticker = Ticker(
+            symbol=symbol, last=Decimal("50000"), bid=Decimal("49995"), ask=Decimal("50005")
+        )
+        assert ticker.last == Decimal("50000")
+        assert ticker.bid == Decimal("49995")
+        assert ticker.ask == Decimal("50005")
+
+    def test_bid_must_be_below_ask(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        with pytest.raises(ValidationError, match="bid"):
+            Ticker(symbol=symbol, last=Decimal("50000"), bid=Decimal("50005"), ask=Decimal("49995"))
+
+    def test_bid_equal_to_ask_rejected(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        with pytest.raises(ValidationError, match="bid"):
+            Ticker(symbol=symbol, last=Decimal("50000"), bid=Decimal("50000"), ask=Decimal("50000"))
+
+    def test_spread_percentage_is_mid_price_basis(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        # bid=100, ask=102 -> mid=101, spread=(102-100)/101*100
+        ticker = Ticker(symbol=symbol, last=Decimal("101"), bid=Decimal("100"), ask=Decimal("102"))
+        expected = (Decimal("102") - Decimal("100")) / Decimal("101") * Decimal("100")
+        assert ticker.spread_percentage == expected
+
+    def test_ticker_immutability(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        ticker = Ticker(symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101"))
+        with pytest.raises(ValidationError):
+            ticker.last = Decimal("200")  # type: ignore
+
+    def test_non_positive_prices_rejected(self):
+        symbol = Symbol(base="BTC", quote="USD")
+        with pytest.raises(ValidationError):
+            Ticker(symbol=symbol, last=Decimal("0"), bid=Decimal("1"), ask=Decimal("2"))
 
 
 class TestAmount:

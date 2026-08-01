@@ -24,18 +24,22 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 from starlette.types import Scope
 
-from wobblebot.config.cli import WebConfig
+from wobblebot import __version__
+from wobblebot.config.cli import TradingMode, WebConfig
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
+from wobblebot.services.release_checker import ReleaseCheckResult
 from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
     CSRF_FORM_FIELD,
     LoginRateLimit,
+    add_security_headers,
     get_or_create_csrf_token,
 )
 from wobblebot.web.routes import advisor as advisor_routes
@@ -135,9 +139,23 @@ def _csrf_input(request: Request) -> Markup:
     return Markup(f'<input type="hidden" name="{CSRF_FORM_FIELD}" value="{token}">')
 
 
+def _release_check_status(request: Request) -> ReleaseCheckResult | None:
+    """Jinja2 global exposing the latest release-check result to the footer.
+
+    A callable global (matching ``csrf_input``'s pattern) rather than
+    a static value set at app-build time: the background poller in
+    ``cli/web`` updates ``app.state.release_check_result`` throughout
+    the process's lifetime, so this must read it live, at render time.
+    ``None`` when the check hasn't completed yet (or is disabled) —
+    the footer template treats that the same as "no update available".
+    """
+    return getattr(request.app.state, "release_check_result", None)
+
+
 def create_app(  # pylint: disable=too-many-arguments
     *,
     config: WebConfig,
+    trading_mode: TradingMode = "live",
     operator_storage: StoragePort,
     session_secret: str,
     advise_storage: StoragePort | None = None,
@@ -147,6 +165,7 @@ def create_app(  # pylint: disable=too-many-arguments
     live_storage: StoragePort | None = None,
     kraken_health_probe: KrakenHealthProbe | None = None,
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
+    cool_down_minutes: float | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -164,13 +183,26 @@ def create_app(  # pylint: disable=too-many-arguments
             ``None`` triggers the OperatorService-style graceful
             degrade (Stage 5.6.C) — cards that need the missing
             DB don't render.
+        cool_down_minutes: ``LiveConfig.cool_down_minutes`` (ADR-024),
+            like ``trading_mode`` sourced from the full operator
+            config rather than ``WebConfig`` — lets the status
+            dashboard's session card show whether the loss-cap
+            cool-down gate is currently active. ``None`` when the
+            operator disabled the gate or didn't give ``cli/web`` a
+            ``live:`` section.
 
     Returns:
         FastAPI app instance. Caller hands to uvicorn.
     """
     app = FastAPI(
         title="WobbleBot Dashboard",
-        version="0.7.1",
+        # v1.1 fix: was hardcoded "0.7.1", silently drifting from
+        # pyproject.toml's real version on every release. The footer's
+        # "update available" indicator makes this load-bearing now —
+        # comparing the running version against GitHub's latest
+        # release is meaningless if the running-version string itself
+        # is stale.
+        version=__version__,
         # NOTE: Swagger UI (/docs) + /openapi.json are served by FastAPI
         # itself and do NOT pass through the per-route require_user auth —
         # an unauthenticated client that can reach the app can read the
@@ -207,6 +239,11 @@ def create_app(  # pylint: disable=too-many-arguments
         https_only=False,
     )
 
+    # v1.1: Content-Security-Policy on every response (defense-in-depth
+    # over Jinja2 autoescape, ASVS L3). See web/middleware.py's
+    # CSP_HEADER_VALUE docstring for what's allowed and why.
+    app.add_middleware(BaseHTTPMiddleware, dispatch=add_security_headers)
+
     # Static assets (HTMX + base.css + brand mark).
     app.mount("/static", _CachedStaticFiles(directory=str(_STATIC_DIR)), name="static")
 
@@ -214,6 +251,14 @@ def create_app(  # pylint: disable=too-many-arguments
     # can pull it via the dependencies module.
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["csrf_input"] = _csrf_input
+    # v1.1: footer "update available" indicator. A callable global
+    # (like csrf_input) since the underlying state changes over the
+    # process's lifetime via a background poller cli/web wires up
+    # separately (see cli/web.py's _serve_async) -- create_app itself
+    # never makes a network call, so tests constructing the app never
+    # accidentally poll GitHub.
+    templates.env.globals["release_check"] = _release_check_status
+    app.state.release_check_result = None
     # Operator-facing presentation globals — surface fields that
     # every template may need without threading them through each
     # route's context dict.
@@ -223,6 +268,10 @@ def create_app(  # pylint: disable=too-many-arguments
     # ``version`` attribute so a future ``pyproject.toml`` bump
     # flows through automatically.
     templates.env.globals["app_version"] = app.version
+    # Deployment trading mode (live / shadow / sandbox) from the single
+    # `application.mode` source — drives the dashboard mode-badge. The
+    # same UI is reused across modes (no separate shadow page).
+    templates.env.globals["trading_mode"] = trading_mode
     # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
     # pass the operator's tz preference (loaded from
     # user_preferences) as ``operator_tz`` in context; templates
@@ -241,6 +290,9 @@ def create_app(  # pylint: disable=too-many-arguments
     app.state.observe_storage = observe_storage
     app.state.news_storage = news_storage
     app.state.live_storage = live_storage
+    # v1.1 session card — ADR-024 cool-down window, threaded through
+    # like trading_mode above (lives on LiveConfig, not WebConfig).
+    app.state.cool_down_minutes = cool_down_minutes
     # Stage 8.4.E health-icon work — KrakenHealthProbe singleton.
     # cli/web constructs one in production; tests pass None when they
     # don't care (the /health page renders Kraken as "not configured").

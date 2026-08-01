@@ -53,7 +53,7 @@ This document defines boundaries, actors, and environment.
 - **Strategy Advisor and Harvester NEVER talk directly.**
   All coordination flows through the **Orchestrator**, which:
   - Prepares sanitized summaries for the Strategy Advisor (via AdvisorPort).
-  - Receives Harvester proposals/actions (via HarvesterPort).
+  - Receives Harvester proposals/actions (the Harvester is a service using ExchangePort).
   - Enforces safety constraints and mode controls.
   - Provides defense-in-depth validation beyond module-level checks.
 

@@ -20,6 +20,15 @@
 > to "rest at 3%, never tighten" would bake in a false absolute (a tight grid chosen in chop and
 > pulled before the trend works — proven live + the +164.6% oracle). The live grid runs a single
 > survival-optimized 3% static default meanwhile (Stage 8.6 Slice C).*
+>
+> **Executed in ADR-022** (v1.1, 2026-06-04): the deferred curve rework landed — by
+> *retiring* the vol→spacing first-order logic, not recalibrating it. The heuristic is now a
+> guard-only layer; every non-guard tick escalates to an LLM **free judge** (`gpt-5-mini`,
+> picked in a 2026-06-04 cloud bake-off) that reads the regime with no prescribed target. The
+> curve survives only as the `defensive_drawdown` guard's widen floor, and the application
+> floor (`8500226`) still bounds what lands. Per-suggestion accuracy is now trackable (the
+> curve no longer suppresses escalation). See ADR-022 +
+> `docs/reference/advisor-llm-models.md`.
 
 *Entries here turn the static-grid engine into a regime-aware system: classify the market, evaluate advisor recommendations against outcomes, extend the grid under operator/advisor agreement, replay historical configs. All preserve ADR-002 (LLM advisory only) and ADR-006 (engine parks honestly when offside).*
 
@@ -314,6 +323,17 @@ is in freeze.
 advisor quality. This is probably the single highest-leverage
 v1.1 candidate for the advisor pipeline.
 
+**Minimal first slice (2026-06-04, MoE prompt review).** Before the full
+TA suite, the highest-value single addition is a **trend / directional
+metric** on `PerformanceSummary` (e.g. signed drift over the lookback, or
+an EMA-slope / ADX on bars). ADR-019 names trend the *dominant* variable,
+and the post-ADR-022 quant free-judge currently infers ranging-vs-trending
+from `flatness` alone (indirect). One directional field + one `metrics.py`
+computation + a `quant.md` line referencing it would hand the judge the one
+signal it most needs — a focused code stage, not the whole indicator library.
+(This is the additive coverage gap from the MoE prompt review; the prompt-only
+realignment of risk/news/arbitrator shipped separately.)
+
 ### Advisor outcome tracking — close the recommendation feedback loop
 
 **What:** measure post-application outcome for every applied
@@ -397,6 +417,76 @@ configuration. NOT generalizable; should not be published as
 "objective LLM leaderboard." Worth a note in the v1.1 entry's
 operator-facing prose so nobody mistakes a personal scoreboard
 for a public benchmark.
+
+### Chaos Gremlin — a loose-reasoning advisor, scored not applied
+
+**What:** a fourth advisory voice that reads the *same* `PerformanceSummary`
+inputs as quant/risk/news but reasons **loose** — an earnest contrarian that
+trusts pattern and conviction over proof, willing to take an unconventional
+swing the evidence-bound experts would reject for lack of support. It is the
+operator's gut modeled as a role: *swinging to win, never to gamble.* Not
+random (it shares the panel's objective — be right, make money), not
+destructive (it does not want to watch the world burn), just
+**under-constrained** where the others are rigorous. This is *reasoning-style*
+diversity — the one axis a panel of careful analysts structurally cannot
+produce — not another data source.
+
+**Why it earns a slot (when more rigorous experts would not):** the grounded
+trio is already right-sized for a $100 advisory grid, and the one macro angle
+they miss is owned by the LLM Historian below. Adding more *evidence-bound*
+experts is over-engineering. But quant/risk/news share a blind spot: all three
+are consensus-trained and act only on what the data licenses; none can flag the
+regime-break that becomes visible *because* you are willing to make a leap. The
+gremlin fills exactly that gap — and its standing question, "does loose
+intuition beat careful evidence on this market over time?", is itself worth
+measuring.
+
+**Firewall (load-bearing — stricter than news, for the same reason):** a
+confident hunch dressed up as a number is the single most dangerous thing to
+let near a live value, so:
+
+- Its own role string (`gremlin`) goes in `_BLOCKED_ROLES`
+  (`services/auto_apply.py`) — it never auto-applies, by the same mechanism as
+  `news`.
+- It is a **standalone scored observer, NOT an MoE expert that feeds the
+  arbitrator.** Wiring it into `MoEAdvisorAdapter` would launder its whimsy
+  through the arbitrator's force-tagged `role="aggregated"` output
+  (`adapters/moe_advisor.py`), which is NOT in `_BLOCKED_ROLES` — the exact
+  news-laundering hole flagged in the 2026-06-04 MoE prompt review (P1 in the
+  README). Standalone is also what you *want* for hit-rate tracking: isolate
+  its calls, do not blend them into consensus. It still gets a seat at the
+  table — its take is shown to the operator for color — it just can never tilt
+  a live number.
+
+**Falsifiable by design:** if it only proposed a spacing number, "was it
+right?" would be unanswerable — it is never applied, so there is no
+counterfactual to compare against. So the gremlin emits a **directional /
+regime call** ("toppy, expect a pullback next 24h"; "chop, not trend") that
+grades cheaply against the realized outcome with no counterfactual needed.
+That makes it the *cleanest first customer* for the Advisor-outcome-tracking
+ledger above (no applied-config confound to untangle) and a natural
+single-forecaster on-ramp to the Oracle / weather-report track.
+
+**Build split (why it is a v1.1 candidate, not pure P4):**
+
+- *The gremlin role itself* — prompt (high `temperature_hint`, a leap-licensed
+  system prompt), the `gremlin` role string, its `_BLOCKED_ROLES` entry, the
+  standalone observe-and-log wiring, and falsifiable directional output — is
+  buildable **in v1.1**, ideally turned on when MoE is enabled for the 1.1
+  soak. Turning it on early matters: its track record starts accumulating
+  immediately, so the scoreboard has real data the moment the P4 infra lands.
+- *Its hit-rate scoreboard* rides the **P4 Advisor-outcome-tracking keystone**
+  above (data-gated; needs the `recommendation_outcomes` ledger + time). The
+  gremlin feeds that ledger; it does not need its own.
+
+**Discipline note:** the answer could honestly be *"loose intuition loses to
+rigor here,"* and that is a finding, not a failure. Do not tune the gremlin
+until its scoreboard flatters it — same learning-signal discipline as the soak
+(do not short-circuit the very data you are collecting). Let it be wrong and
+measure the wrongness.
+
+**Trigger:** v1.1, alongside enabling MoE for the 1.1 soak; the scoreboard half
+unlocks with the P4 outcome ledger.
 
 ### LLM Historian — long-horizon pattern recognition over weeks/months/years
 
@@ -589,6 +679,14 @@ since the inputs share the same data path. Earliest meaningful
 v1.1 candidate that directly serves the 90%-success aspiration.
 
 ### Auditor / strategy + recommendation evaluation tool
+
+> **⚠️ Resolved blueprint (2026-06-03):** the config-replay half has a settled
+> design + three load-bearing **adversarial-judge corrections** (neuter
+> `max_daily_spend_usd` for replay; override `place_order`'s same-bar fill;
+> warm-start the anchor at bar-0 open) recorded in the **"P2 resolved
+> blueprints" block in `README.md`**. Build against that, not the older
+> discussion below — the un-corrected design silently produces a near-zero-
+> activity audit (the wall-clock daily-cap bug).
 
 **Naming note (2026-05-25):** originally called "backtester" in
 the v1.1 plan; renamed to **auditor** because the tool's role is

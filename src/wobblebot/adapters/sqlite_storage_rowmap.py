@@ -104,6 +104,9 @@ def row_to_news_item(row: aiosqlite.Row) -> NewsItem:
 
 def row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
     expert_opinions_raw = row["expert_opinions"] if "expert_opinions" in row.keys() else "[]"
+    news_materially_drove_raw = (
+        row["news_materially_drove"] if "news_materially_drove" in row.keys() else 0
+    )
     return AdvisorSuggestion(
         recommendation=AdvisorRecommendation(
             recommendation_id=row["recommendation_id"],
@@ -116,6 +119,7 @@ def row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
                 expert_opinions_raw,
                 fallback_timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
             ),
+            news_materially_drove=bool(news_materially_drove_raw),
         ),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         input_summary=json.loads(row["input_summary"]),

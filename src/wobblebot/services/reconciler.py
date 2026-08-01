@@ -1,4 +1,4 @@
-"""Engine startup reconciliation (Stage 8.1.C — ADR-018).
+"""Engine startup reconciliation (Stage 8.1.C — ADR-018; extended by ADR-023).
 
 When cli/live or cli/shadow boots, storage's view of open orders
 and the exchange's view can disagree. Three scenarios produce
@@ -17,7 +17,13 @@ Per ADR-018, the exchange is authoritative. This module enforces
 the policy:
 
 - **Storage-only orders** (status="open" in storage, not on
-  exchange) → mark canceled with updated_at = now().
+  exchange) → resolved via :func:`_resolve_terminal_order` (ADR-023)
+  rather than assumed canceled: a storage-only order that actually
+  filled (fully, or partially before a cancel/expiry) while the
+  daemon was down gets its Trade rows recovered and is flagged for
+  a counter-order on the engine's first tick. A genuine clean
+  cancel/expire (``filled_amount == 0``) is marked canceled as
+  before.
 - **Exchange-only orders** (on exchange, not in storage) → log
   ERROR + do NOT adopt. Operator must manually review.
 
@@ -28,10 +34,16 @@ pattern:
   input lists. Returns a :class:`ReconciliationPlan` enumerating
   what to do. No I/O.
 - :func:`apply_reconciliation` — async orchestrator. Queries the
-  adapter + storage, calls the pure function, writes the
-  transitions, logs the orphans, returns a
-  :class:`ReconciliationReport` for the caller's session-start
-  logging.
+  adapter + storage, calls the pure function, resolves each
+  storage-only order's true terminal state, logs the orphans,
+  returns a :class:`ReconciliationReport` for the caller's
+  session-start logging.
+
+``_resolve_terminal_order`` is also used by ``GridEngine._detect_fills``
+(the live per-tick path) — ADR-023 treats the startup and live cases as
+one root state (an order that left the open set with ``filled_amount >
+0`` regardless of whether it refreshed to ``closed`` or
+``canceled``/``expired``) behind one shared resolver.
 
 CLI wiring is one call from each daemon's ``_main_async`` between
 storage open + engine first tick. See ``cli/live`` and
@@ -41,16 +53,24 @@ storage open + engine first tick. See ``cli/live`` and
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
+from uuid import UUID
 
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.services.reconciler")
+
+# How many recent trades to pull per symbol when resolving storage-only
+# orders at startup. Boot-time, not per-tick — a handful of extra calls
+# (bounded by the number of distinct symbols with a storage-only order)
+# is not the rate-limit-storm risk class the per-tick shared-fetch
+# optimization (fleet-review #19 finding 8) guards against.
+_RECONCILE_TRADE_HISTORY_LIMIT = 200
 
 
 # --------------------------------------------------------------------- #
@@ -80,19 +100,48 @@ class ReconciliationReport:
 
     Attributes:
         storage_canceled_count: Number of storage rows transitioned
-            from ``open`` to ``canceled``.
+            to a clean ``canceled``/``expired`` terminal state
+            (``filled_amount == 0``).
         storage_persistence_failures: How many transitions failed at
             the storage layer (logged + counted; reconciliation
             continues so one bad row doesn't block boot).
         orphan_count: Number of exchange-only orders detected.
         orphan_summaries: One short string per orphan for the
             caller's session-start summary log line.
+        recovered_fill_count: Number of storage-only orders resolved
+            with ``filled_amount > 0`` (ADR-023) — a real fill that
+            would have been silently dropped as a clean cancel.
+        needs_counter_order_ids: UUIDs of the recovered-fill orders
+            above, each needing a counter-order on the engine's first
+            tick. The reconciler never places orders itself (financial
+            power fragmentation) — ``GridEngine`` consumes this list.
     """
 
     storage_canceled_count: int = 0
     storage_persistence_failures: int = 0
     orphan_count: int = 0
     orphan_summaries: tuple[str, ...] = ()
+    recovered_fill_count: int = 0
+    needs_counter_order_ids: tuple[UUID, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class TerminalOrderResolution:
+    """The true terminal state of one order that left the open set (ADR-023).
+
+    ``order`` is the refreshed order (correct ``status`` +
+    ``filled_amount`` from ``get_order_status``). ``trades`` are the
+    matched ``Trade`` rows to persist — non-empty only when
+    ``filled_amount > 0``, regardless of whether the order refreshed to
+    ``closed`` (full fill) or ``canceled``/``expired`` (partial fill
+    before the cancel/expiry — the F1 case). ``needs_counter`` mirrors
+    "there was a real fill here": the caller must place a counter sized
+    to ``order.filled_amount``.
+    """
+
+    order: Order
+    trades: tuple[Trade, ...] = ()
+    needs_counter: bool = False
 
 
 # --------------------------------------------------------------------- #
@@ -184,6 +233,42 @@ class _AdapterLike(Protocol):
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]: ...
 
+    async def get_order_status(self, order: Order) -> Order: ...
+
+    async def get_trade_history(
+        self, symbol: Symbol | None = None, limit: int = 100
+    ) -> list[Trade]: ...
+
+
+async def _resolve_terminal_order(
+    adapter: _AdapterLike,
+    order: Order,
+    trades_by_order: dict[str, list[Trade]],
+) -> TerminalOrderResolution:
+    """Resolve one order that's left the open set into its true terminal
+    state, instead of assuming a clean cancel (ADR-023).
+
+    Refreshes via ``get_order_status`` (Kraken QueryOrders already
+    reports the real ``status`` + ``filled_amount`` for a
+    partially-filled cancel/expire — see
+    ``kraken_exchange._apply_kraken_order_update``). An order with
+    ``filled_amount > 0`` had a real fill regardless of whether it
+    refreshed to ``closed`` (full fill) or ``canceled``/``expired``
+    (partial fill before the cancel/expiry, the F1 case): its matched
+    ``Trade`` rows must be persisted and a counter placed. An order
+    with ``filled_amount == 0`` is a genuine clean cancel/expire.
+
+    ``trades_by_order`` is caller-supplied (keyed by ``exchange_id``)
+    rather than fetched here, mirroring ``GridEngine._detect_fills``'s
+    shared-per-tick-fetch pattern — this function never issues its own
+    trade-history call.
+    """
+    refreshed = await adapter.get_order_status(order)
+    if refreshed.filled_amount > 0 and refreshed.exchange_id:
+        trades = tuple(trades_by_order.get(refreshed.exchange_id, []))
+        return TerminalOrderResolution(order=refreshed, trades=trades, needs_counter=True)
+    return TerminalOrderResolution(order=refreshed)
+
 
 def _summarize_orphan(order: Order) -> str:
     """One short string per orphan for the session-start summary."""
@@ -193,7 +278,12 @@ def _summarize_orphan(order: Order) -> str:
     )
 
 
-async def apply_reconciliation(
+async def apply_reconciliation(  # pylint: disable=too-many-locals
+    # R0914 disable: every local is a distinct ADR-023 resolution-stage
+    # signal (plan, per-symbol trade index, the four report counters,
+    # the per-order resolution/exception locals in the loop below) --
+    # splitting further would obscure the linear reconcile-then-persist
+    # flow without removing complexity.
     adapter: _AdapterLike,
     storage: StoragePort,
     *,
@@ -244,29 +334,68 @@ async def apply_reconciliation(
         configured_symbols=configured_symbols,
     )
 
-    # Persist storage-only transitions.
+    # ADR-023: resolve each storage-only order's true terminal state
+    # (recovered fill vs clean cancel) instead of assuming cancel.
+    # Trade history is fetched once per distinct symbol among the
+    # storage-only orders (boot-time, not the per-tick hot path the
+    # fleet-review #19 shared-fetch optimization guards).
+    trades_by_symbol_order: dict[Symbol, dict[str, list[Trade]]] = {}
+    for stale in plan.storage_only:
+        if stale.symbol not in trades_by_symbol_order:
+            recent_trades = await adapter.get_trade_history(
+                symbol=stale.symbol, limit=_RECONCILE_TRADE_HISTORY_LIMIT
+            )
+            by_order: dict[str, list[Trade]] = {}
+            for trade in recent_trades:
+                by_order.setdefault(trade.order_id, []).append(trade)
+            trades_by_symbol_order[stale.symbol] = by_order
+
     canceled_count = 0
     failures = 0
+    recovered_fill_count = 0
+    needs_counter_order_ids: list[UUID] = []
     now = Timestamp(dt=datetime.now(UTC))
     for stale in plan.storage_only:
+        resolution = await _resolve_terminal_order(
+            adapter, stale, trades_by_symbol_order[stale.symbol]
+        )
         try:
-            await storage.save_order(
-                stale.model_copy(update={"status": "canceled", "updated_at": now})
-            )
-            canceled_count += 1
-            _LOGGER.info(
-                "reconciler: storage-only order marked canceled",
-                extra={
-                    "exchange_id": stale.exchange_id,
-                    "symbol": str(stale.symbol),
-                    "side": stale.side.value,
-                    "reason": "not_on_exchange_at_startup",
-                },
-            )
+            if resolution.needs_counter:
+                for trade in resolution.trades:
+                    await storage.save_trade(trade)
+                await storage.save_order(resolution.order.model_copy(update={"updated_at": now}))
+                recovered_fill_count += 1
+                needs_counter_order_ids.append(stale.id)
+                _LOGGER.warning(
+                    "reconciler: storage-only order recovered a real fill "
+                    "while the daemon was down; queuing a counter-order",
+                    extra={
+                        "exchange_id": stale.exchange_id,
+                        "symbol": str(stale.symbol),
+                        "side": stale.side.value,
+                        "status": resolution.order.status,
+                        "filled_amount": str(resolution.order.filled_amount),
+                        "trades_recovered": len(resolution.trades),
+                    },
+                )
+            else:
+                await storage.save_order(
+                    resolution.order.model_copy(update={"status": "canceled", "updated_at": now})
+                )
+                canceled_count += 1
+                _LOGGER.info(
+                    "reconciler: storage-only order marked canceled",
+                    extra={
+                        "exchange_id": stale.exchange_id,
+                        "symbol": str(stale.symbol),
+                        "side": stale.side.value,
+                        "reason": "not_on_exchange_at_startup",
+                    },
+                )
         except StorageError as exc:
             failures += 1
             _LOGGER.error(
-                "reconciler: failed to persist canceled transition; row stays open",
+                "reconciler: failed to persist terminal-order transition; row stays open",
                 extra={
                     "exchange_id": stale.exchange_id,
                     "symbol": str(stale.symbol),
@@ -304,12 +433,15 @@ async def apply_reconciliation(
         storage_persistence_failures=failures,
         orphan_count=len(plan.exchange_only),
         orphan_summaries=tuple(summaries),
+        recovered_fill_count=recovered_fill_count,
+        needs_counter_order_ids=tuple(needs_counter_order_ids),
     )
 
 
 __all__ = (
     "ReconciliationPlan",
     "ReconciliationReport",
+    "TerminalOrderResolution",
     "apply_reconciliation",
     "reconcile_open_orders",
 )

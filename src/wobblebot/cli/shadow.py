@@ -400,11 +400,12 @@ async def _main_async(config: WobbleBotConfig) -> int:
         maker_fee_rate=config.shadow.maker_fee_rate,
         taker_fee_rate=config.shadow.taker_fee_rate,
     )
-    engine = GridEngine(shadow_adapter, storage, config.grid, config.safety)
 
-    # Stage 8.1.C: startup reconciliation per ADR-018. Same shape
-    # as cli/live's path; the synthetic ledger is authoritative for
-    # shadow.
+    # Stage 8.1.C: startup reconciliation per ADR-018, extended by
+    # ADR-023. Same shape as cli/live's path; the synthetic ledger is
+    # authoritative for shadow. Runs BEFORE engine construction so a
+    # recovered fill's order UUID can be threaded into GridEngine as
+    # pending_counters.
     configured_symbols = frozenset(s.base.upper() for s in config.shadow.symbols)
     try:
         report = await apply_reconciliation(
@@ -416,15 +417,24 @@ async def _main_async(config: WobbleBotConfig) -> int:
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1
-    if report.storage_canceled_count or report.orphan_count:
+    if report.storage_canceled_count or report.orphan_count or report.recovered_fill_count:
         _LOGGER.info(
             "startup reconciliation complete (shadow)",
             extra={
                 "storage_canceled": report.storage_canceled_count,
                 "storage_persistence_failures": report.storage_persistence_failures,
                 "orphan_count": report.orphan_count,
+                "recovered_fill_count": report.recovered_fill_count,
             },
         )
+
+    engine = GridEngine(
+        shadow_adapter,
+        storage,
+        config.grid,
+        config.safety,
+        pending_counters=list(report.needs_counter_order_ids),
+    )
 
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)

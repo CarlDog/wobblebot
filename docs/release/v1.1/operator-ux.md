@@ -114,7 +114,16 @@ machinery being commonly idiomatic. v1.1 candidate:
    click writes to ``pending_commands`` with `status='approved'`
    and cli/live's ADR-002 poll picks it up. No engine call
    bypass.
-4. Buttons auto-disable after click (`view.stop()`), so the
+4. **Operator-only gate via `View.interaction_check`.** The reaction
+   flow implicitly filters on *who* reacted; buttons have no such
+   filter, so any channel member could click Approve. Override
+   ``View.interaction_check(interaction)`` to return ``True`` only for
+   the authorized operator ID — the same identity the reaction handler
+   checks. Skipping this silently drops operator-only enforcement on
+   the migration: a firewall regression layered on top of ADR-002.
+   (Verified against current discord.py docs 2026-06-03 — `interaction_check`
+   is the idiomatic per-View gate.)
+5. Buttons auto-disable after click (`view.stop()`), so the
    operator can't double-approve a single PendingCommand.
 
 **Why deferred:** the emoji-reaction flow works end-to-end. The
@@ -129,6 +138,16 @@ away once the button callback has the `pending_id` baked in
 via View construction.
 
 ### Web UI per-entity action buttons (generic "decide + audit" pattern)
+
+> **⚠️ Build to the corrected blueprint, not this entry alone.** A feature-dev
+> architecture pass + adversarial judge (2026-06-03) found **two decisive safety
+> bugs** in the naive design — see the **"P3 resolved blueprints"** block in
+> [`README.md`](README.md): (F) web-Execute without the P1 Harvester replay guard
+> is a **double-withdrawal** vector (ship them together; UNIQUE on
+> `transfer_results.proposal_id`); (E) the daemons polling `pending_commands` need
+> **query-level `command_kind` filtering** (no atomic claim today → double-dispatch
+> / silent-kill of approved withdrawals). And drop `cli/apply --daemon`
+> (`settings.yml` doesn't hot-reload — operator runs the existing one-shot).
 
 **What:** add commit-vs-reject buttons directly to the persisted
 review queues in the web UI. The backend pattern is generic —
@@ -383,6 +402,13 @@ discussion needed).
 
 ### Re-anchor banner — action button + snooze
 
+> **Blueprint 2026-06-03** (feature-dev + judge): the chain resolved to an
+> **in-process** re-anchor + a shared **`engine_state`** keystone table; snooze is
+> UI-local; projected-loss = **fee-only**. ⚠️ judge correction A: place the new grid
+> **in-process**, not via the next-tick re-layout (offside-at-new-anchor would else
+> park silently). Full detail in the **"P3 resolved blueprints"** block in
+> [`README.md`](README.md).
+
 **What:** the dashboard now shows colored re-anchor
 recommendation banners when the drift + age heuristic suggests
 the grid has walked away from market (soak Day 4 add). v1.0
@@ -596,14 +622,138 @@ Two complementary paths to choose between when the time comes:
    price with its orders contextually. Subsection headers also
    give the per-order delta column (above) a natural fit.
 
-**Why deferred:** soak currently runs 1 coin (BTC/USD); the
-existing inline layout works perfectly. The break-point is
-~5 coins, and v1.0 won't see that. Designing for hypothetical
-multi-coin width during documentation freeze would be premature.
+**Status (2026-06-03 — largely SHIPPED):** the live multi-coin
+dashboard renders per-symbol subsections with the current price
+baked into each subhead (option 2), as the soak's 6-coin run shows
+— the old "soak runs 1 coin (BTC/USD)" rationale is stale.
+Remaining: (1) the **parked / no-order symbol** sub-gap — a
+configured symbol with no open orders renders a bare header with no
+price (dedicated entry below); (2) option 1's CSS-grid wrap is only
+worth it if per-symbol subsections get unwieldy past ~8 coins — not
+a concern at 6.
 
-**Trigger:** operator increases to 3+ concurrent coins post-soak,
-or any time the status card starts wrapping mid-ticker on a
-normal desktop window width.
+**Trigger:** per-symbol grouping already triggered (multi-coin
+soak). The parked-symbol price sub-gap is operator-flagged
+2026-06-03; the width/wrap refinement waits for ~8+ coins.
+
+### Symbol-card price + indicator for parked / no-order symbols
+
+**What:** the dashboard's per-symbol cards bake the current price +
+up/down indicator into the header (`DOGE/USD $0.09 ▼`) for symbols
+that have open orders, but a *configured* symbol with no open
+orders — parked because it's offside per ADR-006, or simply held
+and inactive — renders a bare `BTC/USD` with no price. Render the
+price + indicator in the header for EVERY configured symbol
+regardless of open-order state; a held, tradeable asset should read
+like the others.
+
+**Why:** surfaced 2026-06-03 — BTC was in the live grid but offside
+& parked the whole session, so its card showed no price while
+ETH/SOL/XRP/DOGE/ADA all did. The operator wants the price visible
+for any coin in the account, trading or not.
+
+**How:** the per-symbol header already renders price from
+`StatusSnapshot.current_prices` for order-bearing symbols. First
+confirm the snapshot actually carries a parked symbol's price —
+`current_prices` is built from the price poll, which *should* cover
+every configured symbol, but verify a parked/offside symbol isn't
+skipped. If present, it's a template conditional (render the header
+price block even when the symbol's open-orders list is empty). If
+absent, also plumb the price for no-order symbols. Pairs with the
+per-symbol held-inventory card (Buying-power item) — same "show the
+held/tradeable asset even when idle" theme.
+
+**Why deferred:** dashboard polish, not gating. Branch-safe,
+template-ish (a one-line conditional if the data's already present).
+
+**Trigger:** operator-flagged 2026-06-03 from the multi-coin soak
+dashboard — BTC parked, no price shown, while the trading alts all
+displayed price + indicator.
+
+### Whole-UI design review — punch list (2026-06-03)
+
+A frontend-design pass over every page (auth, dashboard, health, cost,
+advisor, harvester, news, history, notifications, settings, command
+flow) + `base.css`. The app is well-engineered + consistent with strong
+empty-state discipline; these are the improvement candidates. Items
+already slated elsewhere (session card, buying-power/held-inventory,
+lifetime PnL, per-order delta, recent-fills enhancement, parked-symbol
+price, mode-badge) are NOT repeated here.
+
+**Defects (cheap, fix-worthy on their own):**
+- **Notification level-color inconsistency.** `info` renders blue
+  (`info`) on `notifications.html:39` but green (`ok`) on
+  `history.html:82` — same notification, different color across pages.
+  Pick one (info ≠ success → use `info`/blue). ~2-line fix. **✅ FIXED
+  2026-06-03 — `history.html` info → `info`/blue, matching
+  `notifications.html`.**
+- **Zero responsive CSS.** `base.css` had no `@media` rule except
+  `prefers-color-scheme`. **✅ DONE 2026-06-03 (v1.1, minimal pass):** a
+  `@media (max-width: 700px)` block — wide tables scroll inside their
+  card (`.card { overflow-x: auto }`), primary nav scrolls sideways
+  instead of crowding, content padding shrinks, scoreboard/emergency-stop
+  tighten. Not a hamburger nav — just "usable, doesn't overflow" on a
+  phone.
+- **Settings inputs dark-on-light** + **`.muted` declared twice** — both
+  flagged in-code "for the dark-mode cleanup" that never landed. **✅ FIXED
+  2026-06-03:** settings `.form-row` inputs now theme via `--surface-card`/
+  `--text-primary`/`--border-strong` (the dead `--form-input-*` vars removed);
+  the duplicate `.muted` collapsed to one rule.
+
+**Tier 1 — high value, low effort:**
+- **Dashboard scoreboard strip.** **✅ DONE 2026-06-03 (v1.1).** A
+  top-of-status-card strip now leads with the answers — Account value ·
+  Free USD · In positions · Today's PnL · Lifetime PnL — reusing the
+  `.metric` hero `/cost` already uses. Money cells come from `observe.db`
+  balance snapshots (credential-free, "as of HH:MM" stamp) and degrade to
+  "—" when unwired; the buried 13px Today's-PnL span was removed. This
+  folded in the buying-power *aggregate* + the lifetime-PnL items; the
+  per-symbol held inventory *inside each card* remains.
+- **`/cost` spend-by-day bar chart.** **✅ DONE 2026-06-03 (v1.1):** a
+  CSS bar chart (7 bars, height ∝ daily cost, oldest→newest, date label +
+  hover detail) now sits above the "Spend by Day" table for at-a-glance
+  trend; exact values stay in the table.
+
+**Tier 2 — high value, medium effort:**
+- **Per-symbol grid-band sparklines.** **✅ DONE 2026-06-03 (v1.1):** a
+  tiny inline SVG in each symbol-card header — recent price line (2h from
+  observe.db) + shaded band spanning the open-order ladder + current-price
+  marker (green inside the band, **red when offside/parked**), so the
+  parked state reads visually. Geometry pre-computed server-side
+  (`_build_sparkline`); degrades to nothing below 2 price points; hidden
+  on mobile. No chart lib.
+- **Fill-flash micro-interaction.** Flash a just-filled row on the 15s
+  HTMX swap. (`/cost` also lacks the dashboard's `transition:true`.)
+- **Fill toast (Kraken-style)** *(operator idea 2026-06-03)*. **✅ DONE
+  2026-06-03 (v1.1):** bottom-right popups when an order fills — slide in,
+  hold ~6s, slide out; left rail colored by money-flow (BUY red / SELL
+  green). A new `GET /status/recent-fills.json` endpoint feeds a poller in
+  `layout.html` that diffs against a `localStorage` watermark (so returning
+  to the page replays fills since last active; first-ever load doesn't
+  flood; capped at 5/cycle). Lives in the shared layout, so it's on every
+  authenticated page.
+- **Advisor pagination/collapse** (`advisor.html:34`) — every
+  suggestion is a full stacked card with a nested table; collapse older
+  ones once `cli/advise` accumulates volume.
+
+**Tier 3 — optional aesthetic elevation:**
+- **Typography + brand.** System stack everywhere (`base.css:205`);
+  `--color-link` is Facebook-blue. Put numeric columns in a tabular
+  monospace (reads like a terminal) + carry the login page's teal
+  (`#4dd0e1`) past auth. The "stop looking like a generic admin panel"
+  lever.
+
+**Small:**
+- News `mentioned_coins`: **✅ DONE 2026-06-03** — now `.tag` pills, not a
+  comma `<code>` list, matching the app's badge vocabulary. (The
+  collected-but-hidden `publisher` field stays parked pending a
+  presentation decision.)
+- Emergency-stop confirm page (`command_confirm.html`) gets the same
+  generic treatment as a routine pause — give the highest-consequence
+  action stronger visual weight on its confirm screen.
+
+**Trigger:** operator-requested whole-UI review 2026-06-03. All P3 /
+post-tag; the defects are cheap enough to pull forward if they bite.
 
 ### Discord response quality: data + presentation + model attribution — ✅ shipped in v1.0 (2026-05-24)
 
@@ -751,6 +901,107 @@ Cosmetic UX issue, not a data correctness one.
 **Trigger:** operator-flagged 2026-05-24 after the post-restart
 probe battery showed how dominant the tally stack is relative
 to the narrative.
+
+### Bespoke notification-card renderers (proactive push embeds)
+
+**What:** give the *proactive* Discord notifications — the events
+``cli/live`` / ``cli/harvest`` raise through ``NotifierPort`` — the
+same per-event embed treatment the *query responses* got in v1.0,
+replacing today's one-size-fits-all renderer. *(Design sharpened by a
+feature-dev architecture pass 2026-06-03: real taxonomy mapped, two
+approaches weighed, Approach B recommended — recorded below.)*
+
+**Current state (the gap):** every notification is forwarded by one
+generic path, ``cli/operator.py::_forward_pending_notifications`` —
+``title``=``notification.title``, ``description``=``notification.message``,
+``color``=a 4-bucket level→color map, ``fields``=``_render_context_fields()``
+(first 8 ``context`` keys, str-cast, 200-char truncated), ``footer``=
+``level=… • id=…``. So a fill card and a loss-cap card are structurally
+identical. The pattern to mirror — ``services/discord_embed_render.py`` —
+dispatches **10 renderers via ``match`` over the typed ``QueryResult``
+union** (no fallthrough) with a 35-test suite; the proactive side never
+got that treatment.
+
+**The real event taxonomy (feature-dev exploration):** the renderer must
+cover the **7 events that actually exist**, all via the ``notify()`` helper
+(``cli/_common.py``):
+
+| Event | CLI | Level | Key payload |
+|---|---|---|---|
+| `session_start` | live | info | symbols, tick_seconds, max_session_loss_usd, starting_value_usd |
+| `fill` | live | info | symbol, fills, counters_placed, tick |
+| `loss_cap` | live | error | session_pnl_usd, limit, tick |
+| `session_end` | live | info / error | duration, session_pnl, ticks, orders_cancelled/_failed, exit_code |
+| `harvest_proposal` | harvest | info | proposal_id, direction, asset, amount, rationale, balances |
+| `withdrawal_failed` | harvest | error | proposal_id, asset, amount, destination, error |
+| `withdrawal_submitted` | harvest | warning | proposal_id, transaction_id, asset, amount, destination |
+
+⚠️ **Corrects the original entry:** there is **no** separate ``cycle_close``,
+``offside``, or ``dms_trip`` notification today — those are *logged*, not
+raised through ``NotifierPort``. Per-event cards for them are *new raise
+sites*, not just renderer work — out of scope for the initial renderer
+(which covers the existing 7).
+
+**Recommended approach — typed ``NotificationEvent`` union (Approach B):**
+mirror the in-repo ``QueryResult`` / ``OperatorCommand`` discriminated-union
+pattern rather than a stringly-typed ``context["event"]``.
+
+1. New ``ports/notification_events.py``: 7 frozen Pydantic models +
+   ``NotificationEvent = Annotated[…, Field(discriminator="kind")]``. Fixes
+   two latent inconsistencies — ``symbols`` (list) vs ``symbol`` (str), and
+   the ``"unknown"`` sentinel strings in ``session_end`` (→ ``str | None``).
+2. ``Notification`` gains ``event: NotificationEvent | None = None``
+   (additive — old rows keep working).
+3. **No schema migration:** the event serializes via ``model_dump_json()``
+   into the *existing* ``context_json TEXT`` column; ``row_to_notification``
+   reconstructs it with a module-level ``TypeAdapter[NotificationEvent]``
+   keyed on ``kind`` (the exact ``_COMMAND_ADAPTER`` pattern already in
+   ``sqlite_storage_rowmap.py``). Rows without ``kind`` (the live soak's
+   existing rows) → ``event=None`` → legacy path. **Soak-safe, zero migration.**
+4. New ``services/notification_embed_render.py``: ``match`` over the typed
+   models (mypy-exhaustive, no fallthrough), per-event color + layout
+   (fill=green, loss_cap=red, withdrawal_submitted=amber/loud — money moved).
+5. Forwarder: two-path dispatch (``event is not None`` → typed renderer; else
+   the legacy ``_render_context_fields``). Per-row try/except +
+   ``mark_notification_forwarded`` untouched.
+6. ``notify_event()`` added alongside ``notify()``; the 7 raise sites migrate.
+
+**Build sequence:** (1) ports union + ``Notification.event`` field; (2)
+storage round-trip (``save_notification`` serializer + rowmap ``TypeAdapter``)
++ round-trip tests; (3) ``notification_embed_render.py`` + per-event tests
+(mirror the 35-test suite); (4) forwarder two-path swap + a forwarder test;
+(5) migrate the 7 raise sites; (6, post-soak cleanup) drop ``context: dict``
++ ``_render_context_fields`` once all rows are new-format.
+
+**Alternative (Approach A — not recommended here):** a stringly-typed
+``context["event"]`` discriminator + string ``match`` — 3 commits, no storage
+change, but mypy-invisible (a typo → silent generic fallback) and a *less*
+faithful mirror of the typed query renderer. Right only to ship per-event
+cards *before* the tag; since this is gate-blocked, go straight to B — both
+approaches converge on B as the end state anyway.
+
+**Why high value:** the proactive cards are how the operator learns
+the bot *did something* without asking — the most-seen Discord
+surface during a soak. Generic title+blurb+dict-dump is legible but
+loses the glanceability a labelled, color-by-event card gives
+(a red cap-trip vs a green cycle-close should be distinguishable at
+a thumb-scroll). This is the push-side twin of the v1.0 query-side
+work, and the two share the renderer pattern + color constants.
+
+**Why deferred:** every part is feature work, not a bug — the
+generic path is correct, just undifferentiated. Pairs naturally
+with the **status_report tally compactness** item (same embed-field
+ergonomics) and the **buttons-over-reactions** migration (both
+touch ``DiscordTransport``); batch the Discord-format changes so the
+embed shape shifts once, predictably, rather than across several
+commits. Branch-safe to **document** now; implementation is
+gate-blocked with the rest of P3 (needs soak → tag → unfreeze).
+
+**Trigger:** operator-flagged 2026-06-03 while reviewing the v1.1
+Discord backlog — the proactive notification cards never received
+the bespoke-renderer treatment the query responses did, so they sit
+on the generic forwarder path. Pick up alongside the other Discord
+P3 format items.
 
 ### Operator command catalog: single source of truth across prompt + code
 
@@ -912,6 +1163,57 @@ that v1.0's status_report doesn't need.
 **Trigger:** if the operator switches to cloud, OR if a future
 v1.1 feature (weather_report, anomaly_summary) needs the
 broader provider coverage.
+
+### Mode-parameterized webui — reuse the dashboard for live + shadow
+
+**What:** serve the **same** web UI for both trading modes instead of
+building a separate shadow dashboard. The `LIVE`/`SHADOW` `mode-badge`
+becomes **dynamic** (rendered from the active mode, not hardcoded `LIVE`
+at `_status_card.html:35`); the mode parameter switches *how the app
+responds* — chiefly which data source it reads (the live ledger vs
+`cli/shadow`'s synthetic ledger) — while every template, route, and
+style stays identical. The CSS already ships both badge variants
+(`mode-badge-live` / `mode-badge-shadow`, `base.css:1449`), so the
+presentation side is a context-variable flip.
+
+**✅ Badge + single-source DONE 2026-06-03 (v1.1).** The badge now reads
+`application.mode` (`live | shadow | sandbox`) — the **single**
+deployment-mode config — via the `trading_mode` Jinja global; `cli/web`
+passes `config.application.mode` to `create_app`. `application.mode` was
+promoted from informational-only YAML to a modeled `ApplicationConfig`
+field; the redundant `web.mode` knob was removed (operator: one mode
+source, not two). All three badge variants ship in CSS. **Remaining:**
+the *data-source* switch (point the loaders at the shadow ledger) — see
+the Mode-source note below.
+
+**Why (operator decision 2026-06-03):** don't reinvent the wheel for a
+shadow UI. The dashboard is already mode-agnostic except for that one
+hardcoded badge; DRY says reuse it. Mode is a runtime concern, not a
+template fork — it pairs with `cli/up shadow` (below), which already
+distinguishes the two daemon sets.
+
+**How / design questions to settle when built:**
+- **Mode source:** likely a separate `cli/web` instance per mode
+  (pointed at the shadow DBs via config) — simplest, mirrors `cli/up
+  live` vs `cli/up shadow` running their own stacks. Alternative: one
+  instance that resolves mode + data source from config/env.
+- **Data source:** `web.live_db` → the shadow ledger in shadow mode;
+  the snapshot loaders are already DB-path-parameterized.
+- **Mutations/firewall:** the `pending_commands` ADR-013 firewall still
+  applies in shadow mode — commands target the shadow engine. Confirm
+  the confirm-flow copy reads correctly when the target is paper.
+- The **badge-dynamic flip is the small, branch-safe first slice**; the
+  data-source + mode-selection plumbing is the larger piece.
+
+**Supersedes:** the code comments that assumed a *separate* shadow page
+(`_status_card.html:31`, `base.css:1429` say "future shadow-dashboard
+page/variant") — update those when this lands.
+
+**Why deferred:** not needed until the operator runs `cli/shadow` as a
+standing paper-trading instance. Branch-safe to start (the badge flip).
+
+**Trigger:** operator wants to watch a shadow run in the browser, OR the
+`cli/up shadow` orchestrator lands and a paper stack wants a UI.
 
 ### One-command daemon orchestrator (`cli/up` wrapper)
 
@@ -1278,8 +1580,12 @@ Documented as a deliberate L3 gap in the security audit (2026-05-23).
   same access that lets you read `.env`)
 
 **Trigger:** any of the three "becomes load-bearing when"
-conditions above. Until then: per-IP rate-limit + bcrypt cost 12
-+ single-user-on-LAN is reasonable.
+conditions above. Until then: the login throttle (effectively
+*global*, not per-IP, behind the reverse proxy — see the
+`LoginRateLimit` docstring) + bcrypt cost 12 + single-user-on-LAN
+is reasonable. The throttle slows online password-guessing; it is
+not an isolation control, which is exactly why MFA is the named
+upgrade when the threat model grows.
 
 ### Content-Security-Policy header
 

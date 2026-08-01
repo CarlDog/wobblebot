@@ -1,9 +1,9 @@
-"""Tests for the ``CascadingAdvisorAdapter`` (Stage 8.5).
+"""Tests for the ``CascadingAdvisorAdapter`` (ADR-022).
 
-The cascade resolves clear cases via the heuristic (no LLM call),
-escalates ambiguous / thin-metrics cases to the LLM, and falls back to
-the heuristic on LLM failure or cost-cap trip. A stub LLM records its
-calls so "did we escalate?" is asserted directly.
+The cascade resolves guard cases via the heuristic (no LLM call),
+escalates every non-guard tick to the LLM, and falls back to the
+heuristic on LLM failure or cost-cap trip. A stub LLM records its calls
+so "did we escalate?" is asserted directly.
 """
 
 from __future__ import annotations
@@ -68,7 +68,12 @@ class StubLLM(AdvisorPort):
 
 
 def _summary(
-    *, current_spacing: float | None, volatility: float, snapshot_count: int = 720
+    *,
+    current_spacing: float | None,
+    volatility: float,
+    snapshot_count: int = 720,
+    max_drawdown: float = -0.01,
+    cycle_count: int = 4,
 ) -> PerformanceSummary:
     return PerformanceSummary(
         symbol="BTC/USD",
@@ -76,9 +81,9 @@ def _summary(
         latest_price=79000.0,
         snapshot_count=snapshot_count,
         volatility=volatility,
-        max_drawdown=-0.01,
+        max_drawdown=max_drawdown,
         flatness=0.5,
-        cycle_count=4,
+        cycle_count=cycle_count,
         win_rate=0.5,
         active_orders=6,
         current_grid=CurrentGridParams(
@@ -108,47 +113,39 @@ def test_requires_both_advisors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_match_resolves_locally() -> None:
+async def test_guard_match_resolves_locally() -> None:
     stub = StubLLM()
     cascade = CascadingAdvisorAdapter(heuristic=_heuristic(), llm=stub)
-    # Clear widen (tight grid, active market) -> heuristic answers, no LLM.
-    rec = await cascade.get_recommendation(_summary(current_spacing=0.60, volatility=0.008))
+    # A guard fires (price ran away: 0 cycles + sharp drawdown -> HOLD),
+    # so the heuristic answers and the LLM is never called.
+    rec = await cascade.get_recommendation(
+        _summary(current_spacing=0.60, volatility=0.008, max_drawdown=-0.06, cycle_count=0)
+    )
     assert stub.calls == 0
     assert rec.role == "heuristic"
-    assert rec.recommendations == {"spacing_percentage": 1.90}
+    assert rec.recommendations == {}  # directional_runaway holds
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_escalates_to_llm() -> None:
+async def test_no_guard_escalates_to_llm() -> None:
     stub = StubLLM()
     cascade = CascadingAdvisorAdapter(heuristic=_heuristic(), llm=stub)
-    # ideal(0.004)=1.25; current 1.42 -> |gap| ~12% lands in the ambiguous
-    # band [0.075, 0.225] with no guard -> escalate.
+    # No guard fires (mild vol, shallow drawdown, no clear override) ->
+    # escalate to the LLM, whose answer is returned verbatim (ADR-022).
     rec = await cascade.get_recommendation(_summary(current_spacing=1.42, volatility=0.004))
     assert stub.calls == 1
     assert rec.recommendations == {"spacing_percentage": 9.99}  # the LLM's answer
 
 
 @pytest.mark.asyncio
-async def test_thin_metrics_escalates() -> None:
-    stub = StubLLM()
-    cascade = CascadingAdvisorAdapter(heuristic=_heuristic(), llm=stub)
-    rec = await cascade.get_recommendation(
-        _summary(current_spacing=1.25, volatility=0.004, snapshot_count=5)
-    )
-    assert stub.calls == 1
-    assert rec.recommendations == {"spacing_percentage": 9.99}
-
-
-@pytest.mark.asyncio
 async def test_falls_back_to_heuristic_on_llm_error() -> None:
     stub = StubLLM(raises=AdvisorError("vendor down"))
     cascade = CascadingAdvisorAdapter(heuristic=_heuristic(), llm=stub)
-    # Ambiguous -> tries LLM -> LLM raises -> heuristic fallback (a hold).
+    # No guard -> tries LLM -> LLM raises -> heuristic fallback (a HOLD).
     rec = await cascade.get_recommendation(_summary(current_spacing=1.42, volatility=0.004))
     assert stub.calls == 1
     assert rec.role == "heuristic"
-    assert rec.recommendations == {}  # heuristic held (within deadband)
+    assert rec.recommendations == {}  # heuristic's no-guard HOLD
 
 
 @pytest.mark.asyncio

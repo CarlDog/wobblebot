@@ -1,7 +1,7 @@
 # Web UI static assets
 
-Three files live here and ship to the operator via FastAPI's
-`StaticFiles` mount at `/static/...`:
+Files here ship to the operator via FastAPI's `StaticFiles` mount at
+`/static/...`:
 
 - **`base.css`** — minimal dashboard styles. Committed; edit freely
   per operator branding (the file lives in your repo, not behind
@@ -18,6 +18,17 @@ Three files live here and ship to the operator via FastAPI's
   Pin to 2.x. HTMX is stable but minor versions occasionally
   tweak default attribute behavior; verify SHA-256 from
   <https://htmx.org/> before swapping in.
+- **`theme-init.js` / `nav.js` / `notifications-seen.js`** — v1.1:
+  extracted from inline `<script>` blocks in `base.html` /
+  `layout.html` / `notifications.html` so the dashboard's
+  Content-Security-Policy (`web/middleware.py`) can set
+  `script-src 'self'` with no `'unsafe-inline'`. No Jinja
+  interpolation lives in any of these — they're plain JS, editable
+  like any other static file. Adding a NEW inline `<script>` to a
+  template will silently fail to execute under the CSP (blocked, not
+  errored) — put new script logic in a file here instead.
+  `tests/web/test_security_headers.py::TestNoInlineScriptsRemain`
+  guards against a template regrowing an inline script.
 
 Without HTMX the dashboard chrome (nav, login, mutation confirm
 flow) all work — only the polled cards stay static until a full

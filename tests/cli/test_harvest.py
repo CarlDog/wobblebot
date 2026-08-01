@@ -13,7 +13,14 @@ import pytest
 from tests.fixtures import grid_config as _grid_config
 from tests.fixtures import safety_config as _shared_safety_config
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.harvest import _classify_band, _execute_command, _read_usd_balance, _run_cycle
+from wobblebot.cli.harvest import (
+    _TRADE_KEY_ENV_VAR,
+    _classify_band,
+    _execute_command,
+    _read_usd_balance,
+    _run_cycle,
+    _verify_harvester_key,
+)
 from wobblebot.config.cli import HarvestConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -67,6 +74,9 @@ class _StubExchange(ExchangePort):
         raise NotImplementedError("not used by harvest")
 
     async def get_current_price(self, symbol):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("not used by harvest")
+
+    async def get_ticker(self, symbol):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 
     async def place_order(self, order):  # type: ignore[no-untyped-def]
@@ -124,6 +134,62 @@ def _full_config(*, harvester: HarvesterConfig | None = None) -> WobbleBotConfig
         harvest=HarvestConfig(),
         harvester=harvester if harvester is not None else _harvester_config(),
     )
+
+
+# ----- _verify_harvester_key (ADR-003 startup invariants) -----
+
+
+class _WithdrawProbeStub:
+    """Minimal KrakenAdapter stand-in exercising only has_withdraw_scope."""
+
+    def __init__(self, *, scope: bool = True, error: ExchangeError | None = None) -> None:
+        self._scope = scope
+        self._error = error
+
+    async def has_withdraw_scope(self) -> bool:
+        if self._error is not None:
+            raise self._error
+        return self._scope
+
+
+@pytest.mark.asyncio
+class TestVerifyHarvesterKey:
+    """ADR-003: the Harvester key must hold Withdraw scope AND differ from
+    the trade key. A definitive violation refuses (exit 3); a transient
+    probe failure fails soft (continue, don't crash-loop)."""
+
+    async def test_valid_key_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvest-secret")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "trade-secret")
+        result = await _verify_harvester_key(_WithdrawProbeStub(scope=True), _full_config())  # type: ignore[arg-type]
+        assert result is None
+
+    async def test_no_withdraw_scope_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvest-secret")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "trade-secret")
+        result = await _verify_harvester_key(_WithdrawProbeStub(scope=False), _full_config())  # type: ignore[arg-type]
+        assert result == 3
+
+    async def test_identical_to_trade_key_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "same-secret")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "same-secret")
+        result = await _verify_harvester_key(_WithdrawProbeStub(scope=True), _full_config())  # type: ignore[arg-type]
+        assert result == 3
+
+    async def test_transient_probe_error_continues(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Fail soft: a Kraken blip must not crash-loop the daemon.
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvest-secret")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "trade-secret")
+        stub = _WithdrawProbeStub(error=ExchangeError("EAPI:Rate limit exceeded"))
+        result = await _verify_harvester_key(stub, _full_config())  # type: ignore[arg-type]
+        assert result is None
+
+    async def test_trade_key_absent_continues(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Can't byte-compare; rely on deployment-level key separation.
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvest-secret")
+        monkeypatch.delenv(_TRADE_KEY_ENV_VAR, raising=False)
+        result = await _verify_harvester_key(_WithdrawProbeStub(scope=True), _full_config())  # type: ignore[arg-type]
+        assert result is None
 
 
 # ----- _read_usd_balance -----
@@ -782,5 +848,83 @@ class TestExecuteFailureModes:
             assert results[0].status == "failed"
             assert results[0].transaction_id.startswith("failed-")
             assert any("rejected the request" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
+
+@pytest.mark.asyncio
+class TestExecuteIdempotency:
+    """Issue #12: a proposal already submitted must not be withdrawn a
+    second time (every gate re-passes after the first wire clears). A prior
+    *failed* attempt — Kraken rejected it, no money moved — may be retried."""
+
+    async def test_already_submitted_refuses_without_withdraw(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A pre-existing pending result for the same proposal id blocks a
+        second --execute, and CRITICALLY does not call withdraw()."""
+        from wobblebot.ports.harvester import TransferResult as _TR
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            # An in-flight withdrawal already submitted for THIS proposal.
+            await storage.save_transfer_result(
+                _TR(
+                    proposal_id="p-test",
+                    transaction_id="AGBSO6T-UFMTTQ-I7KGS6",
+                    status="pending",
+                    executed_amount=Decimal("100"),
+                    direction="exchange_to_bank",
+                    asset="USD",
+                    timestamp=_Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+                ),
+            )
+            adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
+            config = _full_config(harvester=_enabled_harvester())
+            with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+                rc = await _execute_command(
+                    adapter=adapter,
+                    storage=storage,
+                    config=config,
+                    proposal_id="p-test",
+                )
+            assert rc == 1
+            assert adapter.withdraw_calls == []  # no double-withdraw
+            assert any("already executed" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
+    async def test_prior_failed_result_allows_retry(self) -> None:
+        """A failed attempt left no money in flight, so a fresh --execute of
+        the same proposal proceeds and submits."""
+        from wobblebot.ports.harvester import TransferResult as _TR
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            await storage.save_transfer_result(
+                _TR(
+                    proposal_id="p-test",
+                    transaction_id=f"failed-{uuid4()}",
+                    status="failed",
+                    executed_amount=Decimal("100"),
+                    direction="exchange_to_bank",
+                    asset="USD",
+                    timestamp=_Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+                ),
+            )
+            adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
+            config = _full_config(harvester=_enabled_harvester())
+            rc = await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=config,
+                proposal_id="p-test",
+            )
+            assert rc == 0
+            assert len(adapter.withdraw_calls) == 1  # retry proceeds
         finally:
             await storage.close()

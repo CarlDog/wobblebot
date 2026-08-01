@@ -1,17 +1,11 @@
-"""Tests for the deterministic ``HeuristicAdvisorAdapter`` (Stage 8.5).
+"""Tests for the deterministic ``HeuristicAdvisorAdapter`` (ADR-022).
 
-The headline tests run the adapter — loaded from the SHIPPED
-``config/heuristic/quant.yml`` — through the same fixture batteries and
-scoring rubric that ``tools/probe_advisor.py`` uses to grade LLM
-candidates. The heuristic codifies the maintainer's grid judgment, so it
-should score a perfect 36/36 on the core battery and resolve all 8
-held-out cases (the 4 conflict discriminators that every local LLM
-failed) in the right direction. If an operator edits the curve in the
-YAML and breaks a fixture, these fail loudly.
-
-The remaining tests pin behaviour the battery doesn't exercise:
-curve interpolation, the fee-floor clamp, per-guard on/off toggles, and
-the cascade ``clear_match`` / escalation signal.
+The heuristic is a guard layer: it makes only the four clear override
+calls and escalates every other tick to the LLM (``clear_match=False``,
+reason ``no_guard_fired``). These tests pin that the guards still fire on
+their held-out discriminators, that the former first-order cases now
+escalate, that the ``_ideal`` curve still floors the drawdown guard's
+widen target, and the per-guard on/off toggles.
 """
 
 from __future__ import annotations
@@ -90,37 +84,8 @@ def _summary(  # pylint: disable=too-many-arguments,too-many-positional-argument
 
 
 # ---------------------------------------------------------------------------
-# Battery reproduction — the SHIPPED spec must reproduce the validated judgment
+# Guards still fire; former first-order cases now escalate (ADR-022)
 # ---------------------------------------------------------------------------
-
-
-def _score_battery(adapter: HeuristicAdvisorAdapter, fixtures: tuple) -> tuple[int, list[str]]:
-    """Score the heuristic across a probe fixture battery; collect mismatches."""
-    total = 0
-    mismatches: list[str] = []
-    for fx in fixtures:
-        rec = adapter.evaluate(fx.summary).recommendation
-        actual = probe._classify_direction(rec, fx.summary.current_grid)
-        magnitude_ok = probe._magnitude_ok(rec, fx.ideal_spacing)
-        score, verdict = probe._score_row(fx.expected, actual, magnitude_ok)
-        total += score
-        if actual != fx.expected:
-            mismatches.append(f"{fx.name}: expected {fx.expected}, got {actual} ({verdict})")
-    return total, mismatches
-
-
-def test_core_battery_scores_perfect(adapter: HeuristicAdvisorAdapter) -> None:
-    total, mismatches = _score_battery(adapter, probe.FIXTURES)
-    assert not mismatches, f"core direction mismatches: {mismatches}"
-    assert total == probe._MAX_PER_FIXTURE * len(probe.FIXTURES)  # 36/36
-
-
-def test_heldout_battery_all_directions_correct(adapter: HeuristicAdvisorAdapter) -> None:
-    # The 4 discriminators are conflict cases every local LLM failed; the
-    # heuristic must resolve all 8 via its guards in the right direction.
-    total, mismatches = _score_battery(adapter, probe.HELDOUT_FIXTURES)
-    assert not mismatches, f"held-out direction mismatches: {mismatches}"
-    assert total == probe._MAX_PER_FIXTURE * len(probe.HELDOUT_FIXTURES)  # 24/24
 
 
 def test_each_guard_path_is_exercised_by_the_heldout_battery(
@@ -136,27 +101,73 @@ def test_each_guard_path_is_exercised_by_the_heldout_battery(
     assert by_name["heldout_fee_floor"].reason == "fee_floor_calm"
 
 
-def test_all_battery_verdicts_are_clear_matches(adapter: HeuristicAdvisorAdapter) -> None:
-    # Every validated fixture is inside the heuristic's competence zone,
-    # so a cascade resolves all 20 without ever calling the LLM.
-    for fx in (*probe.FIXTURES, *probe.HELDOUT_FIXTURES):
-        verdict = adapter.evaluate(fx.summary)
-        assert verdict.clear_match, f"{fx.name} unexpectedly flagged for escalation"
+def test_guard_cases_are_clear_matches(adapter: HeuristicAdvisorAdapter) -> None:
+    # The 5 held-out guard cases resolve locally (clear_match=True) — the
+    # cascade answers them for $0, no LLM call.
+    guard_cases = (
+        "heldout_directional_downtrend",
+        "heldout_drawdown_overrides_calm",
+        "heldout_working_well",
+        "heldout_tight_but_scalping",
+        "heldout_fee_floor",
+    )
+    by_name = {fx.name: adapter.evaluate(fx.summary) for fx in probe.HELDOUT_FIXTURES}
+    for name in guard_cases:
+        assert by_name[name].clear_match is True, f"{name} should resolve via a guard"
+
+
+def test_former_first_order_cases_now_escalate(adapter: HeuristicAdvisorAdapter) -> None:
+    # The 3 held-out cases the retired first-order logic used to resolve
+    # (a clear widen + two matched grids) now have no guard, so they
+    # escalate to the LLM (clear_match=False, reason no_guard_fired).
+    escalators = ("heldout_clear_widen", "heldout_matched", "heldout_matched_whipsaw")
+    by_name = {fx.name: adapter.evaluate(fx.summary) for fx in probe.HELDOUT_FIXTURES}
+    for name in escalators:
+        verdict = by_name[name]
+        assert verdict.clear_match is False, f"{name} should escalate post-ADR-022"
+        assert verdict.reason == "no_guard_fired"
+        assert verdict.direction == "hold"  # escalation default is a HOLD
+
+
+def test_no_guard_fired_returns_low_confidence_hold(adapter: HeuristicAdvisorAdapter) -> None:
+    # A vanilla tick with no guard condition: hold, non-clear, low confidence.
+    verdict = adapter.evaluate(
+        _summary(current_spacing=1.20, volatility=0.005, max_drawdown=-0.01, win_rate=0.5)
+    )
+    assert verdict.direction == "hold"
+    assert verdict.clear_match is False
+    assert verdict.reason == "no_guard_fired"
+    assert verdict.recommendation.confidence == "low"
+    assert verdict.recommendation.recommendations == {}
 
 
 # ---------------------------------------------------------------------------
-# Curve interpolation + fee-floor clamp
+# _ideal curve helper (now used only by the defensive_drawdown guard floor)
 # ---------------------------------------------------------------------------
 
 
-def test_curve_interpolates_between_points(adapter: HeuristicAdvisorAdapter) -> None:
+def test_ideal_interpolates_between_points(adapter: HeuristicAdvisorAdapter) -> None:
     # vol 0.005 sits halfway between (0.004, 1.25) and (0.006, 1.60) -> 1.425
     assert adapter._ideal(0.005) == pytest.approx(1.425)
 
 
-def test_curve_flat_clamps_outside_the_range(adapter: HeuristicAdvisorAdapter) -> None:
+def test_ideal_flat_clamps_outside_the_range(adapter: HeuristicAdvisorAdapter) -> None:
     assert adapter._ideal(0.00001) == pytest.approx(0.65)  # below first point
     assert adapter._ideal(0.5) == pytest.approx(2.70)  # above last point
+
+
+def test_ideal_floors_the_drawdown_guard_widen_target(adapter: HeuristicAdvisorAdapter) -> None:
+    # defensive_drawdown widens to max(current * widen_factor, _ideal(vol)).
+    # In a high-vol drawdown the _ideal floor exceeds current*1.5 and sets
+    # the target — proving the curve still feeds the guard.
+    summary = _summary(
+        current_spacing=1.00, volatility=0.014, max_drawdown=-0.085, cycle_count=3, win_rate=0.4
+    )
+    verdict = adapter.evaluate(summary)
+    assert verdict.reason == "defensive_drawdown"
+    assert verdict.direction == "widen"
+    # current*1.5 = 1.50, _ideal(0.014) = 2.70 -> floor wins -> 2.70
+    assert verdict.recommendation.recommendations == {"spacing_percentage": 2.70}
 
 
 def test_fee_floor_clamps_the_target() -> None:
@@ -195,17 +206,24 @@ def test_defensive_drawdown_toggle_flips_widen_to_hold() -> None:
         }
     )
     off = HeuristicAdvisorAdapter(spec=spec_off)
-    # Without the guard, the calm-market first-order call holds (gap < deadband).
-    assert off.evaluate(summary).direction == "hold"
+    # Without the guard, no guard fires -> escalate-HOLD (no first-order curve).
+    off_verdict = off.evaluate(summary)
+    assert off_verdict.direction == "hold"
+    assert off_verdict.clear_match is False
+    assert off_verdict.reason == "no_guard_fired"
 
 
-def test_dont_fix_working_toggle_flips_hold_to_widen() -> None:
-    # Tight-for-vol but printing fills: guard ON -> HOLD; OFF -> WIDEN.
+def test_dont_fix_working_toggle_flips_clear_match() -> None:
+    # Tight-for-vol but printing fills: guard ON -> a clear HOLD resolved
+    # locally; OFF -> no guard fires, so the tick escalates to the LLM.
     summary = _summary(
         current_spacing=1.00, volatility=0.007, max_drawdown=-0.004, cycle_count=14, win_rate=0.92
     )
     on = HeuristicAdvisorAdapter(spec=load_heuristic_spec(_SHIPPED_SPEC))
-    assert on.evaluate(summary).direction == "hold"
+    on_verdict = on.evaluate(summary)
+    assert on_verdict.direction == "hold"
+    assert on_verdict.clear_match is True
+    assert on_verdict.reason == "dont_fix_working"
 
     spec = load_heuristic_spec(_SHIPPED_SPEC)
     spec = spec.model_copy(
@@ -220,7 +238,9 @@ def test_dont_fix_working_toggle_flips_hold_to_widen() -> None:
         }
     )
     off = HeuristicAdvisorAdapter(spec=spec)
-    assert off.evaluate(summary).direction == "widen"
+    off_verdict = off.evaluate(summary)
+    assert off_verdict.clear_match is False
+    assert off_verdict.reason == "no_guard_fired"
 
 
 # ---------------------------------------------------------------------------
@@ -236,43 +256,16 @@ def test_no_current_grid_holds_and_is_not_clear(adapter: HeuristicAdvisorAdapter
     assert verdict.recommendation.confidence == "low"
 
 
-def test_gap_in_ambiguous_band_is_not_clear(adapter: HeuristicAdvisorAdapter) -> None:
-    # ideal(0.004)=1.25; pick current so the gap ~12% lands in the
-    # ambiguous band [0.075, 0.225] with no guard firing.
-    summary = _summary(
-        current_spacing=1.42, volatility=0.004, max_drawdown=-0.01, cycle_count=4, win_rate=0.5
-    )
-    verdict = adapter.evaluate(summary)
-    assert verdict.direction == "hold"  # |gap| ~0.12 < 0.15 deadband
-    assert verdict.clear_match is False  # ...but inside the ambiguous band
-    assert verdict.recommendation.confidence == "low"
-
-
-def test_thin_metrics_window_is_not_clear(adapter: HeuristicAdvisorAdapter) -> None:
-    # A clearly-matched hold, but too few snapshots to trust the vol estimate.
-    summary = _summary(
-        current_spacing=1.25, volatility=0.004, cycle_count=4, win_rate=0.5, snapshot_count=5
-    )
-    verdict = adapter.evaluate(summary)
-    assert verdict.direction == "hold"
-    assert verdict.clear_match is False
-
-
-def test_clear_action_emits_target_spacing(adapter: HeuristicAdvisorAdapter) -> None:
-    # Tight grid, active market -> a confident widen to the vol-ideal.
-    summary = _summary(current_spacing=0.60, volatility=0.008, cycle_count=4, win_rate=0.4)
-    verdict = adapter.evaluate(summary)
-    assert verdict.direction == "widen"
-    assert verdict.clear_match is True
-    assert verdict.recommendation.recommendations == {"spacing_percentage": 1.90}
-
-
 @pytest.mark.asyncio
-async def test_get_recommendation_returns_the_verdict_recommendation(
+async def test_get_recommendation_wraps_a_guard_verdict(
     adapter: HeuristicAdvisorAdapter,
 ) -> None:
-    summary = _summary(current_spacing=0.60, volatility=0.008, cycle_count=4, win_rate=0.4)
+    # The async port wrapper returns the guard's recommendation verbatim.
+    # A sharp drawdown fires defensive_drawdown -> a widen with a target.
+    summary = _summary(
+        current_spacing=1.00, volatility=0.014, max_drawdown=-0.085, cycle_count=3, win_rate=0.4
+    )
     rec = await adapter.get_recommendation(summary)
-    assert rec.recommendations == {"spacing_percentage": 1.90}
+    assert rec.recommendations == {"spacing_percentage": 2.70}
     assert rec.role == "heuristic"
     assert await adapter.validate_recommendation(rec) is True

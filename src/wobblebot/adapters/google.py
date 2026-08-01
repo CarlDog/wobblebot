@@ -43,6 +43,7 @@ supplies its provider-specific ``call_fn`` closure + the
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -393,12 +394,14 @@ class GoogleAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                     if isinstance(text, str):
                         per_message_text.append(text)
         prompt_text = system_text + "\n\n" + "\n".join(per_message_text)
-        estimate = estimate_cost_ceiling(
-            provider="google",
-            model=self._model,
-            prompt_text=prompt_text,
-            max_tokens=self._max_tokens,
-        )
+
+        def _estimate() -> Decimal:
+            return estimate_cost_ceiling(
+                provider="google",
+                model=self._model,
+                prompt_text=prompt_text,
+                max_tokens=self._max_tokens,
+            )
 
         body = _build_generate_body(
             system_text=system_text,
@@ -427,7 +430,7 @@ class GoogleAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         )
         return await execute_assistant_call(
             ctx=ctx,
-            estimated_cost_usd=estimate,
+            estimate_cost_fn=_estimate,
             call_fn=_call,
             extract_tokens=extract_google_tokens,
             parse_text_fn=parse_candidate_text,

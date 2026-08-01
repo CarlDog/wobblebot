@@ -196,6 +196,54 @@ class TestGetCurrentPrice:
 
 
 @pytest.mark.asyncio
+class TestGetTicker:
+    """ADR-025: last/bid/ask from the same /0/public/Ticker response."""
+
+    async def test_btc_usd_happy_path(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["path"] = request.url.path
+            captured["pair"] = request.url.params.get("pair")
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "XXBTZUSD": {
+                            "a": ["79035.20000", "1", "1.000"],
+                            "b": ["79035.10000", "1", "1.000"],
+                            "c": ["79033.80000", "0.00156715"],
+                        }
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            ticker = await adapter.get_ticker(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+        assert captured == {"method": "GET", "path": "/0/public/Ticker", "pair": "XBTUSD"}
+        assert ticker.last == Decimal("79033.80000")
+        assert ticker.bid == Decimal("79035.10000")
+        assert ticker.ask == Decimal("79035.20000")
+
+    async def test_empty_result_raises(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"error": [], "result": {}})
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="no ticker data"):
+                await adapter.get_ticker(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+
+@pytest.mark.asyncio
 class TestGetBalances:
     async def test_happy_path_translates_kraken_codes(self) -> None:
         captured: dict[str, Any] = {}
@@ -526,3 +574,129 @@ class TestEnvelopeUnwrapping:
                 await adapter.get_current_price(Symbol(base="BTC", quote="USD"))
         finally:
             await adapter.aclose()
+
+
+@pytest.mark.asyncio
+class TestRateLimitRetry:
+    """ADR-027: ``EAPI:Rate limit exceeded`` is transient and retried with
+    bounded exponential backoff (mirroring ADR-015's shape) before ever
+    surfacing as an ``ExchangeError``; every other error surfaces
+    immediately, unretried."""
+
+    async def test_retries_then_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sleeps: list[float] = []
+
+        async def fast_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr("asyncio.sleep", fast_sleep)
+
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return httpx.Response(
+                    200, json={"error": ["EAPI:Rate limit exceeded"], "result": {}}
+                )
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"XXBTZUSD": {"c": ["50000.00", "0.01"]}}},
+            )
+
+        adapter = _make_adapter(handler)
+        try:
+            price = await adapter.get_current_price(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+        assert price.amount == Decimal("50000.00")
+        assert calls["n"] == 3
+        # Exponential backoff (1s, 2s, ...) between the two failed attempts.
+        assert sleeps == [1.0, 2.0]
+
+    async def test_exhausts_and_raises_last_rate_limit_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fast_sleep(seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr("asyncio.sleep", fast_sleep)
+
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(200, json={"error": ["EAPI:Rate limit exceeded"], "result": {}})
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="Rate limit exceeded"):
+                await adapter.get_current_price(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+        # 1 initial attempt + 3 retries (the bounded budget) = 4 total.
+        assert calls["n"] == 4
+
+    async def test_non_rate_limit_error_is_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fail_if_called(seconds: float) -> None:
+            raise AssertionError("must not sleep/retry a non-rate-limit error")
+
+        monkeypatch.setattr("asyncio.sleep", fail_if_called)
+
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(200, json={"error": ["EQuery:Unknown asset pair"], "result": {}})
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="EQuery:Unknown asset pair"):
+                await adapter.get_current_price(Symbol(base="BTC", quote="USD"))
+        finally:
+            await adapter.aclose()
+
+        assert calls["n"] == 1
+
+    async def test_private_post_retry_uses_a_fresh_nonce_each_attempt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A retried private POST must not replay a stale nonce (Kraken
+        rejects non-increasing nonces) -- each attempt (re)builds the
+        nonce + signature from scratch inside the retried closure."""
+        from urllib.parse import parse_qs
+
+        async def fast_sleep(seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr("asyncio.sleep", fast_sleep)
+
+        nonces: list[int] = []
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            body = parse_qs(request.content.decode("utf-8"))
+            nonces.append(int(body["nonce"][0]))
+            if calls["n"] < 2:
+                return httpx.Response(
+                    200, json={"error": ["EAPI:Rate limit exceeded"], "result": {}}
+                )
+            return httpx.Response(
+                200,
+                json={"error": [], "result": {"XXBT": {"balance": "1", "hold_trade": "0"}}},
+            )
+
+        adapter = _make_adapter_with_metadata(handler)
+        try:
+            await adapter.get_balances()
+        finally:
+            await adapter.aclose()
+
+        assert calls["n"] == 2
+        assert len(nonces) == 2
+        assert nonces[1] > nonces[0]

@@ -21,6 +21,7 @@ from wobblebot.domain.value_objects import (
     OrderSide,
     Price,
     Symbol,
+    Ticker,
     Timestamp,
 )
 from wobblebot.ports.exceptions import ExchangeError
@@ -48,6 +49,14 @@ class _StubLiveExchange(ExchangePort):
         if symbol not in self._prices:
             raise ExchangeError(f"no canned price for {symbol}")
         return Price(amount=self._prices[symbol], currency=symbol.quote)
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        self.price_call_count += 1
+        if symbol not in self._prices:
+            raise ExchangeError(f"no canned price for {symbol}")
+        last = self._prices[symbol]
+        half_spread = last * Decimal("0.0001")  # tight, healthy canned spread
+        return Ticker(symbol=symbol, last=last, bid=last - half_spread, ask=last + half_spread)
 
     # --- everything else: NotImplementedError; shadow should NEVER call these
     async def get_balances(self) -> list[Balance]:
@@ -117,6 +126,20 @@ class TestRouting:
         )
         price = await shadow.get_current_price(BTC_USD)
         assert price.amount == Decimal("80000")
+        assert live.price_call_count == 1
+
+    async def test_get_ticker_queries_live_and_pumps_mock(self) -> None:
+        """ADR-025: get_ticker forwards to live AND pumps the last price
+        into the mock matcher -- same live-tape-coupling contract as
+        get_current_price."""
+        live = _StubLiveExchange({BTC_USD: Decimal("80000")})
+        shadow = ShadowExchangeAdapter(
+            live_exchange=live,
+            starting_balances={"USD": Decimal("1000"), "BTC": Decimal("0")},
+        )
+        ticker = await shadow.get_ticker(BTC_USD)
+        assert ticker.last == Decimal("80000")
+        assert ticker.bid < ticker.last < ticker.ask
         assert live.price_call_count == 1
 
     async def test_balances_come_from_synthetic_ledger_not_live(self) -> None:

@@ -23,7 +23,7 @@ instance resets the counters.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from wobblebot.domain.exceptions import InsufficientBalance
@@ -34,6 +34,7 @@ from wobblebot.domain.value_objects import (
     OrderSide,
     Price,
     Symbol,
+    Ticker,
     Timestamp,
 )
 from wobblebot.ports.exceptions import ExchangeError
@@ -41,6 +42,12 @@ from wobblebot.ports.exchange import ExchangePort
 
 # Sensible Kraken-ish defaults; override per-instance if needed.
 _DEFAULT_FEE_RATE = Decimal("0.0026")
+
+# ADR-025: a tight, healthy default spread (comfortably under any
+# sensible max_spread_percentage) so existing engine tests that never
+# call set_spread don't trip the guard now that GridEngine calls
+# get_ticker every tick instead of get_current_price.
+_DEFAULT_SPREAD_PERCENTAGE = Decimal("0.02")
 
 
 class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
@@ -73,11 +80,18 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         self._trade_history: list[Trade] = []
         self._order_counter = 0
         self._trade_counter = 0
+        # ADR-023 test control: exchange_id -> the order get_order_status
+        # should return, overriding the normal open/trade-history lookup.
+        # Populated only by inject_partial_cancel.
+        self._terminal_overrides: dict[str, Order] = {}
         # ADR-021: the mock has no server-side timer and holds no real
         # resting orders, so set_dead_mans_switch is a no-op — but we
         # record the last value so engine-loop tests can assert the loop
         # armed/disarmed it (None until the first call).
         self.last_dead_mans_switch_seconds: int | None = None
+        # ADR-025: per-symbol spread override for get_ticker; absent
+        # symbols use _DEFAULT_SPREAD_PERCENTAGE.
+        self._spread_pct: dict[Symbol, Decimal] = {}
 
     # ----------------------------------------------------------------- mock controls
 
@@ -90,6 +104,13 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         self._prices[symbol] = price
         return self._match_open_orders(symbol)
 
+    def set_spread(self, symbol: Symbol, spread_percentage: Decimal) -> None:
+        """Test control: override the bid-ask spread (as a percentage of
+        mid-price) ``get_ticker`` reports for ``symbol`` (ADR-025).
+        Absent symbols use a tight, healthy default.
+        """
+        self._spread_pct[symbol] = spread_percentage
+
     def run_scenario(self, ticks: Iterable[tuple[Symbol, Decimal]]) -> list[Trade]:
         """Apply a sequence of (symbol, price) ticks. Returns all fills."""
         fills: list[Trade] = []
@@ -97,12 +118,62 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
             fills.extend(self.set_price(symbol, price))
         return fills
 
+    def inject_partial_cancel(self, order: Order, *, filled_amount: Decimal) -> Trade | None:
+        """Test control: simulate a partial fill followed by a
+        cancel/expiry (ADR-023's "F1" case) — state the mock's normal
+        full-fill-on-price-cross matching can't produce (it only fills
+        completely or not at all).
+
+        Removes ``order`` from the open set if resting there, records a
+        matching partial ``Trade`` when ``filled_amount > 0``, and makes
+        the next ``get_order_status(order)`` call return
+        ``status="canceled"`` with ``filled_amount`` set — mirroring
+        what Kraken's QueryOrders reports for a real
+        partial-fill-then-cancel (see
+        ``kraken_exchange._apply_kraken_order_update``). ``filled_amount
+        == 0`` (a genuine clean cancel) records no trade and returns
+        ``None``.
+
+        Returns the injected ``Trade``, or ``None`` for a clean cancel.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot inject a partial cancel for an order with no exchange_id")
+        self._open_orders.pop(order.exchange_id, None)
+        self._terminal_overrides[order.exchange_id] = order.model_copy(
+            update={"status": "canceled", "filled_amount": filled_amount}
+        )
+        if filled_amount <= 0:
+            return None
+        self._trade_counter += 1
+        cost = order.price.amount * filled_amount
+        trade = Trade(
+            id=f"MOCK-TRD-{self._trade_counter:06d}",
+            order_id=order.exchange_id,
+            symbol=order.symbol,
+            side=order.side,
+            price=order.price,
+            amount=Amount(value=filled_amount, asset=order.symbol.base),
+            fee=cost * self._fee_rate,
+            cost=cost,
+            executed_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        self._trade_history.append(trade)
+        return trade
+
     # ----------------------------------------------------------------- ExchangePort
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         if symbol not in self._prices:
             raise ExchangeError(f"No market price set for {symbol}")
         return Price(amount=self._prices[symbol], currency=symbol.quote)
+
+    async def get_ticker(self, symbol: Symbol) -> Ticker:
+        if symbol not in self._prices:
+            raise ExchangeError(f"No market price set for {symbol}")
+        last = self._prices[symbol]
+        spread_pct = self._spread_pct.get(symbol, _DEFAULT_SPREAD_PERCENTAGE)
+        half_spread = last * spread_pct / Decimal("100") / Decimal("2")
+        return Ticker(symbol=symbol, last=last, bid=last - half_spread, ask=last + half_spread)
 
     async def get_ohlc(
         self,
@@ -170,18 +241,26 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         live.mark_canceled()
         return live
 
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """No-op (ADR-021): the in-memory mock has no server-side timer and
         holds no real resting orders. Records the value so engine-loop tests
-        can assert the loop armed/disarmed the switch.
+        can assert the loop armed/disarmed the switch, and returns a
+        synthetic confirmed trigger time (now + timeout_seconds) so
+        callers exercising the arm-confirmation path see realistic
+        "armed" behavior; ``None`` for a disarm (timeout_seconds=0).
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
         self.last_dead_mans_switch_seconds = timeout_seconds
+        if timeout_seconds == 0:
+            return None
+        return datetime.now(UTC) + timedelta(seconds=timeout_seconds)
 
     async def get_order_status(self, order: Order) -> Order:
         if not order.exchange_id:
             raise ExchangeError("Cannot get status for an order with no exchange_id")
+        if order.exchange_id in self._terminal_overrides:
+            return self._terminal_overrides[order.exchange_id]
         if order.exchange_id in self._open_orders:
             return self._open_orders[order.exchange_id]
         # Order is no longer open - look it up in our trade history.

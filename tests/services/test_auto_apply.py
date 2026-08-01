@@ -14,6 +14,7 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.services.auto_apply import (
     AutoApplyResult,
+    _coerce_numeric,
     evaluate_auto_apply,
 )
 
@@ -70,6 +71,73 @@ def _auto_apply(
     )
 
 
+class TestNaNGuard:
+    """NaN / Inf recommendations degrade to a RejectedKey, never a crash
+    in the ADR-002 boundary (deep-scan F2, 2026-06-02). ``json.loads``
+    accepts bare ``NaN`` / ``Infinity`` tokens, and ``Decimal("NaN")`` is
+    a valid Decimal that would crash the downstream ``<= 0`` bound check.
+    """
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), "NaN", "Infinity"])
+    def test_coerce_numeric_rejects_non_finite(self, bad: Any) -> None:
+        assert _coerce_numeric(bad) is None
+
+    def test_coerce_numeric_keeps_finite(self) -> None:
+        assert _coerce_numeric(1.05) == Decimal("1.05")
+        assert _coerce_numeric("2.5") == Decimal("2.5")
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), "NaN"])
+    def test_non_finite_recommendation_rejected_not_raised(self, bad: Any) -> None:
+        # The contract is "never raises on bad input" — a garbled NaN must
+        # land as a rejected key, not a decimal.InvalidOperation.
+        suggestion = _suggestion(recommendations={"spacing_percentage": bad})
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.applied_keys == []
+        assert "spacing_percentage" in {r.key for r in result.rejected_keys}
+
+
+class TestSpacingFloor:
+    """ADR-019 / ADR-002 defense-in-depth: auto-apply never accepts a spacing
+    BELOW the operator's configured per-symbol spacing (the survival floor),
+    whatever advisor produced it (a heuristic guard, an LLM, or a future MoE).
+    Tightening below the settled floor is the move the backtest proved kills a
+    grid. The floor is the configured ``current`` spacing itself, so it's
+    per-symbol-correct with no new config field, and it fires BEFORE the
+    magnitude-cap check so a sub-floor value is rejected even within the cap.
+    """
+
+    def test_spacing_below_configured_is_rejected(self) -> None:
+        # 2.7% < the configured 3.0%, and the 10% delta is WITHIN the 20% cap —
+        # so the floor, not the cap, is what rejects it.
+        suggestion = _suggestion(recommendations={"spacing_percentage": 2.7})
+        result = evaluate_auto_apply(suggestion, _grid(spacing="3.0"), _auto_apply(), symbol="BTC")
+        assert result.applied_keys == []
+        rejected = {r.key: r.reason for r in result.rejected_keys}
+        assert "spacing_percentage" in rejected
+        assert "below the configured spacing" in rejected["spacing_percentage"]
+
+    def test_spacing_at_configured_floor_passes(self) -> None:
+        # At-floor is allowed (the floor is a lower bound, not a strict >).
+        suggestion = _suggestion(recommendations={"spacing_percentage": 3.0})
+        result = evaluate_auto_apply(suggestion, _grid(spacing="3.0"), _auto_apply(), symbol="BTC")
+        assert "spacing_percentage" in {a.key for a in result.applied_keys}
+
+    def test_spacing_above_configured_passes(self) -> None:
+        # A WIDEN within the magnitude cap applies normally.
+        suggestion = _suggestion(recommendations={"spacing_percentage": 3.3})
+        result = evaluate_auto_apply(suggestion, _grid(spacing="3.0"), _auto_apply(), symbol="BTC")
+        assert "spacing_percentage" in {a.key for a in result.applied_keys}
+
+    def test_order_size_has_no_floor(self) -> None:
+        # The floor is spacing-ONLY: order_size may go below its configured
+        # value (within its own magnitude cap) — no inadvertent order-size floor.
+        suggestion = _suggestion(recommendations={"order_size_usd": 9.0})
+        result = evaluate_auto_apply(
+            suggestion, _grid(order_size="10"), _auto_apply(), symbol="BTC"
+        )
+        assert "order_size_usd" in {a.key for a in result.applied_keys}
+
+
 class TestEnabledFlag:
     def test_disabled_blanket_rejects(self) -> None:
         """``enabled=False`` rejects every key with a clear reason —
@@ -120,9 +188,13 @@ class TestRoleEligibility:
 
     def test_aggregated_role_with_news_in_opinions_still_applies(self) -> None:
         """An MoE-aggregated recommendation that included a news expert
-        in expert_opinions still applies for whitelisted keys — the
-        ``aggregated`` role IS the metrics-driven synthesis. The
-        news-blocking rule is about role, not contributing experts."""
+        in expert_opinions still applies for whitelisted keys when
+        ``news_materially_drove`` is unset/False (the default here —
+        this suggestion is built directly, bypassing
+        ``MoEAdvisorAdapter``, so the flag was never computed). The
+        news-blocking rule is keyed off ROLE plus that flag, not off
+        contributing-experts alone. See TestNewsMateriallyDroveGate for
+        the companion case where the flag IS set."""
         # We construct the suggestion directly; the expert_opinions field
         # carries the news opinion but the top-level role is "aggregated".
         news_op = AdvisorRecommendation(
@@ -170,6 +242,70 @@ class TestRoleEligibility:
         suggestion = _suggestion(
             role="quant",
             recommendations={"spacing_percentage": 1.1},
+        )
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is True
+
+
+class TestNewsMateriallyDroveGate:
+    """ADR-007 amendment (structural news firewall): an ``aggregated``
+    suggestion flagged ``news_materially_drove`` must be blocked exactly
+    like a raw ``role='news'`` suggestion, even though its role string
+    says ``aggregated``."""
+
+    def _aggregated_suggestion(
+        self, *, news_materially_drove: bool, recommendations: dict[str, Any] | None = None
+    ) -> AdvisorSuggestion:
+        rec = AdvisorRecommendation(
+            recommendation_id="rec-aggregated",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="aggregated",
+            recommendations=recommendations or {"spacing_percentage": 1.1},
+            rationale="consensus",
+            confidence="medium",
+            news_materially_drove=news_materially_drove,
+        )
+        return AdvisorSuggestion(
+            recommendation=rec,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={},
+            model_name="moe[arbitrator:...]",
+        )
+
+    def test_flagged_aggregated_suggestion_blocked(self) -> None:
+        suggestion = self._aggregated_suggestion(news_materially_drove=True)
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is False
+        assert result.applied_keys == []
+        reason = result.rejected_keys[0].reason
+        assert "ADR-007 amendment" in reason
+        assert "news" in reason.lower()
+
+    def test_unflagged_aggregated_suggestion_still_applies(self) -> None:
+        suggestion = self._aggregated_suggestion(news_materially_drove=False)
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is True
+        assert len(result.applied_keys) == 1
+
+    def test_flag_only_matters_for_aggregated_role(self) -> None:
+        """The gate keys off role=='aggregated' AND the flag together --
+        a non-aggregated role with the flag set (shouldn't happen in
+        practice; MoEAdvisorAdapter only sets it on aggregated output)
+        must not be treated as automatically blocked by this branch."""
+        rec = AdvisorRecommendation(
+            recommendation_id="rec-single",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="single",
+            recommendations={"spacing_percentage": 1.1},
+            rationale="test",
+            confidence="medium",
+            news_materially_drove=True,
+        )
+        suggestion = AdvisorSuggestion(
+            recommendation=rec,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={},
+            model_name="phi4:14b",
         )
         result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
         assert result.role_eligible is True
@@ -251,10 +387,11 @@ class TestMagnitudeCaps:
         assert "+50.00%" in reason
         assert "20" in reason
 
-    def test_below_zero_rejected_even_within_cap(self) -> None:
-        """A 50% reduction is well under the 20% cap, but the proposed
-        value 0.5 is +50% magnitude below 1.0 — the cap is on the
-        ``abs(delta)``, so this still fails."""
+    def test_spacing_decrease_caught_by_floor_before_cap(self) -> None:
+        """A spacing DECREASE is rejected by the ADR-019 configured-spacing
+        floor BEFORE the magnitude cap is checked — the floor, not the
+        ``abs(delta)`` cap, is the binding constraint on tightening (added
+        2026-06-04; previously this 50% reduction was rejected by the cap)."""
         suggestion = _suggestion(recommendations={"spacing_percentage": 0.5})
         result = evaluate_auto_apply(
             suggestion,
@@ -263,10 +400,14 @@ class TestMagnitudeCaps:
             symbol="BTC",
         )
         assert result.applied_keys == []
-        assert "-50.00%" in result.rejected_keys[0].reason
+        assert "below the configured spacing" in result.rejected_keys[0].reason
 
-    def test_within_cap_decrease_passes(self) -> None:
-        """1.0 → 0.85 is -15%, within 20% cap."""
+    def test_spacing_decrease_within_cap_still_floored(self) -> None:
+        """Even a spacing decrease that clears the magnitude cap (1.0 -> 0.85 is
+        -15%, within 20%) is rejected by the ADR-019 floor — auto-apply never
+        tightens below the configured spacing, cap or no cap (2026-06-04;
+        previously this applied). Decreases on un-floored keys like order_size
+        still pass — see TestSpacingFloor.test_order_size_has_no_floor."""
         suggestion = _suggestion(recommendations={"spacing_percentage": 0.85})
         result = evaluate_auto_apply(
             suggestion,
@@ -274,8 +415,8 @@ class TestMagnitudeCaps:
             _auto_apply(max_spacing_pct="20"),
             symbol="BTC",
         )
-        assert len(result.applied_keys) == 1
-        assert result.applied_keys[0].delta_pct == pytest.approx(-15.0)
+        assert result.applied_keys == []
+        assert "below the configured spacing" in result.rejected_keys[0].reason
 
     def test_order_size_cap_independent_of_spacing_cap(self) -> None:
         """Order-size has its own 15% cap; verify it's wired correctly."""

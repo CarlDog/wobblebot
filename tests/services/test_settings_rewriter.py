@@ -40,7 +40,7 @@ grid:
 
 # Trailing comment, also kept.
 safety:
-  emergency_stop:
+  sell_guard:
     enabled: true
 """
 
@@ -174,7 +174,7 @@ class TestAtomicWrite:
 class TestErrorPaths:
     def test_missing_grid_section_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.yml"
-        path.write_text("safety:\n  emergency_stop:\n    enabled: true\n", encoding="utf-8")
+        path.write_text("safety:\n  sell_guard:\n    enabled: true\n", encoding="utf-8")
         with pytest.raises(SettingsRewriteError, match="no `grid:` block"):
             apply_grid_overrides(
                 path,

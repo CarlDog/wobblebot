@@ -162,7 +162,12 @@ CREATE TABLE IF NOT EXISTS advisor_suggestions (
     -- (role, confidence, recommendations, rationale). Empty array for
     -- single-LLM suggestions. NOT NULL DEFAULT keeps the migration on
     -- pre-3.4a DBs trivial — the ALTER below picks up existing rows.
-    expert_opinions     TEXT NOT NULL DEFAULT '[]'
+    expert_opinions     TEXT NOT NULL DEFAULT '[]',
+    -- ADR-007 amendment (structural news firewall, v1.1): whether a
+    -- news opinion materially drove an aggregated recommendation's
+    -- value. Always 0 outside MoE / for non-aggregated roles.
+    news_materially_drove INTEGER NOT NULL DEFAULT 0
+                                    CHECK (news_materially_drove IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created
@@ -406,5 +411,20 @@ CREATE TABLE IF NOT EXISTS status_report_history (
     user_id         TEXT NOT NULL CHECK (length(user_id) > 0),
     taken_at        TEXT NOT NULL,
     PRIMARY KEY (channel_id, user_id)
+);
+
+-- ---------------------------------------------------------------- --
+-- cap_trips — session-loss-cap cool-down record (ADR-024)           --
+-- ---------------------------------------------------------------- --
+-- One row per cli/live session that exits on the session-loss cap
+-- (exit_code=1). The pre-loop cool-down gate reads the newest row's
+-- tripped_at to decide whether to refuse a new session. Append-only;
+-- never pruned by cli/maintenance (a handful of rows a year at most).
+-- Lives in live.db. Never written by cli/shadow (synthetic ledger,
+-- ADR-024 decision 4).
+CREATE TABLE IF NOT EXISTS cap_trips (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tripped_at      TEXT NOT NULL,
+    session_pnl_usd TEXT NOT NULL
 );
 """

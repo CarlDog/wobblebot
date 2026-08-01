@@ -53,7 +53,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.config.safety import EmergencyStopConfig, SafetyConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.grid_engine import GridEngine, StepResult
 
@@ -71,11 +71,6 @@ def _build_safety_config(max_total_usd: Decimal, max_orders: int) -> SafetyConfi
         max_daily_spend_usd=max_total_usd,
         max_per_coin_exposure_usd=max_total_usd,
         max_orders_per_coin=max_orders,
-        emergency_stop=EmergencyStopConfig(
-            enabled=True,
-            max_loss_percentage=Decimal("20"),
-            min_exchange_balance_usd=Decimal("0"),
-        ),
     )
 
 

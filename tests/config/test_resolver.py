@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from wobblebot.config.resolver import deep_merge, resolve_config
 
@@ -162,3 +165,172 @@ class TestResolveConfig:
         merged = resolve_config(raw, profile_name="single-expert")
         assert len(merged["advisor"]["experts"]) == 1
         assert merged["advisor"]["experts"][0]["name"] == "lonely"
+
+
+# ---------------------------------------------------------------------------
+# Profile overlay typo guard (fleet-review #19 finding 2)
+# ---------------------------------------------------------------------------
+
+
+class TestProfileOverlayTypoGuard:
+    def test_typo_in_top_level_section_raises(self) -> None:
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {"conservative": {"saftey": {"max_total_exposure_usd": 50}}},
+        }
+        with pytest.raises(ValueError, match="saftey"):
+            resolve_config(raw, profile_name="conservative")
+
+    def test_typo_in_nested_leaf_raises(self) -> None:
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "safety": {"max_total_exposure_usd": 100},
+            "profiles": {
+                "conservative": {"safety": {"max_total_exposure_usdd": 50}},
+            },
+        }
+        with pytest.raises(ValueError, match="safety.max_total_exposure_usdd"):
+            resolve_config(raw, profile_name="conservative")
+
+    def test_typo_error_names_settings_example(self) -> None:
+        """Points the operator at the same reference file the other
+        profile error (unknown profile name) already points at."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {"conservative": {"saftey": {}}},
+        }
+        with pytest.raises(ValueError, match="settings.example.yml"):
+            resolve_config(raw, profile_name="conservative")
+
+    def test_valid_overlay_does_not_raise(self) -> None:
+        """Sanity: a correctly-spelled overlay across several real
+        sections is untouched by the guard."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0, "levels_above": 3}},
+            "safety": {"max_total_exposure_usd": 100},
+            "live": {"tick_seconds": 5.0},
+            "profiles": {
+                "conservative": {
+                    "grid": {"default": {"spacing_percentage": 2.0}},
+                    "safety": {"max_total_exposure_usd": 50},
+                    "live": {"max_session_loss_usd": 2.0},
+                },
+            },
+        }
+        merged = resolve_config(raw, profile_name="conservative")
+        assert merged["safety"]["max_total_exposure_usd"] == 50
+
+    def test_per_coin_override_key_is_not_checked_as_a_field_name(self) -> None:
+        """grid.coins is dict[str, CoinGridConfig] — the coin symbol is a
+        free-form key, not a fixed field name, and must not be flagged."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "btc-tight": {
+                    "grid": {
+                        "coins": {
+                            "BTC": {
+                                "spacing_percentage": 0.6,
+                                "levels_above": 3,
+                                "levels_below": 3,
+                                "order_size_usd": 10,
+                                "enabled": True,
+                            }
+                        }
+                    }
+                },
+            },
+        }
+        merged = resolve_config(raw, profile_name="btc-tight")
+        assert merged["grid"]["coins"]["BTC"]["spacing_percentage"] == 0.6
+
+    def test_typo_inside_per_coin_override_raises(self) -> None:
+        """A typo INSIDE a per-coin entry (not the coin key itself) must
+        still be caught — the free-form-key exemption is for the coin
+        symbol only, not for the fields underneath it."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "btc-tight": {
+                    "grid": {"coins": {"BTC": {"spacing_percentag": 0.6}}},
+                },
+            },
+        }
+        with pytest.raises(ValueError, match="grid.coins.BTC.spacing_percentag"):
+            resolve_config(raw, profile_name="btc-tight")
+
+    def test_typo_inside_list_of_submodels_raises(self) -> None:
+        """advisor.experts is list[ExpertConfig] — a typo inside a list
+        ITEM (not the list field name itself) must still be caught, since
+        deep_merge replaces the whole list wholesale (the moe-advisor /
+        cloud-only-moe example profiles use exactly this shape)."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "moe-typo": {
+                    "advisor": {
+                        "experts": [
+                            {
+                                "name": "quant",
+                                "provider": "ollama",
+                                "model": "qwen2.5:3b",
+                                "role": "quant",
+                                "prompt_file": "config/prompts/quant.md",
+                                "inference_params": {"temperture": 0.9},
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+        with pytest.raises(
+            ValueError, match=r"advisor\.experts\[0\]\.inference_params\.temperture"
+        ):
+            resolve_config(raw, profile_name="moe-typo")
+
+    def test_valid_list_of_submodels_does_not_raise(self) -> None:
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "moe-ok": {
+                    "advisor": {
+                        "experts": [
+                            {
+                                "name": "quant",
+                                "provider": "ollama",
+                                "model": "qwen2.5:3b",
+                                "role": "quant",
+                                "prompt_file": "config/prompts/quant.md",
+                                "inference_params": {"temperature": 0.9},
+                            }
+                        ]
+                    },
+                },
+            },
+        }
+        merged = resolve_config(raw, profile_name="moe-ok")
+        assert merged["advisor"]["experts"][0]["inference_params"]["temperature"] == 0.9
+
+    def test_rootmodel_backed_section_overlay_does_not_false_positive(self) -> None:
+        """schedules is a RootModel[dict[str, timedelta]] — its own keys
+        (schedule names) are free-form and must not be checked against
+        RootModel's internal 'root' field name, which would false-positive
+        on any legitimate per-profile schedule override."""
+        raw = {
+            "grid": {"default": {"spacing_percentage": 1.0}},
+            "profiles": {
+                "fast-news": {"schedules": {"news": "5m"}},
+            },
+        }
+        merged = resolve_config(raw, profile_name="fast-news")
+        assert merged["schedules"]["news"] == "5m"
+
+    def test_real_example_profiles_all_pass_the_guard(self) -> None:
+        """Every profile shipped in config/settings.example.yml must
+        validate cleanly — this is the regression net against the guard
+        itself false-positiving on legitimate profile content."""
+        repo_root = Path(__file__).resolve().parents[2]
+        example_path = repo_root / "config" / "settings.example.yml"
+        raw = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+        for name in raw.get("profiles", {}):
+            resolve_config(raw, profile_name=name)  # raises on any bad path

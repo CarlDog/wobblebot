@@ -26,21 +26,33 @@ calls for the same symbol serialize, while different symbols can
 proceed in parallel (per ADR-006 decision 5).
 
 Reconciliation against orders that exist on the exchange but not in
-storage (manual operator intervention, prior crash mid-placement) is
-deferred to a later slice along with the periodic-N-tick cadence
-described in ADR-006 decision 3.
+storage happens once at daemon startup (``services/reconciler.py``,
+ADR-018). A storage-only order recovered with a real fill (ADR-023 —
+the order left the open set while the daemon was down, either fully or
+partially filled before a cancel/expiry) is queued as a
+``pending_counters`` UUID at construction time; this engine places the
+matching counter-order on the first tick for that symbol, retrying on
+a later tick if placement is refused (never discarded — see
+:meth:`_place_pending_counters`).
 """
+
+# pylint: disable=too-many-lines
+# One cohesive per-symbol tick orchestrator (init, fill detection,
+# counters, safety caps, offside, re-layout, sell guard, spread guard);
+# splitting it would fragment a single control flow across files for
+# no organizational gain -- same posture as ports/storage.py's disable.
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
-from wobblebot.config.grid import CoinGridConfig, GridConfig
+from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, CoinGridConfig, GridConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.grid import (
@@ -52,9 +64,14 @@ from wobblebot.domain.grid import (
     next_counter_action,
 )
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cost_basis import SellGuard
+from wobblebot.services.reconciler import _resolve_terminal_order
+
+_PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
 
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
@@ -64,6 +81,15 @@ _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 # every 5s for ~7h straight. 240 ticks ≈ 20 min at the default 5s cadence.
 _OFFSIDE_SUMMARY_EVERY_TICKS = 240
 
+# v1.1 backlog "boot-time stale-anchor WARN": an anchor persisted this
+# long ago has ridden through enough market time that its reference
+# price may no longer reflect a sensible regime -- a WARNING (not just
+# INFO) when the auto-re-layout uses it, so the operator notices
+# without the engine refusing to trade or forcing a re-anchor itself
+# (that's the separate, not-yet-built P3 re-anchor command). Detection
+# only, per the backlog item's own framing.
+_STALE_ANCHOR_AGE = timedelta(hours=24)
+
 # Order statuses that represent committed funds for the
 # max_daily_spend_usd cap (Stage 8.4.E follow-up 2026-05-22): the
 # field's name says SPEND, so canceled / expired BUYs — which never
@@ -72,7 +98,9 @@ _OFFSIDE_SUMMARY_EVERY_TICKS = 240
 _SPEND_COMMITTED_STATUSES: frozenset[str] = frozenset({"open", "pending", "closed"})
 
 
-StepAction = Literal["initialized", "stepped", "skipped_disabled", "skipped_paused"]
+StepAction = Literal[
+    "initialized", "stepped", "skipped_disabled", "skipped_paused", "skipped_wide_spread"
+]
 
 
 @dataclass(frozen=True)
@@ -96,6 +124,14 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
       signal.
     - ``"skipped_disabled"`` — the per-coin config has ``enabled: false``;
       no exchange or storage interaction occurred.
+    - ``"skipped_wide_spread"`` (ADR-025) — the symbol's bid-ask spread
+      exceeded ``safety.max_spread_percentage``; no order placed or
+      cancelled this tick, storage untouched.
+
+    ``sells_deferred`` (ADR-032) counts SELL placements the cost-basis
+    sell guard deferred — deliberately separate from ``refusals``, whose
+    hard-cap meaning (``preflight``'s ``refusals != 0 -> exit 1``) must
+    stay reserved for the four exposure/spend caps.
     """
 
     symbol: Symbol
@@ -104,6 +140,7 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
     counters_placed: int = 0
     placed: int = 0
     refusals: int = 0
+    sells_deferred: int = 0
     offside: bool = False
     trade_ids: list[str] = field(default_factory=list)
 
@@ -125,17 +162,33 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
     is rebuilt fresh on each instance.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         exchange: ExchangePort,
         storage: StoragePort,
         grid_config: GridConfig,
         safety_config: SafetyConfig,
+        pending_counters: list[UUID] | None = None,
     ) -> None:
         self._exchange = exchange
         self._storage = storage
         self._config = grid_config
         self._safety = safety_config
+        # ADR-032 cost-basis sell guard. Constructed here (not injected)
+        # so every existing GridEngine(...) call site picks it up for
+        # free — the maker fee rate is the code-resident constant per
+        # the four-homes safety-carve-out (pricing/fees stay code), the
+        # tolerance is the one operator-tunable knob.
+        self._sell_guard = SellGuard(
+            storage,
+            max_loss_percentage=safety_config.sell_guard.max_loss_percentage,
+            maker_fee_rate=KRAKEN_MAKER_FEE_RATE,
+        )
+        # ADR-023: order UUIDs the startup reconciler recovered a real
+        # fill for (ReconciliationReport.needs_counter_order_ids). Each
+        # needs a counter-order placed; a failed placement stays here
+        # and retries next tick rather than being discarded (decision 4).
+        self._pending_counter_ids: set[UUID] = set(pending_counters or [])
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
         # pause is per-session — a cli/live restart resets it. Keeping it
@@ -149,6 +202,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # parked, once on recovery) instead of a WARNING every tick. Absent
         # / 0 means the symbol is onside.
         self._offside_ticks: dict[Symbol, int] = {}
+        # ADR-025: same transition + heartbeat pattern for consecutive
+        # wide-spread-skip ticks.
+        self._wide_spread_ticks: dict[Symbol, int] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -159,7 +215,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         return lock
 
     async def step(
-        self, symbol: Symbol, *, exchange_open_orders: list[Order] | None = None
+        self,
+        symbol: Symbol,
+        *,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
+        ticker: Ticker | None = None,
     ) -> StepResult:
         """Advance the engine by one tick for ``symbol``.
 
@@ -173,12 +234,35 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         which keeps multi-coin sessions under Kraken's private-API rate
         limit. When ``None`` (single-symbol callers / shadow / tests), fill
         detection fetches per-symbol as before.
+
+        ``exchange_trades``: an optional whole-account trade-history
+        snapshot the caller fetched once this tick (fleet-review #19
+        finding 8 follow-up), mirroring ``exchange_open_orders`` — a tick
+        where several symbols fill simultaneously would otherwise call
+        ``TradesHistory`` (now paginated, up to 20 pages) once per filling
+        symbol. When provided it is filtered to ``symbol`` instead of a
+        per-symbol exchange call. ``None`` falls back to a per-symbol
+        fetch (single-symbol callers / shadow / tests / a failed shared
+        fetch this tick).
+
+        ``ticker``: an optional pre-fetched :class:`Ticker` for
+        ``symbol`` (v1.1 backlog "per-tick price-fetch dedup") — when
+        provided, skips this method's own ``get_ticker`` call. Lets a
+        caller that also needs the price for something else this tick
+        (``cli/live``'s loss-cap mark-to-market check) fetch once and
+        thread it through instead of two uncached ``/0/public/Ticker``
+        GETs per held symbol. ``None`` falls back to fetching here
+        (single-symbol callers / shadow / tests).
         """
         async with self._lock_for(symbol):
-            return await self._step_unlocked(symbol, exchange_open_orders)
+            return await self._step_unlocked(symbol, exchange_open_orders, exchange_trades, ticker)
 
     async def _step_unlocked(
-        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+        self,
+        symbol: Symbol,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
+        ticker: Ticker | None = None,
     ) -> StepResult:
         coin_cfg = self._config.for_coin(symbol.base)
         if not coin_cfg.enabled:
@@ -186,13 +270,67 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if self.is_paused(symbol):
             return StepResult(symbol=symbol, action="skipped_paused")
 
-        current_price = (await self._exchange.get_current_price(symbol)).amount
+        # ADR-025: bid/ask ride the same market-data call the engine
+        # already made for the current price -- zero extra API cost.
+        if ticker is None:
+            ticker = await self._exchange.get_ticker(symbol)
+        current_price = ticker.last
+        if self._is_spread_too_wide(symbol, ticker):
+            return StepResult(symbol=symbol, action="skipped_wide_spread")
 
         grid_state = await self._storage.get_grid_state(symbol)
         if grid_state is None:
             return await self._initialize(symbol, current_price, coin_cfg)
 
-        return await self._tick(symbol, current_price, grid_state, coin_cfg, exchange_open_orders)
+        return await self._tick(
+            symbol, current_price, grid_state, coin_cfg, exchange_open_orders, exchange_trades
+        )
+
+    def _is_spread_too_wide(self, symbol: Symbol, ticker: Ticker) -> bool:
+        """ADR-025 pre-tick market-quality gate.
+
+        A market-quality signal, not a per-order safety-cap invariant —
+        gates the whole tick rather than a 5th ``_check_safety`` arm, so
+        no order is even attempted against a dislocated market. Uses
+        the same transition + heartbeat logging pattern as offside
+        (ADR-006): one WARNING on entry, a periodic INFO summary while
+        it persists, never a WARNING every tick.
+        """
+        max_spread = self._safety.max_spread_percentage
+        if max_spread is None or ticker.spread_percentage <= max_spread:
+            if self._wide_spread_ticks.pop(symbol, 0):
+                _LOGGER.info(
+                    "spread back to normal; resuming",
+                    extra={
+                        "symbol": str(symbol),
+                        "spread_percentage": str(ticker.spread_percentage),
+                    },
+                )
+            return False
+
+        consecutive = self._wide_spread_ticks.get(symbol, 0) + 1
+        self._wide_spread_ticks[symbol] = consecutive
+        if consecutive == 1:
+            _LOGGER.warning(
+                "spread too wide; skipping tick",
+                extra={
+                    "symbol": str(symbol),
+                    "spread_percentage": str(ticker.spread_percentage),
+                    "max_spread_percentage": str(max_spread),
+                    "bid": str(ticker.bid),
+                    "ask": str(ticker.ask),
+                },
+            )
+        elif consecutive % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
+            _LOGGER.info(
+                "still skipping ticks; spread remains wide",
+                extra={
+                    "symbol": str(symbol),
+                    "spread_percentage": str(ticker.spread_percentage),
+                    "consecutive_wide_spread_ticks": consecutive,
+                },
+            )
+        return True
 
     # ------------------------------------------------------------------ operator control (5.4)
 
@@ -262,15 +400,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             ``(cancelled, failed)`` counts.
+
+        Raises:
+            ExchangeError: If the open-order fetch itself fails. The cancel
+                set is then indeterminate, so the error propagates rather
+                than collapsing into ``(0, 0)`` — which an operator "cancel
+                all" would otherwise read as a false all-clear while orders
+                stay live on the exchange. (The per-order loop below still
+                logs-and-counts; the batch never aborts mid-way.)
         """
-        try:
-            opens = await self._exchange.get_open_orders(symbol=symbol)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            _LOGGER.warning(
-                "cancel_open_orders: get_open_orders failed",
-                extra={"symbol": str(symbol) if symbol else None, "error": str(exc)},
-            )
-            return (0, 0)
+        opens = await self._exchange.get_open_orders(symbol=symbol)
         cancelled = 0
         failed = 0
         for order in opens:
@@ -323,10 +462,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         placed = 0
         refusals = 0
+        sells_deferred = 0
         for level in levels:
-            placed_ok = await self._try_place(symbol, level, coin_cfg)
-            if placed_ok:
+            outcome = await self._try_place(symbol, level, coin_cfg)
+            if outcome == "placed":
                 placed += 1
+            elif outcome == "sell_deferred":
+                sells_deferred += 1
             else:
                 refusals += 1
         _LOGGER.info(
@@ -334,8 +476,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             extra={
                 "symbol": str(symbol),
                 "reference_price": str(state.reference_price),
+                "target_levels": len(levels),
                 "levels_placed": placed,
                 "refusals": refusals,
+                "sells_deferred": sells_deferred,
             },
         )
         return StepResult(
@@ -343,11 +487,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             action="initialized",
             placed=placed,
             refusals=refusals,
+            sells_deferred=sells_deferred,
         )
 
     # ------------------------------------------------------------------ subsequent ticks
 
-    async def _tick(  # pylint: disable=too-many-locals,too-many-branches,too-many-arguments,too-many-positional-arguments
+    async def _tick(  # pylint: disable=too-many-locals,too-many-branches,too-many-arguments,too-many-positional-arguments,too-many-statements
         # R0914 disable: every local here represents a distinct
         # tick-stage signal (levels, offside, fills, trade_ids,
         # counters_placed, refusals, spacing, target, counter_amount,
@@ -359,6 +504,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         state: GridState,
         coin_cfg: CoinGridConfig,
         exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
     ) -> StepResult:
         levels = compute_grid_levels(
             reference_price=state.reference_price,
@@ -368,12 +514,26 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         offside = is_offside(current_price, levels)
 
-        fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders)
+        fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders, exchange_trades)
         counters_placed = 0
         refusals = 0
         placed = 0
+        sells_deferred = 0
         if not offside:
             spacing = grid_spacing(state.reference_price, state.spacing_percentage)
+
+            # ADR-023: place any counters the startup reconciler queued
+            # for this symbol before anything else this tick, so the
+            # auto-re-layout guard below sees them as already-open and
+            # doesn't spuriously re-place the full grid on top.
+            if self._pending_counter_ids:
+                pc_placed, pc_refusals, pc_deferred = await self._place_pending_counters(
+                    symbol, spacing, coin_cfg
+                )
+                placed += pc_placed
+                refusals += pc_refusals
+                sells_deferred += pc_deferred
+
             for filled in fills:
                 target = next_counter_action(filled.side, filled.price.amount, spacing)
                 # Per ADR-006 decision 2 the counter is sized to the filled
@@ -384,9 +544,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 # cycle would slowly accumulate or shed inventory and
                 # bleed value through the spread.
                 counter_amount = Amount(value=filled.filled_amount, asset=filled.amount.asset)
-                placed_ok = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
-                if placed_ok:
+                outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+                if outcome == "placed":
                     counters_placed += 1
+                elif outcome == "sell_deferred":
+                    sells_deferred += 1
                 else:
                     refusals += 1
 
@@ -405,21 +567,59 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # placing counters.
             remaining_open = await self._storage.get_open_orders(symbol=symbol)
             if not remaining_open:
+                anchor_age = datetime.now(UTC) - state.created_at.dt
+                drift_percentage = (
+                    abs(current_price - state.reference_price) / state.reference_price
+                ) * Decimal("100")
+                log_extra = {
+                    "symbol": str(symbol),
+                    "reference_price": str(state.reference_price),
+                    "current_price": str(current_price),
+                    "level_count": len(levels),
+                    "anchor_age_hours": round(anchor_age.total_seconds() / 3600, 1),
+                    "drift_percentage": str(drift_percentage),
+                }
+                if anchor_age >= _STALE_ANCHOR_AGE:
+                    # Detect-only (per the backlog item): still re-lays out
+                    # normally. A stale anchor that still brackets price
+                    # passes silently otherwise -- the operator-initiated
+                    # re-anchor command (separate, not-yet-built P3 item)
+                    # is the fix flow this warning points at.
+                    _LOGGER.warning(
+                        "no open orders detected; re-laying out grid at a stale anchor",
+                        extra=log_extra,
+                    )
+                else:
+                    _LOGGER.info(
+                        "no open orders detected; re-laying out grid at existing anchor",
+                        extra=log_extra,
+                    )
+                relayout_placed = relayout_refusals = relayout_deferred = 0
+                for level in levels:
+                    outcome = await self._try_place(symbol, level, coin_cfg)
+                    if outcome == "placed":
+                        relayout_placed += 1
+                    elif outcome == "sell_deferred":
+                        relayout_deferred += 1
+                    else:
+                        relayout_refusals += 1
+                placed += relayout_placed
+                refusals += relayout_refusals
+                sells_deferred += relayout_deferred
+                # v1.1 backlog "partial-grid placement WARN -> INFO": the
+                # placed-vs-target summary an operator should look at,
+                # now that per-level insufficient-balance refusals log
+                # at DEBUG instead of WARN (see _try_place).
                 _LOGGER.info(
-                    "no open orders detected; re-laying out grid at existing anchor",
+                    "grid re-layout complete",
                     extra={
                         "symbol": str(symbol),
-                        "reference_price": str(state.reference_price),
-                        "current_price": str(current_price),
-                        "level_count": len(levels),
+                        "target_levels": len(levels),
+                        "levels_placed": relayout_placed,
+                        "refusals": relayout_refusals,
+                        "sells_deferred": relayout_deferred,
                     },
                 )
-                for level in levels:
-                    placed_ok = await self._try_place(symbol, level, coin_cfg)
-                    if placed_ok:
-                        placed += 1
-                    else:
-                        refusals += 1
         elif fills:
             _LOGGER.warning(
                 "fills detected while offside; counters suppressed",
@@ -469,20 +669,63 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             counters_placed=counters_placed,
             placed=placed,
             refusals=refusals,
+            sells_deferred=sells_deferred,
             offside=offside,
             trade_ids=trade_ids,
         )
 
+    async def _place_pending_counters(
+        self, symbol: Symbol, spacing: Decimal, coin_cfg: CoinGridConfig
+    ) -> tuple[int, int, int]:
+        """Place counter-orders queued by startup reconciliation (ADR-023).
+
+        Each pending UUID names a storage order the reconciler recovered
+        a real fill for (fully or partially, before a cancel/expiry) while
+        this daemon was down. Orders for a *different* symbol are left
+        untouched — they'll place on that symbol's own tick. A placement
+        that's refused or sell-guard-deferred stays in the pending set and
+        retries next tick (decision 4: discarding it would let the
+        auto-re-layout guard re-place a full grid with no counter,
+        reproducing the very orphan this recovers).
+
+        Returns ``(placed, refusals, sells_deferred)``.
+        """
+        placed = refusals = sells_deferred = 0
+        for order_id in list(self._pending_counter_ids):
+            order = await self._storage.get_order(order_id)
+            if order is None:
+                _LOGGER.error(
+                    "pending recovery counter references a missing storage order; dropping",
+                    extra={"order_id": str(order_id)},
+                )
+                self._pending_counter_ids.discard(order_id)
+                continue
+            if order.symbol != symbol:
+                continue
+            target = next_counter_action(order.side, order.price.amount, spacing)
+            counter_amount = Amount(value=order.filled_amount, asset=order.amount.asset)
+            outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+            if outcome == "placed":
+                placed += 1
+                self._pending_counter_ids.discard(order_id)
+            elif outcome == "sell_deferred":
+                sells_deferred += 1
+            else:
+                refusals += 1
+        return placed, refusals, sells_deferred
+
     # ------------------------------------------------------------------ helpers
 
-    async def _detect_fills(
-        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
-    ) -> tuple[list[Order], list[str]]:
-        """Diff storage's open set against the exchange's; record fills.
+    async def _fill_candidates(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None
+    ) -> list[Order]:
+        """Storage-open orders no longer confirmed live on the exchange.
 
-        Returns ``(filled_orders, saved_trade_ids)`` — the orders that
-        transitioned out of the open set this tick (status refreshed
-        from the exchange) and the trade IDs persisted as a result.
+        Pure diff (one storage read +, absent a shared snapshot, one
+        exchange read) — no trade-history call. Split out from
+        ``_detect_fills`` so ``has_pending_fill_candidates`` can answer
+        "does this symbol need trade history this tick" without a
+        network round-trip to ``TradesHistory``.
 
         ``exchange_open_orders``: when provided (a whole-account snapshot
         the caller fetched once this tick), it is filtered to ``symbol``
@@ -499,14 +742,65 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         else:
             exchange_open = [o for o in exchange_open_orders if o.symbol == symbol]
         live_ids = {o.exchange_id for o in exchange_open if o.exchange_id}
+        return [o for o in stored_open if o.exchange_id and o.exchange_id not in live_ids]
 
-        candidates = [o for o in stored_open if o.exchange_id and o.exchange_id not in live_ids]
+    async def has_pending_fill_candidates(
+        self, symbol: Symbol, exchange_open_orders: list[Order] | None = None
+    ) -> bool:
+        """``True`` if ``symbol`` has a storage-open order not confirmed
+        live on the exchange — i.e. this tick will need trade history to
+        resolve a possible fill.
+
+        Callers juggling several symbols in one tick (``cli/live``) use
+        this to decide, before running any symbol's ``step``, whether a
+        single shared ``TradesHistory`` fetch is worth making this tick —
+        mirroring the ``exchange_open_orders`` consolidation so a tick
+        with several simultaneous fills doesn't call ``TradesHistory``
+        (now paginated, up to 20 pages) once per filling symbol
+        (fleet-review #19 finding 8 follow-up).
+        """
+        candidates = await self._fill_candidates(symbol, exchange_open_orders)
+        return bool(candidates)
+
+    async def _detect_fills(
+        self,
+        symbol: Symbol,
+        exchange_open_orders: list[Order] | None = None,
+        exchange_trades: list[Trade] | None = None,
+    ) -> tuple[list[Order], list[str]]:
+        """Diff storage's open set against the exchange's; record fills.
+
+        Returns ``(filled_orders, saved_trade_ids)`` — the orders that
+        transitioned out of the open set this tick (status refreshed
+        from the exchange) and the trade IDs persisted as a result.
+
+        ``exchange_open_orders``: see :meth:`_fill_candidates`.
+
+        ``exchange_trades``: when provided (a whole-account trade-history
+        snapshot the caller fetched once this tick), it is filtered to
+        ``symbol`` instead of issuing a per-symbol ``TradesHistory`` call.
+        ``None`` falls back to a per-symbol fetch (single-symbol callers /
+        shadow / tests / a failed shared fetch this tick).
+
+        Each candidate is resolved via the shared
+        ``services.reconciler._resolve_terminal_order`` (ADR-023): an
+        order with ``filled_amount > 0`` is treated as filled whether it
+        refreshed to ``closed`` (full fill) or ``canceled``/``expired``
+        (a partial fill before the cancel/expiry, the "F1" case a plain
+        ``status == "closed"`` check used to silently drop). A clean
+        cancel/expire (``filled_amount == 0``) is saved with its real
+        status but produces no trade and no counter.
+        """
+        candidates = await self._fill_candidates(symbol, exchange_open_orders)
         if not candidates:
             return [], []
 
         # Fetch trade history once and index by exchange_id; cheaper than
         # one round-trip per fill, and sufficient for Stage 2.2 volumes.
-        recent_trades = await self._exchange.get_trade_history(symbol=symbol, limit=200)
+        if exchange_trades is None:
+            recent_trades = await self._exchange.get_trade_history(symbol=symbol, limit=200)
+        else:
+            recent_trades = [t for t in exchange_trades if t.symbol == symbol]
         trades_by_order: dict[str, list[Trade]] = {}
         for trade in recent_trades:
             trades_by_order.setdefault(trade.order_id, []).append(trade)
@@ -514,21 +808,27 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         filled: list[Order] = []
         saved_trade_ids: list[str] = []
         for candidate in candidates:
-            refreshed = await self._exchange.get_order_status(candidate)
-            await self._storage.save_order(refreshed)
-            if refreshed.status == "closed" and refreshed.exchange_id is not None:
-                filled.append(refreshed)
-                for trade in trades_by_order.get(refreshed.exchange_id, []):
+            resolution = await _resolve_terminal_order(self._exchange, candidate, trades_by_order)
+            await self._storage.save_order(resolution.order)
+            if resolution.needs_counter:
+                filled.append(resolution.order)
+                for trade in resolution.trades:
                     await self._storage.save_trade(trade)
                     saved_trade_ids.append(trade.id)
+                if resolution.trades:
+                    # ADR-032: a newly-saved trade changes this symbol's
+                    # cost basis, so the sell guard must not reuse a
+                    # cache computed before it.
+                    self._sell_guard.invalidate(symbol)
                 _LOGGER.info(
                     "grid fill",
                     extra={
                         "symbol": str(symbol),
-                        "side": refreshed.side.value,
-                        "price": str(refreshed.price.amount),
-                        "amount": str(refreshed.amount.value),
-                        "exchange_id": refreshed.exchange_id,
+                        "side": resolution.order.side.value,
+                        "price": str(resolution.order.price.amount),
+                        "amount": str(resolution.order.filled_amount),
+                        "exchange_id": resolution.order.exchange_id,
+                        "terminal_status": resolution.order.status,
                     },
                 )
         return filled, saved_trade_ids
@@ -539,23 +839,31 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         level: GridLevel,
         coin_cfg: CoinGridConfig,
         amount: Amount | None = None,
-    ) -> bool:
-        """Run safety checks then place. Returns True if placed, False if
-        refused. Refusals are logged and never raise.
+    ) -> _PlaceOutcome:
+        """Run safety checks then place. Refusals/deferrals are logged
+        and never raise.
 
         ``amount`` overrides the default USD-budget-derived sizing — used
         for counter orders, which must match the filled order's base
         amount (ADR-006 decision 2).
 
-        Two refusal paths, both treated identically (log + return False):
-        - **Internal safety cap.** ``_check_safety`` returns ok=False.
-        - **Exchange-side refusal.** ``InsufficientBalance`` from the
-          adapter (Kraken returns ``EOrder:Insufficient funds``). This
-          happens routinely on the SELL side when the account doesn't
-          hold the base asset yet — common during initial layout
-          before any cycles have run. Treating it as a refusal lets the
-          BUY side still place; once a BUY fills and produces base
-          inventory, subsequent SELL counters at that level will succeed.
+        Three non-placed outcomes:
+        - ``"refused"`` — an internal safety cap (``_check_safety``
+          returns ok=False), an exchange-side ``InsufficientBalance``
+          (Kraken's ``EOrder:Insufficient funds``, routine on the SELL
+          side before any cycle has produced base inventory), or a
+          generic ``ExchangeError`` -- notably Kraken's client-side
+          ``ordermin``/``costmin`` rejection (a fixed ``order_size_usd``
+          ÷ a risen price can slide the computed volume under a pair's
+          fixed-quantity minimum, e.g. DOGE's 50-unit ordermin at low
+          prices). Before this was caught here it propagated out of
+          ``_try_place`` uncaught, aborting every remaining level in
+          the same layout/re-layout loop instead of just the one
+          doomed order.
+        - ``"sell_deferred"`` (ADR-032) — the cost-basis sell guard
+          deferred a SELL priced enough below the symbol's average cost
+          to realize a loss beyond tolerance. Deliberately distinct from
+          a refusal: it never counts toward a hard-cap exit code.
 
         Storage is fully up-to-date between successive ``_try_place``
         calls within one ``step`` (the per-symbol lock prevents
@@ -575,11 +883,27 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "reason": decision.reason,
                 },
             )
-            return False
+            return "refused"
+
+        if level.side is OrderSide.SELL and self._safety.sell_guard.enabled:
+            assessment = await self._sell_guard.assess(symbol, level.price)
+            if not assessment.allowed:
+                return "sell_deferred"
+
         try:
             await self._place_level(symbol, level, coin_cfg, amount=amount)
         except InsufficientBalance as exc:
-            _LOGGER.warning(
+            # v1.1 backlog "partial-grid placement WARN -> INFO": a
+            # per-level insufficient-balance refusal is routine, not a
+            # genuine problem -- expected on the SELL side before a
+            # cycle has produced base inventory, and on the BUY side
+            # whenever the account can't fund the full configured
+            # layout. DEBUG here; the placed-vs-target INFO summary
+            # (_initialize / the auto-re-layout branch below) is where
+            # an operator should look. Reserve WARN for the safety-cap
+            # and generic-exchange-error refusals below, which mean
+            # something is actually wrong.
+            _LOGGER.debug(
                 "order refused by exchange: insufficient balance",
                 extra={
                     "symbol": str(symbol),
@@ -590,8 +914,23 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "available": str(exc.available),
                 },
             )
-            return False
-        return True
+            return "refused"
+        except ExchangeError as exc:
+            # Kraken's client-side ordermin/costmin rejection (and any
+            # other exchange-side refusal) lands here -- must not
+            # propagate, or it aborts every remaining level in the same
+            # layout/re-layout loop instead of skipping just this one.
+            _LOGGER.warning(
+                "order refused by exchange",
+                extra={
+                    "symbol": str(symbol),
+                    "side": level.side.value,
+                    "price": str(level.price),
+                    "error": str(exc),
+                },
+            )
+            return "refused"
+        return "placed"
 
     async def _place_level(
         self,

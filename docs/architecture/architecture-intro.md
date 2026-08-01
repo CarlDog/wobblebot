@@ -46,7 +46,7 @@ WobbleBot consists of the following domains:
 - **Data Collector** – service layer for market data aggregation, caching, and metrics
 - **Kraken Adapter** – all exchange communication (implements ExchangePort)
 - **Strategy Advisor (LLM)** – suggestion generation (implements AdvisorPort)
-- **Harvester Module** – fund inflow/outflow management (implements HarvesterPort)
+- **Harvester Module** – fund inflow/outflow management (a service; withdraws via ExchangePort per ADR-004)
 - **Orchestrator** – central command, coordination, and safety gate-keeping
 - **Storage** – SQLite database + structured logs (implements StoragePort)
 - **Dashboard/Observability** – Grafana or custom UI (future)

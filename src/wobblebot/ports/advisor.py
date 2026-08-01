@@ -146,6 +146,17 @@ class AdvisorRecommendation(BaseModel):
             from each expert (role=``"quant"``/``"risk"``/``"news"``)
             that fed the aggregator. Preserves the per-expert audit
             trail required by ADR-007 without a side-channel API.
+        news_materially_drove: ADR-007 amendment (structural news
+            firewall). ``False`` outside MoE and for non-``"aggregated"``
+            roles. For an ``"aggregated"`` recommendation,
+            ``MoEAdvisorAdapter`` sets this from ``expert_opinions``:
+            ``True`` when a news opinion is the closer match to at
+            least one key's final reconciled value than any non-news
+            expert's opinion (or the sole source for that key). The
+            Stage 3.4b auto-apply gate blocks an aggregated suggestion
+            so flagged, closing the gap where news could otherwise
+            drive an auto-applied change via the arbitrator's
+            reconciliation rather than a raw ``role == "news"`` tag.
     """
 
     recommendation_id: str = Field(min_length=1)
@@ -155,6 +166,7 @@ class AdvisorRecommendation(BaseModel):
     rationale: str = Field(min_length=1)
     confidence: ConfidenceLevel
     expert_opinions: list[AdvisorRecommendation] = Field(default_factory=list)
+    news_materially_drove: bool = False
 
     class Config:
         frozen = True

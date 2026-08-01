@@ -84,6 +84,39 @@ class TestPriceAndBalances:
         assert sorted(b.asset for b in balances) == ["BTC", "USD"]
 
 
+class TestGetTicker:
+    """ADR-025 pre-placement spread guard test control."""
+
+    async def test_requires_seeded_price(self) -> None:
+        exch = MockExchangeAdapter()
+        with pytest.raises(ExchangeError, match="No market price"):
+            await exch.get_ticker(BTC_USD)
+
+    async def test_default_spread_is_tight(self) -> None:
+        exch = MockExchangeAdapter(starting_prices={BTC_USD: Decimal("50000")})
+        ticker = await exch.get_ticker(BTC_USD)
+        assert ticker.last == Decimal("50000")
+        assert ticker.bid < ticker.last < ticker.ask
+        assert ticker.spread_percentage < Decimal("1.0")
+
+    async def test_set_spread_overrides_default(self) -> None:
+        exch = MockExchangeAdapter(starting_prices={BTC_USD: Decimal("50000")})
+        exch.set_spread(BTC_USD, Decimal("5.0"))
+        ticker = await exch.get_ticker(BTC_USD)
+        assert abs(ticker.spread_percentage - Decimal("5.0")) < Decimal("0.001")
+
+    async def test_set_spread_is_per_symbol(self) -> None:
+        eth_usd = Symbol(base="ETH", quote="USD")
+        exch = MockExchangeAdapter(
+            starting_prices={BTC_USD: Decimal("50000"), eth_usd: Decimal("3000")}
+        )
+        exch.set_spread(BTC_USD, Decimal("5.0"))
+        btc_ticker = await exch.get_ticker(BTC_USD)
+        eth_ticker = await exch.get_ticker(eth_usd)
+        assert abs(btc_ticker.spread_percentage - Decimal("5.0")) < Decimal("0.001")
+        assert eth_ticker.spread_percentage < Decimal("1.0")
+
+
 class TestOrderPlacement:
     async def test_buy_requires_quote_balance(self) -> None:
         exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10")})
@@ -247,6 +280,51 @@ class TestOrderManagement:
         exch = MockExchangeAdapter()
         with pytest.raises(ValueError, match=">= 0"):
             await exch.set_dead_mans_switch(-5)
+
+
+class TestInjectPartialCancel:
+    """ADR-023 test control: state the mock's normal full-fill-on-cross
+    matching can't produce (a canceled order carrying a nonzero
+    filled_amount)."""
+
+    async def test_partial_fill_removes_from_open_and_records_trade(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000"))  # doesn't cross, stays open
+
+        trade = exch.inject_partial_cancel(order, filled_amount=Decimal("0.04"))
+
+        assert trade is not None
+        assert trade.amount.value == Decimal("0.04")
+        assert trade.order_id == order.exchange_id
+        assert await exch.get_open_orders() == []
+
+    async def test_get_order_status_reports_canceled_with_fill(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000", amount="0.1"))
+        exch.inject_partial_cancel(order, filled_amount=Decimal("0.04"))
+
+        refreshed = await exch.get_order_status(order)
+
+        assert refreshed.status == "canceled"
+        assert refreshed.filled_amount == Decimal("0.04")
+
+    async def test_zero_fill_is_a_clean_cancel_no_trade(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={"USD": Decimal("10000")})
+        order = await exch.place_order(_buy_order(price="49000"))
+
+        trade = exch.inject_partial_cancel(order, filled_amount=Decimal("0"))
+
+        assert trade is None
+        refreshed = await exch.get_order_status(order)
+        assert refreshed.status == "canceled"
+        assert refreshed.filled_amount == Decimal("0")
+        assert await exch.get_trade_history() == []
+
+    async def test_no_exchange_id_raises(self) -> None:
+        exch = MockExchangeAdapter()
+        unsubmitted = _buy_order()
+        with pytest.raises(ExchangeError, match="no exchange_id"):
+            exch.inject_partial_cancel(unsubmitted, filled_amount=Decimal("0.01"))
 
 
 class TestWithdraw:

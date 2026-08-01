@@ -18,6 +18,7 @@ when ``advise_storage`` is ``None``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Request
@@ -43,13 +44,66 @@ _ADVISOR_QUERY_LIMIT = 1000
 
 
 @dataclass(frozen=True)
+class AdvisorRow:
+    """A suggestion plus the display-only flags the template can't derive.
+
+    ``below_floor`` is True when the suggestion proposes a
+    ``spacing_percentage`` strictly tighter than the
+    ``current_grid.spacing_percentage`` recorded in its ``input_summary``
+    (what the advisor was looking at). The auto-apply floor
+    (``services/auto_apply.py``, ADR-022) rejects exactly those, so they
+    can never land — but the raw recommendation is kept and shown
+    (de-emphasised) so per-suggestion accuracy stays trackable.
+    """
+
+    suggestion: AdvisorSuggestion
+    below_floor: bool
+    proposed_spacing: float | None
+    current_spacing: float | None
+
+
+@dataclass(frozen=True)
 class AdvisorSnapshot:
     """Everything the advisor template needs in one bundle."""
 
     wired: bool
-    suggestions: tuple[AdvisorSuggestion, ...]
+    rows: tuple[AdvisorRow, ...]
     total: int = 0
     error: str | None = None
+
+
+def _as_float(value: object) -> float | None:
+    """Coerce a JSON-ish numeric to float; None on bool / non-numeric / non-finite.
+
+    NaN/Infinity rejection is load-bearing here too (same class of bug as
+    ``services/auto_apply._coerce_numeric``): ``json.loads`` accepts bare
+    ``NaN``/``Infinity`` tokens, and ``float("nan")`` is a valid,
+    non-raising float. Left unchecked, a garbled LLM recommendation would
+    render as "nan%"/"inf%" in the template — and since NaN comparisons
+    always return False, ``below_floor`` in ``_to_row`` would silently
+    read False for exactly the value most worth flagging as suspect.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        coerced = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return coerced if math.isfinite(coerced) else None
+
+
+def _to_row(suggestion: AdvisorSuggestion) -> AdvisorRow:
+    """Wrap a suggestion with the sub-floor display flag (see AdvisorRow)."""
+    proposed = _as_float(suggestion.recommendation.recommendations.get("spacing_percentage"))
+    grid = suggestion.input_summary.get("current_grid")
+    current = _as_float(grid.get("spacing_percentage")) if isinstance(grid, dict) else None
+    below = proposed is not None and current is not None and proposed < current
+    return AdvisorRow(
+        suggestion=suggestion,
+        below_floor=below,
+        proposed_spacing=proposed,
+        current_spacing=current,
+    )
 
 
 async def _load_snapshot(
@@ -57,19 +111,19 @@ async def _load_snapshot(
 ) -> AdvisorSnapshot:
     """Pull recent advisor_suggestions; degrade gracefully on failure."""
     if advise_storage is None:
-        return AdvisorSnapshot(wired=False, suggestions=())
+        return AdvisorSnapshot(wired=False, rows=())
     try:
-        rows = await advise_storage.get_advisor_suggestions(limit=_ADVISOR_QUERY_LIMIT)
+        suggestions = await advise_storage.get_advisor_suggestions(limit=_ADVISOR_QUERY_LIMIT)
     except StorageError as exc:
         return AdvisorSnapshot(
             wired=True,
-            suggestions=(),
+            rows=(),
             error=f"failed to query advisor_suggestions: {exc}",
         )
     return AdvisorSnapshot(
         wired=True,
-        suggestions=tuple(rows[:_ADVISOR_DISPLAY_LIMIT]),
-        total=len(rows),
+        rows=tuple(_to_row(s) for s in suggestions[:_ADVISOR_DISPLAY_LIMIT]),
+        total=len(suggestions),
     )
 
 
@@ -94,4 +148,4 @@ async def advisor_page(
     )
 
 
-__all__ = ("router", "AdvisorSnapshot")
+__all__ = ("router", "AdvisorSnapshot", "AdvisorRow")
