@@ -483,6 +483,80 @@ class TestStatusQuery:
         assert status.session_pnl > 0.04
         assert status.session_pnl < 0.06
 
+    async def test_busy_day_does_not_truncate_an_early_cycle(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        """v1.1 fix: ``get_trades(limit=100)`` silently dropped a cycle's
+        BUY+SELL if 100+ MORE RECENT trades existed the same day (a
+        plausible multi-coin trading day) -- the oldest legs truncate
+        out of a newest-first fetch and PnL undercounts with no error.
+        Seeds a real BTC cycle early today, then 150 later filler
+        trades on a second symbol; the early cycle's PnL must still be
+        counted with the fixed (much higher) fetch limit.
+        """
+        from uuid import uuid4
+
+        from wobblebot.domain.models import Trade
+        from wobblebot.domain.value_objects import Amount, Price
+
+        now = datetime.now(UTC)
+        today_at = now.replace(minute=0, second=0, microsecond=0)
+
+        # The real cycle: BUY then SELL, both early today.
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="buy",
+                price=Price(amount=Decimal("76000"), currency="USD"),
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("9.956"),
+                executed_at=Timestamp(dt=today_at.replace(hour=1, minute=0)),
+            )
+        )
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4().hex[:8]}",
+                order_id=f"O-{uuid4().hex[:8]}",
+                symbol=BTC_USD,
+                side="sell",
+                price=Price(amount=Decimal("76760"), currency="USD"),
+                amount=Amount(value=Decimal("0.000131"), asset="BTC"),
+                fee=Decimal("0.025"),
+                cost=Decimal("10.055"),
+                executed_at=Timestamp(dt=today_at.replace(hour=1, minute=30)),
+            )
+        )
+        # 150 later filler trades (a busy multi-coin day), all AFTER the
+        # real cycle -- a `limit=100` newest-first fetch would push the
+        # real cycle's two trades entirely out of the window.
+        for i in range(150):
+            await storage.save_trade(
+                Trade(
+                    id=f"T-filler-{i}",
+                    order_id=f"O-filler-{i}",
+                    symbol=ETH_USD,
+                    side="buy",
+                    price=Price(amount=Decimal("3000"), currency="USD"),
+                    amount=Amount(value=Decimal("0.01"), asset="ETH"),
+                    fee=Decimal("0.01"),
+                    cost=Decimal("30"),
+                    executed_at=Timestamp(
+                        dt=today_at.replace(hour=2, minute=0) + timedelta(minutes=i)
+                    ),
+                )
+            )
+
+        svc = await _service(storage, exchange_with_btc_and_eth)
+        status = await svc.answer_query(StatusQuery())
+        # Same cycle as the test above: net PnL ~= 0.04956.
+        assert status.session_pnl > 0.04
+        assert status.session_pnl < 0.06
+
 
 class TestOpenOrdersQuery:
     async def test_open_orders_for_symbol(

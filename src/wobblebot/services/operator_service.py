@@ -171,6 +171,14 @@ _HELP_ENTRIES: tuple[HelpEntry, ...] = (
 )
 
 
+# Trade-fetch limit for _fetch_today_realized_pnl. Mirrors
+# web/routes/status.py's _TRADE_FETCH_LIMIT / cost.py's fee rollup —
+# high enough that truncation is a non-issue at this bot's volume, and
+# wide enough for match_cycles to correctly pair a cross-midnight cycle
+# (v1.1 fix; was limit=100, which a busy multi-coin day could exceed).
+_TODAY_PNL_TRADE_FETCH_LIMIT = 10_000
+
+
 class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attributes
     """Concrete ``OperatorPort`` wired to ``GridEngine`` + storage.
 
@@ -882,9 +890,18 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         — the Discord bot has no operator-tz context the way the web UI
         does (web UI threads ``prefs.timezone`` from the auth session;
         Discord has no equivalent user-preference layer in v1).
+
+        v1.1 fix: was ``get_trades(limit=100)`` — a multi-coin day can
+        plausibly exceed 100 trades, silently truncating the oldest
+        legs of today's activity and undercounting PnL with no error.
+        Matches ``web/routes/status.py``'s ``_TRADE_FETCH_LIMIT`` /
+        ``cost.py``'s fee rollup: a high limit, not a small row count,
+        so ``match_cycles`` also has enough history to correctly pair a
+        cycle whose BUY fired yesterday but whose SELL fired today
+        (``today_realized_pnl``'s documented cross-midnight case).
         """
         try:
-            trades = await self._storage.get_trades(limit=100)
+            trades = await self._storage.get_trades(limit=_TODAY_PNL_TRADE_FETCH_LIMIT)
         except StorageError as exc:
             raise OperatorError(f"Failed to read recent trades for PnL: {exc}") from exc
         if not trades:
