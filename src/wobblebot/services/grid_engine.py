@@ -36,6 +36,12 @@ a later tick if placement is refused (never discarded — see
 :meth:`_place_pending_counters`).
 """
 
+# pylint: disable=too-many-lines
+# One cohesive per-symbol tick orchestrator (init, fill detection,
+# counters, safety caps, offside, re-layout, sell guard, spread guard);
+# splitting it would fragment a single control flow across files for
+# no organizational gain -- same posture as ports/storage.py's disable.
+
 from __future__ import annotations
 
 import asyncio
@@ -470,6 +476,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             extra={
                 "symbol": str(symbol),
                 "reference_price": str(state.reference_price),
+                "target_levels": len(levels),
                 "levels_placed": placed,
                 "refusals": refusals,
                 "sells_deferred": sells_deferred,
@@ -587,14 +594,32 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                         "no open orders detected; re-laying out grid at existing anchor",
                         extra=log_extra,
                     )
+                relayout_placed = relayout_refusals = relayout_deferred = 0
                 for level in levels:
                     outcome = await self._try_place(symbol, level, coin_cfg)
                     if outcome == "placed":
-                        placed += 1
+                        relayout_placed += 1
                     elif outcome == "sell_deferred":
-                        sells_deferred += 1
+                        relayout_deferred += 1
                     else:
-                        refusals += 1
+                        relayout_refusals += 1
+                placed += relayout_placed
+                refusals += relayout_refusals
+                sells_deferred += relayout_deferred
+                # v1.1 backlog "partial-grid placement WARN -> INFO": the
+                # placed-vs-target summary an operator should look at,
+                # now that per-level insufficient-balance refusals log
+                # at DEBUG instead of WARN (see _try_place).
+                _LOGGER.info(
+                    "grid re-layout complete",
+                    extra={
+                        "symbol": str(symbol),
+                        "target_levels": len(levels),
+                        "levels_placed": relayout_placed,
+                        "refusals": relayout_refusals,
+                        "sells_deferred": relayout_deferred,
+                    },
+                )
         elif fills:
             _LOGGER.warning(
                 "fills detected while offside; counters suppressed",
@@ -868,7 +893,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         try:
             await self._place_level(symbol, level, coin_cfg, amount=amount)
         except InsufficientBalance as exc:
-            _LOGGER.warning(
+            # v1.1 backlog "partial-grid placement WARN -> INFO": a
+            # per-level insufficient-balance refusal is routine, not a
+            # genuine problem -- expected on the SELL side before a
+            # cycle has produced base inventory, and on the BUY side
+            # whenever the account can't fund the full configured
+            # layout. DEBUG here; the placed-vs-target INFO summary
+            # (_initialize / the auto-re-layout branch below) is where
+            # an operator should look. Reserve WARN for the safety-cap
+            # and generic-exchange-error refusals below, which mean
+            # something is actually wrong.
+            _LOGGER.debug(
                 "order refused by exchange: insufficient balance",
                 extra={
                     "symbol": str(symbol),

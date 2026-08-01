@@ -548,6 +548,96 @@ class TestAutoReLayout:
         assert len(await storage.get_open_orders(symbol=BTC_USD)) == 0
 
 
+class TestPartialGridPlacementLogging:
+    """v1.1 backlog 'partial-grid placement WARN -> INFO': a per-level
+    insufficient-balance refusal is routine (a flat-start account, or an
+    account too small to fund the full layout), not a genuine problem.
+    It must log at DEBUG, not WARNING, and each placement batch must
+    emit a placed-vs-target INFO summary an operator can actually use."""
+
+    async def test_insufficient_balance_refusal_does_not_warn(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # USD-only balance -- every SELL in the layout raises
+        # InsufficientBalance (same fixture as
+        # test_insufficient_base_for_sell_treated_as_refusal).
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+
+        assert result.placed == 3
+        assert result.refusals == 3
+        assert not any("insufficient balance" in r.getMessage() for r in caplog.records)
+
+    async def test_insufficient_balance_refusal_still_logs_at_debug(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Demoted, not deleted -- still traceable with DEBUG enabled."""
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        with caplog.at_level(logging.DEBUG, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+
+        debug_refusals = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.DEBUG and "insufficient balance" in r.getMessage()
+        ]
+        assert len(debug_refusals) == 3
+
+    async def test_initialize_summary_reports_placed_vs_target(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+
+        summaries = [r for r in caplog.records if r.getMessage() == "grid initialized"]
+        assert len(summaries) == 1
+        assert summaries[0].target_levels == 6  # 3 above + 3 below
+        assert summaries[0].levels_placed == 3
+        assert summaries[0].refusals == 3
+
+    async def test_relayout_summary_reports_placed_vs_target(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The auto-re-layout branch had NO completion summary before this
+        fix -- only the per-level WARNING gave any visibility. Now that
+        the per-level log is DEBUG, the summary is the only signal, so
+        it must exist and report accurately."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize -> 6 orders
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            await exchange.cancel_order(order)
+            await storage.save_order(order.model_copy(update={"status": "canceled"}))
+
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+
+        assert result.action == "stepped"
+        assert result.placed == 6
+        summaries = [r for r in caplog.records if r.getMessage() == "grid re-layout complete"]
+        assert len(summaries) == 1
+        assert summaries[0].target_levels == 6
+        assert summaries[0].levels_placed == 6
+        assert summaries[0].refusals == 0
+
+
 # ---------------------------------------------------------------------------
 # Per-symbol concurrency
 # ---------------------------------------------------------------------------
