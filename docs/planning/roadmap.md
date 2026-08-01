@@ -306,6 +306,66 @@ the detail; the full backlog index is
    loss) — the failure the `finally`-block cancel can't cover (2026-05-19 outage). **ADR-021**.
    Real-money cost $0.00. See [`docs/release/v1.1/engine.md`](../release/v1.1/engine.md).
 
+2. **P1 — Safety-hardening + ready-now backlog** ✅ **COMPLETE 2026-07-31 → 2026-08-01**
+   (`docs/release/v1.1/README.md`'s P1 table). One focused commit per item, full gate
+   (pytest/mypy/pylint 10.00/black/isort) green before each; 2582 tests passing by the end
+   (was 2369 at the `v1.0.0`-tag-adjacent checkpoint). Real-money cost **$0.00** — pure
+   code/test work, no live trading. Sequential engine-safety items (each its own ADR +
+   test-for-the-bug):
+   - **ADR-032** — cost-basis sell guard; retires the dead `EmergencyStopConfig` (`f96eb34`).
+   - **ADR-023** — unified terminal-order resolution (fill-vs-cancel + the F1 live
+     partial-fill Trade-drop), one `_resolve_terminal_order` shared by the startup
+     reconciler and the live `_detect_fills` gate (`3ba7e9f`).
+   - **ADR-024** — session-loss-cap cool-down period, new `cap_trips` table (`b9cf5a1`).
+   - **ADR-025** — pre-placement slippage/spread guard via a new `get_ticker` port method
+     (`12a2bc5`); a same-day follow-up caught exchange-side placement errors aborting a
+     whole tick instead of skipping the one order (`242fbf0`).
+   - Dead-man's-switch arm confirmation — logs Kraken's `triggerTime` instead of discarding
+     the response (`b42cf74`).
+   - Boot-time stale-anchor WARN on restart re-layout (`617a7bb`).
+   - Per-tick price-fetch dedup — one fetch threaded through, not two (`a4979c1`).
+   - **ADR-027** — Kraken rate-limit backoff + inter-cancel pacing (`1b9e9b9`).
+   - Partial-grid placement: insufficient-balance WARN demoted to DEBUG (`e05a931`).
+   - Engine ordermin-awareness — **containment half only**: an uncaught exchange-side
+     ordermin/costmin rejection was aborting every remaining level in the same
+     layout/re-layout loop, not just the one doomed order; now caught alongside
+     `InsufficientBalance` (`242fbf0`). The proactive half (bump volume to clear ordermin,
+     or skip with a clear INFO, before attempting placement) was not built — the operator's
+     per-coin `order_size_usd` workaround remains the mitigation.
+
+   Parallel/independent items:
+   - **ADR-026** — harvester `--execute` replay guard, DB-enforced via a UNIQUE index on
+     `transfer_results.proposal_id` (`69a4519`).
+   - **ADR-007 amendment** — structural MoE news-firewall fix: `news_materially_drove` flag
+     blocks `role='aggregated'` auto-apply when news was the effective driver (`ee324ee`).
+   - Today's-PnL truncation fix — `get_trades(limit=100)` → `limit=10_000` (`054690a`).
+   - Content-Security-Policy middleware (`a19816e`).
+   - Monthly backup-restoration smoke test — `PRAGMA integrity_check` + representative
+     SELECTs against the latest backup (`b5dbfba`).
+   - Kraken exchange-status news adapter, `status.kraken.com` → tagged `news_items`
+     (`39cac1a`).
+   - Footer "update available" indicator via `release_checker` polling GitHub (`dd35431`).
+   - Four test-hardening additions closing the 2026-06-02 test-honesty audit's
+     consequence/orchestration gaps: loss-cap trip E2E, preflight-gate orchestration,
+     operator firewall-bypass negative test, reconciler fail-soft continuation (`2d168d6`).
+   - Dashboard session-cap card — a durable Session banner (last `cap_trips` row + live
+     cool-down state) so a trip during a missed Discord ping still has an on-dashboard
+     signal; new `CapTripRecord`/`get_last_cap_trip` (`b33fbef`→`b5b57d6`).
+
+   **Explicitly NOT built** (per the plan's own open questions, not oversights): `cli/up`
+   (one-command daemon orchestrator) stays parked — "promote only if real restart friction
+   is real," none reported; more Kraken pairs / which coins is an operator risk-budget call,
+   not a code task. Both remain open in the Parked register / Open Questions section of
+   `docs/release/v1.1/README.md`.
+
+   Also landed alongside P1 in this window (fleet-review + soak-adjacent, not P1 items
+   themselves): the second fleet-review pass's remaining 5 findings (cost-estimate
+   crash-loop reintroduction, trade-history pagination, profile-overlay schema validation,
+   Ollama thinking/response concat order, TTL check on pending-command confirm routes) plus
+   an adversarial re-review catching 2 further gaps in those fixes; the 11-day NAS host
+   reboot incident (resolved clean, reconciler held); a CI gitleaks secret-scanning workflow.
+   Full narrative in Stage 8.4.E's digest above.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

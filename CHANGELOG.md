@@ -18,6 +18,68 @@ Nothing yet.
 
 ## [v1.1] — Unreleased (on the `v1.1` branch; not yet merged to main)
 
+### P1 — Safety-hardening + ready-now backlog, COMPLETE (2026-07-31 → 2026-08-01)
+
+Full P1 phase of `docs/release/v1.1/README.md`'s plan (see that doc's P1 table and
+`docs/planning/roadmap.md`'s v1.1 Track item 2 for per-item receipts + commit hashes). One
+focused commit per item; full gate (pytest/mypy/pylint 10.00/black/isort) green before
+each. 2582 tests passing by the end (was 2369 pre-P1). Real-money cost $0.00.
+
+- **ADR-032** — cost-basis sell guard added; the dead, silently-inert `EmergencyStopConfig`
+  retired (an operator reasonably believed it was an enforced balance floor; it did
+  nothing).
+- **ADR-023** — unified terminal-order resolution: one shared `_resolve_terminal_order`
+  fixes both the startup reconciler's fill-vs-cancel disambiguation AND the live
+  `_detect_fills` gate's partial-fill Trade-drop (the F1 defect) — the same root cause,
+  two call sites, one fix.
+- **ADR-024** — session-loss-cap cool-down period: new `cap_trips` table, pre-loop gate,
+  new exit code 4, fail-open on a storage error so a DB hiccup can't crash-loop the daemon.
+- **ADR-025** — pre-placement slippage/spread guard via a new `get_ticker` port method and
+  a pre-tick spread gate; a same-day follow-up fixed an uncaught exchange-side placement
+  error that was aborting an entire tick's remaining levels instead of skipping just the
+  one refused order (worse than the original bug report suggested).
+- **ADR-026** — harvester `--execute` replay guard, DB-enforced via a UNIQUE index on
+  `transfer_results.proposal_id` — the highest-blast-radius hole in the codebase (no
+  "already executed for this proposal_id" check existed before this).
+- **ADR-027** — Kraken rate-limit backoff + inter-cancel pacing, reusing the ADR-015
+  cloud-LLM retry shape.
+- **ADR-007 amendment** — structural MoE news-firewall fix: a `news_materially_drove` flag
+  now blocks `role='aggregated'` auto-apply whenever news was the effective driver of the
+  aggregated number, closing a gap where ADR-007's "news cannot drive an auto-applied
+  change" intent was enforced only by the arbitrator prompt, not the code.
+- Dead-man's-switch arm confirmation (logs Kraken's `triggerTime` instead of discarding
+  it), boot-time stale-anchor WARN on restart re-layout, per-tick price-fetch dedup (one
+  fetch threaded through instead of two), partial-grid insufficient-balance refusal
+  demoted WARN→DEBUG, today's-PnL fetch limit raised 100→10,000 (was silently undercounting
+  on any day with >100 trades).
+- Engine ordermin-awareness: the **containment** half only — an uncaught exchange-side
+  ordermin/costmin rejection was aborting an entire placement loop, not just the doomed
+  order; now caught and logged as a refusal. The proactive half (bump volume to clear
+  ordermin, or skip with an INFO, before attempting) was not built.
+- Content-Security-Policy middleware, monthly backup-restoration smoke test (opens the
+  latest backup, runs `PRAGMA integrity_check` + representative SELECTs), a Kraken
+  exchange-status news adapter (`status.kraken.com` → tagged `news_items`), and a footer
+  "update available" indicator (polls GitHub releases every 6h).
+- **Dashboard session-cap card** — a durable Session banner sourced from the existing
+  `cap_trips` table: last trip's timestamp + PnL, plus whether the ADR-024 cool-down gate
+  is currently active. Fixes the soak's "cap tripped unnoticed ~1.5h" failure mode (a trip
+  during a missed Discord ping now persists on next dashboard load instead of only having
+  existed as a transient notification). Deliberately scoped to this durable-signal tier,
+  not a live "% of cap consumed" gauge — that needs a new per-tick write from the hot
+  trading loop, a materially larger change than this fix earns.
+- Five test-hardening additions closing gaps the 2026-06-02 test-honesty audit found
+  (decision logic was pinned, the consequence/orchestration wiring around it wasn't): a
+  loss-cap-trip end-to-end test (asserts the exit code AND that every resting order is
+  actually canceled, AND the strict `<`-not-`<=` cap boundary), a preflight-gate
+  orchestration test (the ADR-003 key-scope gate pre-empts both the reference-price fetch
+  and `engine.step`), an operator firewall-bypass negative test (a bare command intent
+  never actions the engine without an explicit confirm dispatch), a reconciler fail-soft
+  continuation test (one bad row's `StorageError` doesn't abort reconciling the rest of the
+  batch), and the F1 partial-fill test that came free with the ADR-023 unification.
+- **Explicitly not built**, per the plan's own open questions rather than oversights:
+  `cli/up` (one-command daemon orchestrator — no restart friction reported) and additional
+  Kraken pairs (which coins / what capital split is an operator risk-budget call).
+
 ### LLM pricing re-verification (2026-07-23)
 
 - **Cleared the 2026-01-15 pricing anchor.** The freshness watchdog
