@@ -194,10 +194,12 @@ class ShadowExchangeAdapter(ExchangePort):
         switch on the operator's REAL Kraken account during a paper-trade
         session, which could cancel their genuine manual orders. There are
         no real resting orders here for a timer to protect, so this does
-        nothing.
+        nothing -- always returns ``None`` (nothing is ever confirmed
+        armed, because nothing is ever armed).
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
+        return None
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError(

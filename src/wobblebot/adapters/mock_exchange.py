@@ -23,7 +23,7 @@ instance resets the counters.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from wobblebot.domain.exceptions import InsufficientBalance
@@ -241,14 +241,20 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         live.mark_canceled()
         return live
 
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """No-op (ADR-021): the in-memory mock has no server-side timer and
         holds no real resting orders. Records the value so engine-loop tests
-        can assert the loop armed/disarmed the switch.
+        can assert the loop armed/disarmed the switch, and returns a
+        synthetic confirmed trigger time (now + timeout_seconds) so
+        callers exercising the arm-confirmation path see realistic
+        "armed" behavior; ``None`` for a disarm (timeout_seconds=0).
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
         self.last_dead_mans_switch_seconds = timeout_seconds
+        if timeout_seconds == 0:
+            return None
+        return datetime.now(UTC) + timedelta(seconds=timeout_seconds)
 
     async def get_order_status(self, order: Order) -> Order:
         if not order.exchange_id:

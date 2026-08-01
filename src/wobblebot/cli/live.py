@@ -78,6 +78,11 @@ from wobblebot.services.reconciler import apply_reconciliation
 
 _LOGGER = logging.getLogger("wobblebot.cli.live")
 
+# How often (in consecutive ticks) to re-emit a "still not confirmed
+# armed" WARNING for the dead man's switch, mirroring GridEngine's
+# offside transition + heartbeat pattern -- never a WARNING every tick.
+_DMS_UNCONFIRMED_SUMMARY_EVERY_TICKS = 240
+
 
 # ---------------------------------------------------------------------------
 # Loop helpers — same shape as before, now consume LiveConfig directly
@@ -153,6 +158,38 @@ async def _cancel_all_open(
                 },
             )
     return cancelled, failed
+
+
+def _log_dms_confirmation(
+    trigger_at: datetime | None, requested_timeout_seconds: int, unconfirmed_ticks: int
+) -> int:
+    """Log the dead man's switch arm confirmation and return the updated
+    consecutive-unconfirmed-ticks counter.
+
+    Confirmed (``trigger_at`` set): DEBUG, matching the per-tick log
+    level convention, and the counter resets to 0. Unconfirmed (the
+    2026-06-02 soak lesson — Kraken's response carried no real future
+    trigger despite the call not raising): transition + heartbeat
+    WARNING logging, mirroring GridEngine's offside pattern, rather
+    than a WARNING every tick.
+    """
+    if trigger_at is not None:
+        _LOGGER.debug(
+            "dead man's switch confirmed armed", extra={"trigger_at": trigger_at.isoformat()}
+        )
+        return 0
+    unconfirmed_ticks += 1
+    if unconfirmed_ticks == 1:
+        _LOGGER.warning(
+            "dead man's switch arm not confirmed by Kraken's response",
+            extra={"requested_timeout_seconds": requested_timeout_seconds},
+        )
+    elif unconfirmed_ticks % _DMS_UNCONFIRMED_SUMMARY_EVERY_TICKS == 0:
+        _LOGGER.warning(
+            "dead man's switch still not confirmed armed",
+            extra={"consecutive_unconfirmed_ticks": unconfirmed_ticks},
+        )
+    return unconfirmed_ticks
 
 
 async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
@@ -479,6 +516,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
 
     exit_code = 0
     tick = 0
+    dms_unconfirmed_ticks = 0
     # Terminal-visible periodic heartbeat (separate from the operator.db
     # daemon_heartbeats row). After the 2026-05-23 logging-audit demoted
     # per-tick "tick complete" from INFO to DEBUG, a long quiet period
@@ -504,7 +542,10 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # (still-protective) value until the next tick re-pings.
             if live.dead_mans_switch_seconds is not None:
                 try:
-                    await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
+                    trigger_at = await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
+                    dms_unconfirmed_ticks = _log_dms_confirmation(
+                        trigger_at, live.dead_mans_switch_seconds, dms_unconfirmed_ticks
+                    )
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "dead man's switch reset failed; continuing (timer retains prior value)",

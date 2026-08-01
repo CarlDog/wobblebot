@@ -32,6 +32,13 @@ The adapter synthesizes a ``DRYRUN-<order.id>`` exchange_id so the
 engine's bookkeeping path still works for diagnostic runs.
 """
 
+# pylint: disable=too-many-lines
+# The sole ExchangePort implementation against a single, large REST
+# API (public + private endpoints, signing, per-pair precision
+# metadata, pagination). Splitting it would fragment one cohesive
+# adapter across files for no organizational gain -- same posture as
+# ports/storage.py's disable.
+
 from __future__ import annotations
 
 import asyncio
@@ -518,7 +525,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         order.mark_canceled()
         return order
 
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """Arm/reset (``timeout_seconds`` > 0) or disable (``0``) Kraken's
         server-side dead man's switch via ``/0/private/CancelAllOrdersAfter``.
 
@@ -534,14 +541,25 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
         Dry-run short-circuits locally: a ``validate=true`` diagnostic run
         must never arm a real timer on the live account.
+
+        Returns Kraken's confirmed ``triggerTime`` (parsed to a UTC
+        ``datetime``), or ``None`` when the switch reports disarmed
+        (``timeout_seconds=0``, or Kraken's response doesn't carry a real
+        future trigger). Previously this response was discarded entirely
+        — the 2026-06-02 soak incident's root cause (a disarm-on-failed-
+        cancel bug) went undiagnosed for a day because nothing had ever
+        confirmed Kraken actually armed anything; see
+        ``tools/check_dead_mans_switch.py``, which now calls this method
+        directly instead of reaching into ``_private_post``.
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
         if self._dry_run:
-            return
-        await self._private_post(
+            return None
+        result = await self._private_post(
             "/0/private/CancelAllOrdersAfter", {"timeout": str(timeout_seconds)}
         )
+        return _parse_dms_trigger_time(result)
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         """Withdraw funds via Kraken's ``/0/private/Withdraw`` endpoint.
@@ -941,6 +959,28 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         secret_bytes = base64.b64decode(self._config.api_secret)
         signature = hmac.new(secret_bytes, mac_input, hashlib.sha512).digest()
         return base64.b64encode(signature).decode("utf-8")
+
+
+def _parse_dms_trigger_time(result: dict[str, Any]) -> datetime | None:
+    """Parse ``CancelAllOrdersAfter``'s ``currentTime``/``triggerTime``
+    into a confirmed-armed signal.
+
+    Kraken returns ``triggerTime="0"`` when the switch is disabled
+    (``timeout=0``) and otherwise an RFC3339 timestamp
+    (``"2026-06-01T00:01:00Z"``) strictly after ``currentTime``. Treat
+    anything else — missing, malformed, or equal to ``currentTime`` —
+    as "not confirmed armed" rather than raising, so a single odd
+    response doesn't crash the per-tick ping loop; the caller decides
+    what to do with ``None``.
+    """
+    trigger = result.get("triggerTime")
+    current = result.get("currentTime")
+    if not trigger or trigger == "0" or trigger == current:
+        return None
+    try:
+        return datetime.fromisoformat(str(trigger).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _quantize_decimal(value: Decimal, decimals: int) -> Decimal:

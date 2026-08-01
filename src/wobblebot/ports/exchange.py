@@ -131,7 +131,7 @@ class ExchangePort(ABC):
         pass
 
     @abstractmethod
-    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
         """Arm, reset, or disable a server-side dead man's switch (ADR-021).
 
         Sets a countdown timer **on the exchange**: if the client does
@@ -155,6 +155,13 @@ class ExchangePort(ABC):
         Adapters with no such facility (synthetic / simulated execution,
         where no real resting orders are at risk) implement this as a
         documented no-op.
+
+        Returns:
+            The exchange's confirmed trigger time (UTC), so the caller
+            can log or act on whether the arm was actually accepted
+            server-side rather than assuming success. ``None`` when
+            disarming (``timeout_seconds=0``) or when the exchange's
+            response doesn't carry a confirmed future trigger.
 
         Raises:
             ExchangeError: On transport / protocol failure when arming.

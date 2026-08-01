@@ -35,6 +35,7 @@ import pytest
 from wobblebot.adapters.kraken_exchange import (
     _TRADES_HISTORY_MAX_PAGES,
     KrakenAdapter,
+    _parse_dms_trigger_time,
     _quantize_decimal,
 )
 from wobblebot.config.kraken import KrakenConfig
@@ -367,7 +368,7 @@ class TestDeadMansSwitch:
 
         adapter = _make_adapter(handler)
         result = await adapter.set_dead_mans_switch(60)
-        assert result is None
+        assert result == datetime(2026, 6, 1, 0, 1, 0, tzinfo=UTC)
         assert captured["body"]["timeout"] == "60"
 
     async def test_disable_posts_zero(self) -> None:
@@ -378,12 +379,34 @@ class TestDeadMansSwitch:
             captured["body"] = _post_body(request)
             return httpx.Response(
                 200,
-                json={"error": [], "result": {"currentTime": "x", "triggerTime": "x"}},
+                json={"error": [], "result": {"currentTime": "x", "triggerTime": "0"}},
             )
 
         adapter = _make_adapter(handler)
-        await adapter.set_dead_mans_switch(0)
+        result = await adapter.set_dead_mans_switch(0)
+        assert result is None
         assert captured["body"]["timeout"] == "0"
+
+    async def test_unconfirmed_arm_returns_none(self) -> None:
+        """Kraken's response carries no real future trigger (missing,
+        zero, or equal to currentTime) -- the 2026-06-02 soak lesson:
+        never assume the arm took just because the call didn't raise."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "error": [],
+                    "result": {
+                        "currentTime": "2026-06-01T00:00:00Z",
+                        "triggerTime": "2026-06-01T00:00:00Z",
+                    },
+                },
+            )
+
+        adapter = _make_adapter(handler)
+        result = await adapter.set_dead_mans_switch(60)
+        assert result is None
 
     async def test_dry_run_short_circuits(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -407,6 +430,37 @@ class TestDeadMansSwitch:
         adapter = _make_adapter(handler)
         with pytest.raises(ExchangeError):
             await adapter.set_dead_mans_switch(60)
+
+
+class TestParseDmsTriggerTime:
+    """Unit tests for the pure CancelAllOrdersAfter response parser."""
+
+    def test_confirmed_future_trigger(self) -> None:
+        result = _parse_dms_trigger_time(
+            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "2026-06-01T00:01:00Z"}
+        )
+        assert result == datetime(2026, 6, 1, 0, 1, 0, tzinfo=UTC)
+
+    def test_trigger_zero_is_unconfirmed(self) -> None:
+        result = _parse_dms_trigger_time(
+            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "0"}
+        )
+        assert result is None
+
+    def test_trigger_equal_to_current_is_unconfirmed(self) -> None:
+        result = _parse_dms_trigger_time(
+            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "2026-06-01T00:00:00Z"}
+        )
+        assert result is None
+
+    def test_missing_trigger_is_unconfirmed(self) -> None:
+        assert _parse_dms_trigger_time({"currentTime": "2026-06-01T00:00:00Z"}) is None
+
+    def test_malformed_trigger_is_unconfirmed_not_raising(self) -> None:
+        result = _parse_dms_trigger_time(
+            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "not-a-timestamp"}
+        )
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
