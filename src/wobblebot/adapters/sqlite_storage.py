@@ -49,7 +49,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
 from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -1436,10 +1436,15 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
 
     async def get_last_cap_trip_at(self) -> Timestamp | None:
         """Return the most recent cap-trip timestamp, or ``None``."""
+        record = await self.get_last_cap_trip()
+        return record.tripped_at if record is not None else None
+
+    async def get_last_cap_trip(self) -> CapTripRecord | None:
+        """Return the most recent cap-trip record (timestamp + PnL), or ``None``."""
         conn = self._require_conn()
         try:
             async with conn.execute(
-                "SELECT tripped_at FROM cap_trips ORDER BY id DESC LIMIT 1"
+                "SELECT tripped_at, session_pnl_usd FROM cap_trips ORDER BY id DESC LIMIT 1"
             ) as cursor:
                 row = await cursor.fetchone()
         except (aiosqlite.Error, OSError) as exc:
@@ -1452,7 +1457,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return Timestamp(dt=parsed)
+        return CapTripRecord(tripped_at=Timestamp(dt=parsed), session_pnl_usd=Decimal(row[1]))
 
 
 async def _migrate_advisor_suggestions_expert_opinions(

@@ -24,6 +24,25 @@
     </div>
   {% endfor %}
 
+  {# Session card (v1.1, ADR-024): a durable signal for the last
+     session-loss-cap trip, so a trip that fires while the operator
+     misses the bell/Discord ping is still visible on next dashboard
+     load instead of only having existed as a transient notification. #}
+  {% if snapshot.last_cap_trip %}
+    {% set pnl = snapshot.last_cap_trip.session_pnl_usd %}
+    <div class="session-cap-banner {% if snapshot.cool_down_active %}session-cap-active{% else %}session-cap-cleared{% endif %}" role="status">
+      <strong>{% if snapshot.cool_down_active %}⚠ Session-loss cap tripped{% else %}Session-loss cap trip (cleared){% endif %}</strong>
+      — {{ snapshot.last_cap_trip_age_seconds | humanize_duration }} ago,
+      session PnL {% if pnl < 0 %}-${{ "%.2f"|format(-pnl) }}{% else %}${{ "%.2f"|format(pnl) }}{% endif %}.
+      {% if snapshot.cool_down_active %}
+        Cooling down until {{ snapshot.cool_down_resumes_at | tz_format(operator_tz, "%H:%M %Z") }}
+        — no new session may start before then.
+      {% else %}
+        Cool-down has cleared; sessions may resume normally.
+      {% endif %}
+    </div>
+  {% endif %}
+
   <div class="card" id="status-card">
     <div class="card-header">
       <div class="card-title">

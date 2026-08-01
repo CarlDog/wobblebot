@@ -879,6 +879,36 @@ h2 {
   color: var(--banner-strong-text);
 }
 
+/* Session card (v1.1, ADR-024): last loss-cap trip, so it stays
+   visible on the dashboard even if the operator missed the bell.
+   Active cool-down reuses the "strong" (red) tier since a new
+   session genuinely cannot start yet; a cleared trip is a quieter
+   "mild" (yellow) historical note. */
+.session-cap-banner {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 4px solid;
+}
+
+.session-cap-banner strong {
+  font-weight: 600;
+}
+
+.session-cap-active {
+  background: var(--banner-strong-bg);
+  border-color: var(--banner-strong-border);
+  color: var(--banner-strong-text);
+}
+
+.session-cap-cleared {
+  background: var(--banner-mild-bg);
+  border-color: var(--banner-mild-border);
+  color: var(--banner-mild-text);
+}
+
 .metric {
   margin-bottom: 12px;
 }

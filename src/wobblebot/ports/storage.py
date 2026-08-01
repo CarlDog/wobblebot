@@ -17,7 +17,7 @@ from uuid import UUID
 
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
@@ -1023,6 +1023,20 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         The pre-loop cool-down gate (``services/cool_down.py``) reads
         this to decide whether a new session may start.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
+    async def get_last_cap_trip(self) -> CapTripRecord | None:
+        """Return the most recent cap-trip record (timestamp + PnL), or ``None``.
+
+        The dashboard's session card reads this to show the operator
+        what happened at the last trip, not just that one occurred —
+        the cool-down gate only needs the timestamp
+        (:meth:`get_last_cap_trip_at`), but the web tier needs the PnL
+        too.
 
         Raises:
             StorageError: On retrieval failure.

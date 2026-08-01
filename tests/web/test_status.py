@@ -43,12 +43,15 @@ async def live_storage() -> AsyncIterator[SQLiteStorageAdapter]:
 def _build_client(
     operator: SQLiteStorageAdapter,
     live: SQLiteStorageAdapter | None,
+    *,
+    cool_down_minutes: float | None = None,
 ) -> TestClient:
     app = create_app(
         config=WebConfig(bcrypt_cost=10),
         operator_storage=operator,
         session_secret="x" * 64,
         live_storage=live,
+        cool_down_minutes=cool_down_minutes,
     )
     return TestClient(app, follow_redirects=False)
 
@@ -499,6 +502,73 @@ class TestDashboardRoute:
 
 
 # --------------------------------------------------------------------- #
+# Session card (v1.1, ADR-024)                                          #
+# --------------------------------------------------------------------- #
+
+
+class TestSessionCapCard:
+    def test_no_trip_no_banner_rendered(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "session-cap-banner" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_trip_with_no_cool_down_configured_renders_cleared(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        await live_storage.record_cap_trip(Timestamp(dt=datetime.now(UTC)), Decimal("-5.12"))
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "session-cap-cleared" in resp.text
+            assert "session-cap-active" not in resp.text
+            assert "-$5.12" in resp.text
+            assert "cleared" in resp.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_recent_trip_within_cool_down_renders_active_warning(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        tripped_at = datetime.now(UTC) - timedelta(minutes=10)
+        await live_storage.record_cap_trip(Timestamp(dt=tripped_at), Decimal("-8"))
+        with _build_client(operator_storage, live_storage, cool_down_minutes=60.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "session-cap-active" in resp.text
+            assert "session-cap-cleared" not in resp.text
+            assert "Session-loss cap tripped" in resp.text
+            assert "no new session may start" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_status_card_fragment_also_renders_the_banner(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """The HTMX fragment route shares the same template include —
+        confirm the banner isn't dashboard.html-only."""
+        tripped_at = datetime.now(UTC) - timedelta(minutes=10)
+        await live_storage.record_cap_trip(Timestamp(dt=tripped_at), Decimal("-8"))
+        with _build_client(operator_storage, live_storage, cool_down_minutes=60.0) as client:
+            login_as(client)
+            resp = client.get("/status/card")
+            assert resp.status_code == 200
+            assert "session-cap-active" in resp.text
+
+
+# --------------------------------------------------------------------- #
 # /status/card fragment                                                 #
 # --------------------------------------------------------------------- #
 
@@ -589,3 +659,57 @@ class TestLoadSnapshot:
         snap = await _load_snapshot(live_storage, None)
         assert snap.last_fill_age_seconds is None
         assert snap.live_wired is True
+
+    @pytest.mark.asyncio
+    async def test_no_cap_trip_leaves_session_fields_empty(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.web.routes.status import _load_snapshot
+
+        snap = await _load_snapshot(live_storage, None, cool_down_minutes=60.0)
+        assert snap.last_cap_trip is None
+        assert snap.last_cap_trip_age_seconds is None
+        assert snap.cool_down_active is False
+        assert snap.cool_down_resumes_at is None
+
+    @pytest.mark.asyncio
+    async def test_cap_trip_recorded_without_cool_down_configured_is_cleared(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """No ``cool_down_minutes`` -> the gate is operator-disabled, so
+        even a fresh trip reads as cleared, never active."""
+        from wobblebot.web.routes.status import _load_snapshot
+
+        await live_storage.record_cap_trip(Timestamp(dt=datetime.now(UTC)), Decimal("-5.12"))
+        snap = await _load_snapshot(live_storage, None, cool_down_minutes=None)
+        assert snap.last_cap_trip is not None
+        assert snap.last_cap_trip.session_pnl_usd == Decimal("-5.12")
+        assert snap.last_cap_trip_age_seconds is not None
+        assert snap.last_cap_trip_age_seconds >= 0
+        assert snap.cool_down_active is False
+        assert snap.cool_down_resumes_at is None
+
+    @pytest.mark.asyncio
+    async def test_recent_trip_within_window_is_active(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.web.routes.status import _load_snapshot
+
+        tripped_at = datetime.now(UTC) - timedelta(minutes=5)
+        await live_storage.record_cap_trip(Timestamp(dt=tripped_at), Decimal("-8"))
+        snap = await _load_snapshot(live_storage, None, cool_down_minutes=60.0)
+        assert snap.cool_down_active is True
+        assert snap.cool_down_resumes_at is not None
+        assert snap.cool_down_resumes_at > datetime.now(UTC)
+
+    @pytest.mark.asyncio
+    async def test_old_trip_past_window_is_cleared(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.web.routes.status import _load_snapshot
+
+        tripped_at = datetime.now(UTC) - timedelta(hours=2)
+        await live_storage.record_cap_trip(Timestamp(dt=tripped_at), Decimal("-8"))
+        snap = await _load_snapshot(live_storage, None, cool_down_minutes=60.0)
+        assert snap.cool_down_active is False
+        assert snap.last_cap_trip is not None  # the record persists; just not "active"

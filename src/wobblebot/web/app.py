@@ -165,6 +165,7 @@ def create_app(  # pylint: disable=too-many-arguments
     live_storage: StoragePort | None = None,
     kraken_health_probe: KrakenHealthProbe | None = None,
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
+    cool_down_minutes: float | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -182,6 +183,13 @@ def create_app(  # pylint: disable=too-many-arguments
             ``None`` triggers the OperatorService-style graceful
             degrade (Stage 5.6.C) — cards that need the missing
             DB don't render.
+        cool_down_minutes: ``LiveConfig.cool_down_minutes`` (ADR-024),
+            like ``trading_mode`` sourced from the full operator
+            config rather than ``WebConfig`` — lets the status
+            dashboard's session card show whether the loss-cap
+            cool-down gate is currently active. ``None`` when the
+            operator disabled the gate or didn't give ``cli/web`` a
+            ``live:`` section.
 
     Returns:
         FastAPI app instance. Caller hands to uvicorn.
@@ -282,6 +290,9 @@ def create_app(  # pylint: disable=too-many-arguments
     app.state.observe_storage = observe_storage
     app.state.news_storage = news_storage
     app.state.live_storage = live_storage
+    # v1.1 session card — ADR-024 cool-down window, threaded through
+    # like trading_mode above (lives on LiveConfig, not WebConfig).
+    app.state.cool_down_minutes = cool_down_minutes
     # Stage 8.4.E health-icon work — KrakenHealthProbe singleton.
     # cli/web constructs one in production; tests pass None when they
     # don't care (the /health page renders Kraken as "not configured").

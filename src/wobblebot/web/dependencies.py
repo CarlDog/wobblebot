@@ -55,6 +55,18 @@ def get_live_storage(request: Request) -> StoragePort | None:
     return request.app.state.live_storage  # type: ignore[no-any-return]
 
 
+def get_cool_down_minutes(request: Request) -> float | None:
+    """Pull ``LiveConfig.cool_down_minutes`` (ADR-024) off ``app.state``.
+
+    Mirrors ``trading_mode``: a fact that lives on ``LiveConfig``, not
+    ``WebConfig``, threaded through at app-build time so the session
+    card can tell whether the cool-down gate is currently active.
+    ``None`` when the operator disabled the gate or didn't give
+    ``cli/web`` a ``live:`` config section.
+    """
+    return request.app.state.cool_down_minutes  # type: ignore[no-any-return]
+
+
 def get_templates(request: Request) -> Jinja2Templates:
     """Pull the shared ``Jinja2Templates`` instance off ``app.state``.
     Routes use this to render HTML responses."""

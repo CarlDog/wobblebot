@@ -241,6 +241,9 @@ async def _bootstrap_app(
         news_storage=optionals["news"],
         kraken_health_probe=kraken_probe,
         daemon_health_thresholds=daemon_thresholds,
+        # v1.1 session card — read straight off the same live: section
+        # cli/live itself uses, so the two processes can't drift.
+        cool_down_minutes=config.live.cool_down_minutes if config.live else None,
     )
     return app, opened, kraken_http
 

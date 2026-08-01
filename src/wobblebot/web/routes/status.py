@@ -29,14 +29,16 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
+    get_cool_down_minutes,
     get_live_storage,
     get_observe_storage,
     get_templates,
@@ -183,6 +185,21 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # < 2 price snapshots in the 2h window are absent — the card renders
     # exactly as before (no misleading single-point line).
     sparklines: dict[Symbol, Sparkline] = field(default_factory=dict)
+    # Session card (v1.1): the most recent session-loss-cap trip on
+    # record (ADR-024's cap_trips table), so a trip that fires while
+    # the operator misses the bell/Discord ping still has a durable
+    # on-dashboard signal instead of disappearing once the alert
+    # scrolls out of view. ``None`` when no trip has ever been
+    # recorded. Age is precomputed here (not in the template) so
+    # Jinja only formats, never does datetime arithmetic.
+    last_cap_trip: CapTripRecord | None = None
+    last_cap_trip_age_seconds: float | None = None
+    # Whether the ADR-024 cool-down gate is active RIGHT NOW (blocks a
+    # new cli/live session from starting) and, if so, when it lifts.
+    # Both are ``False``/``None`` when no trip is on record, the
+    # cool-down window is operator-disabled, or the window has elapsed.
+    cool_down_active: bool = False
+    cool_down_resumes_at: datetime | None = None
     error: str | None = None
 
 
@@ -443,6 +460,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     observe_storage: StoragePort | None,
     *,
     operator_tz: str = "UTC",
+    cool_down_minutes: float | None = None,
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -452,6 +470,13 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     UTC midnight while the operator's CST clock still read late
     evening on the same calendar day, silently showing "Today: $0.00"
     against cycles that the operator considered today's.
+
+    ``cool_down_minutes`` mirrors ``LiveConfig.cool_down_minutes``
+    (ADR-024) so the session card can show whether a new session is
+    currently gated — ``None`` when the operator disabled the gate
+    or ``cli/web`` wasn't given a ``live:`` config section to read it
+    from (the trip itself still shows; only the "gate active" framing
+    is unavailable).
     """
     if live_storage is None:
         return _empty_snapshot(wired=False)
@@ -494,6 +519,15 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
     reanchor_recs = await _load_reanchor_recommendations(
         live_storage, list(open_orders), prices, order_ages
     )
+    last_cap_trip = await _load_last_cap_trip(live_storage)
+    last_cap_trip_age: float | None = None
+    cool_down = check_cool_down(
+        last_cap_trip.tripped_at if last_cap_trip else None,
+        now=now,
+        window_minutes=cool_down_minutes,
+    )
+    if last_cap_trip is not None:
+        last_cap_trip_age = (now - last_cap_trip.tripped_at.dt).total_seconds()
     # A card renders for every symbol you have orders for, hold a balance
     # in, or traded recently — so a parked/held coin (e.g. offside BTC)
     # keeps its card + price even when its last fill ages out of the
@@ -531,7 +565,27 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         held_value_usd=held_value,
         balance_as_of=balance_as_of,
         sparklines=sparklines,
+        last_cap_trip=last_cap_trip,
+        last_cap_trip_age_seconds=last_cap_trip_age,
+        cool_down_active=cool_down.active,
+        cool_down_resumes_at=cool_down.resumes_at,
     )
+
+
+async def _load_last_cap_trip(live_storage: StoragePort) -> CapTripRecord | None:
+    """The most recent session-loss-cap trip (ADR-024), or ``None``.
+
+    A storage failure here degrades to "no trip on record" rather than
+    failing the whole snapshot — the session card is a durable-signal
+    nicety, not load-bearing for the rest of the dashboard.
+    """
+    try:
+        return await live_storage.get_last_cap_trip()
+    except StorageError as exc:
+        _LOGGER.warning(
+            "last-cap-trip lookup failed; session card omitted", extra={"error": str(exc)}
+        )
+        return None
 
 
 async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
@@ -604,6 +658,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    cool_down_minutes: float | None = Depends(get_cool_down_minutes),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
 
@@ -611,7 +666,12 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     light was removed 2026-05-23 and the navbar heart-pulse icon's
     tiered dot now polls /health/overall.json directly.
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
+    snapshot = await _load_snapshot(
+        live_storage,
+        observe_storage,
+        operator_tz=prefs.timezone,
+        cool_down_minutes=cool_down_minutes,
+    )
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -632,13 +692,19 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    cool_down_minutes: float | None = Depends(get_cool_down_minutes),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
 
     No health snapshot — the navbar dot owns health UX since
     2026-05-23 (single source of truth via /health/overall.json).
     """
-    snapshot = await _load_snapshot(live_storage, observe_storage, operator_tz=prefs.timezone)
+    snapshot = await _load_snapshot(
+        live_storage,
+        observe_storage,
+        operator_tz=prefs.timezone,
+        cool_down_minutes=cool_down_minutes,
+    )
     return templates.TemplateResponse(
         request,
         "_status_card.html",
