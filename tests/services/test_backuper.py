@@ -11,7 +11,9 @@ import pytest
 
 from wobblebot.services.backuper import (
     backup_database_locally,
+    find_latest_backup,
     prune_old_backups,
+    verify_backup_restoration,
 )
 
 pytestmark = pytest.mark.unit
@@ -146,3 +148,107 @@ class TestPruneOldBackups:
     def test_negative_keep_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="must be non-negative"):
             prune_old_backups(tmp_path, db_stem="live", keep_n_daily=-1)
+
+
+# --------------------------------------------------------------------- #
+# find_latest_backup                                                    #
+# --------------------------------------------------------------------- #
+
+
+class TestFindLatestBackup:
+    def test_returns_newest_file(self, tmp_path: Path) -> None:
+        import os
+
+        for i in range(3):
+            f = tmp_path / f"live-2026051{i}-0000.db"
+            f.write_bytes(b"")
+            stamp = time.time() + i
+            os.utime(f, (stamp, stamp))
+        latest = find_latest_backup(tmp_path, db_stem="live")
+        assert latest is not None
+        assert latest.name == "live-20260512-0000.db"
+
+    def test_missing_dir_returns_none(self, tmp_path: Path) -> None:
+        assert find_latest_backup(tmp_path / "no-such-dir", db_stem="live") is None
+
+    def test_no_matching_files_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / "shadow-20260518-0000.db").write_bytes(b"")
+        assert find_latest_backup(tmp_path, db_stem="live") is None
+
+    def test_only_matches_db_stem(self, tmp_path: Path) -> None:
+        (tmp_path / "live-20260518-0000.db").write_bytes(b"")
+        (tmp_path / "harvest-20260518-0000.db").write_bytes(b"")
+        latest = find_latest_backup(tmp_path, db_stem="live")
+        assert latest is not None
+        assert latest.name == "live-20260518-0000.db"
+
+
+# --------------------------------------------------------------------- #
+# verify_backup_restoration (v1.1 restoration smoke test)                #
+# --------------------------------------------------------------------- #
+
+
+class TestVerifyBackupRestoration:
+    def test_clean_backup_passes(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_test_db(src)
+        backup = backup_database_locally(src, tmp_path / "backups")
+
+        result = verify_backup_restoration(backup)
+
+        assert result.ok is True
+        assert result.integrity_check_result == "ok"
+        assert result.table_count == 1
+        assert result.error is None
+
+    def test_multi_table_backup_checks_every_table(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        conn = sqlite3.connect(str(src))
+        try:
+            conn.execute("CREATE TABLE orders (id INTEGER)")
+            conn.execute("CREATE TABLE trades (id INTEGER)")
+            conn.execute("INSERT INTO orders VALUES (1)")
+            conn.commit()
+        finally:
+            conn.close()
+        backup = backup_database_locally(src, tmp_path / "backups")
+
+        result = verify_backup_restoration(backup)
+
+        assert result.ok is True
+        assert result.table_count == 2
+
+    def test_missing_file_fails(self, tmp_path: Path) -> None:
+        result = verify_backup_restoration(tmp_path / "nope.db")
+        assert result.ok is False
+        assert result.error is not None
+        assert "does not exist" in result.error
+
+    def test_non_sqlite_file_fails(self, tmp_path: Path) -> None:
+        """A truncated/garbled backup (e.g. a torn write) must fail the
+        smoke test rather than reporting false-clean."""
+        garbage = tmp_path / "live-20260518-0000.db"
+        garbage.write_bytes(b"not a real sqlite file" * 100)
+
+        result = verify_backup_restoration(garbage)
+
+        assert result.ok is False
+        assert result.error is not None
+
+    def test_never_touches_source_db(self, tmp_path: Path) -> None:
+        """Verification must open only the backup copy -- the source
+        DB stays untouched and still writable afterward."""
+        src = tmp_path / "live.db"
+        _make_test_db(src)
+        backup = backup_database_locally(src, tmp_path / "backups")
+
+        verify_backup_restoration(backup)
+
+        conn = sqlite3.connect(str(src))
+        try:
+            conn.execute("INSERT INTO t (value) VALUES ('still writable')")
+            conn.commit()
+            count = conn.execute("SELECT COUNT(*) FROM t").fetchone()
+            assert count == (2,)
+        finally:
+            conn.close()

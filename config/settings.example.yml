@@ -132,6 +132,7 @@ schedules:
   maintenance_vacuum: 7d              # cli/maintenance (Stage 8.2): VACUUM cadence
   maintenance_prune: 1d               # cli/maintenance: price_snapshots prune+archive cadence
   maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
+  maintenance_verify: 30d             # cli/maintenance (v1.1): backup restoration smoke test cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -716,11 +717,12 @@ web:
 # ============================================================================
 # Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
 # ============================================================================
-# Long-running daemon with three concurrent scheduled tasks:
-# vacuum / prune+archive / backup. Operator-started; not auto-spawned
-# by any other daemon. Cadences pulled from `schedules:` block above
-# (maintenance_vacuum / maintenance_prune / maintenance_backup) with
-# per-task defaults (7d / 1d / 1d) when missing.
+# Long-running daemon with four concurrent scheduled tasks:
+# vacuum / prune+archive / backup / verify. Operator-started; not
+# auto-spawned by any other daemon. Cadences pulled from `schedules:`
+# block above (maintenance_vacuum / maintenance_prune /
+# maintenance_backup / maintenance_verify) with per-task defaults
+# (7d / 1d / 1d / 30d) when missing.
 #
 # Per stage-8.2-design.md decision 3 only `price_snapshots` gets
 # pruned in v1.0. Every audit table (orders, trades, llm_calls, etc.)
@@ -730,6 +732,10 @@ web:
 # `.backup` API produces atomic point-in-time copies without
 # locking cli/live's writers. Operator can rclone/rsync the
 # backup_dir to offsite storage if they want.
+#
+# v1.1: `verify` runs a restoration smoke test (PRAGMA integrity_check
+# + a representative SELECT per table) against each DB's LATEST
+# backup, and notifies (via operator_db below, if set) on failure.
 maintenance:
   # Every DB the daemon should VACUUM + back up. Add the operator's
   # active DBs; missing files are skipped (logged WARNING) so partial

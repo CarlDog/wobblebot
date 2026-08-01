@@ -682,11 +682,14 @@ class WebConfig(BaseModel):
 class MaintenanceConfig(BaseModel):
     """Phase 8.2 — operator-tunable knobs for ``cli/maintenance``.
 
-    Three concurrent scheduled tasks (vacuum / prune+archive /
-    backup) each pull their cadence from ``schedules:`` (keys
+    Four concurrent scheduled tasks (vacuum / prune+archive / backup /
+    verify) each pull their cadence from ``schedules:`` (keys
     ``maintenance_vacuum`` / ``maintenance_prune`` /
-    ``maintenance_backup``); this block holds the per-task
-    parameters those cadences operate against.
+    ``maintenance_backup`` / ``maintenance_verify``); this block holds
+    the per-task parameters those cadences operate against. ``verify``
+    (v1.1) reuses ``target_dbs`` + ``backup_dir`` — no dedicated field
+    of its own — since it's a restoration smoke test against the SAME
+    backups the backup task already produces.
 
     Per ``stage-8.2-design.md`` decision 7 the maintenance daemon
     is operator-started — not auto-spawned by any other daemon.
