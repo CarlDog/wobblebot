@@ -53,9 +53,12 @@ never the sort key). **WIP limit: finish a phase before opening the next** — r
 **Stale note (kept for history, see below for the real state):** the table immediately below
 this note was written pre-tag, when `main` was still the soak candidate. `v1.0.0` **tagged
 2026-07-31** on `main` exactly as it stood at tag time (`docs/planning/phase-8-summary.md`);
-`v1.1` continues on this branch, off `main` as of the tag. **P1 is now COMPLETE** (2026-07-31
-→ 2026-08-01) — see the P1 table below for per-item receipts and roadmap.md's v1.1 Track item
-2 for the consolidated ledger entry. P2/P3/P4 have not started.
+this plan (still named for the `v1.1` branch it was developed on) **ships as `2.0.0`, not
+`1.1.0`** — `EmergencyStopConfig`'s removal (ADR-032) is a breaking config-schema change and
+ADR-022 replaced the advisor's whole decision architecture, both past what SemVer's minor
+bump should carry (see `CHANGELOG.md`'s `[2.0.0]` section). **P1 is now COMPLETE** (2026-07-31
+→ 2026-08-01) and merged to `main` — see the P1 table below for per-item receipts and
+roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. P2/P3/P4 have not started.
 
 | | |
 |---|---|

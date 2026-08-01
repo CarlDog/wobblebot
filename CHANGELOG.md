@@ -7,16 +7,24 @@ Per-stage receipts in [`docs/planning/roadmap.md`](docs/planning/roadmap.md)
 carry the canonical completion dates.
 
 **`v1.0.0` was tagged 2026-07-31** (see the `[1.0.0]` section below and
-`docs/planning/phase-8-summary.md`). **v1.1 development continues on the
-`v1.1` branch**, deliberately not merged into this tag — those entries
-land under `[v1.1]` below until they eventually merge. New direct-to-`main`
-changes (post-tag hotfixes) land under `[Unreleased]`.
+`docs/planning/phase-8-summary.md`). The work developed on the `v1.1`
+branch since then — P1's safety-hardening backlog, the ADR-022 advisor
+reorientation, and a full web UI expansion — merges to `main` as
+**`2.0.0`**, not `1.1.0`: it includes a breaking config-schema change
+(`EmergencyStopConfig` removed, ADR-032) and a full replacement of the
+advisor's decision architecture (ADR-022), both of which warrant a
+major bump under this file's stated SemVer discipline. The branch
+itself keeps its `v1.1` name for history (git branches, ADR numbers,
+and the `docs/release/v1.1/` planning directory aren't renamed) — only
+the released version number changes. Entries land under `[2.0.0]`
+below until the tag ceremony stamps a date. New direct-to-`main`
+changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
 Nothing yet.
 
-## [v1.1] — Unreleased (on the `v1.1` branch; not yet merged to main)
+## [2.0.0] — Unreleased (developed on the `v1.1` branch)
 
 ### P1 — Safety-hardening + ready-now backlog, COMPLETE (2026-07-31 → 2026-08-01)
 

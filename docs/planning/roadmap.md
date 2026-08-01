@@ -288,17 +288,21 @@ Six new runtime dependencies (biggest dep-add since Phase 5's `discord.py`): `fa
    plan (A–F) + the 2026 Q1 out-of-sample check in
    `docs/planning/stage-8.6-advisor-regime-reorientation-design.md`.
 
-## v1.1 Track (in progress, on the `v1.1` branch — parallel to the v1.0 soak)
+## v1.1 Track — ships as `2.0.0` (developed on the `v1.1` branch)
 
-**Status:** v1.1 development began 2026-06-01 on the `v1.1` branch while the v1.0 gating
-soak runs on the NAS. `main` stays **frozen at the soak commit** until v1.0 is tagged (the
-GHCR image only rebuilds on a push to `main`, which would bounce the live soak container);
-all v1.1 work lands on the branch and merges after the tag. **The sequenced plan — phases
-P0–P4, the dependency spine, and the parked register — lives in
+**Status:** development began 2026-06-01 on the `v1.1` branch while the v1.0 gating soak
+ran on the NAS; `main` stayed frozen at the soak commit until v1.0 tagged 2026-07-31. **P1
+closed 2026-08-01 and merges to `main` as `2.0.0`, not `1.1.0`** — the branch's own
+`EmergencyStopConfig` removal (ADR-032) is a breaking config-schema change, and ADR-022
+fully replaced the advisor's decision architecture, both past what a minor bump should
+carry under this project's SemVer discipline (see `CHANGELOG.md`'s `[2.0.0]` section). The
+branch name, the ADR numbers, and this `docs/release/v1.1/` planning directory all keep
+their `v1.1` name for history — only the released version number changed. **The sequenced
+plan — phases P0–P4, the dependency spine, and the parked register — lives in
 [`docs/release/v1.1/README.md`](../release/v1.1/README.md)** (the per-area files there hold
 the detail; the full backlog index is
 [`docs/release/v1.0-future-improvements.md`](../release/v1.0-future-improvements.md)). Only
-*shipped* v1.1 items are receipted here.
+*shipped* items are receipted here.
 
 1. **Dead man's switch** ✅ 2026-06-01 — server-side `CancelAllOrdersAfter` safety net
    (`ExchangePort.set_dead_mans_switch` + per-tick pet/disarm in `cli/live`), on by default

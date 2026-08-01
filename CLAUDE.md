@@ -13,12 +13,15 @@ rule); this section is a pointer, not a changelog.
   deployment and passed its stated exit criteria (engine-coverage + reconciliation-across-restarts
   + all-daemon-cycles + no fund-losing hard-stops), including a clean recovery from an
   11-day host-wide NAS reboot discovered 2026-07-31. **`v1.0.0` is `main` exactly as it
-  stood at tag time** — substantial additional work (ADR-022 advisor reorientation, web UI
-  expansion, two fleet-review passes) already exists on the `v1.1` branch (this branch) and
-  continues here per `docs/release/v1.1/README.md`. **v1.1's P1 (safety-hardening +
-  ready-now backlog) is now COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2)
-  — P2 (data-infrastructure spine) and P4 (advisor-feedback, data-gated) remain unstarted.
-  Phase 9 (Kraken Securities equities) follows v1.1, not immediately after the v1.0.0 tag.
+  stood at tag time.** The work developed since on the `v1.1` branch (ADR-022 advisor
+  reorientation, web UI expansion, two fleet-review passes, and P1's safety-hardening
+  backlog — see `docs/release/v1.1/README.md`) **merges to `main` as `2.0.0`, not `1.1.0`**
+  (a breaking config-schema change — `EmergencyStopConfig` removed, ADR-032 — plus ADR-022's
+  full advisor-architecture replacement warrant the major bump; see `CHANGELOG.md`).
+  **P1 is COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2) and merged
+  2026-08-01 — P2 (data-infrastructure spine), P3 (ops/UX), and P4 (advisor-feedback,
+  data-gated) remain unstarted. Phase 9 (Kraken Securities equities) follows, not
+  immediately after this merge.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
   onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
