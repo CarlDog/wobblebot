@@ -162,7 +162,12 @@ CREATE TABLE IF NOT EXISTS advisor_suggestions (
     -- (role, confidence, recommendations, rationale). Empty array for
     -- single-LLM suggestions. NOT NULL DEFAULT keeps the migration on
     -- pre-3.4a DBs trivial — the ALTER below picks up existing rows.
-    expert_opinions     TEXT NOT NULL DEFAULT '[]'
+    expert_opinions     TEXT NOT NULL DEFAULT '[]',
+    -- ADR-007 amendment (structural news firewall, v1.1): whether a
+    -- news opinion materially drove an aggregated recommendation's
+    -- value. Always 0 outside MoE / for non-aggregated roles.
+    news_materially_drove INTEGER NOT NULL DEFAULT 0
+                                    CHECK (news_materially_drove IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created

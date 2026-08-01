@@ -36,6 +36,7 @@ def _make_suggestion(
     minutes_ago: int = 5,
     summary: dict[str, object] | None = None,
     recommendations: dict[str, object] | None = None,
+    news_materially_drove: bool = False,
 ) -> AdvisorSuggestion:
     created = datetime.now(UTC) - timedelta(minutes=minutes_ago)
     rec = AdvisorRecommendation(
@@ -45,6 +46,7 @@ def _make_suggestion(
         recommendations=recommendations or {"spacing_percentage": 1.2},
         rationale=f"Test rationale from {model_name}.",
         confidence=confidence,  # type: ignore[arg-type]
+        news_materially_drove=news_materially_drove,
     )
     return AdvisorSuggestion(
         recommendation=rec,
@@ -328,6 +330,96 @@ async def test_expert_opinions_migration_on_pre_3_4a_db(tmp_path: object) -> Non
         await adapter.save_advisor_suggestion(_make_suggestion(model_name="post-migration"))
         got2 = await adapter.get_advisor_suggestions(model_name="post-migration")
         assert len(got2) == 1
+    finally:
+        await adapter.close()
+
+
+async def test_news_materially_drove_defaults_false(storage: SQLiteStorageAdapter) -> None:
+    await storage.save_advisor_suggestion(_make_suggestion())
+    got = (await storage.get_advisor_suggestions())[0]
+    assert got.recommendation.news_materially_drove is False
+
+
+async def test_news_materially_drove_round_trips_true(storage: SQLiteStorageAdapter) -> None:
+    await storage.save_advisor_suggestion(
+        _make_suggestion(role="aggregated", news_materially_drove=True)
+    )
+    got = (await storage.get_advisor_suggestions())[0]
+    assert got.recommendation.news_materially_drove is True
+
+
+async def test_news_materially_drove_migration_on_pre_amendment_db(
+    tmp_path: object,
+) -> None:
+    """Operators upgrading from before the ADR-007 amendment have
+    advisor_suggestions tables with expert_opinions but no
+    news_materially_drove column. connect() must ALTER the table to
+    add it (defaulted to 0/False) without losing existing rows."""
+    from pathlib import Path as _Path
+
+    import aiosqlite as _aiosqlite
+
+    db_path = _Path(tmp_path) / "legacy.db"  # type: ignore[arg-type]
+
+    # Post-3.4a shape (has expert_opinions) but pre-amendment (no
+    # news_materially_drove) -- the realistic upgrade path.
+    legacy_create = """
+    CREATE TABLE advisor_suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recommendation_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        role TEXT NOT NULL,
+        recommendations TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        confidence TEXT NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+        input_summary TEXT NOT NULL,
+        model_name TEXT NOT NULL,
+        expert_opinions TEXT NOT NULL DEFAULT '[]'
+    );
+    """
+    async with _aiosqlite.connect(str(db_path)) as raw:
+        await raw.executescript(legacy_create)
+        await raw.execute(
+            """
+            INSERT INTO advisor_suggestions (
+                recommendation_id, created_at, role, recommendations,
+                rationale, confidence, input_summary, model_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-id",
+                datetime.now(UTC).isoformat(),
+                "aggregated",
+                "{}",
+                "pre-amendment row",
+                "low",
+                "{}",
+                "moe[voting:...]",
+            ),
+        )
+        await raw.commit()
+
+    adapter = SQLiteStorageAdapter(str(db_path))
+    await adapter.connect()
+    try:
+        got = await adapter.get_advisor_suggestions()
+        assert len(got) == 1
+        assert got[0].recommendation.rationale == "pre-amendment row"
+        # Pre-existing row defaults to False -- correct: the flag never
+        # existed when this row was written, and can't be retroactively
+        # re-derived without the original per-expert opinions.
+        assert got[0].recommendation.news_materially_drove is False
+
+        # New writes carry the real flag through -- proves the column
+        # is present and writeable, not just defaulted.
+        await adapter.save_advisor_suggestion(
+            _make_suggestion(
+                model_name="post-migration", role="aggregated", news_materially_drove=True
+            )
+        )
+        got2 = await adapter.get_advisor_suggestions(model_name="post-migration")
+        assert len(got2) == 1
+        assert got2[0].recommendation.news_materially_drove is True
     finally:
         await adapter.close()
 

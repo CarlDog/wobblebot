@@ -188,9 +188,13 @@ class TestRoleEligibility:
 
     def test_aggregated_role_with_news_in_opinions_still_applies(self) -> None:
         """An MoE-aggregated recommendation that included a news expert
-        in expert_opinions still applies for whitelisted keys — the
-        ``aggregated`` role IS the metrics-driven synthesis. The
-        news-blocking rule is about role, not contributing experts."""
+        in expert_opinions still applies for whitelisted keys when
+        ``news_materially_drove`` is unset/False (the default here —
+        this suggestion is built directly, bypassing
+        ``MoEAdvisorAdapter``, so the flag was never computed). The
+        news-blocking rule is keyed off ROLE plus that flag, not off
+        contributing-experts alone. See TestNewsMateriallyDroveGate for
+        the companion case where the flag IS set."""
         # We construct the suggestion directly; the expert_opinions field
         # carries the news opinion but the top-level role is "aggregated".
         news_op = AdvisorRecommendation(
@@ -238,6 +242,70 @@ class TestRoleEligibility:
         suggestion = _suggestion(
             role="quant",
             recommendations={"spacing_percentage": 1.1},
+        )
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is True
+
+
+class TestNewsMateriallyDroveGate:
+    """ADR-007 amendment (structural news firewall): an ``aggregated``
+    suggestion flagged ``news_materially_drove`` must be blocked exactly
+    like a raw ``role='news'`` suggestion, even though its role string
+    says ``aggregated``."""
+
+    def _aggregated_suggestion(
+        self, *, news_materially_drove: bool, recommendations: dict[str, Any] | None = None
+    ) -> AdvisorSuggestion:
+        rec = AdvisorRecommendation(
+            recommendation_id="rec-aggregated",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="aggregated",
+            recommendations=recommendations or {"spacing_percentage": 1.1},
+            rationale="consensus",
+            confidence="medium",
+            news_materially_drove=news_materially_drove,
+        )
+        return AdvisorSuggestion(
+            recommendation=rec,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={},
+            model_name="moe[arbitrator:...]",
+        )
+
+    def test_flagged_aggregated_suggestion_blocked(self) -> None:
+        suggestion = self._aggregated_suggestion(news_materially_drove=True)
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is False
+        assert result.applied_keys == []
+        reason = result.rejected_keys[0].reason
+        assert "ADR-007 amendment" in reason
+        assert "news" in reason.lower()
+
+    def test_unflagged_aggregated_suggestion_still_applies(self) -> None:
+        suggestion = self._aggregated_suggestion(news_materially_drove=False)
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is True
+        assert len(result.applied_keys) == 1
+
+    def test_flag_only_matters_for_aggregated_role(self) -> None:
+        """The gate keys off role=='aggregated' AND the flag together --
+        a non-aggregated role with the flag set (shouldn't happen in
+        practice; MoEAdvisorAdapter only sets it on aggregated output)
+        must not be treated as automatically blocked by this branch."""
+        rec = AdvisorRecommendation(
+            recommendation_id="rec-single",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="single",
+            recommendations={"spacing_percentage": 1.1},
+            rationale="test",
+            confidence="medium",
+            news_materially_drove=True,
+        )
+        suggestion = AdvisorSuggestion(
+            recommendation=rec,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+            input_summary={},
+            model_name="phi4:14b",
         )
         result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
         assert result.role_eligible is True

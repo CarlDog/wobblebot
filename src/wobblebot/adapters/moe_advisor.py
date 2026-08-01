@@ -21,7 +21,12 @@ said alongside the consensus.
 **News-role discipline.** Per ADR-007, news opinions DO contribute
 to the aggregated reasoning. The auto-apply exclusion ("news-derived
 recommendations never auto-apply") lives in Stage 3.4b's gate, not
-here.
+here — but this adapter computes the *signal* the gate needs for
+aggregated output: per the ADR-007 amendment (structural news
+firewall), ``news_materially_drove`` flags whether a news opinion
+was the closer match to the reconciled value on any key, so the gate
+can block an aggregated suggestion that's effectively news-driven
+even though its role isn't literally ``"news"``.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from wobblebot.services.aggregators import (
     aggregate_arbitrator,
     aggregate_voting,
     aggregate_weighted_confidence,
+    news_materially_drove,
 )
 
 _LOGGER = logging.getLogger("wobblebot.adapters.moe_advisor")
@@ -158,7 +164,18 @@ class MoEAdvisorAdapter(AdvisorPort):
         # aggregated role is forced to "aggregated" regardless of the
         # arbitrator's self-tag so the audit trail keeps the MoE output
         # distinguishable from a raw single-LLM call.
-        return aggregated.model_copy(update={"role": "aggregated", "expert_opinions": opinions})
+        #
+        # ADR-007 amendment (structural news firewall): tag whether a
+        # news opinion materially drove the reconciled value, computed
+        # from the same per-expert opinions the audit trail already
+        # carries. The Stage 3.4b auto-apply gate reads this flag.
+        return aggregated.model_copy(
+            update={
+                "role": "aggregated",
+                "expert_opinions": opinions,
+                "news_materially_drove": news_materially_drove(aggregated, opinions),
+            }
+        )
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.4a: passing through — like the single-LLM adapter, real

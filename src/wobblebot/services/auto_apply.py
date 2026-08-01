@@ -12,11 +12,16 @@ Gate rules (per ADR-007 + the AutoApplyConfig docstring):
    logged with reason ``"auto-apply disabled"``. The whole point of
    the flag is that the operator opts in.
 2. **``recommendation.role == "news"``** → blanket reject. News-derived
-   recommendations are advisory-only regardless of bounds. ``aggregated``
-   suggestions that *included* a news opinion in ``expert_opinions``
-   still auto-apply because the aggregated role is metrics-driven
-   (news is one of several inputs; the aggregation IS the
-   metrics-driven synthesis).
+   recommendations are advisory-only regardless of bounds.
+2b. **``recommendation.role == "aggregated"`` and
+   ``recommendation.news_materially_drove``** → blanket reject (ADR-007
+   amendment, 2026-07-31). An aggregated suggestion is normally
+   metrics-driven even when a news opinion contributed — but when a
+   news opinion is the closer match to the reconciled value on at
+   least one key (or the sole source for it), the aggregation didn't
+   launder out news's influence; it structurally carried it through.
+   ``MoEAdvisorAdapter`` computes this flag from ``expert_opinions``,
+   the same audit-trail data the gate already has access to.
 3. **Whitelist** of mutable keys: ``spacing_percentage`` and
    ``order_size_usd``. Both have ``max_*_change_percentage`` caps in
    ``AutoApplyConfig`` and a clear current-value baseline in
@@ -52,8 +57,12 @@ _WHITELISTED_NUMERIC_KEYS = ("spacing_percentage", "order_size_usd")
 _LEVEL_KEYS = ("levels_above", "levels_below")
 
 # Roles whose recommendations never auto-apply, per ADR-007.
-# ``"aggregated"`` is intentionally NOT here — the MoE's aggregated
-# output is metrics-driven even when a news expert contributed.
+# ``"aggregated"`` is intentionally NOT here — most aggregated output
+# is metrics-driven even when a news expert contributed. The narrower
+# case where news specifically drove the reconciled value is caught
+# below via ``recommendation.news_materially_drove`` (ADR-007
+# amendment, structural news firewall), not by blocking the role
+# wholesale.
 _BLOCKED_ROLES: frozenset[str] = frozenset({"news"})
 
 
@@ -168,6 +177,25 @@ def evaluate_auto_apply(  # pylint: disable=too-many-locals
                     reason=(
                         f"role={role!r} blocked by ADR-007 "
                         "(news-derived recommendations never auto-apply)"
+                    ),
+                )
+                for k, v in recommendations.items()
+            ],
+            proposed_grid=current_grid,
+        )
+
+    if role == "aggregated" and suggestion.recommendation.news_materially_drove:
+        return AutoApplyResult(
+            enabled=True,
+            role_eligible=False,
+            symbol=symbol,
+            rejected_keys=[
+                RejectedKey(
+                    key=k,
+                    proposed=v,
+                    reason=(
+                        "aggregated recommendation blocked by the ADR-007 amendment: "
+                        "a news opinion materially drove this reconciled value"
                     ),
                 )
                 for k, v in recommendations.items()

@@ -117,6 +117,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 await self._conn.execute("PRAGMA synchronous = NORMAL")
             await self._conn.executescript(SCHEMA)
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
+            await _migrate_advisor_suggestions_news_materially_drove(self._conn)
             await _migrate_news_items_publisher_url(self._conn)
             await _migrate_price_snapshots_unique(self._conn)
             await _migrate_transfer_results_unique_proposal_id(self._conn)
@@ -556,8 +557,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 INSERT INTO advisor_suggestions (
                     recommendation_id, created_at, role,
                     recommendations, rationale, confidence,
-                    input_summary, model_name, expert_opinions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    input_summary, model_name, expert_opinions,
+                    news_materially_drove
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     suggestion.recommendation.recommendation_id,
@@ -569,6 +571,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     json.dumps(suggestion.input_summary),
                     suggestion.model_name,
                     serialize_expert_opinions(suggestion.recommendation.expert_opinions),
+                    1 if suggestion.recommendation.news_materially_drove else 0,
                 ),
             )
             await conn.commit()
@@ -1468,6 +1471,29 @@ async def _migrate_advisor_suggestions_expert_opinions(
         await conn.execute(
             "ALTER TABLE advisor_suggestions "
             "ADD COLUMN expert_opinions TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
+async def _migrate_advisor_suggestions_news_materially_drove(
+    conn: aiosqlite.Connection,
+) -> None:
+    """Add the ``news_materially_drove`` column (ADR-007 amendment, v1.1).
+
+    Same shape as ``_migrate_advisor_suggestions_expert_opinions`` --
+    ``SCHEMA`` already declares the column for new DBs; operators on a
+    pre-amendment table need the ``ALTER``. Existing rows default to 0
+    (not news-driven) -- correct for the forensic record since the
+    flag didn't exist when those rows were written, and re-computing it
+    retroactively isn't possible without the original per-expert
+    opinions in a comparable shape.
+    """
+    async with conn.execute("PRAGMA table_info(advisor_suggestions)") as cursor:
+        cols = {row[1] async for row in cursor}
+    if "news_materially_drove" not in cols:
+        await conn.execute(
+            "ALTER TABLE advisor_suggestions "
+            "ADD COLUMN news_materially_drove INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (news_materially_drove IN (0, 1))"
         )
 
 
