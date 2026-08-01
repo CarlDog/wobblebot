@@ -414,3 +414,46 @@ class TestApplyReconciliationRecoveredFills:
 
         assert report.storage_persistence_failures == 1
         assert report.recovered_fill_count == 0
+
+    async def test_one_bad_row_does_not_block_reconciliation_of_the_rest(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """v1.1 test-hardening (test-honesty audit, P9 "reconciler
+        fail-soft"): the prior failure test above uses a single
+        storage-only order, so it proves the exception doesn't
+        propagate but NOT that the loop actually continues on to the
+        next row. Here two storage-only orders are in play and only
+        the first's persistence fails -- a regression that turned the
+        per-row ``except StorageError`` into a ``re-raise`` (aborting
+        the whole reconciliation, and daemon boot with it) would still
+        pass every other reconciler test but fail this one: the second
+        (good) row must still get its clean-cancel persisted."""
+        bad = _order(exchange_id="BAD-1")
+        good = _order(exchange_id="GOOD-1")
+        await storage.save_order(bad)
+        await storage.save_order(good)
+        adapter = _FakeAdapter(open_orders=[])  # both resolve to a clean cancel
+
+        class _SelectivelyFailingStorage(SQLiteStorageAdapter):
+            async def save_order(self, order: Order) -> None:  # type: ignore[override]
+                if order.exchange_id == "BAD-1":
+                    raise StorageError("simulated save failure")
+                await super().save_order(order)
+
+        failing_storage = _SelectivelyFailingStorage(":memory:")
+        # Reuse the same underlying connection so get_open_orders still
+        # sees the rows `storage` just saved.
+        failing_storage._conn = storage._conn  # type: ignore[attr-defined] # pylint: disable=protected-access
+
+        report = await apply_reconciliation(adapter, failing_storage)
+
+        assert report.storage_persistence_failures == 1
+        assert report.storage_canceled_count == 1
+        bad_roundtripped = await storage.get_order(bad.id)
+        assert bad_roundtripped is not None
+        assert bad_roundtripped.status == "open", "the failed row stays open, untouched"
+        good_roundtripped = await storage.get_order(good.id)
+        assert good_roundtripped is not None
+        assert (
+            good_roundtripped.status == "canceled"
+        ), "reconciliation must continue past the bad row"

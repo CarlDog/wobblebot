@@ -3,13 +3,30 @@
 The full preflight entry point is integration territory (it runs against
 live Kraken); these target the ``_audit_trade_key_scope`` helper — the
 ADR-003 gate that refuses exit 0 when the trade key can withdraw.
+
+v1.1 test-hardening (test-honesty audit, P9 "preflight gate
+orchestration") adds ``TestRunOrchestration``: ``_audit_trade_key_scope``
+itself was solid, but nothing drove ``_run`` to prove the gate's
+early-return actually pre-empts the validate run at the CLI-wiring
+level -- a regression moving the gate call after ``engine.step``, or
+skipping it for a specific ``dry_run`` value, would still pass every
+existing test.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
+
 import pytest
 
+from tests.fixtures import grid_config as _grid_config
+from tests.fixtures import safety_config as _safety_config
+from wobblebot.cli import preflight as preflight_module
 from wobblebot.cli.preflight import _audit_trade_key_scope
+from wobblebot.config.cli import PreflightConfig
+from wobblebot.config.loader import WobbleBotConfig
+from wobblebot.domain.value_objects import Price, Symbol
 from wobblebot.ports.exceptions import ExchangeError
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -46,3 +63,58 @@ async def test_probe_error_warns_and_continues() -> None:
     # network blip shouldn't fail a legitimate diagnostic.
     adapter = _FakeAdapter(error=ExchangeError("transient boom"))
     assert await _audit_trade_key_scope(adapter) is None  # type: ignore[arg-type]
+
+
+class _StubKrakenAdapter:
+    """Stands in for ``KrakenAdapter`` at the ``_run`` orchestration level.
+
+    ``get_current_price`` raising proves ``_run`` never reaches the
+    reference-price fetch when the key-scope gate fires first.
+    """
+
+    def __init__(self, *, config: object = None, dry_run: bool = True) -> None:
+        del config, dry_run
+
+    async def has_withdraw_scope(self) -> bool:
+        return True  # the ADR-003 violation this test class exercises
+
+    async def get_current_price(self, symbol: object) -> Price:
+        raise AssertionError("gate should have pre-empted the reference-price fetch")
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _NeverStepEngine:
+    """Stands in for ``GridEngine``; ``.step`` raising proves the gate
+    pre-empts the validate run itself, not just the price fetch."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+
+    async def step(self, symbol: object) -> Any:
+        raise AssertionError("gate should have pre-empted engine.step")
+
+
+class TestRunOrchestration:
+    """Drives ``_run`` itself (not just ``_audit_trade_key_scope``) to prove
+    the ADR-003 gate's early-return actually pre-empts the validate run at
+    the CLI-wiring level."""
+
+    async def test_withdraw_scope_violation_short_circuits_before_price_fetch_and_step(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KRAKEN_TRADER_API_KEY", "test-key")
+        monkeypatch.setenv("KRAKEN_TRADER_API_SECRET", "c2VjcmV0")  # base64("secret")
+        monkeypatch.setattr(preflight_module, "KrakenAdapter", _StubKrakenAdapter)
+        monkeypatch.setattr(preflight_module, "GridEngine", _NeverStepEngine)
+
+        config = WobbleBotConfig(
+            grid=_grid_config(),
+            safety=_safety_config(),
+            preflight=PreflightConfig(symbol=Symbol(base="BTC", quote="USD")),
+        )
+
+        exit_code = await preflight_module._run(config)  # pylint: disable=protected-access
+
+        assert exit_code == 3

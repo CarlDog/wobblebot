@@ -257,6 +257,71 @@ class TestHandleInboundMessage:
         assert "operator" in roles
         assert "assistant" in roles
 
+    async def test_command_intent_never_actions_the_engine_without_confirmation(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """v1.1 test-hardening (test-honesty audit, P7 "firewall-bypass
+        negative test"). The ADR-002 "approved-only reaches the engine"
+        SELECT (OperatorService's pending-command poll) is well-pinned
+        elsewhere, but "an IntentCommand never dispatches directly" is
+        currently prevented ONLY by _handle_command_intent holding no
+        engine/OperatorService reference at all -- a future edit that
+        gave it one could bypass the firewall silently, with this exact
+        scenario still shipping green. Assert BOTH: the engine's real
+        state is untouched, AND OperatorService.dispatch_command itself
+        was never awaited.
+        """
+        symbol = Symbol(base="BTC", quote="USD")
+        intent: OperatorIntent = IntentCommand(command=PauseCommand(symbol=symbol))
+        transport = _mock_transport()
+        # Inlined (not the shared _operator_service() helper) so this
+        # test keeps its own direct engine reference to assert real
+        # engine state, not just OperatorService's black-box surface.
+        exchange = MockExchangeAdapter(starting_balances={}, starting_prices={})
+        engine = GridEngine(exchange, storage, grid_config(), safety_config())
+        operator_service = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(symbol,),
+            grid_config=grid_config(),
+        )
+        assert engine.is_paused(symbol) is False  # baseline
+
+        # Spy on dispatch_command -- the ONLY sanctioned path from a
+        # PendingCommand to the engine (cli/live's approved-only poll).
+        # If _handle_command_intent ever called this directly, the
+        # spy would record it.
+        operator_service.dispatch_command = AsyncMock(  # type: ignore[method-assign]
+            side_effect=AssertionError(
+                "an unconfirmed IntentCommand must never reach dispatch_command"
+            )
+        )
+
+        await _handle_inbound_message(
+            _inbound(content="pause BTC"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
+            assistant=_StubAssistant(intent),
+            operator_service=operator_service,
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            pending_message_map={},
+            assistant_model_name="test-model",
+        )
+
+        operator_service.dispatch_command.assert_not_awaited()
+        # The engine's real state is unchanged -- not just "the mock
+        # wasn't called" but "the symbol genuinely isn't paused."
+        assert engine.is_paused(symbol) is False
+        # The command sits behind the firewall, awaiting a human ✅.
+        pendings = await storage.get_pending_commands()
+        assert len(pendings) == 1
+        assert pendings[0].status == "awaiting_confirmation"
+
     async def test_query_intent_calls_operator_service_and_posts_embed(
         self, storage: SQLiteStorageAdapter
     ) -> None:
@@ -558,6 +623,45 @@ class TestHandleReaction:
             event, operator_storage=storage, pending_message_map={"msg-1": uuid4()}
         )
         # No exception
+
+    async def test_other_emoji_leaves_pending_untouched(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """v1.1 test-hardening (test-honesty audit, P7): the 'other
+        emoji; ignore' else-branch was uncovered. A reaction with
+        neither CONFIRM_EMOJI nor REJECT_EMOJI on a real,
+        still-pending row must be a genuine no-op -- not fall through
+        to approve or reject."""
+        from wobblebot.ports.operator import PendingCommand
+
+        pending_id = uuid4()
+        pending = PendingCommand(
+            id=pending_id,
+            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
+            status="awaiting_confirmation",
+            channel_id="C-1",
+            requesting_user_id="U-1",
+            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await storage.save_pending_command(pending)
+        pending_map: dict[str, UUID] = {"msg-1": pending_id}
+
+        event = ReactionEvent(
+            message_id="msg-1",
+            channel_id="C-1",
+            user_id="U-2",
+            emoji="\U0001f440",  # 👀 -- neither confirm nor reject
+            action="add",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+        )
+        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
+
+        fetched = await storage.get_pending_command(pending_id)
+        assert fetched is not None
+        assert fetched.status == "awaiting_confirmation"
+        assert fetched.confirming_user_id is None
+        assert fetched.confirmed_at is None
 
 
 # --------------------------------------------------------------------- #
