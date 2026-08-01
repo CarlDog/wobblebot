@@ -352,6 +352,62 @@ class TestCancelAllOpenBatches:
 
 
 # --------------------------------------------------------------------------- #
+# _cancel_all_open: ADR-027 inter-cancel pacing on shutdown                    #
+# --------------------------------------------------------------------------- #
+
+
+class TestCancelAllOpenPacing:
+    """A short sleep between successive shutdown cancels, none before the
+    first -- so this cleanup path can't itself re-trigger the rate-limit
+    storm the OpenOrders batching above already guards against."""
+
+    async def test_paces_between_successive_cancels(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+
+        async def fast_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(live_module.asyncio, "sleep", fast_sleep)
+
+        orders = [_order(_BTC, "B1"), _order(_ETH, "E1"), _order(_SOL, "S1")]
+        for o in orders:
+            await storage.save_order(o)
+        adapter = _CancelSpyAdapter(orders)
+
+        cancelled, failed = await _cancel_all_open(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (_BTC, _ETH, _SOL),
+        )
+
+        assert (cancelled, failed) == (3, 0)
+        # Three cancels -> two gaps (none before the first cancel).
+        assert sleeps == [live_module._INTER_CANCEL_PACING_SECONDS] * 2
+
+    async def test_single_cancel_does_not_sleep(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fail_if_called(seconds: float) -> None:
+            raise AssertionError("must not pace a single cancel")
+
+        monkeypatch.setattr(live_module.asyncio, "sleep", fail_if_called)
+
+        btc = _order(_BTC, "B1")
+        await storage.save_order(btc)
+        adapter = _CancelSpyAdapter([btc])
+
+        cancelled, failed = await _cancel_all_open(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (_BTC,),
+        )
+
+        assert (cancelled, failed) == (1, 0)
+
+
+# --------------------------------------------------------------------------- #
 # Engine: a passed snapshot replaces the per-symbol exchange fetch             #
 # --------------------------------------------------------------------------- #
 

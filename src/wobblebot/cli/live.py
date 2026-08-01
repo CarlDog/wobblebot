@@ -88,6 +88,11 @@ _LOGGER = logging.getLogger("wobblebot.cli.live")
 # offside transition + heartbeat pattern -- never a WARNING every tick.
 _DMS_UNCONFIRMED_SUMMARY_EVERY_TICKS = 240
 
+# ADR-027: pace successive shutdown CancelOrder calls so the cleanup
+# path itself can't re-trigger a Kraken rate-limit storm during the
+# most safety-critical cleanup (DMS-armed shutdown).
+_INTER_CANCEL_PACING_SECONDS = 0.2
+
 
 # ---------------------------------------------------------------------------
 # Loop helpers — same shape as before, now consume LiveConfig directly
@@ -115,15 +120,28 @@ async def _cancel_all_open(
     write doesn't undo the cancellation; the next-startup reconciler
     catches stragglers.
 
+    Successive ``cancel_order`` calls are paced (ADR-027) — a short
+    sleep between attempts, none before the first — so this cleanup
+    path can't itself re-trigger the rate-limit storm the OpenOrders
+    batching above already guards against. The underlying Kraken calls
+    (``_public_get``/``_private_post``) additionally retry a rate-limit
+    rejection with bounded backoff before it ever reaches this
+    function as an ``ExchangeError``.
+
     Returns ``(cancelled, failed)`` summed across symbols.
     """
     cancelled = 0
     failed = 0
     configured = set(symbols)
     opens = await adapter.get_open_orders()
+    attempted = 0
     for o in opens:
         if o.symbol not in configured:
             continue
+        if attempted > 0:
+            # ADR-027 inter-cancel pacing (see module constant docstring).
+            await asyncio.sleep(_INTER_CANCEL_PACING_SECONDS)
+        attempted += 1
         try:
             await adapter.cancel_order(o)
             cancelled += 1

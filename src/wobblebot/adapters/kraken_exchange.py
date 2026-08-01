@@ -47,7 +47,7 @@ import hashlib
 import hmac
 import time
 import urllib.parse
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
@@ -129,6 +129,22 @@ _INSUFFICIENT_FUNDS_MARKERS = ("EOrder:Insufficient funds",)
 # the stable part. Used by ``has_withdraw_scope`` to tell "key lacks the
 # permission" (expected, good) apart from a transport/protocol failure.
 _PERMISSION_DENIED_MARKERS = ("Permission denied",)
+
+# Kraken's rate-limit rejection (ADR-027). Transient -- unlike the two
+# markers above, this is retried with bounded exponential backoff rather
+# than mapped to a different exception or swallowed.
+_RATE_LIMIT_MARKERS = ("EAPI:Rate limit exceeded",)
+
+# ADR-027 backoff knobs. Deliberately mirrors ADR-015's cloud-LLM retry
+# shape (capped attempts + exponential multiplier, same defaults: 3
+# retries, 1s initial, 2x multiplier) rather than inventing a different
+# formula. Implemented locally instead of importing
+# ``services.llm_retry`` -- that would be a fresh adapters -> services
+# edge outside the LLM-adapter plumbing carve-out CLAUDE.md reserves
+# (see "Documented exception -- LLM plumbing").
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_INITIAL_BACKOFF_SECONDS = 1.0
+_RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 
 
 class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
@@ -838,13 +854,18 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             ExchangeError: On HTTP error, malformed envelope, or
-                non-empty ``error`` array in the response.
+                non-empty ``error`` array in the response (rate-limit
+                errors are retried per ADR-027 before this is raised).
         """
-        try:
-            response = await self._http.get(path, params=params)
-        except httpx.HTTPError as exc:
-            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-        return self._unwrap_envelope(response, path)
+
+        async def _do() -> dict[str, Any]:
+            try:
+                response = await self._http.get(path, params=params)
+            except httpx.HTTPError as exc:
+                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+            return self._unwrap_envelope(response, path)
+
+        return await self._call_with_rate_limit_retry(_do)
 
     async def _private_post(
         self, path: str, params: dict[str, Any] | None = None, *, require_result: bool = True
@@ -854,26 +875,68 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         Builds the nonce, signs the request, and sets ``API-Key`` /
         ``API-Sign`` headers. The body is form-encoded
         (``application/x-www-form-urlencoded``), which is what Kraken
-        signs over.
+        signs over. The nonce/signature are (re)built on every retry
+        attempt (see ``_call_with_rate_limit_retry``) so a retried
+        request never replays a stale nonce.
 
         Raises:
             ExchangeError: On HTTP error, malformed envelope, or
-                non-empty ``error`` array in the response.
+                non-empty ``error`` array in the response (rate-limit
+                errors are retried per ADR-027 before this is raised).
         """
-        body = dict(params or {})
-        nonce = self._make_nonce()
-        body["nonce"] = nonce
-        signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
-        headers = {
-            "API-Key": self._config.api_key,
-            "API-Sign": signature,
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        try:
-            response = await self._http.post(path, data=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-        return self._unwrap_envelope(response, path, require_result=require_result)
+
+        async def _do() -> dict[str, Any]:
+            body = dict(params or {})
+            nonce = self._make_nonce()
+            body["nonce"] = nonce
+            signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
+            headers = {
+                "API-Key": self._config.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            try:
+                response = await self._http.post(path, data=body, headers=headers)
+            except httpx.HTTPError as exc:
+                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+            return self._unwrap_envelope(response, path, require_result=require_result)
+
+        return await self._call_with_rate_limit_retry(_do)
+
+    @staticmethod
+    async def _call_with_rate_limit_retry(
+        fn: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Retry ``fn`` with bounded exponential backoff on a Kraken
+        rate-limit rejection (ADR-027).
+
+        Mirrors ADR-015's cloud-LLM retry shape (capped attempts,
+        exponential backoff) rather than a bespoke formula -- see the
+        ``_RATE_LIMIT_*`` constants. Only ``EAPI:Rate limit exceeded``
+        is transient here; any other ``ExchangeError`` (or any other
+        exception) propagates on the first attempt unchanged. After
+        the retry budget is exhausted, re-raises the last rate-limit
+        ``ExchangeError`` as-is -- callers already handle
+        ``ExchangeError`` from a Kraken call, so this stays a plain
+        transport-resilience retry rather than a new exception type.
+        """
+        last_error: ExchangeError | None = None
+        total_attempts = 1 + _RATE_LIMIT_MAX_RETRIES
+        for attempt in range(total_attempts):
+            try:
+                return await fn()
+            except ExchangeError as exc:
+                if not any(marker in str(exc) for marker in _RATE_LIMIT_MARKERS):
+                    raise
+                last_error = exc
+                if attempt == total_attempts - 1:
+                    break
+                backoff = _RATE_LIMIT_INITIAL_BACKOFF_SECONDS * (
+                    _RATE_LIMIT_BACKOFF_MULTIPLIER**attempt
+                )
+                await asyncio.sleep(backoff)
+        assert last_error is not None
+        raise last_error
 
     @staticmethod
     def _unwrap_envelope(

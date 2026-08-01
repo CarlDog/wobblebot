@@ -14,7 +14,7 @@ are **consistency + robustness gaps, not active bugs.**
 | Integration | Per-request timeout | Application-level retry | Rate limiting | How a failure is contained today |
 |---|---|---|---|---|
 | **Cloud LLM** (Anthropic / OpenAI / Google, advisor + assistant) | yes (60s default, per-adapter) | ✅ **Yes — ADR-015** (`retry_with_backoff`) | n/a | retry 1+3 attempts → `LLMRetryExhausted` → caller degrades (heuristic fallback / skip tick) |
-| **Kraken REST** | yes (10s, `KrakenConfig` default) | ❌ **No — single attempt** | ❌ none enforced | per-symbol error swallowed at the CLI (Stage 2.4); retried next tick. One-shot CLIs surface the error to the operator |
+| **Kraken REST** | yes (10s, `KrakenConfig` default) | ⚠️ **Partial — ADR-027 (2026-07-31)**: `EAPI:Rate limit exceeded` retries (bounded exponential backoff, ADR-015 shape); every other error is still single-attempt | ❌ none enforced (reactive retry only, no token bucket) | per-symbol error swallowed at the CLI (Stage 2.4); retried next tick. One-shot CLIs surface the error to the operator |
 | **Ollama** (advisor + operator assistant) | yes (60s default; up to 180s for slow CPU models via config) | ❌ No — single attempt | n/a | MoE is fail-open (one expert timeout → proceed); `cli/advise`/`cli/operator` isolate per-cycle failures |
 | **RSS feeds** | yes (30s) + `follow_redirects` | ❌ No — single attempt | n/a | per-source fault isolation in `cli/news` (one feed fails → log + continue) |
 | **CryptoCompare** | yes (30s) | ❌ No — single attempt | n/a | same per-source isolation in `cli/news` |
@@ -47,11 +47,20 @@ cushion against a transient blip, and leaves the Kraken **config knobs dead**.
 
 This is the gold standard the other integrations are measured against.
 
-### Kraken REST — single attempt, dead config knobs
+### Kraken REST — rate-limit retry (ADR-027), otherwise single attempt
 
-- The adapter builds `httpx.AsyncClient(timeout=config.request_timeout_seconds)` and
-  `_public_get` / `_private_post` make **one** request, mapping `httpx.HTTPError` →
-  `ExchangeError`. **No retry loop, no backoff.**
+- The adapter builds `httpx.AsyncClient(timeout=config.request_timeout_seconds)`.
+  `_public_get` / `_private_post` still make **one HTTP request** per attempt, mapping
+  `httpx.HTTPError` → `ExchangeError` with no retry — **except** when the resulting
+  `ExchangeError` carries Kraken's `EAPI:Rate limit exceeded` marker: `_call_with_rate_limit_retry`
+  (ADR-027, 2026-07-31) retries that specific case with bounded exponential backoff (1+3
+  attempts, 1s/2s/4s — the same shape as ADR-015's cloud-LLM retry, reimplemented locally
+  rather than importing `services/llm_retry` across the adapters→services boundary). A
+  retried private POST rebuilds its nonce + signature fresh each attempt. Every other
+  Kraken error (timeout, 5xx, connection failure, any non-rate-limit business rejection)
+  is still single-attempt. `cli/live`'s shutdown `_cancel_all_open` additionally paces
+  successive `CancelOrder` calls (`_INTER_CANCEL_PACING_SECONDS`) so the cleanup path
+  itself can't retrigger the storm.
 - `KrakenConfig` (`config/kraken.py`) is built via `from_env(...)` — it carries only
   credentials, `base_url`, and a **default 10s** `request_timeout_seconds`. It is **not**
   populated from the YAML.
@@ -105,23 +114,30 @@ This is the gold standard the other integrations are measured against.
   improvement (option a — wire an actual transient-retry wrapper + a client-side rate
   limiter) stays as future work; it would reintroduce these knobs *with code behind them*.
 
-- **G2 — retry asymmetry on one-shot Kraken paths.** The daemon paths get an implicit
-  next-cycle retry; the **one-shot** Kraken calls (`preflight`, `status`,
-  `first_real_trade`, `harvest --execute`) get none — a transient timeout is a hard
-  failure the operator must notice and re-run. A *small* bounded transient retry
-  (timeouts / 5xx / connection only; never on a business rejection or a `validate` result)
-  on these paths would smooth real-world flakiness. **Money-path caution:** any retry on
+- **G2 — retry asymmetry on one-shot Kraken paths.** ⚠️ **Partially addressed by ADR-027**
+  (2026-07-31) for the rate-limit slice specifically: `_call_with_rate_limit_retry` lives in
+  `_public_get`/`_private_post`, so **every** caller — daemon *and* one-shot (`preflight`,
+  `status`, `first_real_trade`, `harvest --execute`) — gets the bounded rate-limit retry for
+  free. **Still open** for the general case: a plain timeout / 5xx / connection failure on a
+  one-shot path is still a hard failure the operator must notice and re-run. A small bounded
+  transient retry for that broader class (never on a business rejection or a `validate`
+  result) would close the rest of this gap. **Money-path caution unchanged:** any retry on
   `AddOrder`/`Withdraw` must guard against double-submission (Kraken's nonce + idempotency
-  semantics) — this is exactly why it's *not* done blindly today.
+  semantics) — ADR-027's private-POST retry rebuilds the nonce fresh each attempt for exactly
+  this reason.
 
 - **G3 — Kraken timeout isn't operator-tunable.** The 10s timeout is the `KrakenConfig`
   default; an operator on a slow link can't raise it without editing env/code. Low
   priority; folds into G1 if the YAML knobs get wired.
 
-- **G4 — no client-side Kraken rate limiting.** Relies on Kraken's generous hobby-tier
-  limits + the 5s tick spacing. Fine at single-symbol; revisit at multi-symbol scale
-  (already tracked as a parked perf item — "WebSocket / async parallelism" group). The
-  `rate_limit_rps` knob from G1 would be its home if implemented.
+- **G4 — no client-side Kraken rate limiting.** ⚠️ **Re-scoped 2026-07-31 (ADR-027):** the
+  soak proved this is *resilience*, not perf — a rate-limit storm during shutdown can leave
+  orders uncancelled. Addressed **reactively**: `EAPI:Rate limit exceeded` now retries with
+  bounded backoff, and `cli/live`'s shutdown cancel loop paces successive `CancelOrder` calls
+  so it can't retrigger the storm itself. **Still not done:** a *proactive* client-side rate
+  limiter (a token bucket ahead of the `rate_limit_rps` knob from G1) that avoids hitting the
+  limit in the first place — still fine at today's single/few-symbol scale + 5s tick spacing;
+  revisit if multi-symbol scale makes the reactive retry insufficient.
 
 **Posture going forward:** the cloud-LLM `retry_with_backoff` is the template. When a
 Kraken/Ollama/news retry is actually warranted (G1/G2), reuse the same
