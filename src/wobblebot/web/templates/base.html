@@ -22,17 +22,9 @@
   <meta name="twitter:card" content="summary">
   {# Theme init — runs BEFORE the stylesheet loads so the page paints
      with the right theme on first frame. Prevents the flash-of-wrong-
-     theme on dark-mode browsers loading the light defaults. #}
-  <script>
-    (function () {
-      try {
-        var stored = localStorage.getItem('wobblebot_theme');
-        if (stored === 'light' || stored === 'dark') {
-          document.documentElement.setAttribute('data-theme', stored);
-        }
-      } catch (e) { /* localStorage unavailable; fall back to auto */ }
-    })();
-  </script>
+     theme on dark-mode browsers loading the light defaults. External
+     file (not inline) per the v1.1 CSP fix — script-src is 'self' only. #}
+  <script src="/static/theme-init.js"></script>
   <link rel="stylesheet" href="/static/base.css">
   <script src="/static/htmx.min.js" defer></script>
   {% block head_extra %}{% endblock %}

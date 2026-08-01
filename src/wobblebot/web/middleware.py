@@ -1,13 +1,13 @@
-"""Web UI middleware — CSRF synchronizer-token + login rate-limit.
+"""Web UI middleware — CSRF synchronizer-token + login rate-limit + CSP.
 
-Per ADR-017 decisions 7 + 8 these are *application-level* concerns
-implemented as FastAPI dependencies / small helper classes rather
-than Starlette ``BaseHTTPMiddleware`` subclasses — the surface area
-is small enough that dependency injection keeps the wiring simple
-and avoids the body-buffering footguns of middleware-level form
-parsing.
+Per ADR-017 decisions 7 + 8 the CSRF/rate-limit pieces are
+*application-level* concerns implemented as FastAPI dependencies /
+small helper classes rather than Starlette ``BaseHTTPMiddleware``
+subclasses — the surface area is small enough that dependency
+injection keeps the wiring simple and avoids the body-buffering
+footguns of middleware-level form parsing.
 
-Two pieces ship here:
+Three pieces ship here:
 
 - :class:`LoginRateLimit` — in-memory per-IP token-bucket. 5 attempts
   per 60 seconds (operator-tunable via :class:`WebConfig`). Resets on
@@ -19,6 +19,11 @@ Two pieces ship here:
   forms include it as a hidden ``csrf_token`` input; the FastAPI
   dependency rejects POSTs whose form value doesn't match the
   session.
+- :func:`add_security_headers` — a real ``BaseHTTPMiddleware``
+  dispatch function (v1.1). Unlike CSRF/rate-limit, this doesn't
+  touch the request body at all — it only sets a response header on
+  every response, which is exactly the blanket-application case
+  Starlette's middleware layer is for.
 """
 
 from __future__ import annotations
@@ -26,9 +31,11 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request, status
+from starlette.responses import Response
 
 # --------------------------------------------------------------------- #
 # CSRF — synchronizer-token pattern                                     #
@@ -196,10 +203,57 @@ def get_login_rate_limit(request: Request) -> LoginRateLimit:
     return request.app.state.login_rate_limit  # type: ignore[no-any-return]
 
 
+# --------------------------------------------------------------------- #
+# Content-Security-Policy (v1.1 backlog — defense-in-depth over         #
+# Jinja2 autoescape, ASVS L3)                                           #
+# --------------------------------------------------------------------- #
+
+# script-src is 'self' only, no 'unsafe-inline' -- every template
+# script lives under /static/*.js (moved there for this fix; see
+# nav.js / theme-init.js / notifications-seen.js). style-src allows
+# 'unsafe-inline' because several templates use inline `style="..."`
+# (a data-driven bar-chart height on the cost page, fixed <col> width
+# hints) -- moving those to CSS custom properties is a larger refactor
+# than this fix scopes to; inline styles are lower-risk than inline
+# scripts for XSS. No external origins are referenced anywhere in the
+# templates (htmx.min.js is vendored under /static/), so every
+# directive below is 'self' or stricter.
+CSP_HEADER_VALUE = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self'; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+async def add_security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Set the Content-Security-Policy header on every response.
+
+    Registered via ``app.add_middleware(BaseHTTPMiddleware,
+    dispatch=add_security_headers)`` in ``create_app`` — applies to
+    every route, static assets, and error responses alike, which a
+    per-route dependency couldn't do without adding the same
+    ``Depends(...)`` everywhere.
+    """
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = CSP_HEADER_VALUE
+    return response
+
+
 __all__ = (
+    "CSP_HEADER_VALUE",
     "CSRF_FORM_FIELD",
     "CSRF_SESSION_KEY",
     "LoginRateLimit",
+    "add_security_headers",
     "get_login_rate_limit",
     "get_or_create_csrf_token",
     "require_csrf_token",

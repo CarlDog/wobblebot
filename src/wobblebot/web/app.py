@@ -24,6 +24,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 from starlette.types import Scope
@@ -36,6 +37,7 @@ from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
     CSRF_FORM_FIELD,
     LoginRateLimit,
+    add_security_headers,
     get_or_create_csrf_token,
 )
 from wobblebot.web.routes import advisor as advisor_routes
@@ -207,6 +209,11 @@ def create_app(  # pylint: disable=too-many-arguments
         same_site="lax",
         https_only=False,
     )
+
+    # v1.1: Content-Security-Policy on every response (defense-in-depth
+    # over Jinja2 autoescape, ASVS L3). See web/middleware.py's
+    # CSP_HEADER_VALUE docstring for what's allowed and why.
+    app.add_middleware(BaseHTTPMiddleware, dispatch=add_security_headers)
 
     # Static assets (HTMX + base.css + brand mark).
     app.mount("/static", _CachedStaticFiles(directory=str(_STATIC_DIR)), name="static")
