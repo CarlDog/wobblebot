@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -468,6 +468,50 @@ class TestAutoReLayout:
         state_after = await storage.get_grid_state(BTC_USD)
         assert state_after is not None
         assert state_after.reference_price == anchor_before
+
+    async def test_stale_anchor_re_layout_warns(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """v1.1 backlog: an anchor 24h+ old that still re-lays out cleanly
+        (no offside, no incident) must WARN, not just INFO -- a multi-
+        day-old anchor that still brackets price otherwise passes
+        silently. Detect-only: the layout still places normally."""
+        exchange = _exchange()
+        old_anchor = GridState(
+            symbol=BTC_USD,
+            reference_price=Decimal("50000"),
+            spacing_percentage=Decimal("1.0"),
+            levels_above=3,
+            levels_below=3,
+            created_at=Timestamp(dt=datetime.now(UTC) - timedelta(hours=25)),
+        )
+        await storage.save_grid_state(old_anchor)
+
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await GridEngine(exchange, storage, _grid_config(), _safety_config()).step(
+                BTC_USD
+            )
+
+        assert result.action == "stepped"
+        assert result.placed == 6
+        assert any("stale anchor" in r.message for r in caplog.records)
+
+    async def test_fresh_anchor_re_layout_does_not_warn(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # fresh anchor, created_at = now
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            await exchange.cancel_order(order)
+            await storage.save_order(order.model_copy(update={"status": "canceled"}))
+
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+
+        assert result.action == "stepped"
+        assert result.placed == 6
+        assert not any("stale anchor" in r.message for r in caplog.records)
 
     async def test_normal_tick_with_open_orders_does_not_re_layout(
         self, storage: SQLiteStorageAdapter

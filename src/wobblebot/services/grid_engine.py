@@ -41,7 +41,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -74,6 +74,15 @@ _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 # demoted to a transition + heartbeat after the 2026-06-02 soak logged it
 # every 5s for ~7h straight. 240 ticks ≈ 20 min at the default 5s cadence.
 _OFFSIDE_SUMMARY_EVERY_TICKS = 240
+
+# v1.1 backlog "boot-time stale-anchor WARN": an anchor persisted this
+# long ago has ridden through enough market time that its reference
+# price may no longer reflect a sensible regime -- a WARNING (not just
+# INFO) when the auto-re-layout uses it, so the operator notices
+# without the engine refusing to trade or forcing a re-anchor itself
+# (that's the separate, not-yet-built P3 re-anchor command). Detection
+# only, per the backlog item's own framing.
+_STALE_ANCHOR_AGE = timedelta(hours=24)
 
 # Order statuses that represent committed funds for the
 # max_daily_spend_usd cap (Stage 8.4.E follow-up 2026-05-22): the
@@ -464,7 +473,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     # ------------------------------------------------------------------ subsequent ticks
 
-    async def _tick(  # pylint: disable=too-many-locals,too-many-branches,too-many-arguments,too-many-positional-arguments
+    async def _tick(  # pylint: disable=too-many-locals,too-many-branches,too-many-arguments,too-many-positional-arguments,too-many-statements
         # R0914 disable: every local here represents a distinct
         # tick-stage signal (levels, offside, fills, trade_ids,
         # counters_placed, refusals, spacing, target, counter_amount,
@@ -539,15 +548,33 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # placing counters.
             remaining_open = await self._storage.get_open_orders(symbol=symbol)
             if not remaining_open:
-                _LOGGER.info(
-                    "no open orders detected; re-laying out grid at existing anchor",
-                    extra={
-                        "symbol": str(symbol),
-                        "reference_price": str(state.reference_price),
-                        "current_price": str(current_price),
-                        "level_count": len(levels),
-                    },
-                )
+                anchor_age = datetime.now(UTC) - state.created_at.dt
+                drift_percentage = (
+                    abs(current_price - state.reference_price) / state.reference_price
+                ) * Decimal("100")
+                log_extra = {
+                    "symbol": str(symbol),
+                    "reference_price": str(state.reference_price),
+                    "current_price": str(current_price),
+                    "level_count": len(levels),
+                    "anchor_age_hours": round(anchor_age.total_seconds() / 3600, 1),
+                    "drift_percentage": str(drift_percentage),
+                }
+                if anchor_age >= _STALE_ANCHOR_AGE:
+                    # Detect-only (per the backlog item): still re-lays out
+                    # normally. A stale anchor that still brackets price
+                    # passes silently otherwise -- the operator-initiated
+                    # re-anchor command (separate, not-yet-built P3 item)
+                    # is the fix flow this warning points at.
+                    _LOGGER.warning(
+                        "no open orders detected; re-laying out grid at a stale anchor",
+                        extra=log_extra,
+                    )
+                else:
+                    _LOGGER.info(
+                        "no open orders detected; re-laying out grid at existing anchor",
+                        extra=log_extra,
+                    )
                 for level in levels:
                     outcome = await self._try_place(symbol, level, coin_cfg)
                     if outcome == "placed":
