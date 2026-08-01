@@ -467,12 +467,21 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         row raises StorageError (the caller should fetch by id and
         skip rather than retry blindly).
 
+        ADR-026 replay guard: at most one non-``failed`` result may
+        exist per ``proposal_id`` (a partial UNIQUE index — a prior
+        ``failed`` row does not block a legitimate retry). This is the
+        DB-enforced backstop beneath ``cli/harvest``'s app-layer
+        pre-check; a second insert for an already-executed proposal
+        raises ``StorageError`` rather than silently recording a
+        duplicate.
+
         Args:
             result: TransferResult to save.
 
         Raises:
             StorageError: If save fails (including UNIQUE violation
-                on ``transaction_id``).
+                on ``transaction_id`` or the ADR-026 ``proposal_id``
+                replay guard).
         """
 
     @abstractmethod

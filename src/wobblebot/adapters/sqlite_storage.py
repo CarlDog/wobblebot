@@ -119,6 +119,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await _migrate_news_items_publisher_url(self._conn)
             await _migrate_price_snapshots_unique(self._conn)
+            await _migrate_transfer_results_unique_proposal_id(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -749,6 +750,21 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 ),
             )
             await conn.commit()
+        except aiosqlite.IntegrityError as exc:
+            await conn.rollback()
+            if "transfer_results.proposal_id" in str(exc):
+                # ADR-026 replay guard tripped: a non-failed TransferResult
+                # already exists for this proposal. Distinguish this from a
+                # generic write failure so the caller (cli/harvest) logs
+                # something an operator can act on immediately.
+                raise StorageError(
+                    f"Refusing to save transfer result for proposal "
+                    f"{result.proposal_id}: a non-failed result already exists "
+                    "(ADR-026 replay guard)"
+                ) from exc
+            raise StorageError(
+                f"Failed to save transfer result {result.transaction_id}: {exc}"
+            ) from exc
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(
@@ -1528,4 +1544,50 @@ async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
     await conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_price_snapshots_unique "
         "ON price_snapshots(symbol_base, symbol_quote, observed_at)"
+    )
+
+
+async def _migrate_transfer_results_unique_proposal_id(
+    conn: aiosqlite.Connection,
+) -> None:
+    """DB-enforced idempotency guard for ``cli/harvest --execute`` (ADR-026).
+
+    A partial UNIQUE index -- at most one non-``failed`` ``TransferResult``
+    per ``proposal_id``, matching cli/harvest's existing app-layer
+    pre-check (a prior ``failed`` row does not block a legitimate
+    retry, so the index must not either). This is the "highest-blast-
+    radius hole in the codebase" the 2026-06-02 plan review flagged: a
+    double-tap, shell re-run, or hang-retry could double-withdraw with
+    only the app-layer SELECT-then-INSERT check in the way, which two
+    near-simultaneous dispatchers can both pass before either inserts.
+    The DB constraint is the concurrency-proof backstop underneath it.
+
+    Unlike ``_migrate_price_snapshots_unique``, existing duplicate rows
+    here are NOT junk to silently collapse -- a duplicate non-failed
+    ``proposal_id`` could be the forensic record of a real past
+    double-withdrawal, and deleting one to satisfy the constraint would
+    destroy that evidence. If duplicates are found, log loudly and
+    leave the index un-created (the guard stays absent, not silently
+    "fixed") until an operator investigates and resolves the rows by
+    hand -- this fires on every connect until then, which is the point.
+    """
+    async with conn.execute("""
+        SELECT proposal_id, COUNT(*) FROM transfer_results
+        WHERE status != 'failed'
+        GROUP BY proposal_id
+        HAVING COUNT(*) > 1
+        """) as cursor:
+        duplicates = list(await cursor.fetchall())
+    if duplicates:
+        _LOGGER.error(
+            "transfer_results has %d proposal_id(s) with more than one non-failed "
+            "result -- the ADR-026 replay guard cannot be enabled until these are "
+            "investigated and resolved by hand (possible past double-withdrawal)",
+            len(duplicates),
+            extra={"duplicate_proposal_ids": [row[0] for row in duplicates]},
+        )
+        return
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_transfer_results_unique_proposal "
+        "ON transfer_results(proposal_id) WHERE status != 'failed'"
     )
