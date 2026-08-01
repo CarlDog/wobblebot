@@ -214,6 +214,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         *,
         exchange_open_orders: list[Order] | None = None,
         exchange_trades: list[Trade] | None = None,
+        ticker: Ticker | None = None,
     ) -> StepResult:
         """Advance the engine by one tick for ``symbol``.
 
@@ -237,15 +238,25 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         per-symbol exchange call. ``None`` falls back to a per-symbol
         fetch (single-symbol callers / shadow / tests / a failed shared
         fetch this tick).
+
+        ``ticker``: an optional pre-fetched :class:`Ticker` for
+        ``symbol`` (v1.1 backlog "per-tick price-fetch dedup") — when
+        provided, skips this method's own ``get_ticker`` call. Lets a
+        caller that also needs the price for something else this tick
+        (``cli/live``'s loss-cap mark-to-market check) fetch once and
+        thread it through instead of two uncached ``/0/public/Ticker``
+        GETs per held symbol. ``None`` falls back to fetching here
+        (single-symbol callers / shadow / tests).
         """
         async with self._lock_for(symbol):
-            return await self._step_unlocked(symbol, exchange_open_orders, exchange_trades)
+            return await self._step_unlocked(symbol, exchange_open_orders, exchange_trades, ticker)
 
     async def _step_unlocked(
         self,
         symbol: Symbol,
         exchange_open_orders: list[Order] | None = None,
         exchange_trades: list[Trade] | None = None,
+        ticker: Ticker | None = None,
     ) -> StepResult:
         coin_cfg = self._config.for_coin(symbol.base)
         if not coin_cfg.enabled:
@@ -255,7 +266,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
         # ADR-025: bid/ask ride the same market-data call the engine
         # already made for the current price -- zero extra API cost.
-        ticker = await self._exchange.get_ticker(symbol)
+        if ticker is None:
+            ticker = await self._exchange.get_ticker(symbol)
         current_price = ticker.last
         if self._is_spread_too_wide(symbol, ticker):
             return StepResult(symbol=symbol, action="skipped_wide_spread")

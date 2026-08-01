@@ -33,6 +33,11 @@ Loads trade credentials from ``KRAKEN_TRADER_API_KEY`` /
 ``KRAKEN_TRADER_API_SECRET``.
 """
 
+# pylint: disable=too-many-lines
+# One cohesive daemon loop (session lifecycle, per-tick fetch batching,
+# dead man's switch, cool-down gate, shutdown cleanup); splitting it would
+# fragment a single control flow across files for no organizational gain.
+
 from __future__ import annotations
 
 import argparse
@@ -66,7 +71,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import CommandResult
@@ -200,6 +205,7 @@ async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
 async def _session_portfolio_value_usd(
     adapter: KrakenAdapter,
     symbols: tuple[Symbol, ...],
+    tickers: dict[Symbol, Ticker] | None = None,
 ) -> Decimal:
     """USD-denominated mark-to-market portfolio value: USD balance plus
     each configured symbol's base asset valued at its current price.
@@ -210,6 +216,16 @@ async def _session_portfolio_value_usd(
     USD balance alone, which tripped on the first BUY of any session
     whose order_size_usd > max_session_loss_usd. Using mark-to-market
     portfolio value captures realized + unrealized PnL honestly.
+
+    ``tickers``: an optional pre-fetched ``{symbol: Ticker}`` map (v1.1
+    backlog "per-tick price-fetch dedup") — when a symbol is present,
+    its ``last`` price is used instead of this function issuing its own
+    ``get_current_price`` call. Lets ``_run_one_tick``, which already
+    fetches a ``Ticker`` per symbol for the engine step, reuse it here
+    rather than doubling the per-tick ``/0/public/Ticker`` GETs. ``None``
+    (the default) falls back to fetching here — the session-start /
+    session-end call sites in ``_run_loop`` run outside any tick's
+    pre-fetch and have nothing to share.
     """
     balances = await adapter.get_balances()
     by_asset = {b.asset: b.total for b in balances}
@@ -230,12 +246,17 @@ async def _session_portfolio_value_usd(
         base_balance = by_asset.get(symbol.base, Decimal("0"))
         if base_balance <= 0:
             continue
-        price = await adapter.get_current_price(symbol)
-        total += base_balance * price.amount
+        cached = tickers.get(symbol) if tickers is not None else None
+        if cached is not None:
+            price_amount = cached.last
+        else:
+            price = await adapter.get_current_price(symbol)
+            price_amount = price.amount
+        total += base_balance * price_amount
     return total
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -291,12 +312,38 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 )
                 tick_trades = None
 
+    # One ticker fetch per symbol per tick, shared between the engine
+    # step (spread guard + current price, ADR-025) and the post-tick
+    # loss-cap mark-to-market check below (v1.1 backlog "per-tick
+    # price-fetch dedup") -- both used to independently call
+    # /0/public/Ticker (or get_current_price) for the same symbol in
+    # the same tick. A per-symbol fetch failure just leaves that
+    # symbol out of the dict; both call sites already fall back to
+    # fetching for themselves when a symbol has no cached entry.
+    tick_tickers: dict[Symbol, Ticker] = {}
+    for symbol in live.symbols:
+        try:
+            tick_tickers[symbol] = await adapter.get_ticker(symbol)
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "tick ticker fetch failed; symbol will fetch its own price",
+                extra={
+                    "tick": tick,
+                    "symbol": str(symbol),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+
     for symbol in live.symbols:
         if tick_open_orders is None:
             break
         try:
             result = await engine.step(
-                symbol, exchange_open_orders=tick_open_orders, exchange_trades=tick_trades
+                symbol,
+                exchange_open_orders=tick_open_orders,
+                exchange_trades=tick_trades,
+                ticker=tick_tickers.get(symbol),
             )
             # Per-symbol per-tick output is DEBUG so the operator's
             # terminal doesn't flood at the 5s default cadence. The
@@ -354,7 +401,9 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     # cap check for this tick (next tick will retry), log a warning,
     # and treat as "no cap trip" so the loop continues.
     try:
-        current_value_usd = await _session_portfolio_value_usd(adapter, tuple(live.symbols))
+        current_value_usd = await _session_portfolio_value_usd(
+            adapter, tuple(live.symbols), tick_tickers
+        )
     except WobbleBotPortError as exc:
         _LOGGER.warning(
             "post-tick portfolio-value fetch failed; skipping loss-cap check this tick",

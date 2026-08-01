@@ -40,7 +40,7 @@ from wobblebot.cli import live as live_module
 from wobblebot.cli.live import _cancel_all_open, _run_one_tick
 from wobblebot.config.cli import LiveConfig
 from wobblebot.domain.models import Order
-from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, Price, Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services.grid_engine import GridEngine
 
@@ -49,6 +49,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 _BTC = Symbol(base="BTC", quote="USD")
 _ETH = Symbol(base="ETH", quote="USD")
 _SOL = Symbol(base="SOL", quote="USD")
+
+
+def _ticker(symbol: Symbol, last: str = "50000") -> Ticker:
+    return Ticker(symbol=symbol, last=Decimal(last), bid=Decimal(last) - 1, ask=Decimal(last) + 1)
 
 
 def _order(symbol: Symbol, exchange_id: str, side: str = "buy") -> Order:
@@ -91,7 +95,7 @@ class TestTickBatchesOpenOrders:
     async def test_one_global_fetch_snapshot_passed_to_each_step(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def no_trip(_adapter: Any, _symbols: Any) -> Decimal:
+        async def no_trip(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", no_trip)
@@ -99,6 +103,7 @@ class TestTickBatchesOpenOrders:
         snapshot = [_order(_BTC, "B1"), _order(_ETH, "E1")]
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=snapshot)
+        adapter.get_ticker = AsyncMock(side_effect=_ticker)
         engine = MagicMock()
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
         engine.has_pending_fill_candidates = AsyncMock(return_value=False)
@@ -117,11 +122,16 @@ class TestTickBatchesOpenOrders:
         adapter.get_open_orders.assert_awaited_once_with()
         # No symbol had a fill candidate, so no TradesHistory call at all.
         adapter.get_trade_history.assert_not_called()
-        # Each symbol stepped, every step handed the SAME snapshot object.
+        # Each symbol stepped, every step handed the SAME snapshot object,
+        # and a per-symbol pre-fetched Ticker (v1.1 "per-tick price-fetch
+        # dedup") -- one get_ticker call per symbol, reused by the engine
+        # instead of the engine fetching its own.
         assert engine.step.await_count == 3
+        assert adapter.get_ticker.await_count == 3
         for call in engine.step.await_args_list:
             assert call.kwargs["exchange_open_orders"] is snapshot
             assert call.kwargs["exchange_trades"] is None
+            assert call.kwargs["ticker"] == _ticker(call.args[0])
 
     async def test_failed_global_fetch_skips_all_steps(
         self, monkeypatch: pytest.MonkeyPatch
@@ -130,13 +140,14 @@ class TestTickBatchesOpenOrders:
         fetches (that storm is exactly what blew the limit). Skip the
         tick's steps; the loss-cap check still runs."""
 
-        async def no_trip(_adapter: Any, _symbols: Any) -> Decimal:
+        async def no_trip(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", no_trip)
 
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(side_effect=ExchangeError("EAPI:Rate limit exceeded"))
+        adapter.get_ticker = AsyncMock(side_effect=_ticker)
         engine = MagicMock()
         engine.step = AsyncMock()
 
@@ -169,7 +180,7 @@ class TestTickBatchesTradeHistory:
         cost zero TradesHistory calls — has_pending_fill_candidates is a
         pure storage + already-fetched-snapshot check, no network call."""
 
-        async def no_trip(_adapter: Any, _symbols: Any) -> Decimal:
+        async def no_trip(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", no_trip)
@@ -178,6 +189,7 @@ class TestTickBatchesTradeHistory:
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=snapshot)
         adapter.get_trade_history = AsyncMock()
+        adapter.get_ticker = AsyncMock(side_effect=_ticker)
         engine = MagicMock()
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
         engine.has_pending_fill_candidates = AsyncMock(return_value=False)
@@ -203,7 +215,7 @@ class TestTickBatchesTradeHistory:
         symbol's step() receives the SAME shared snapshot, not a
         per-symbol re-fetch."""
 
-        async def no_trip(_adapter: Any, _symbols: Any) -> Decimal:
+        async def no_trip(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", no_trip)
@@ -213,6 +225,7 @@ class TestTickBatchesTradeHistory:
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=open_snapshot)
         adapter.get_trade_history = AsyncMock(return_value=trades_snapshot)
+        adapter.get_ticker = AsyncMock(side_effect=_ticker)
         engine = MagicMock()
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=1))
         # Only BTC has a candidate; ETH/SOL do not.
@@ -234,6 +247,7 @@ class TestTickBatchesTradeHistory:
         assert engine.step.await_count == 3
         for call in engine.step.await_args_list:
             assert call.kwargs["exchange_trades"] is trades_snapshot
+            assert call.kwargs["ticker"] == _ticker(call.args[0])
 
     async def test_failed_trade_history_fetch_falls_back_to_per_symbol(
         self, monkeypatch: pytest.MonkeyPatch
@@ -244,7 +258,7 @@ class TestTickBatchesTradeHistory:
         (exchange_trades=None), falling back to GridEngine's own
         per-symbol TradesHistory call inside _detect_fills."""
 
-        async def no_trip(_adapter: Any, _symbols: Any) -> Decimal:
+        async def no_trip(_adapter: Any, _symbols: Any, _tickers: Any = None) -> Decimal:
             return Decimal("100")
 
         monkeypatch.setattr(live_module, "_session_portfolio_value_usd", no_trip)
@@ -253,6 +267,7 @@ class TestTickBatchesTradeHistory:
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=snapshot)
         adapter.get_trade_history = AsyncMock(side_effect=ExchangeError("EAPI:Rate limit exceeded"))
+        adapter.get_ticker = AsyncMock(side_effect=_ticker)
         engine = MagicMock()
         engine.step = AsyncMock(return_value=MagicMock(action="stepped", fills=0))
         engine.has_pending_fill_candidates = AsyncMock(return_value=True)
