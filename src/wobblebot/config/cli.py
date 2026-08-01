@@ -348,6 +348,25 @@ class CryptoCompareSpec(BaseModel):
         frozen = True
 
 
+class KrakenStatusSpec(BaseModel):
+    """Kraken exchange-status feed under ``news.kraken_status`` (v1.1).
+
+    No API key required — status.kraken.com's incident feed is public
+    JSON. Defaults ``enabled=True``: unlike CryptoCompare (paid API,
+    off by default) or RSS (operator must choose feeds), this source
+    needs zero setup and is directly relevant to every Kraken-trading
+    deployment — an exchange-status incident (API degraded, a coin's
+    deposits/withdrawals halted) is exactly the kind of signal the
+    advisor's news expert should see.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://status.kraken.com"
+
+    class Config:
+        frozen = True
+
+
 class NewsDedupConfig(BaseModel):
     """Stage 8.4 follow-up: fuzzy headline dedup for cli/news.
 
@@ -396,6 +415,7 @@ class NewsConfig(BaseModel):
     db: str = "data/wobblebot-news.db"
     rss_feeds: list[RssFeedSpec] = Field(default_factory=list)
     cryptocompare: CryptoCompareSpec = Field(default_factory=CryptoCompareSpec)
+    kraken_status: KrakenStatusSpec = Field(default_factory=KrakenStatusSpec)
     dedup: NewsDedupConfig = Field(default_factory=NewsDedupConfig)
     log_format: LogFormat = "plain"
     log_file_path: str | None = "data/logs/news.log"
@@ -764,6 +784,7 @@ __all__ = [
     "AssistantLLMConfig",
     "CryptoCompareSpec",
     "HarvestConfig",
+    "KrakenStatusSpec",
     "LiveConfig",
     "LogFormat",
     "MaintenanceConfig",

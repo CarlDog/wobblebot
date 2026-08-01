@@ -336,6 +336,15 @@ news:
     lang: EN
     # categories: "BTC|ETH"            # optional pipe-separated filter
 
+  # Kraken's own exchange-status incident feed (v1.1). Public JSON,
+  # no API key -- polls status.kraken.com/api/v2/incidents.json.
+  # Enabled by default: an exchange-status incident (API degraded, a
+  # coin's deposits/withdrawals halted) is directly relevant to a bot
+  # trading on Kraken, unlike general market news.
+  kraken_status:
+    enabled: true
+    base_url: "https://status.kraken.com"
+
   # Stage 8.4 follow-up: cross-source syndication dedup. Storage's
   # UNIQUE(source, external_id) catches same-source reposts; this
   # block catches the same wire story republished by multiple

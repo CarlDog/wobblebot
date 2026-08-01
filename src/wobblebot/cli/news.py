@@ -8,10 +8,11 @@ Run as a module::
 
 **Read-only against external sources; write-only against local
 storage.** Polls every enabled ``NewsPort`` (RSS feeds + optional
-CryptoCompare) on the configured interval and persists each item
-to the local ``news_items`` table. Dedup is enforced at the storage
-layer via ``UNIQUE(source, external_id)`` — re-fetching the same
-article across polls is a no-op.
+CryptoCompare + Kraken's own exchange-status feed, enabled by
+default) on the configured interval and persists each item to the
+local ``news_items`` table. Dedup is enforced at the storage layer
+via ``UNIQUE(source, external_id)`` — re-fetching the same article
+across polls is a no-op.
 
 **Fault isolation.** One bad source (DNS failure, 500, malformed
 feed) cannot stop the others. Per-source errors are logged and the
@@ -39,6 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
+from wobblebot.adapters.kraken_status_news import KrakenStatusAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
@@ -82,6 +84,8 @@ def _build_sources(news: NewsConfig) -> list[NewsPort]:
                 categories=news.cryptocompare.categories,
             )
         )
+    if news.kraken_status.enabled:
+        sources.append(KrakenStatusAdapter(base_url=news.kraken_status.base_url))
     return sources
 
 
