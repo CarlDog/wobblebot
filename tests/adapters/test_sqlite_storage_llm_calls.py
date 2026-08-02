@@ -76,6 +76,19 @@ class TestRoundTrip:
         assert loaded.tokens_reasoning == 500
         assert loaded.request_id == "req-xyz"
 
+    async def test_round_trips_cache_token_counts(self, storage: SQLiteStorageAdapter) -> None:
+        rec = _record().model_copy(update={"tokens_cache_read": 896, "tokens_cache_write": 1024})
+        await storage.save_llm_call(rec)
+        loaded = (await storage.get_llm_calls())[0]
+        assert loaded.tokens_cache_read == 896
+        assert loaded.tokens_cache_write == 1024
+
+    async def test_cache_token_counts_default_to_zero(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_llm_call(_record())
+        loaded = (await storage.get_llm_calls())[0]
+        assert loaded.tokens_cache_read == 0
+        assert loaded.tokens_cache_write == 0
+
     async def test_round_trips_failed_call(self, storage: SQLiteStorageAdapter) -> None:
         rec = _record(
             success=False,
@@ -194,3 +207,72 @@ class TestEdgeCases:
         # not connected
         with pytest.raises(StorageError):
             await adapter.save_llm_call(_record())
+
+
+# --------------------------------------------------------------------- #
+# ADR-033 cache-token column migration                                   #
+# --------------------------------------------------------------------- #
+
+
+async def test_migration_adds_cache_token_columns_to_legacy_table(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An operator ledger created before ADR-033 lacks the cache-token
+    columns; the migration in connect() adds them and legacy rows read
+    back with both counts at 0."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy.db"
+    # Build the pre-ADR-033 llm_calls table with the original 12 columns.
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE llm_calls (
+            id                  TEXT PRIMARY KEY,
+            timestamp           TEXT NOT NULL,
+            role                TEXT NOT NULL,
+            provider            TEXT NOT NULL,
+            model               TEXT NOT NULL,
+            tokens_in           INTEGER NOT NULL,
+            tokens_out          INTEGER NOT NULL,
+            tokens_reasoning    INTEGER,
+            cost_usd            TEXT NOT NULL,
+            request_id          TEXT,
+            success             INTEGER NOT NULL,
+            error_kind          TEXT
+        )
+        """)
+    conn.execute(
+        "INSERT INTO llm_calls "
+        "(id, timestamp, role, provider, model, tokens_in, tokens_out, "
+        "tokens_reasoning, cost_usd, request_id, success, error_kind) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            str(uuid4()),
+            "2026-05-17T00:00:00+00:00",
+            "single",
+            "openai",
+            "gpt-5-mini",
+            2500,
+            300,
+            None,
+            "0.001",
+            "resp-legacy",
+            1,
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Re-open through the adapter — connect() must ALTER in the columns.
+    adapter = SQLiteStorageAdapter(str(db_path))
+    await adapter.connect()
+    try:
+        rows = await adapter.get_llm_calls()
+        assert len(rows) == 1
+        assert rows[0].tokens_cache_read == 0
+        assert rows[0].tokens_cache_write == 0
+        # And new writes with nonzero counts land in the migrated table.
+        await adapter.save_llm_call(_record().model_copy(update={"tokens_cache_read": 1024}))
+        newest = (await adapter.get_llm_calls())[0]
+        assert newest.tokens_cache_read == 1024
+    finally:
+        await adapter.close()

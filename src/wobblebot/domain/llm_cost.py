@@ -43,11 +43,27 @@ class LLMCallRecord(BaseModel):
         role: Which role drove the call (operator chat, MoE expert, etc.).
         provider: Cloud provider that received the request.
         model: Provider's model identifier (e.g. ``claude-sonnet-4-6``).
-        tokens_in: Prompt token count from the provider's usage block.
+        tokens_in: UNCACHED prompt token count from the provider's
+            usage block — cache-served tokens are carried separately in
+            ``tokens_cache_read`` (disjoint buckets; total prompt size
+            is ``tokens_in + tokens_cache_read``). Rows written before
+            the ADR-033 migration folded cached tokens into
+            ``tokens_in`` for OpenAI/Google.
         tokens_out: Completion token count.
         tokens_reasoning: Thinking-mode token count when the model
             exposes it (Anthropic extended thinking / OpenAI o-series /
             Gemini thinking). ``None`` for plain-completion calls.
+        tokens_cache_read: Prompt tokens served from the provider's
+            prompt cache (OpenAI ``prompt_tokens_details.cached_tokens``,
+            Anthropic ``cache_read_input_tokens``, Gemini
+            ``cachedContentTokenCount``). 0 means no cache hit — unlike
+            ``tokens_reasoning``, 0 is always meaningful, so this is a
+            plain int, not ``int | None``.
+        tokens_cache_write: Prompt tokens written to the provider's
+            cache (Anthropic ``cache_creation_input_tokens`` only;
+            always 0 for OpenAI/Google, whose caching has no billed
+            write step). Stays 0 in practice while wobblebot never
+            sends ``cache_control`` (ADR-033 defers that).
         cost_usd: USD cost of this call computed locally from the
             pricing table (``services/llm_pricing.py``). 6-decimal
             precision is enough for any per-call charge at current
@@ -71,6 +87,8 @@ class LLMCallRecord(BaseModel):
     tokens_in: int = Field(..., ge=0)
     tokens_out: int = Field(..., ge=0)
     tokens_reasoning: int | None = Field(default=None, ge=0)
+    tokens_cache_read: int = Field(default=0, ge=0)
+    tokens_cache_write: int = Field(default=0, ge=0)
     cost_usd: Decimal = Field(..., ge=Decimal("0"))
     request_id: str | None = None
     success: bool
