@@ -191,20 +191,43 @@ class TestPureHelpers:
             "id": "msg_abc",
             "usage": {"input_tokens": 100, "output_tokens": 200},
         }
-        tokens_in, tokens_out, tokens_reasoning, request_id = extract_anthropic_tokens(envelope)
-        assert tokens_in == 100
-        assert tokens_out == 200
-        assert tokens_reasoning is None
-        assert request_id == "msg_abc"
+        usage = extract_anthropic_tokens(envelope)
+        assert usage.tokens_in == 100
+        assert usage.tokens_out == 200
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+        assert usage.tokens_cache_write == 0
+        assert usage.request_id == "msg_abc"
+
+    def test_extract_anthropic_tokens_with_cache_fields(self) -> None:
+        """input_tokens EXCLUDES the cache fields on the wire (already
+        disjoint) — all three pass through unchanged. Fixture mirrors
+        the real Messages-API usage shape with cache_control active."""
+        envelope = {
+            "id": "msg_cached",
+            "usage": {
+                "input_tokens": 42,
+                "output_tokens": 200,
+                "cache_read_input_tokens": 2048,
+                "cache_creation_input_tokens": 512,
+            },
+        }
+        usage = extract_anthropic_tokens(envelope)
+        assert usage.tokens_in == 42  # NOT reduced — already uncached-only
+        assert usage.tokens_cache_read == 2048
+        assert usage.tokens_cache_write == 512
+        assert usage.tokens_out == 200
 
     def test_extract_anthropic_tokens_missing_usage(self) -> None:
         """Defensive: missing usage block → zeros + no request_id."""
         envelope: dict[str, object] = {}
-        tokens_in, tokens_out, tokens_reasoning, request_id = extract_anthropic_tokens(envelope)
-        assert tokens_in == 0
-        assert tokens_out == 0
-        assert tokens_reasoning is None
-        assert request_id is None
+        usage = extract_anthropic_tokens(envelope)
+        assert usage.tokens_in == 0
+        assert usage.tokens_out == 0
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+        assert usage.tokens_cache_write == 0
+        assert usage.request_id is None
 
 
 # --------------------------------------------------------------------- #

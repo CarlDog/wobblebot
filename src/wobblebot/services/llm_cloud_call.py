@@ -16,8 +16,8 @@ Every cloud-LLM adapter runs the same sequence per call:
 This module captures steps 1-5 once. Per-provider adapters
 (Anthropic / OpenAI / Google) supply the provider-specific bits via
 two callables: ``call_fn`` (zero-arg async returning the response
-envelope) and ``extract_tokens`` (envelope → tuple). The shared
-helper composes them inside the cost-tracking sandwich.
+envelope) and ``extract_tokens`` (envelope → ``TokenUsage``). The
+shared helper composes them inside the cost-tracking sandwich.
 
 **Why a function and not a base class.** The provider-specific
 state lives on each adapter (api_key, base_url, model, etc.) which
@@ -61,10 +61,34 @@ from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
 
 _LOGGER = logging.getLogger("wobblebot.services.llm_cloud_call")
 
-# Type alias for the token-count tuple per-adapter callbacks return.
-# (tokens_in, tokens_out, tokens_reasoning_or_None, request_id_or_None).
-TokenTuple = tuple[int, int, int | None, str | None]
-TokenExtractor = Callable[[dict[str, Any]], TokenTuple]
+
+@dataclass(frozen=True, kw_only=True)
+class TokenUsage:
+    """Token counts one provider call reported, as DISJOINT buckets.
+
+    Every field is its own bucket — cost is Σ bucket × rate with no
+    subtraction downstream (mirrors the pre-existing convention that
+    ``tokens_reasoning`` is additive to ``tokens_out``). Extractors do
+    the provider-specific normalization: OpenAI's ``prompt_tokens``
+    INCLUDES its cached count (subtract there), Anthropic's
+    ``input_tokens`` EXCLUDES its cache fields (passthrough), Gemini's
+    ``promptTokenCount`` INCLUDES ``cachedContentTokenCount``
+    (subtract there). See each provider's ``extract_*_tokens``.
+
+    ``kw_only`` forces named construction so a transposed count can't
+    slip through positionally — the reason this replaced the old
+    4-tuple (``TokenTuple``) when the cache buckets landed (ADR-033).
+    """
+
+    tokens_in: int  # UNCACHED prompt tokens (full input price)
+    tokens_out: int
+    tokens_reasoning: int | None = None
+    tokens_cache_read: int = 0
+    tokens_cache_write: int = 0  # Anthropic cache_creation only; 0 elsewhere
+    request_id: str | None = None
+
+
+TokenExtractor = Callable[[dict[str, Any]], TokenUsage]
 
 
 @dataclass(frozen=True)
@@ -112,6 +136,8 @@ def _make_failure_record(ctx: CloudCallContext, exc: Exception) -> LLMCallRecord
         tokens_in=0,
         tokens_out=0,
         tokens_reasoning=None,
+        tokens_cache_read=0,
+        tokens_cache_write=0,
         cost_usd=Decimal("0"),
         request_id=None,
         success=False,
@@ -121,27 +147,30 @@ def _make_failure_record(ctx: CloudCallContext, exc: Exception) -> LLMCallRecord
 
 def _make_success_record(
     ctx: CloudCallContext,
-    tokens: TokenTuple,
+    tokens: TokenUsage,
 ) -> LLMCallRecord:
     """Build the ``success=True`` record + compute cost from token counts."""
-    tokens_in, tokens_out, tokens_reasoning, request_id = tokens
     cost = cost_for(
         provider=ctx.provider,
         model=ctx.model,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        tokens_reasoning=tokens_reasoning or 0,
+        tokens_in=tokens.tokens_in,
+        tokens_out=tokens.tokens_out,
+        tokens_reasoning=tokens.tokens_reasoning or 0,
+        tokens_cache_read=tokens.tokens_cache_read,
+        tokens_cache_write=tokens.tokens_cache_write,
     )
     return LLMCallRecord(
         timestamp=Timestamp(dt=datetime.now(UTC)),
         role=ctx.role,
         provider=ctx.provider,
         model=ctx.model,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        tokens_reasoning=tokens_reasoning,
+        tokens_in=tokens.tokens_in,
+        tokens_out=tokens.tokens_out,
+        tokens_reasoning=tokens.tokens_reasoning,
+        tokens_cache_read=tokens.tokens_cache_read,
+        tokens_cache_write=tokens.tokens_cache_write,
         cost_usd=cost,
-        request_id=request_id,
+        request_id=tokens.request_id,
         success=True,
         error_kind=None,
     )
@@ -189,11 +218,11 @@ async def execute_cloud_call(  # pylint: disable=too-many-arguments,too-many-pos
         call_fn: Zero-arg async that performs the actual HTTP request.
             Must ``response.raise_for_status()`` so the retry helper
             sees structured ``HTTPStatusError`` for 4xx/5xx classification.
-        extract_tokens: Pulls ``(tokens_in, tokens_out, tokens_reasoning,
-            request_id)`` from the parsed response envelope. Per-provider
-            normalization happens here (e.g. OpenAI subtracts
-            reasoning_tokens from completion_tokens to satisfy the
-            ``tokens_reasoning is additive to tokens_out`` convention).
+        extract_tokens: Pulls a :class:`TokenUsage` from the parsed
+            response envelope. Per-provider normalization happens here
+            (e.g. OpenAI subtracts reasoning_tokens from
+            completion_tokens, and cached_tokens from prompt_tokens,
+            to satisfy the disjoint-buckets convention).
 
     Returns:
         The parsed response envelope. Caller decodes provider-specific
@@ -424,7 +453,7 @@ async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many
     ctx: CloudCallContext,
     estimate_cost_fn: Callable[[], Decimal],
     call_fn: Callable[[], Awaitable[dict[str, Any]]],
-    extract_tokens: Callable[[dict[str, Any]], TokenTuple],
+    extract_tokens: TokenExtractor,
     parse_text_fn: Callable[[dict[str, Any]], str],
     provider_name: str,
 ) -> OperatorIntent:
@@ -459,8 +488,8 @@ async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many
         call_fn: Zero-arg async returning the provider's response
             envelope (already JSON-decoded). Typically a closure that
             calls the provider's ``post_*`` helper.
-        extract_tokens: Provider-specific usage extractor —
-            ``(tokens_in, tokens_out, tokens_reasoning)``.
+        extract_tokens: Provider-specific usage extractor returning a
+            :class:`TokenUsage`.
         parse_text_fn: Provider-specific text-from-envelope extractor.
             Returns the raw model output the JSON parser should read.
         provider_name: Display name for error messages

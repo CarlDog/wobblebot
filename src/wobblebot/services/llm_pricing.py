@@ -16,11 +16,25 @@ Convention for thinking-mode pricing:
     cloud adapters (Stages 6.2-6.4) must normalize on read so the
     cost-record columns satisfy this invariant.
 
+Convention for cache-token pricing (ADR-033):
+    Cache counts follow the same disjoint-bucket rule — extractors
+    normalize so ``tokens_in`` holds ONLY uncached prompt tokens and
+    ``tokens_cache_read`` / ``tokens_cache_write`` are separate,
+    non-overlapping buckets (OpenAI/Gemini include cached in their
+    prompt totals → adapters subtract; Anthropic reports them disjoint
+    → passthrough).
+
     Cost of a call:
         cost = (tokens_in  * input_per_million_usd  / 1_000_000)
              + (tokens_out * output_per_million_usd / 1_000_000)
              + (tokens_reasoning *
                 (reasoning_per_million_usd or output_per_million_usd)
+                / 1_000_000)
+             + (tokens_cache_read *
+                (cached_input_per_million_usd or input_per_million_usd)
+                / 1_000_000)
+             + (tokens_cache_write *
+                (cache_write_per_million_usd or input_per_million_usd)
                 / 1_000_000)
 
     ``reasoning_per_million_usd=None`` means "fall back to output
@@ -30,6 +44,15 @@ Convention for thinking-mode pricing:
     thinking into the output rate ("Output price (including thinking
     tokens)"), so no entry overrides today. Keep the column — it costs
     nothing and the next provider to unbundle will need it.
+
+    ``cached_input_per_million_usd=None`` falls back to the FULL input
+    rate — deliberately conservative: an entry nobody has re-verified
+    over-prices cached tokens (exactly the pre-ADR-033 behavior) and
+    can never silently under-report spend. Same fallback for
+    ``cache_write_per_million_usd``, which only Anthropic bills (1.25x
+    input for the 5-minute TTL; the 1-hour TTL's 2x premium doesn't
+    fit a single column and is moot while wobblebot never sends
+    ``cache_control`` — revisit if ADR-033's deferral is ever lifted).
 """
 
 from __future__ import annotations
@@ -59,8 +82,18 @@ class LLMPricePoint(BaseModel):
             above).
         reasoning_per_million_usd: Optional override for thinking-mode
             tokens. ``None`` means fall back to ``output_per_million_usd``.
+        cached_input_per_million_usd: Price per million CACHE-READ
+            prompt tokens (ADR-033). ``None`` falls back to the full
+            ``input_per_million_usd`` — conservative over-pricing for
+            entries whose cached rate hasn't been verified.
+        cache_write_per_million_usd: Price per million cache-WRITE
+            tokens (Anthropic's 5-minute-TTL 1.25x premium; OpenAI and
+            Gemini implicit caching have no billed write step).
+            ``None`` falls back to ``input_per_million_usd``.
         verified_date: When the operator last confirmed this price.
-            Drives ``test_pricing_freshness``.
+            Drives ``test_pricing_freshness``. Bumping it asserts the
+            WHOLE entry was re-checked — every rate column, not just
+            the one being edited.
     """
 
     provider: LLMProvider
@@ -68,6 +101,8 @@ class LLMPricePoint(BaseModel):
     input_per_million_usd: Decimal = Field(..., ge=Decimal("0"))
     output_per_million_usd: Decimal = Field(..., ge=Decimal("0"))
     reasoning_per_million_usd: Decimal | None = Field(default=None, ge=Decimal("0"))
+    cached_input_per_million_usd: Decimal | None = Field(default=None, ge=Decimal("0"))
+    cache_write_per_million_usd: Decimal | None = Field(default=None, ge=Decimal("0"))
     verified_date: date
 
     class Config:
@@ -97,6 +132,18 @@ _VERIFIED_2026_07_23 = date(2026, 7, 23)
 # monthly routine's bake-off can probe them under the ADR-014 gate
 # (wobblebot#23). Sources per entry.
 _VERIFIED_2026_07_31 = date(2026, 7, 31)
+# ADR-033 cached-rate sweep (2026-08-02): entries below carrying this
+# anchor had input + output + cached rates confirmed together on this
+# date. Sources: Anthropic model-pricing table at
+# platform.claude.com/docs/en/about-claude/pricing (5m Cache Writes /
+# Cache Hits & Refreshes columns); OpenAI per-model docs pages +
+# developers.openai.com/api/docs/pricing ("Cached input" column);
+# ai.google.dev/gemini-api/docs/pricing ("Context caching" per-token
+# rate — the separate per-hour storage fee applies only to EXPLICIT
+# cached content, which wobblebot never creates, and is not modeled).
+# Entries NOT in this sweep keep their old dates and cached=None
+# (fallback to full input rate — conservative).
+_VERIFIED_2026_08_02 = date(2026, 8, 2)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -104,13 +151,19 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # https://www.anthropic.com/pricing — Sonnet + Opus tiers; thinking
     # tokens billed at output rate (no separate reasoning column needed;
     # convention recommends adapters fold thinking into output).
+    # Cache columns follow Anthropic's published multipliers (read 0.1x
+    # input, 5m write 1.25x input) — confirmed as absolute rates on the
+    # pricing table 2026-08-02. Counts stay 0 while ADR-033 defers
+    # cache_control, but the rates are real if that ever lifts.
     ("anthropic", "claude-sonnet-4-6"): LLMPricePoint(
         provider="anthropic",
         model="claude-sonnet-4-6",
         input_per_million_usd=Decimal("3.00"),
         output_per_million_usd=Decimal("15.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_23,
+        cached_input_per_million_usd=Decimal("0.30"),
+        cache_write_per_million_usd=Decimal("3.75"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     # Opus tier dropped to $5/$25 (verified 2026-05-29 against
     # https://platform.claude.com/docs/en/about-claude/pricing) — the
@@ -121,7 +174,9 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("5.00"),
         output_per_million_usd=Decimal("25.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.50"),
+        cache_write_per_million_usd=Decimal("6.25"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("anthropic", "claude-opus-4-7"): LLMPricePoint(
         provider="anthropic",
@@ -129,7 +184,9 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("5.00"),
         output_per_million_usd=Decimal("25.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.50"),
+        cache_write_per_million_usd=Decimal("6.25"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("anthropic", "claude-opus-4-6"): LLMPricePoint(
         provider="anthropic",
@@ -137,7 +194,9 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("5.00"),
         output_per_million_usd=Decimal("25.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.50"),
+        cache_write_per_million_usd=Decimal("6.25"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("anthropic", "claude-haiku-4-5-20251001"): LLMPricePoint(
         provider="anthropic",
@@ -145,7 +204,9 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("1.00"),
         output_per_million_usd=Decimal("5.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.10"),
+        cache_write_per_million_usd=Decimal("1.25"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("anthropic", "claude-haiku-4-5"): LLMPricePoint(
         provider="anthropic",
@@ -153,7 +214,9 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("1.00"),
         output_per_million_usd=Decimal("5.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.10"),
+        cache_write_per_million_usd=Decimal("1.25"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     # --- OpenAI ---
     # o-series: reasoning tokens billed at output rate.
@@ -201,21 +264,28 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # 2026-05-29 verified against developers.openai.com/api/docs/models/*.
     # gpt-5 family + o-series are reasoning models; reasoning tokens bill at
     # the output rate (None falls back to output per this module's convention).
+    # OpenAI prompt caching is automatic (no opt-in, no write premium →
+    # cache_write stays None). "Cached input" rates confirmed 2026-08-02
+    # against developers.openai.com/api/docs/pricing + per-model pages.
     ("openai", "gpt-5.5"): LLMPricePoint(
         provider="openai",
         model="gpt-5.5",
         input_per_million_usd=Decimal("5.00"),
         output_per_million_usd=Decimal("30.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.50"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
+    # gpt-5.5-pro has NO cached-input rate (pricing table shows "—", so
+    # its cached_tokens is expected to stay 0) — None keeps the
+    # full-input-rate fallback if that ever changes.
     ("openai", "gpt-5.5-pro"): LLMPricePoint(
         provider="openai",
         model="gpt-5.5-pro",
         input_per_million_usd=Decimal("30.00"),
         output_per_million_usd=Decimal("180.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("openai", "gpt-5-mini"): LLMPricePoint(
         provider="openai",
@@ -223,7 +293,8 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("0.25"),
         output_per_million_usd=Decimal("2.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_05,
+        cached_input_per_million_usd=Decimal("0.025"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     # gpt-5.4 mini/nano tiers verified 2026-07-31 against
     # developers.openai.com/api/docs/models/gpt-5.4-mini and /gpt-5.4-nano.
@@ -234,7 +305,8 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("0.75"),
         output_per_million_usd=Decimal("4.50"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_31,
+        cached_input_per_million_usd=Decimal("0.075"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("openai", "gpt-5.4-nano"): LLMPricePoint(
         provider="openai",
@@ -242,7 +314,8 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("0.20"),
         output_per_million_usd=Decimal("1.25"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_31,
+        cached_input_per_million_usd=Decimal("0.02"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("openai", "o3"): LLMPricePoint(
         provider="openai",
@@ -272,13 +345,19 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # thinking tokens)" at $2.50 — so the override was double-counting
     # thinking at 1.4x the real rate. Dropped to None (falls back to
     # output) per this module's convention.
+    # "Context caching" per-token rates confirmed 2026-08-02 (<=200k
+    # small-prompt tier for Pro, matching the input/output tier choice
+    # above). Implicit caching bills these on cachedContentTokenCount;
+    # the separate per-hour storage fee applies only to explicit cached
+    # content, which wobblebot never creates. No write premium → None.
     ("google", "gemini-2.5-pro"): LLMPricePoint(
         provider="google",
         model="gemini-2.5-pro",
         input_per_million_usd=Decimal("1.25"),
         output_per_million_usd=Decimal("10.00"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_23,
+        cached_input_per_million_usd=Decimal("0.125"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     ("google", "gemini-2.5-flash"): LLMPricePoint(
         provider="google",
@@ -286,7 +365,8 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         input_per_million_usd=Decimal("0.30"),
         output_per_million_usd=Decimal("2.50"),
         reasoning_per_million_usd=None,
-        verified_date=_VERIFIED_2026_07_23,
+        cached_input_per_million_usd=Decimal("0.03"),
+        verified_date=_VERIFIED_2026_08_02,
     ),
     # Gemini 3.x (verified 2026-05-29 against ai.google.dev/gemini-api/docs/
     # pricing). Unlike 2.5-flash, gen-3 bills thinking tokens at the OUTPUT
@@ -357,19 +437,23 @@ def get_price_point(provider: LLMProvider, model: str) -> LLMPricePoint:
         ) from exc
 
 
-def cost_for(
+def cost_for(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     provider: LLMProvider,
     model: str,
     tokens_in: int,
     tokens_out: int,
     tokens_reasoning: int = 0,
+    tokens_cache_read: int = 0,
+    tokens_cache_write: int = 0,
 ) -> Decimal:
     """Compute USD cost of one call from token counts.
 
-    Convention: ``tokens_reasoning`` is additive to ``tokens_out`` per
-    this module's docstring. The reasoning-token rate falls back to
-    the output rate when the model's price point doesn't carry an
-    explicit override.
+    Every count is a disjoint bucket per this module's docstring:
+    ``tokens_reasoning`` is additive to ``tokens_out``, and
+    ``tokens_in`` holds only UNCACHED prompt tokens with the cache
+    buckets carried separately (ADR-033). Rates fall back per column —
+    reasoning → output rate, cached-read and cache-write → full input
+    rate (conservative: over-prices, never under-reports).
 
     Returns a ``Decimal`` quantized to 6 decimal places (matching the
     ``llm_calls.cost_usd`` column precision).
@@ -378,18 +462,27 @@ def cost_for(
         PricingLookupError: If the (provider, model) isn't priced.
         ValueError: If any token count is negative.
     """
-    if tokens_in < 0 or tokens_out < 0 or tokens_reasoning < 0:
+    if min(tokens_in, tokens_out, tokens_reasoning, tokens_cache_read, tokens_cache_write) < 0:
         raise ValueError(
             f"Token counts must be non-negative; got "
-            f"in={tokens_in} out={tokens_out} reasoning={tokens_reasoning}"
+            f"in={tokens_in} out={tokens_out} reasoning={tokens_reasoning} "
+            f"cache_read={tokens_cache_read} cache_write={tokens_cache_write}"
         )
     price = get_price_point(provider, model)
     million = Decimal("1000000")
     reasoning_rate = price.reasoning_per_million_usd or price.output_per_million_usd
+    cached_rate = price.cached_input_per_million_usd
+    if cached_rate is None:
+        cached_rate = price.input_per_million_usd
+    cache_write_rate = price.cache_write_per_million_usd
+    if cache_write_rate is None:
+        cache_write_rate = price.input_per_million_usd
     cost = (
         Decimal(tokens_in) * price.input_per_million_usd / million
         + Decimal(tokens_out) * price.output_per_million_usd / million
         + Decimal(tokens_reasoning) * reasoning_rate / million
+        + Decimal(tokens_cache_read) * cached_rate / million
+        + Decimal(tokens_cache_write) * cache_write_rate / million
     )
     return cost.quantize(_COST_QUANTIZER, rounding=ROUND_HALF_UP)
 

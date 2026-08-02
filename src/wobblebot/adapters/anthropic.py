@@ -60,7 +60,7 @@ from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
-    TokenTuple,
+    TokenUsage,
     execute_cloud_call,
     parse_advisor_recommendation,
     wrap_provider_errors,
@@ -259,8 +259,23 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         return True
 
 
-def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenTuple:
-    """Pull the ``TokenTuple`` from an Anthropic Messages-API response.
+def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenUsage:
+    """Pull a ``TokenUsage`` from an Anthropic Messages-API response.
+
+    Anthropic's usage shape::
+
+        "usage": {
+            "input_tokens": int,
+            "output_tokens": int,
+            "cache_creation_input_tokens": int,
+            "cache_read_input_tokens": int
+        }
+
+    Unlike OpenAI/Gemini, ``input_tokens`` already EXCLUDES the cache
+    fields — the three are disjoint on the wire, so all pass through
+    unchanged. The cache fields stay 0 while wobblebot never sends
+    ``cache_control`` (ADR-033 defers that), but capturing them means
+    enabling caching later can't silently under-report input.
 
     Anthropic lumps extended-thinking tokens into ``output_tokens`` and
     bills them at the regular output rate, so v1 records
@@ -269,9 +284,13 @@ def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenTuple:
     thinking-token counts queued as a v2 candidate.
     """
     usage = envelope.get("usage", {}) or {}
-    return (
-        int(usage.get("input_tokens", 0)),
-        int(usage.get("output_tokens", 0)),
-        None,
-        envelope.get("id"),
+    cache_read_raw = usage.get("cache_read_input_tokens", 0)
+    cache_write_raw = usage.get("cache_creation_input_tokens", 0)
+    return TokenUsage(
+        tokens_in=int(usage.get("input_tokens", 0)),
+        tokens_out=int(usage.get("output_tokens", 0)),
+        tokens_reasoning=None,
+        tokens_cache_read=int(cache_read_raw) if cache_read_raw else 0,
+        tokens_cache_write=int(cache_write_raw) if cache_write_raw else 0,
+        request_id=envelope.get("id"),
     )
