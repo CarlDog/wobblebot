@@ -9,6 +9,7 @@
       <div class="card-title">LLM Cost — Last 24h</div>
       <div class="card-meta">
         {{ snapshot.call_count_24h }} calls ·
+        {% if snapshot.cached_tokens_24h %}{{ "{:,}".format(snapshot.cached_tokens_24h) }} cached input tokens ·{% endif %}
         refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
         <button type="button"
                 class="btn-link"

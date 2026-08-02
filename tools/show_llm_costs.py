@@ -58,6 +58,8 @@ def _format_line(rec: LLMCallRecord) -> str:
     when_iso = rec.timestamp.dt.isoformat()
     when_short = when_iso.split("T")[0] + " " + when_iso.split("T")[1].split(".")[0]
     reasoning_part = f" reasoning={rec.tokens_reasoning}" if rec.tokens_reasoning else ""
+    cached_part = f" cached={rec.tokens_cache_read}" if rec.tokens_cache_read else ""
+    cache_write_part = f" cache_write={rec.tokens_cache_write}" if rec.tokens_cache_write else ""
     status = "OK" if rec.success else f"FAIL({rec.error_kind or '?'})"
     return " | ".join(
         [
@@ -65,7 +67,8 @@ def _format_line(rec: LLMCallRecord) -> str:
             status,
             f"{rec.provider}/{rec.model}",
             f"role={rec.role}",
-            f"in={rec.tokens_in} out={rec.tokens_out}{reasoning_part}",
+            f"in={rec.tokens_in} out={rec.tokens_out}"
+            f"{reasoning_part}{cached_part}{cache_write_part}",
             f"${rec.cost_usd}",
         ]
     )
