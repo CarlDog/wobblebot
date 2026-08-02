@@ -379,6 +379,31 @@ wrong low price lets calls past the budget guard). Cadence home: the new
 phase-end-audit *quarterly* checklist, with the 180-day freshness test
 as the automated backstop.
 
+### Anthropic prompt-cache `cache_control` (deferred per ADR-033)
+
+**What:** opt-in Anthropic prompt caching — converting the `system`
+param to a content-block list, attaching a `cache_control` breakpoint
+to the stable prompt body, and (for the assistant path) splitting the
+volatile engine-state snapshot out of the system string so the stable
+prefix survives byte-identical across calls.
+
+**Why deferred (ADR-033, 2026-08-02):** negative ROI at current shape —
+the advisor's 4h sweep cadence exceeds both cache TTLs (5min/1h; every
+sweep cold, every write a 1.25–2× premium), three of four role prompts
+sit under the 1024-token cacheable floor, MoE experts share no prefix,
+and no *deployed* config path reaches Anthropic (the cascade escalates
+to OpenAI `gpt-5-mini`, whose caching is automatic and needs no code).
+The half that pays regardless — cache-aware usage capture + pricing —
+shipped with ADR-033, so enabling this later cannot silently
+mis-report.
+
+**Trigger:** (a) an Anthropic provider enters a deployed config path
+with call cadence inside a cache TTL — the operator-assistant's bursty
+multi-turn shape is the natural candidate — or (b) Phase 9 materially
+raises LLM call volume/cadence. Implementation notes (system-string →
+block list; snapshot split; the 1h-TTL 2× write rate needing its own
+pricing column) are in ADR-033.
+
 ### Audit: hardcoded facts that should be data / DB-driven
 
 **What:** a systematic v1.1 sweep of facts hardcoded in *code* that are

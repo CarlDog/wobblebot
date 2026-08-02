@@ -573,7 +573,10 @@ fallback · foreign-language support.
 
 ### CI / infra / vendor (`infrastructure.md`, `external-triggers.md`)
 CI `make check` + wheel publish (contributor-triggered) · Kraken schema-drift coverage (pairs
-with CI) · **LLM-provider-drift-watcher** (new models + pricing/API re-verify) · portainer-mcp
+with CI) · **LLM-provider-drift-watcher** (new models + pricing/API re-verify) · **Anthropic
+prompt-cache `cache_control`** (ADR-033 deferral — trigger: an Anthropic provider in a *deployed*
+config path with call cadence inside a cache TTL, or Phase 9 raising LLM volume; the cache-aware
+*accounting* shipped 2026-08-02) · portainer-mcp
 AutoUpdate flags (separate repo) · Python 3.14 compat · test-count growth · OpenClaw integration ·
 news-source expansion (Messari/Reuters/stocks + publisher-attribution UI) · CryptoCompare 90-day
 eval (**2026-08-13**) · Kraken API/fee change responses.
