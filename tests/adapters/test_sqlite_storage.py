@@ -12,10 +12,11 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 
-from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter, _add_column_if_missing
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
@@ -173,6 +174,108 @@ class TestConnectionLifecycle:
             await adapter.connect()
         finally:
             await adapter.close()
+
+
+class _ScriptedCursor:
+    """A single scripted response for one ``conn.execute(...)`` call.
+
+    Supports every shape ``_add_column_if_missing`` uses a cursor as:
+    ``await conn.execute(...)`` (awaitable) and
+    ``async with conn.execute(...) as cursor:`` (async context manager),
+    plus ``async for row in cursor`` (async iterable) for the PRAGMA
+    reads. ``raises``, if set, fires from both the await and the
+    context-manager entry.
+    """
+
+    def __init__(
+        self, rows: tuple[tuple[object, ...], ...] = (), *, raises: Exception | None = None
+    ):
+        self._rows = rows
+        self._raises = raises
+
+    def __await__(self):  # type: ignore[no-untyped-def]
+        async def _run() -> "_ScriptedCursor":
+            if self._raises is not None:
+                raise self._raises
+            return self
+
+        return _run().__await__()
+
+    async def __aenter__(self) -> "_ScriptedCursor":
+        if self._raises is not None:
+            raise self._raises
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        for row in self._rows:
+            yield row
+
+
+class _ScriptedConn:
+    """A fake ``aiosqlite.Connection`` that replays a fixed call script.
+
+    ``_add_column_if_missing`` is deterministic in *what* it calls (PRAGMA,
+    then maybe ALTER, then maybe a recheck PRAGMA) but the property under
+    test — recovering from a genuine cross-process TOCTOU race — can't be
+    reproduced reliably against a real on-disk DB without either flaky
+    real concurrency or a lock-contention test that exercises a different
+    code path entirely. Scripting the exact call sequence is the
+    deterministic alternative; every other migration test in this file
+    still goes through the real ``connect()`` path against a hand-rolled
+    legacy DB.
+    """
+
+    def __init__(self, script: list[_ScriptedCursor]) -> None:
+        self._script = iter(script)
+
+    def execute(self, _sql: str, *_args: object, **_kwargs: object) -> _ScriptedCursor:
+        return next(self._script)
+
+
+class TestAddColumnIfMissing:
+    """Unit coverage for the ``_add_column_if_missing`` migration helper
+    (2026-08-05 outage fix). See ``_ScriptedConn`` for why this is a
+    scripted-double test rather than a real-DB migration test."""
+
+    async def test_tolerates_concurrent_add_losing_the_race(self) -> None:
+        # 1st PRAGMA: column not yet present (this connection's stale read).
+        # ALTER: fails -- another connection already committed the column.
+        # 2nd PRAGMA (recheck): column IS present -- the race is harmless,
+        # the migration's goal (column exists) is already satisfied.
+        conn = _ScriptedConn(
+            [
+                _ScriptedCursor(rows=((0, "id"), (1, "other_col"))),
+                _ScriptedCursor(raises=aiosqlite.Error("duplicate column name: new_col")),
+                _ScriptedCursor(rows=((0, "id"), (1, "other_col"), (2, "new_col"))),
+            ]
+        )
+        # No raise -- this is the assertion. A pre-fix implementation that
+        # let the ALTER's aiosqlite.Error propagate would fail this test.
+        await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
+
+    async def test_reraises_when_column_genuinely_still_missing(self) -> None:
+        # Same shape, but the recheck confirms the column is STILL absent —
+        # a real failure (bad DDL, locked file, disk full), not a race.
+        # Must propagate, not be swallowed.
+        boom = aiosqlite.Error("disk I/O error")
+        conn = _ScriptedConn(
+            [
+                _ScriptedCursor(rows=((0, "id"),)),
+                _ScriptedCursor(raises=boom),
+                _ScriptedCursor(rows=((0, "id"),)),
+            ]
+        )
+        with pytest.raises(aiosqlite.Error, match="disk I/O error"):
+            await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
+
+    async def test_no_op_when_column_already_present(self) -> None:
+        # Fast path: the PRAGMA check alone satisfies it -- no ALTER call
+        # scripted, so the test fails with StopIteration if one is attempted.
+        conn = _ScriptedConn([_ScriptedCursor(rows=((0, "id"), (1, "new_col")))])
+        await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
 
 
 class TestStage83Pragmas:
