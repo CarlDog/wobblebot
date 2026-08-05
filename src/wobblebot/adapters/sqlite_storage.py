@@ -1460,6 +1460,38 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         return CapTripRecord(tripped_at=Timestamp(dt=parsed), session_pnl_usd=Decimal(row[1]))
 
 
+async def _add_column_if_missing(
+    conn: aiosqlite.Connection, table: str, column: str, ddl_suffix: str
+) -> None:
+    """Add ``column`` to ``table`` if missing, tolerating a concurrent-process race.
+
+    SQLite has no ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``, so every
+    additive migration in this module does PRAGMA-check-then-ALTER. When
+    two processes open the same DB file for the first time after a new
+    migration ships (e.g. every daemon in the compose stack cold-booting
+    at once), both can pass the PRAGMA check before either's ALTER
+    commits -- the loser then hits "duplicate column name" even though
+    the column is now genuinely present and the migration's goal is
+    satisfied. Re-checking PRAGMA table_info after a failed ALTER
+    (rather than string-matching the error) distinguishes "lost this
+    race, column's there, fine" from a real failure. Traces back to the
+    2026-08-05 outage: that race hit a since-fixed bug in an unrelated
+    warning-log call and turned into a full dashboard crash instead of
+    the harmless race it actually was.
+    """
+    async with conn.execute(f"PRAGMA table_info({table})") as cursor:
+        cols = {row[1] async for row in cursor}
+    if column in cols:
+        return
+    try:
+        await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_suffix}")
+    except aiosqlite.Error:
+        async with conn.execute(f"PRAGMA table_info({table})") as cursor:
+            cols_after = {row[1] async for row in cursor}
+        if column not in cols_after:
+            raise
+
+
 async def _migrate_advisor_suggestions_expert_opinions(
     conn: aiosqlite.Connection,
 ) -> None:
@@ -1470,13 +1502,9 @@ async def _migrate_advisor_suggestions_expert_opinions(
     existing tables that lack it. SQLite doesn't support ``ALTER TABLE
     ADD COLUMN IF NOT EXISTS``, so we PRAGMA-check first.
     """
-    async with conn.execute("PRAGMA table_info(advisor_suggestions)") as cursor:
-        cols = {row[1] async for row in cursor}
-    if "expert_opinions" not in cols:
-        await conn.execute(
-            "ALTER TABLE advisor_suggestions "
-            "ADD COLUMN expert_opinions TEXT NOT NULL DEFAULT '[]'"
-        )
+    await _add_column_if_missing(
+        conn, "advisor_suggestions", "expert_opinions", "TEXT NOT NULL DEFAULT '[]'"
+    )
 
 
 async def _migrate_advisor_suggestions_news_materially_drove(
@@ -1492,14 +1520,12 @@ async def _migrate_advisor_suggestions_news_materially_drove(
     retroactively isn't possible without the original per-expert
     opinions in a comparable shape.
     """
-    async with conn.execute("PRAGMA table_info(advisor_suggestions)") as cursor:
-        cols = {row[1] async for row in cursor}
-    if "news_materially_drove" not in cols:
-        await conn.execute(
-            "ALTER TABLE advisor_suggestions "
-            "ADD COLUMN news_materially_drove INTEGER NOT NULL DEFAULT 0 "
-            "CHECK (news_materially_drove IN (0, 1))"
-        )
+    await _add_column_if_missing(
+        conn,
+        "advisor_suggestions",
+        "news_materially_drove",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (news_materially_drove IN (0, 1))",
+    )
 
 
 async def _migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
@@ -1510,12 +1536,8 @@ async def _migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
     3882+ existing rows stay valid with both columns set to NULL on
     read.
     """
-    async with conn.execute("PRAGMA table_info(news_items)") as cursor:
-        cols = {row[1] async for row in cursor}
-    if "publisher" not in cols:
-        await conn.execute("ALTER TABLE news_items ADD COLUMN publisher TEXT")
-    if "url" not in cols:
-        await conn.execute("ALTER TABLE news_items ADD COLUMN url TEXT")
+    await _add_column_if_missing(conn, "news_items", "publisher", "TEXT")
+    await _add_column_if_missing(conn, "news_items", "url", "TEXT")
 
 
 async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
