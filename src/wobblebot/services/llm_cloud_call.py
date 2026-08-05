@@ -43,7 +43,7 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from wobblebot.adapters.ollama import OllamaJsonExtractError, extract_last_json_object
-from wobblebot.domain.exceptions import LLMCostCapExceeded
+from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation
@@ -391,6 +391,14 @@ async def wrap_provider_errors(
     actually fires. The "fail loudly" intent (llm_pricing docstring) is
     preserved by the loud logs each consumer emits on the domain error.
 
+    ``LLMRetryExhausted`` gets the same translation for the same reason
+    (2026-08-05 outage): ``retry_with_backoff`` raises it directly (it
+    is a ``WobbleBotDomainError``, not an ``httpx`` exception), so an
+    ordinary transient failure -- an OpenAI 429 that outlasts the retry
+    budget -- skipped this wrap entirely and killed the whole daemon the
+    same way the ``PricingLookupError`` gap once did. 203 restarts in
+    under two hours on a live deployment before this was caught.
+
     Args:
         provider_name: Display name for the error message (e.g.
             ``"Anthropic"``). Conventionally Title Case since it
@@ -407,6 +415,8 @@ async def wrap_provider_errors(
         raise error_cls(f"{provider_name} transport error: {exc}") from exc
     except PricingLookupError as exc:
         raise error_cls(f"{provider_name} pricing unavailable: {exc}") from exc
+    except LLMRetryExhausted as exc:
+        raise error_cls(f"{provider_name} retries exhausted: {exc}") from exc
 
 
 async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many-positional-arguments
