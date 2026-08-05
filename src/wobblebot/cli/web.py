@@ -178,7 +178,14 @@ async def _open_optional_dbs(
             _LOGGER.warning(
                 "optional db failed to open; the dashboard will "
                 "gracefully degrade cards that need it",
-                extra={"name": name, "path": p},
+                # "name" collides with the reserved LogRecord.name attribute
+                # (the logger's own name) -- passing it via extra raises
+                # KeyError inside logging internals and crashes the whole
+                # process instead of gracefully degrading (2026-08-05 outage:
+                # a cross-process migration race left advise.db transiently
+                # unopenable, and this crash turned that into a full dashboard
+                # outage instead of one missing card).
+                extra={"db_name": name, "path": p},
             )
         out[name] = adapter
     return out

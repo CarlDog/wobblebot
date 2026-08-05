@@ -155,6 +155,50 @@ class TestOpenStorage:
 
 
 # --------------------------------------------------------------------- #
+# _open_optional_dbs                                                    #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestOpenOptionalDbs:
+    """2026-08-05 outage regression: a failed optional DB must degrade
+    gracefully (log a WARNING, return None for that key), never crash
+    the whole dashboard. The original bug was in the warning call
+    itself -- extra={"name": ...} collides with the reserved
+    LogRecord.name attribute and raises KeyError from inside logging,
+    independent of *why* the DB failed to open."""
+
+    async def test_failed_db_degrades_instead_of_crashing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A path that IS a directory can never open as a SQLite file --
+        # connect() raises StorageError, _open_storage returns None,
+        # and _open_optional_dbs must handle that without raising.
+        bad_path = tmp_path / "advise_is_a_dir"
+        bad_path.mkdir()
+        good_path = tmp_path / "harvest.db"
+
+        web = WebConfig(advise_db=str(bad_path), harvest_db=str(good_path))
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.web"):
+            result = await cli_web._open_optional_dbs(web)
+
+        assert result["advise"] is None
+        assert result["harvest"] is not None
+        assert "optional db failed to open" in caplog.text
+        await result["harvest"].close()
+
+    async def test_all_paths_unset_returns_all_none(self) -> None:
+        result = await cli_web._open_optional_dbs(WebConfig())
+        assert result == {
+            "live": None,
+            "advise": None,
+            "harvest": None,
+            "observe": None,
+            "news": None,
+        }
+
+
+# --------------------------------------------------------------------- #
 # create-user subcommand                                                #
 # --------------------------------------------------------------------- #
 
