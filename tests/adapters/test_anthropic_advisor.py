@@ -25,7 +25,7 @@ from wobblebot.adapters.anthropic import (
 )
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.prompts import Prompt, PromptMetadata
-from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.ports.advisor import PerformanceSummary
 from wobblebot.ports.exceptions import AdvisorError
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
@@ -405,11 +405,14 @@ class TestRetryPath:
             storage,
             retry_config=LLMRetryConfig(max_retries=2, initial_backoff_seconds=0.01),
         )
-        # retry_with_backoff raises LLMRetryExhausted after the budget.
-        # The adapter catches httpx.HTTPError (which LLMRetryExhausted is NOT)
-        # — so the exhaustion propagates as-is. Operator-notification layer
-        # at cli/* handles the surface.
-        with pytest.raises(LLMRetryExhausted):
+        # retry_with_backoff raises LLMRetryExhausted after the budget --
+        # a WobbleBotDomainError, not an httpx exception. wrap_provider_errors
+        # translates it to AdvisorError (2026-08-05 fix) so this stays a
+        # per-tick recoverable failure instead of propagating raw past
+        # _run_cycle's AdvisorError handler and the cascade's heuristic
+        # fallback, which is exactly what crash-looped the live advise
+        # daemon 203 times in under two hours before this was caught.
+        with pytest.raises(AdvisorError, match="retries exhausted"):
             await adapter.get_recommendation(_make_summary())
         assert call_count[0] == 3  # 1 initial + 2 retries
 

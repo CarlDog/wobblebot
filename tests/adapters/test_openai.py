@@ -525,6 +525,28 @@ class TestAdvisorFailures:
         with pytest.raises(AdvisorError, match="pricing unavailable"):
             await adapter.get_recommendation(_summary())
 
+    async def test_retries_exhausted_wraps_as_advisor_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # A 429 that outlasts the retry budget raises LLMRetryExhausted --
+        # a WobbleBotDomainError, not an httpx exception -- from inside
+        # execute_cloud_call. Before wrap_provider_errors covered it, that
+        # type skipped every except clause here, then skipped both
+        # _run_cycle's AdvisorError handler and the cascade's heuristic
+        # fallback, crash-looping the whole advise daemon on an ordinary
+        # rate limit (2026-08-05 outage: 203 restarts in under two hours).
+        calls = 0
+
+        def handler(_r: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(429, json={"error": {"message": "rate limited"}})
+
+        adapter = _build_advisor(httpx.MockTransport(handler), storage)
+        with pytest.raises(AdvisorError, match="retries exhausted"):
+            await adapter.get_recommendation(_summary())
+        assert calls == 3  # 1 + max_retries=2 from _build_advisor's retry_config
+
 
 # --------------------------------------------------------------------- #
 # Assistant                                                             #
