@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -11,7 +12,14 @@ import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.models import NewsItem, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import (
+    Amount,
+    OHLCBar,
+    OrderSide,
+    Price,
+    Symbol,
+    Timestamp,
+)
 from wobblebot.ports.advisor import CurrentGridParams
 from wobblebot.services.summary_builder import SummaryBuilder
 
@@ -236,3 +244,124 @@ class TestNewsPath:
             news_lookback=timedelta(hours=1),
         )
         assert summary.recent_news[0].sentiment_score == 0.3
+
+
+def _make_ta_bar(opened_at: datetime, close: float) -> OHLCBar:
+    return OHLCBar(
+        symbol=BTC_USD,
+        interval_minutes=60,
+        opened_at=opened_at,
+        open=Decimal(str(close)),
+        high=Decimal(str(close + 2)),
+        low=Decimal(str(close - 2)),
+        close=Decimal(str(close)),
+        vwap=Decimal("0"),
+        volume=Decimal("1"),
+        count=1,
+    )
+
+
+async def _seed_hourly_bars(
+    storage: SQLiteStorageAdapter, *, count: int, newest_age_hours: float = 0.5
+) -> None:
+    """``count`` hourly bars, newest opening ``newest_age_hours`` ago."""
+    now = datetime.now(UTC)
+    bars = [
+        _make_ta_bar(
+            now - timedelta(hours=newest_age_hours + (count - 1 - i)),
+            100.0 + (i % 9),
+        )
+        for i in range(count)
+    ]
+    await storage.save_ohlc_bars(bars)
+
+
+class TestTAFields:
+    """P2 slice 3 — the 16 TA indicator fields on PerformanceSummary."""
+
+    async def test_fresh_bars_populate_indicators(self, storage: SQLiteStorageAdapter) -> None:
+        await _seed_prices(storage)
+        await _seed_hourly_bars(storage, count=250)
+        summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is not None
+        assert summary.macd_line is not None
+        assert summary.macd_histogram == pytest.approx(
+            summary.macd_line - summary.macd_signal  # type: ignore[operator]
+        )
+        assert summary.bollinger_middle == pytest.approx(summary.sma_20)  # type: ignore[arg-type]
+        assert summary.sma_200 is not None
+        assert summary.atr_14 is not None
+        assert summary.adx_14 is not None
+        assert summary.stochastic_k is not None
+
+    async def test_no_bars_yields_all_none(self, storage: SQLiteStorageAdapter) -> None:
+        await _seed_prices(storage)
+        summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is None
+        assert summary.macd_line is None
+        assert summary.sma_200 is None
+        assert summary.stochastic_d is None
+
+    async def test_stale_bars_yield_all_none_with_warning(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bars exist but the newest opened 12h ago (> 3 intervals):
+        stale indicators presented as current would poison the regime
+        read, so every TA field must go out None — and loudly."""
+        await _seed_prices(storage)
+        await _seed_hourly_bars(storage, count=250, newest_age_hours=12.0)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.summary_builder"):
+            summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is None
+        assert summary.adx_14 is None
+        assert any("TA fields null" in r.getMessage() for r in caplog.records)
+
+    async def test_short_fresh_window_partial_none(self, storage: SQLiteStorageAdapter) -> None:
+        """40 fresh bars: RSI(14)/ATR(14) compute; SMA(200) can't —
+        per-indicator None, not all-or-nothing."""
+        await _seed_prices(storage)
+        await _seed_hourly_bars(storage, count=40)
+        summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is not None
+        assert summary.atr_14 is not None
+        assert summary.sma_200 is None
+
+    async def test_other_interval_bars_do_not_feed_ta(self, storage: SQLiteStorageAdapter) -> None:
+        """1m bars must not satisfy the 60m TA read."""
+        await _seed_prices(storage)
+        now = datetime.now(UTC)
+        minute_bars = [
+            OHLCBar(
+                symbol=BTC_USD,
+                interval_minutes=1,
+                opened_at=now - timedelta(minutes=i),
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100"),
+                vwap=Decimal("0"),
+                volume=Decimal("1"),
+                count=1,
+            )
+            for i in range(30)
+        ]
+        await storage.save_ohlc_bars(minute_bars)
+        summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is None
+
+    async def test_months_old_bars_still_warn_not_silence(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bars older than the whole 260-bar fetch window (e.g. a dump
+        import that ended a quarter ago) fall outside the windowed read
+        — the guard must check the cursor and still WARN, not demote
+        the stalest data of all to a silent DEBUG. Caught live
+        2026-08-08."""
+        await _seed_prices(storage)
+        await _seed_hourly_bars(storage, count=50, newest_age_hours=24 * 90)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.summary_builder"):
+            summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is None
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "TA fields null" in rendered
+        assert "--resume" in rendered

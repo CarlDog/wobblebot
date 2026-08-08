@@ -19,6 +19,7 @@ outage news is symbol-agnostic but still relevant, so the default is
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -34,6 +35,47 @@ from wobblebot.services.metrics import (
     compute_flatness,
     compute_max_drawdown,
     compute_volatility,
+)
+from wobblebot.services.ta_metrics import (
+    compute_adx,
+    compute_atr,
+    compute_bollinger,
+    compute_ema,
+    compute_macd,
+    compute_rsi,
+    compute_sma,
+    compute_stochastic,
+)
+
+_LOGGER = logging.getLogger("wobblebot.services.summary_builder")
+
+# TA bar window: SMA(200) is the heaviest consumer; 260 bars gives it
+# headroom plus full ADX/MACD warmup. At the 60m default interval this
+# is ~11 days of history.
+_TA_LOOKBACK_BARS = 260
+
+# Newest bar must open within this many intervals of "now" or the TA
+# fields go out as None — stale indicators presented as current would
+# quietly poison the advisor's regime read (ADR-019: trend dominates).
+_TA_MAX_STALENESS_INTERVALS = 3
+
+_TA_FIELD_NAMES = (
+    "rsi_14",
+    "macd_line",
+    "macd_signal",
+    "macd_histogram",
+    "bollinger_upper",
+    "bollinger_middle",
+    "bollinger_lower",
+    "sma_20",
+    "sma_50",
+    "sma_200",
+    "ema_12",
+    "ema_26",
+    "atr_14",
+    "adx_14",
+    "stochastic_k",
+    "stochastic_d",
 )
 
 
@@ -72,6 +114,7 @@ class SummaryBuilder:
         news_match_coin: bool = False,
         current_grid: CurrentGridParams | None = None,
         active_orders: int = 0,
+        ta_interval_minutes: int = 60,
     ) -> PerformanceSummary:
         """Build a ``PerformanceSummary`` for one symbol over ``lookback``.
 
@@ -88,6 +131,10 @@ class SummaryBuilder:
                 current grid params. When ``None``, the summary
                 reports empty grid params (advisor sees "unconfigured").
             active_orders: Count of orders currently on the book.
+            ta_interval_minutes: Bar interval the TA indicators read
+                (P2 slice 3). Default 60 — the spine's standard. TA
+                fields come back ``None`` when bars are absent, too
+                short, or stale (see the staleness guard).
 
         Returns:
             A populated ``PerformanceSummary`` ready for
@@ -112,6 +159,9 @@ class SummaryBuilder:
 
         cycle = compute_cycle_stats(trades_asc)
         latest_price = float(snapshots[-1].price.amount) if snapshots else None
+        ta_fields = await self._compute_ta_fields(
+            symbol, now=now, interval_minutes=ta_interval_minutes
+        )
 
         return PerformanceSummary(
             symbol=str(symbol),
@@ -127,6 +177,99 @@ class SummaryBuilder:
             active_orders=active_orders,
             current_grid=current_grid or CurrentGridParams(),
             recent_news=recent_news,
+            **ta_fields,
+        )
+
+    async def _compute_ta_fields(
+        self,
+        symbol: Symbol,
+        *,
+        now: datetime,
+        interval_minutes: int,
+    ) -> dict[str, float | None]:
+        """The 16 TA indicator fields, or all-``None`` when bars can't back them.
+
+        Reads the newest ``_TA_LOOKBACK_BARS`` window of ``ohlc_bars``
+        at ``interval_minutes``. All-``None`` cases:
+
+        - no bars for the pair at that interval AT ALL (DEBUG — normal
+          before the operator imports/backfills bar history), or
+        - newest bar older than ``_TA_MAX_STALENESS_INTERVALS``
+          intervals (WARN — bar history exists but nothing is keeping
+          it fresh; stale indicators presented as current would poison
+          the regime read, so we refuse instead). Months-old bars fall
+          entirely OUTSIDE the fetch window, so the empty-window case
+          checks the cheap ``get_latest_ohlc_opened_at`` cursor before
+          concluding "never had bars" — otherwise the stalest data of
+          all would demote the actionable WARN to a silent DEBUG
+          (caught in the 2026-08-08 live verification).
+
+        Individual indicators may still be ``None`` inside a fresh
+        window when it's too short for their period (e.g. sma_200
+        needs 200 bars; a new listing may only have 40).
+        """
+        empty: dict[str, float | None] = dict.fromkeys(_TA_FIELD_NAMES)
+        window = timedelta(minutes=interval_minutes * _TA_LOOKBACK_BARS)
+        bars = await self._storage.get_ohlc_bars(symbol, interval_minutes, start_time=now - window)
+        if not bars:
+            latest = await self._storage.get_latest_ohlc_opened_at(symbol, interval_minutes)
+            if latest is None:
+                _LOGGER.debug(
+                    "no %dm bars for %s — TA fields null",
+                    interval_minutes,
+                    symbol,
+                    extra={"symbol": str(symbol), "interval_minutes": interval_minutes},
+                )
+                return empty
+            self._warn_stale_bars(symbol, interval_minutes, now=now, newest=latest)
+            return empty
+        newest = bars[-1].opened_at
+        max_staleness = timedelta(minutes=interval_minutes * _TA_MAX_STALENESS_INTERVALS)
+        if now - newest > max_staleness:
+            self._warn_stale_bars(symbol, interval_minutes, now=now, newest=newest)
+            return empty
+        macd = compute_macd(bars)
+        bollinger = compute_bollinger(bars)
+        stochastic = compute_stochastic(bars)
+        return {
+            "rsi_14": compute_rsi(bars),
+            "macd_line": macd.line if macd else None,
+            "macd_signal": macd.signal if macd else None,
+            "macd_histogram": macd.histogram if macd else None,
+            "bollinger_upper": bollinger.upper if bollinger else None,
+            "bollinger_middle": bollinger.middle if bollinger else None,
+            "bollinger_lower": bollinger.lower if bollinger else None,
+            "sma_20": compute_sma(bars, 20),
+            "sma_50": compute_sma(bars, 50),
+            "sma_200": compute_sma(bars, 200),
+            "ema_12": compute_ema(bars, 12),
+            "ema_26": compute_ema(bars, 26),
+            "atr_14": compute_atr(bars),
+            "adx_14": compute_adx(bars),
+            "stochastic_k": stochastic.k if stochastic else None,
+            "stochastic_d": stochastic.d if stochastic else None,
+        }
+
+    @staticmethod
+    def _warn_stale_bars(
+        symbol: Symbol, interval_minutes: int, *, now: datetime, newest: datetime
+    ) -> None:
+        """The actionable stale-bars WARN, shared by both stale branches."""
+        staleness_hours = (now - newest).total_seconds() / 3600.0
+        _LOGGER.warning(
+            "newest %dm bar for %s is %.1fh old -- TA fields null; "
+            "top up with `cli/observe --backfill --resume --intervals %dm` "
+            "or the history import",
+            interval_minutes,
+            symbol,
+            staleness_hours,
+            interval_minutes,
+            extra={
+                "symbol": str(symbol),
+                "interval_minutes": interval_minutes,
+                "newest_opened_at": newest.isoformat(),
+                "staleness_hours": round(staleness_hours, 1),
+            },
         )
 
     async def _build_news_summaries(

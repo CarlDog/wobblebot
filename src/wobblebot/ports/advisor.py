@@ -90,6 +90,13 @@ class PerformanceSummary(BaseModel):
             should consider. Empty list = metrics-only summary. The
             Stage 3.2 single-LLM advisor may or may not consume it;
             the Stage 3.4a news expert needs it.
+
+    TA fields (P2 slice 3): standard bar-based indicators computed by
+    ``services/ta_metrics.py`` over ``ohlc_bars`` — the vocabulary the
+    LLM's training distribution expects (RSI(14) on bars, not a tick
+    proxy). All ``None`` when bar history is absent, too short, or
+    stale (the SummaryBuilder's staleness guard) — a null means "no
+    TA available," never "zero."
     """
 
     symbol: str = Field(min_length=3)
@@ -105,6 +112,24 @@ class PerformanceSummary(BaseModel):
     active_orders: int = Field(ge=0, default=0)
     current_grid: CurrentGridParams = Field(default_factory=CurrentGridParams)
     recent_news: list[NewsItemSummary] = Field(default_factory=list)
+
+    # --- TA indicators (P2 slice 3; textbook periods) ---
+    rsi_14: float | None = None
+    macd_line: float | None = None
+    macd_signal: float | None = None
+    macd_histogram: float | None = None
+    bollinger_upper: float | None = None
+    bollinger_middle: float | None = None
+    bollinger_lower: float | None = None
+    sma_20: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    ema_12: float | None = None
+    ema_26: float | None = None
+    atr_14: float | None = None
+    adx_14: float | None = None
+    stochastic_k: float | None = None
+    stochastic_d: float | None = None
 
     class Config:
         frozen = True

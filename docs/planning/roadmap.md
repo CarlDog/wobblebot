@@ -406,8 +406,29 @@ the detail; the full backlog index is
    quarter-end (2026-03-31) to the live ~720-bar horizon stays unfillable until
    Kraken publishes the next quarterly dump (the horizon WARN flags it).
    Real-money cost $0.00 (fully offline). Test count 2657 → 2685.
-   Remaining P2 slices in strict order: OHLC+TA → auditor config-replay →
-   screener → counter-order target (ADR-028/029 already written).
+
+   **The one-shot bulk import ran 2026-08-08** against the operator's local
+   `data/wobblebot-observe.db`: all 11 `observe.symbols` at 1h — **670,111 bars**
+   (each pair's full Kraken listing history → 2026-03-31) + matching synthesized
+   snapshots, 0 skipped rows, ~70s, idempotency spot-verified.
+
+   **Slice 3 — OHLC+TA indicators** ✅ **2026-08-08**: `services/ta_metrics.py`
+   (RSI/MACD/Bollinger/SMA/EMA/ATR/ADX/Stochastic, hand-rolled textbook formulas,
+   frozen compound results, private `_compute_*_series` for the auditor/screener);
+   16 `float|None` TA fields on `PerformanceSummary` wired via `SummaryBuilder`
+   over a 260-bar 60m `get_ohlc_bars` window; `quant.md` vocabulary update (ADX +
+   price-vs-SMA as the direct trend reads ADR-019 wanted). Staleness guard: >3
+   intervals old → all-null TA + actionable WARN; live verification caught and
+   fixed the out-of-window silent-DEBUG case (a quarter-old dump import now WARNs).
+   Real-window verification against the imported BTC data produced coherent
+   textbook values (Bollinger middle == SMA20, stochastic/RSI agreement).
+   **Open operational gap (operator decision pending):** nothing maintains fresh
+   1h bars steady-state, so production TA is null-with-WARN until a
+   `--resume --intervals 1h` cron or a small observe-daemon hourly top-up ships.
+   Advisor-only per the blueprint — nothing wired into `cli/live`.
+   Real-money cost $0.00. Test count 2685 → 2721.
+   Remaining P2 slices in strict order: auditor config-replay → screener →
+   counter-order target (ADR-028/029 already written).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
