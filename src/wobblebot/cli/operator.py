@@ -88,6 +88,7 @@ from wobblebot.ports.exceptions import (
     OperatorError,
     StorageError,
 )
+from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import (
     IntentCommand,
     IntentConversational,
@@ -96,7 +97,6 @@ from wobblebot.ports.operator import (
     OperatorIntent,
     PendingCommand,
 )
-from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import (
     DaemonHealth,
