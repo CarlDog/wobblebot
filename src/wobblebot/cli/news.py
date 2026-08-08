@@ -7,12 +7,13 @@ Run as a module::
     python -m wobblebot.cli.news --poll-interval-minutes 15
 
 **Read-only against external sources; write-only against local
-storage.** Polls every enabled ``NewsPort`` (RSS feeds + optional
-CryptoCompare + Kraken's own exchange-status feed, enabled by
-default) on the configured interval and persists each item to the
-local ``news_items`` table. Dedup is enforced at the storage layer
-via ``UNIQUE(source, external_id)`` — re-fetching the same article
-across polls is a no-op.
+storage.** Polls every enabled ``NewsPort`` (RSS feeds + Kraken's
+own exchange-status feed, enabled by default; CryptoCompare is
+dormant — retired upstream 2026-05-21, off by default at every
+layer, paid-plan opt-in only) on the configured interval and
+persists each item to the local ``news_items`` table. Dedup is
+enforced at the storage layer via ``UNIQUE(source, external_id)``
+— re-fetching the same article across polls is a no-op.
 
 **Fault isolation.** One bad source (DNS failure, 500, malformed
 feed) cannot stop the others. Per-source errors are logged and the

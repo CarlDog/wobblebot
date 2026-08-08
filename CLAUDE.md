@@ -50,7 +50,7 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.live` — **real-money** multi-asset grid trading. `--symbols` comma-list; hard caps; clean SIGINT cancels every open order. Exit codes: 0 clean / 1 loss-cap / 2 missing creds.
 - `cli.observe` — read-only price/balance data collection.
 - `cli.lurker` — one-line alias of `cli.observe` today (own `__main__`); reserved to grow advisor commentary on pure observation later.
-- `cli.news` — long-running news poller (RSS + CryptoCompare); persists `news_items` with `(source, external_id)` dedup; feeds the advisor.
+- `cli.news` — long-running news poller (RSS + Kraken status feed; CryptoCompare retired 2026-07-31, paid-only upstream — off by default everywhere); persists `news_items` with `(source, external_id)` dedup; feeds the advisor.
 - `cli.shadow` — same engine, `ShadowExchangeAdapter` (live prices, synthetic ledger). Backtest sandbox.
 - `cli.advise` — MoE advisor daemon; writes suggestions, **never executes** (ADR-002).
 - `cli.apply` — operator-gated auto-tune. Dry-run default; `--commit` rewrites `settings.yml`. Default-off gate; news-role never auto-applies.

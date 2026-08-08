@@ -51,7 +51,8 @@ x-wobblebot-defaults: &wobblebot-defaults
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-    # ---- News ingestion (CryptoCompare) ------------------------
+    # ---- News ingestion (CryptoCompare — retired upstream; key only
+    # matters with a paid CoinDesk Data plan + enabled: true) -------
     CRYPTOCOMPARE_API_KEY: ${CRYPTOCOMPARE_API_KEY:-}
     # ---- Discord (cli/operator) --------------------------------
     DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
@@ -102,7 +103,8 @@ services:
     command: python -m wobblebot.cli.observe --profile cpu-only
 
   # ------------------------------------------------------------------
-  # News ingestion (CryptoCompare + RSS). Safe to auto-restart.
+  # News ingestion (RSS + Kraken status feed; CryptoCompare retired).
+  # Safe to auto-restart.
   # ------------------------------------------------------------------
   news:
     <<: *wobblebot-defaults

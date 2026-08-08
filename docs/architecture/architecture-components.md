@@ -16,7 +16,7 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 ### Advisory & Intelligence Ports
 - **AdvisorPort** – Interface for Strategy Advisor to receive summaries and return recommendations (`get_recommendation(summary) -> AdvisorRecommendation`; implementations are `OllamaAdapter` for single-LLM and `MoEAdvisorAdapter` composing 2+ AdvisorPort instances). Phase 3.2 / 3.4a.
 - **DataCollectorPort** – Market metrics, historical data, derived analytics (aggregation layer). Phase 3.1.
-- **NewsPort** – Interface for crypto news ingestion (`fetch_recent(since) -> list[NewsItem]`; implementations are `RssNewsAdapter` per feed + `CryptoCompareAdapter`). Phase 3.2.5.
+- **NewsPort** – Interface for crypto news ingestion (`fetch_recent(since) -> list[NewsItem]`; implementations are `RssNewsAdapter` per feed, `KrakenStatusAdapter`, and the dormant `CryptoCompareAdapter` — retired upstream, see 5f). Phase 3.2.5.
 
 ### Operational Ports
 - **NotifierPort** – Alerts, notifications (email, Slack, Discord, etc.)
@@ -122,7 +122,7 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 
 ### 5f. News Ingestion (Stage 3.2.5)
 - **`RssNewsAdapter`** (`adapters/rss_news.py`): one instance per RSS feed. feedparser-based; httpx fetches with `follow_redirects=True`. Mentioned-coin extraction via a whitelist regex over BTC/ETH/SOL/DOGE/ADA/XRP/DOT/MATIC/AVAX/LINK.
-- **`CryptoCompareAdapter`** (`adapters/cryptocompare_news.py`): polls `/data/v2/news/`; API key in Authorization header.
+- **`CryptoCompareAdapter`** (`adapters/cryptocompare_news.py`): polls `/data/v2/news/`; API key in Authorization header. **Dormant since 2026-07-31** — CoinDesk Data (the CryptoCompare rebrand) retired free API access 2026-05-21 (ADR-010 evaluation closed early); `news.cryptocompare.enabled` defaults `false` at the schema level and in every config store. The adapter is kept for the paid-plan re-enable path.
 - Both implement `NewsPort`. Items persist to the `news_items` table with `UNIQUE(source, external_id)` dedup; re-fetching across polls is a no-op at the storage layer.
 
 ## 6. Harvester Module
