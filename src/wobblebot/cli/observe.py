@@ -179,6 +179,19 @@ def _parse_date_arg(raw: str) -> datetime:
     return parsed
 
 
+def _parse_days_arg(raw: str) -> int:
+    """Parse ``--days N`` — a positive integer count of days back from now."""
+    try:
+        days = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid --days {raw!r}; use a positive integer day count"
+        ) from exc
+    if days <= 0:
+        raise argparse.ArgumentTypeError(f"--days must be positive, got {days}")
+    return days
+
+
 _INTERVAL_SUFFIX_MINUTES: dict[str, int] = {
     "m": 1,
     "h": 60,
@@ -223,6 +236,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
     until_raw: str | None,
     interval_minutes: int,
     symbols_override: list[Symbol] | None,
+    days: int | None = None,
 ) -> int:
     """One-shot backfill mode for ``cli/observe --backfill``.
 
@@ -237,12 +251,17 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         _LOGGER.error("settings.yml is missing the `observe:` section")
         return 2
 
-    if since_raw is None:
-        _LOGGER.error("--backfill requires --since (e.g. --since 2026-04-01)")
-        return 2
-
     try:
-        since = _parse_date_arg(since_raw)
+        if days is not None:
+            since = datetime.now(UTC) - timedelta(days=days)
+        elif since_raw is not None:
+            since = _parse_date_arg(since_raw)
+        else:
+            _LOGGER.error(
+                "--backfill requires --since (e.g. --since 2026-04-01) "
+                "or --days (e.g. --days 30)"
+            )
+            return 2
         until = _parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
     except ValueError as exc:
         _LOGGER.error("invalid date argument", extra={"error": str(exc)})
@@ -589,13 +608,24 @@ def main() -> int:
             "poll loop. Requires --since."
         ),
     )
-    parser.add_argument(
+    since_group = parser.add_mutually_exclusive_group()
+    since_group.add_argument(
         "--since",
         default=None,
         help=(
             "Backfill lower bound (ISO 8601). Examples: 2026-04-01, "
             "2026-04-01T12:00:00Z. Bare dates are midnight UTC. Only "
             "used with --backfill."
+        ),
+    )
+    since_group.add_argument(
+        "--days",
+        type=_parse_days_arg,
+        default=None,
+        help=(
+            "Backfill lower bound as a day count back from now — shorthand "
+            "for --since <now minus N days>. Mutually exclusive with "
+            "--since. Only used with --backfill."
         ),
     )
     parser.add_argument(
@@ -642,6 +672,7 @@ def main() -> int:
                 until_raw=args.until,
                 interval_minutes=args.interval,
                 symbols_override=symbols_override,
+                days=args.days,
             ),
             logger=_LOGGER,
         )
