@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-2225%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
+[![Tests](https://img.shields.io/badge/tests-2767%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
 [![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
 
 > **⚠ Disclaimer.** WobbleBot is a personal hobby project. It places real
@@ -73,22 +73,26 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 | **Stage 8.1** — Reliability & Recovery (engine reconciliation; ADR-018) | ✅ closed 2026-05-18 |
 | **Stage 8.2** — Background Maintenance Worker (`cli/maintenance`; VACUUM + prune + backup) | ✅ closed 2026-05-18 |
 | **Stage 8.3** — Performance & Resource Tuning (SQLite pragmas + index audit + profile harness) | ✅ closed 2026-05-18 |
-| **Stage 8.4** — Phase 8 / v1.0 Release Check | in progress 2026-05-18 |
+| **Stage 8.4** — Phase 8 / v1.0 Release Check (incl. the ~10-week gating soak, Stage 8.4.E) | ✅ closed 2026-07-31 ([summary](docs/planning/phase-8-summary.md)) |
 | **Stage 8.5** — Advisor Engine: Heuristic + LLM Cascade (pre-soak value-add) | ✅ closed 2026-05-29 |
+| **Stage 8.6** — Advisor hardening + grid widen 1% → 3% (pre-soak) | ✅ closed 2026-05-30 |
+| **`v1.0.0` tagged** — soak passed its stated exit criteria | ✅ 2026-07-31 |
+| **v1.1 Track / P1** — safety-hardening backlog + ADR-022 advisor reorientation, merged to `main` as **`2.0.0`** | ✅ closed 2026-08-01 |
+| **v1.1 Track / P2** — data-infrastructure spine (backfill, history import, TA, auditor, screener, counter-target; ADR-028/029) | ✅ closed 2026-08-08 |
 
-**Health:** 2225 unit tests pass by default; 29 integration tests opt-in. mypy clean (116 src files), black/isort clean, pylint **10.00/10**.
+**Health:** 2767 unit tests pass by default; 29 integration tests opt-in. mypy clean (125 src files), black/isort clean, pylint **10.00/10**.
 
 ---
 
 ## Operator Entry Points
 
-Seventeen entry points cover the full operational surface (fifteen `cli/` modules + two `tools/` one-shots). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Twenty entry points cover the full operational surface (sixteen `cli/` modules + four `tools/` one-shots). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
 | `python -m wobblebot.cli.sandbox` | 1 | ❌ | Mock-only paper buy-dip / sell-rebound cycle through `MockExchangeAdapter` + SQLite. |
 | `python -m wobblebot.cli.status` | 2.1 | ❌ | Live Kraken read check — fetches current price + account balances. Read-only API key. |
-| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots. Read-only API key. |
+| `python -m wobblebot.cli.observe` | 3.0 | ❌ | Pure data collection — polls Ticker per symbol, persists snapshots; tops up completed 60m bars hourly (P2). `--backfill` mode (P2 slice 1) pulls historical OHLC with `--days`/`--catchup`/`--resume`/`--intervals`/`--rate-limit-seconds`; the live endpoint retains only ~720 bars/interval — deeper history comes from `tools/import_kraken_history.py`. Read-only API key. |
 | `python -m wobblebot.cli.lurker` | 3.0 | ❌ | One-line alias of `cli/observe` today (own `__main__`); reserved to grow advisor commentary on top of pure observation later. |
 | `python -m wobblebot.cli.shadow` | 3.0 | ❌ | Same engine as `cli/live` against a synthetic balance ledger with live Kraken prices. Honest maker/taker fee modeling. |
 | `python -m wobblebot.cli.preflight` | 2.3 | ❌ | Diagnostic: runs ONE engine step against live Kraken with `validate=true`. Verifies Kraken accepts the config without spending. **Run this before every live session.** |
@@ -150,7 +154,7 @@ pip install -e ".[dev]"
 # scripts\install-hooks.ps1     # Windows PowerShell
 
 # 5. Verify the install
-pytest                          # 1785 unit tests; ~20s with coverage
+pytest                          # 2767 unit tests; ~90s with coverage
 black --check src/ tests/
 mypy src/
 ```
@@ -190,7 +194,7 @@ wobblebot/
 │   ├── services/          # Orchestrators wiring ports to flows
 │   ├── cli/               # Operator entry points
 │   └── config/            # Pydantic schemas + YAML loader + profile resolver
-├── tests/                 # 1785 unit + 29 integration; mirrors src/
+├── tests/                 # 2767 unit + 29 integration; mirrors src/
 ├── docs/                  # Architecture, planning, implementation, reference
 │   ├── architecture/      # System design, constraints, ADRs
 │   ├── implementation/    # Coding guidelines, module specs, deployment guide
@@ -207,7 +211,7 @@ wobblebot/
 ### Running Tests
 
 ```bash
-pytest                       # default — 1785 unit tests, integration excluded
+pytest                       # default — 2767 unit tests, integration excluded
 pytest -m unit               # explicitly unit only
 pytest -m integration        # opt-in: 29 integration tests (some hit live Kraken)
 pytest tests/path/to/test_file.py::TestClass::test_name   # one test
@@ -243,7 +247,7 @@ WobbleBot follows **hexagonal architecture** with strict layer boundaries:
 
 All cross-module wiring happens via constructor dependency injection of port interfaces.
 
-See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the eighteen ADRs that drive code structure.
+See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the thirty-three ADRs that drive code structure.
 
 ---
 
