@@ -44,7 +44,7 @@ from typing import Any, NoReturn, Protocol, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
@@ -138,6 +138,60 @@ def parse_symbol_csv(raw: str) -> list[str]:
 def identity(value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
+
+
+_INTERVAL_SUFFIX_MINUTES: dict[str, int] = {
+    "m": 1,
+    "h": 60,
+    "d": 1440,
+    "w": 10080,
+}
+
+
+def parse_interval_arg(raw: str) -> int:
+    """Parse ``1m`` / ``5m`` / ``1h`` / ``4h`` / ``1d`` / ``1w`` or bare minutes.
+
+    Returns the canonical minute count. Validates against
+    ``OHLCBar.ALLOWED_INTERVALS`` (Kraken's published set) so an
+    operator can't pass an interval Kraken won't honor. Shared by
+    cli/observe's backfill flags and tools/import_kraken_history.py.
+    """
+    text = raw.strip().lower()
+    if not text:
+        raise argparse.ArgumentTypeError("interval cannot be empty")
+    suffix = text[-1]
+    if suffix in _INTERVAL_SUFFIX_MINUTES and text[:-1].isdigit():
+        minutes = int(text[:-1]) * _INTERVAL_SUFFIX_MINUTES[suffix]
+    else:
+        try:
+            minutes = int(text)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"invalid interval {raw!r}; use 1m/5m/15m/30m/1h/4h/1d/1w "
+                f"or a bare minute count"
+            ) from exc
+    if minutes not in OHLCBar.ALLOWED_INTERVALS:
+        raise argparse.ArgumentTypeError(
+            f"interval {minutes}m not in Kraken's allowed set "
+            f"{sorted(OHLCBar.ALLOWED_INTERVALS)}"
+        )
+    return minutes
+
+
+def parse_intervals_arg(raw: str) -> list[int]:
+    """Parse ``--intervals 1m,1h`` — a comma list of ``parse_interval_arg`` values.
+
+    Deduplicates while preserving operator order (the fetch order).
+    """
+    parts = [piece for piece in (p.strip() for p in raw.split(",")) if piece]
+    if not parts:
+        raise argparse.ArgumentTypeError("--intervals cannot be empty")
+    minutes: list[int] = []
+    for part in parts:
+        value = parse_interval_arg(part)
+        if value not in minutes:
+            minutes.append(value)
+    return minutes
 
 
 async def emit_heartbeat(operator_storage: StoragePort | None, daemon_name: str) -> None:

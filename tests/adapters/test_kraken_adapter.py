@@ -31,7 +31,7 @@ import pytest
 
 from wobblebot.adapters.kraken_exchange import (
     KrakenAdapter,
-    _symbol_to_kraken_altname,
+    symbol_to_kraken_altname,
 )
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.value_objects import Symbol
@@ -93,22 +93,22 @@ def _make_adapter_with_metadata(
 
 
 class TestSymbolToKrakenAltname:
-    """``_symbol_to_kraken_altname`` is a pure function; test it directly."""
+    """``symbol_to_kraken_altname`` is a pure function; test it directly."""
 
     def test_btc_usd_maps_to_xbtusd(self) -> None:
-        assert _symbol_to_kraken_altname(Symbol(base="BTC", quote="USD")) == "XBTUSD"
+        assert symbol_to_kraken_altname(Symbol(base="BTC", quote="USD")) == "XBTUSD"
 
     def test_doge_usd_maps_to_xdgusd(self) -> None:
-        assert _symbol_to_kraken_altname(Symbol(base="DOGE", quote="USD")) == "XDGUSD"
+        assert symbol_to_kraken_altname(Symbol(base="DOGE", quote="USD")) == "XDGUSD"
 
     def test_eth_usd_is_identity(self) -> None:
-        assert _symbol_to_kraken_altname(Symbol(base="ETH", quote="USD")) == "ETHUSD"
+        assert symbol_to_kraken_altname(Symbol(base="ETH", quote="USD")) == "ETHUSD"
 
     def test_ada_usd_is_identity(self) -> None:
-        assert _symbol_to_kraken_altname(Symbol(base="ADA", quote="USD")) == "ADAUSD"
+        assert symbol_to_kraken_altname(Symbol(base="ADA", quote="USD")) == "ADAUSD"
 
     def test_btc_eur(self) -> None:
-        assert _symbol_to_kraken_altname(Symbol(base="BTC", quote="EUR")) == "XBTEUR"
+        assert symbol_to_kraken_altname(Symbol(base="BTC", quote="EUR")) == "XBTEUR"
 
 
 @pytest.mark.asyncio
