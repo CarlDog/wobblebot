@@ -479,6 +479,24 @@ the detail; the full backlog index is
    Real-money cost $0.00. Test count 2756 → 2767. **P2 COMPLETE — all six slices
    shipped 2026-08-07 → 2026-08-08.**
 
+5. **P3 — ops/observability/UX: IN PROGRESS (started 2026-08-08).**
+   **Slice 1 — stale-heartbeat Discord push alert** ✅ **2026-08-08**
+   (operator-flagged from the 2026-07-20 NAS-reboot incident — cli/live +
+   cli/harvest dead 11 days while the pull-only /health looked fine): new
+   `_heartbeat_alert_loop` in `cli/operator` (third sibling of the forwarder +
+   TTL-expirer tasks), 60s check cadence reusing the ONE staleness definition
+   (`fetch_daemon_freshness` + `derive_thresholds_from_config` — no new
+   hardcoded multiplier); pure `_HeartbeatAlertTracker` pins the rules:
+   **stale-on-first-check alerts immediately** (the reboot scenario — state is
+   deliberately in-memory so a restarted watcher re-alerts anything already
+   down), fresh→stale transition alerts, 6h repeat while down, one info
+   recovery notice, UNKNOWN is no-signal (never alerts, preserves stale
+   memory), `critical` for the restart:"no" money-path daemons (live/harvest)
+   vs `warning` for the rest, self-row skipped. Alerts are `Notification` rows
+   via the existing `notify()` — the 2s forwarder pushes them to Discord; no
+   new table, no new config, no ADR (per the observability.md design).
+   Real-money cost $0.00. Test count 2768 → 2779.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

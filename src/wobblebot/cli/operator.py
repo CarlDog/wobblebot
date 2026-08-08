@@ -58,12 +58,14 @@ from wobblebot.adapters.google import GoogleAssistantAdapter
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.adapters.openai import OpenAIAssistantAdapter
+from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     emit_heartbeat,
     install_signal_handlers,
     load_operator_env,
+    notify,
     run_poll_loop,
     run_with_clean_exit,
     safe_shutdown,
@@ -86,6 +88,7 @@ from wobblebot.ports.exceptions import (
     OperatorError,
     StorageError,
 )
+from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import (
     IntentCommand,
     IntentConversational,
@@ -95,6 +98,13 @@ from wobblebot.ports.operator import (
     PendingCommand,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.daemon_health import (
+    DaemonHealth,
+    DaemonHealthThresholds,
+    DaemonStatus,
+    derive_thresholds_from_config,
+    fetch_daemon_freshness,
+)
 from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
@@ -275,6 +285,197 @@ async def _ttl_expirer_loop(
         await run_poll_loop(_one_cycle, interval_seconds=poll_seconds, stop_event=stop_event)
     finally:
         _LOGGER.info("ttl expirer stopped")
+
+
+# --------------------------------------------------------------------- #
+# Stale-heartbeat push alerts (P3 slice 1)                              #
+# --------------------------------------------------------------------- #
+# The 2026-07-20 host-wide NAS reboot left cli/live + cli/harvest dead
+# for 11 days (deliberate restart:"no" on the money-path daemons) while
+# the pull-only /health page looked fine to nobody in particular. This
+# loop is the push half: it reuses the SAME staleness definition /health
+# uses (fetch_daemon_freshness + derive_thresholds_from_config) and
+# emits Notification rows the forwarder loop already drains to Discord.
+# It lives in cli/operator because a dead process can't self-report —
+# the watcher must be a *different* process from the watched.
+
+# Freshness thresholds carry >= 5 min of slack, so a 60s check cadence
+# detects within a minute of the threshold without opening every DB
+# file on the forwarder's 2s cycle.
+_HEARTBEAT_CHECK_SECONDS = 60.0
+# While a daemon STAYS stale, re-alert on this cadence — a reminder,
+# not a 2s-cycle spam stream (mirrors the anomaly-detector dedup idea).
+_HEARTBEAT_REPEAT_SECONDS = 6 * 3600.0
+# The restart:"no" money-path daemons: their death is a capital-safety
+# event, not an ops inconvenience.
+_MONEY_PATH_DAEMONS = frozenset({"cli/live", "cli/harvest"})
+
+
+def _format_age(seconds: float) -> str:
+    """Human-compact age: '90s', '14m', '3.2h', '11.0d'."""
+    if seconds < 120:
+        return f"{seconds:.0f}s"
+    if seconds < 7200:
+        return f"{seconds / 60:.0f}m"
+    if seconds < 172800:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86400:.1f}d"
+
+
+class _HeartbeatAlertTracker:
+    """Pure transition/debounce logic for stale-heartbeat alerts.
+
+    Feed it each check cycle's ``DaemonHealth`` list; it returns the
+    alerts to emit. Rules:
+
+    * FRESH -> STALE (or STALE on the very first check — the reboot
+      scenario: this daemon just came back, the money-path daemons
+      didn't) -> alert. ``critical`` for the money-path daemons,
+      ``warning`` for the rest.
+    * Still STALE past ``repeat_seconds`` since the last alert ->
+      repeat alert (same severity, "still stale" wording).
+    * STALE -> FRESH -> one ``info`` recovery notice, state cleared.
+    * UNKNOWN is no-signal, not failure: never alerts, never counts
+      as recovery, and preserves the last definitive status so a
+      blipped DB read doesn't re-trigger a transition alert.
+    * ``cli/operator`` itself is skipped — this loop runs inside it,
+      so its own heartbeat is fresh by construction whenever the
+      check runs at all.
+
+    In-memory only, deliberately: state resets on daemon restart, so
+    the first check after a restart re-alerts anything already down —
+    exactly what the NAS-reboot incident needed.
+    """
+
+    def __init__(self, *, repeat_seconds: float = _HEARTBEAT_REPEAT_SECONDS) -> None:
+        self._repeat_seconds = repeat_seconds
+        self._last_status: dict[str, DaemonStatus] = {}
+        self._last_alert_at: dict[str, datetime] = {}
+
+    def _stale_alert(
+        self, health: DaemonHealth, now: datetime, *, repeat: bool
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        level = "critical" if health.name in _MONEY_PATH_DAEMONS else "warning"
+        age = (
+            _format_age((now - health.last_seen).total_seconds())
+            if health.last_seen is not None
+            else "unknown"
+        )
+        verb = "still stale" if repeat else "gone stale"
+        title = f"{health.label} heartbeat {verb}"
+        message = (
+            f"{health.name} last seen {age} ago "
+            f"(threshold {_format_age(health.threshold_seconds)}). "
+            + (
+                'Money-path daemon with restart:"no" — it will NOT come back on its own.'
+                if health.name in _MONEY_PATH_DAEMONS
+                else "Check the container / logs."
+            )
+        )
+        context: dict[str, Any] = {
+            "daemon": health.name,
+            "status": str(health.status),
+            "last_seen": health.last_seen.isoformat() if health.last_seen else None,
+            "threshold_seconds": health.threshold_seconds,
+        }
+        return (level, title, message, context)
+
+    def evaluate(
+        self, healths: list[DaemonHealth], now: datetime
+    ) -> list[tuple[str, str, str, dict[str, Any]]]:
+        """Return ``(level, title, message, context)`` per alert due this cycle."""
+        alerts: list[tuple[str, str, str, dict[str, Any]]] = []
+        for health in healths:
+            if health.name == "cli/operator":
+                continue
+            if health.status is DaemonStatus.UNKNOWN:
+                continue  # no signal; keep prior definitive status
+            prior = self._last_status.get(health.name)
+            if health.status is DaemonStatus.STALE:
+                if prior is not DaemonStatus.STALE:
+                    alerts.append(self._stale_alert(health, now, repeat=False))
+                    self._last_alert_at[health.name] = now
+                else:
+                    last_alert = self._last_alert_at.get(health.name)
+                    if (
+                        last_alert is None
+                        or (now - last_alert).total_seconds() >= self._repeat_seconds
+                    ):
+                        alerts.append(self._stale_alert(health, now, repeat=True))
+                        self._last_alert_at[health.name] = now
+            elif prior is DaemonStatus.STALE:  # STALE -> FRESH
+                alerts.append(
+                    (
+                        "info",
+                        f"{health.label} heartbeat recovered",
+                        f"{health.name} is fresh again.",
+                        {"daemon": health.name, "status": str(health.status)},
+                    )
+                )
+                self._last_alert_at.pop(health.name, None)
+            self._last_status[health.name] = health.status
+        return alerts
+
+
+async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
+    *,
+    notifier: NotifierPort,
+    observe_db: Path | None,
+    news_db: Path | None,
+    advise_db: Path | None,
+    operator_db: Path | None,
+    thresholds: DaemonHealthThresholds,
+    stop_event: asyncio.Event,
+    check_seconds: float = _HEARTBEAT_CHECK_SECONDS,
+) -> None:
+    """Background task: freshness check + push alert, until ``stop_event``.
+
+    Emits via :func:`notify` into the notifications table; the
+    forwarder loop (2s) pushes the rows to Discord. A failed freshness
+    read is logged and skipped — the alerting layer must never crash
+    the operator daemon.
+    """
+    tracker = _HeartbeatAlertTracker()
+    _LOGGER.info(
+        "heartbeat alert monitor started",
+        extra={
+            "check_seconds": check_seconds,
+            "repeat_seconds": _HEARTBEAT_REPEAT_SECONDS,
+        },
+    )
+
+    async def _one_cycle() -> None:
+        now = datetime.now(UTC)
+        try:
+            healths = await fetch_daemon_freshness(
+                observe_db=observe_db,
+                news_db=news_db,
+                advise_db=advise_db,
+                operator_db=operator_db,
+                thresholds=thresholds,
+                now=now,
+            )
+        except (OSError, StorageError) as exc:
+            _LOGGER.warning(
+                "heartbeat alert monitor: freshness read failed: %s; retrying next cycle",
+                exc,
+                extra={"error": str(exc)},
+            )
+            return
+        for level, title, message, context in tracker.evaluate(healths, now):
+            _LOGGER.log(
+                logging.CRITICAL if level == "critical" else logging.WARNING,
+                "heartbeat alert: %s — %s",
+                title,
+                message,
+                extra={"level": level, **context},
+            )
+            await notify(notifier, level=level, title=title, message=message, context=context)
+
+    try:
+        await run_poll_loop(_one_cycle, interval_seconds=check_seconds, stop_event=stop_event)
+    finally:
+        _LOGGER.info("heartbeat alert monitor stopped")
 
 
 # --------------------------------------------------------------------- #
@@ -1319,6 +1520,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         ),
         name="operator-ttl-expirer",
     )
+    heartbeat_alert_task = asyncio.create_task(
+        _heartbeat_alert_loop(
+            notifier=SqliteNotifierAdapter(operator_storage),
+            observe_db=Path(operator_cfg.observe_db) if operator_cfg.observe_db else None,
+            news_db=Path(operator_cfg.news_db) if operator_cfg.news_db else None,
+            advise_db=Path(operator_cfg.advise_db) if operator_cfg.advise_db else None,
+            operator_db=Path(operator_cfg.operator_db),
+            thresholds=derive_thresholds_from_config(config),
+            stop_event=stop_event,
+        ),
+        name="operator-heartbeat-alerts",
+    )
     backfill_task = asyncio.create_task(
         _backfill_history_task(
             transport=transport,
@@ -1356,7 +1569,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         stop_event.set()
 
         async def _cancel_background_tasks() -> None:
-            for task in (forwarder_task, ttl_expirer_task, backfill_task):
+            for task in (forwarder_task, ttl_expirer_task, heartbeat_alert_task, backfill_task):
                 task.cancel()
                 try:
                     await task
