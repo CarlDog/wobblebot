@@ -229,6 +229,39 @@ def _parse_interval_arg(raw: str) -> int:
     return minutes
 
 
+async def _resolve_catchup_since(
+    storage: SQLiteStorageAdapter,
+    symbol: Symbol,
+    *,
+    until: datetime,
+) -> datetime | None:
+    """Resolve one symbol's ``--catchup`` lower bound from stored history.
+
+    Returns the latest ``price_snapshots.observed_at`` for ``symbol`` —
+    the same cursor the startup auto-gap-fill reads — or ``None`` when
+    there is nothing to backfill (no prior history, or already current
+    at ``until``). Both skip reasons are logged here; storage failures
+    propagate as ``WobbleBotPortError`` for the caller to handle.
+    """
+    latest = await storage.get_latest_observed_at(symbol)
+    if latest is None:
+        _LOGGER.warning(
+            "catchup: no prior history for %s; seed it with --since or --days",
+            symbol,
+            extra={"symbol": str(symbol)},
+        )
+        return None
+    if latest >= until:
+        _LOGGER.info(
+            "catchup: %s already current (latest observation %s)",
+            symbol,
+            latest.isoformat(),
+            extra={"symbol": str(symbol), "latest_observed_at": latest.isoformat()},
+        )
+        return None
+    return latest
+
+
 async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
     config: WobbleBotConfig,
     *,
@@ -237,6 +270,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
     interval_minutes: int,
     symbols_override: list[Symbol] | None,
     days: int | None = None,
+    catchup: bool = False,
 ) -> int:
     """One-shot backfill mode for ``cli/observe --backfill``.
 
@@ -252,14 +286,17 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         return 2
 
     try:
-        if days is not None:
+        since: datetime | None
+        if catchup:
+            since = None  # resolved per symbol from stored history below
+        elif days is not None:
             since = datetime.now(UTC) - timedelta(days=days)
         elif since_raw is not None:
             since = _parse_date_arg(since_raw)
         else:
             _LOGGER.error(
-                "--backfill requires --since (e.g. --since 2026-04-01) "
-                "or --days (e.g. --days 30)"
+                "--backfill requires --since (e.g. --since 2026-04-01), "
+                "--days (e.g. --days 30), or --catchup"
             )
             return 2
         until = _parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
@@ -267,7 +304,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         _LOGGER.error("invalid date argument", extra={"error": str(exc)})
         return 2
 
-    if since >= until:
+    if since is not None and since >= until:
         _LOGGER.error(
             "--since must be strictly before --until",
             extra={"since": since.isoformat(), "until": until.isoformat()},
@@ -302,15 +339,16 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         if exit_code is not None:
             return exit_code
 
+        since_label = "auto (per-symbol catchup)" if since is None else since.isoformat()
         _LOGGER.info(
             "backfill starting: %d symbol(s), %dm interval, %s -> %s",
             len(symbols),
             interval_minutes,
-            since.isoformat(),
+            since_label,
             until.isoformat(),
             extra={
                 "symbols": [str(s) for s in symbols],
-                "since": since.isoformat(),
+                "since": since_label,
                 "until": until.isoformat(),
                 "interval_minutes": interval_minutes,
             },
@@ -318,11 +356,26 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
 
         any_error = False
         for symbol in symbols:
+            symbol_since = since
+            if symbol_since is None:
+                try:
+                    symbol_since = await _resolve_catchup_since(storage, symbol, until=until)
+                except WobbleBotPortError as exc:
+                    _LOGGER.warning(
+                        "catchup: failed reading latest observation for %s: %s",
+                        symbol,
+                        exc,
+                        extra={"symbol": str(symbol), "error": str(exc)},
+                    )
+                    any_error = True
+                    continue
+                if symbol_since is None:
+                    continue  # skip reason already logged by the resolver
             result = await backfill_range(
                 adapter,
                 storage,
                 symbol=symbol,
-                since=since,
+                since=symbol_since,
                 until=until,
                 interval_minutes=interval_minutes,
             )
@@ -614,8 +667,9 @@ def main() -> int:
         default=None,
         help=(
             "Backfill lower bound (ISO 8601). Examples: 2026-04-01, "
-            "2026-04-01T12:00:00Z. Bare dates are midnight UTC. Only "
-            "used with --backfill."
+            "2026-04-01T12:00:00Z. Bare dates are midnight UTC. The "
+            "literal `auto` is equivalent to --catchup. Only used with "
+            "--backfill."
         ),
     )
     since_group.add_argument(
@@ -626,6 +680,17 @@ def main() -> int:
             "Backfill lower bound as a day count back from now — shorthand "
             "for --since <now minus N days>. Mutually exclusive with "
             "--since. Only used with --backfill."
+        ),
+    )
+    since_group.add_argument(
+        "--catchup",
+        action="store_true",
+        help=(
+            "Resolve each symbol's backfill lower bound from its latest "
+            "stored observation (the same cursor the startup auto-gap-fill "
+            "uses). Symbols with no prior history are skipped with a "
+            "warning. Equivalent spelling: --since auto. Only used with "
+            "--backfill."
         ),
     )
     parser.add_argument(
@@ -665,14 +730,17 @@ def main() -> int:
         symbols_override: list[Symbol] | None = None
         if args.symbols:
             symbols_override = [Symbol.from_string(s) for s in parse_symbol_csv(args.symbols)]
+        # `--since auto` is the doc'd equivalent spelling of --catchup.
+        catchup = args.catchup or args.since == "auto"
         run_with_clean_exit(
             _backfill_main(
                 config,
-                since_raw=args.since,
+                since_raw=None if args.since == "auto" else args.since,
                 until_raw=args.until,
                 interval_minutes=args.interval,
                 symbols_override=symbols_override,
                 days=args.days,
+                catchup=catchup,
             ),
             logger=_LOGGER,
         )
