@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timezone
 import pytest
 
 from wobblebot.cli._common import parse_interval_arg, parse_intervals_arg
-from wobblebot.cli.observe import _parse_date_arg, _parse_days_arg, _parse_rate_limit_arg
+from wobblebot.cli.observe_backfill import _parse_date_arg, _parse_days_arg, _parse_rate_limit_arg
 from wobblebot.domain.value_objects import OHLCBar
 
 pytestmark = pytest.mark.unit
