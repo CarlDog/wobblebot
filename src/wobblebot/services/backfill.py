@@ -25,12 +25,10 @@ exception message, and returns. The operator can re-run with
 ``--since <last_opened_at>`` to resume — ``ohlc_bars``'s UNIQUE
 constraint makes any overlap a no-op.
 
-v1.1 limitation: ``price_snapshots`` has no UNIQUE constraint, so
-re-running an overlapping window produces duplicate snapshots. The
-``ohlc_bars`` half stays idempotent. A future cleanup will add a
-UNIQUE constraint + migration; for now operators should re-run from
-the cursor returned in ``BackfillResult.last_opened_at`` rather than
-re-running from the original ``--since``.
+Both write targets are idempotent: ``ohlc_bars`` via its declared
+UNIQUE constraint, and ``price_snapshots`` via the UNIQUE index added
+by ``_migrate_price_snapshots_unique`` (2026-05-25 backfill follow-up)
+— re-running an overlapping window is a no-op for both.
 """
 
 from __future__ import annotations
