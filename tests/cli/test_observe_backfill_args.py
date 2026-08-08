@@ -15,7 +15,12 @@ from datetime import UTC, datetime, timezone
 
 import pytest
 
-from wobblebot.cli.observe import _parse_date_arg, _parse_days_arg, _parse_interval_arg
+from wobblebot.cli.observe import (
+    _parse_date_arg,
+    _parse_days_arg,
+    _parse_interval_arg,
+    _parse_rate_limit_arg,
+)
 from wobblebot.domain.value_objects import OHLCBar
 
 pytestmark = pytest.mark.unit
@@ -57,6 +62,22 @@ class TestParseDaysArg:
     def test_rejects_non_integers(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match="positive integer"):
             _parse_days_arg(raw)
+
+
+class TestParseRateLimitArg:
+    @pytest.mark.parametrize("raw,expected", [("0", 0.0), ("0.5", 0.5), ("1", 1.0), ("2.5", 2.5)])
+    def test_accepts_non_negative_numbers(self, raw: str, expected: float) -> None:
+        assert _parse_rate_limit_arg(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["-1", "-0.5"])
+    def test_rejects_negative(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 0"):
+            _parse_rate_limit_arg(raw)
+
+    @pytest.mark.parametrize("raw", ["abc", "", "1s"])
+    def test_rejects_garbage(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="non-negative number"):
+            _parse_rate_limit_arg(raw)
 
 
 class TestParseIntervalArg:

@@ -59,7 +59,12 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
-from wobblebot.services.backfill import BackfillResult, ProgressCallback, backfill_range
+from wobblebot.services.backfill import (
+    DEFAULT_RATE_LIMIT_SECONDS,
+    BackfillResult,
+    ProgressCallback,
+    backfill_range,
+)
 
 _LOGGER = logging.getLogger("wobblebot.cli.observe")
 
@@ -192,6 +197,19 @@ def _parse_days_arg(raw: str) -> int:
     return days
 
 
+def _parse_rate_limit_arg(raw: str) -> float:
+    """Parse ``--rate-limit-seconds`` — a non-negative float."""
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid --rate-limit-seconds {raw!r}; use a non-negative number"
+        ) from exc
+    if seconds < 0:
+        raise argparse.ArgumentTypeError(f"--rate-limit-seconds must be >= 0, got {seconds}")
+    return seconds
+
+
 _INTERVAL_SUFFIX_MINUTES: dict[str, int] = {
     "m": 1,
     "h": 60,
@@ -309,6 +327,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
     symbols_override: list[Symbol] | None,
     days: int | None = None,
     catchup: bool = False,
+    rate_limit_seconds: float = DEFAULT_RATE_LIMIT_SECONDS,
 ) -> int:
     """One-shot backfill mode for ``cli/observe --backfill``.
 
@@ -416,6 +435,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
                 since=symbol_since,
                 until=until,
                 interval_minutes=interval_minutes,
+                rate_limit_seconds=rate_limit_seconds,
                 progress_callback=_make_progress_logger(symbol),
             )
             _log_backfill_result(symbol, result)
@@ -740,6 +760,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--rate-limit-seconds",
+        type=_parse_rate_limit_arg,
+        default=DEFAULT_RATE_LIMIT_SECONDS,
+        help=(
+            "Sleep between Kraken OHLC requests during backfill. Default "
+            f"{DEFAULT_RATE_LIMIT_SECONDS}s (the public-API free-tier "
+            "limit is ~1 call/second). Lower only on a paid tier. Only "
+            "used with --backfill."
+        ),
+    )
+    parser.add_argument(
         "--interval",
         type=_parse_interval_arg,
         default=1,
@@ -780,6 +811,7 @@ def main() -> int:
                 symbols_override=symbols_override,
                 days=args.days,
                 catchup=catchup,
+                rate_limit_seconds=args.rate_limit_seconds,
             ),
             logger=_LOGGER,
         )

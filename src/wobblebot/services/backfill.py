@@ -49,8 +49,9 @@ from wobblebot.ports.storage import StoragePort
 
 # Kraken's public-API free-tier limit is roughly 1 call/second. 1.0s
 # is the safe default; operators with a paid tier or a more permissive
-# venue can lower this through the kwarg.
-_DEFAULT_RATE_LIMIT_SECONDS: float = 1.0
+# venue can lower this through the kwarg. Public so cli/observe's
+# --rate-limit-seconds flag shares the one default instead of copying it.
+DEFAULT_RATE_LIMIT_SECONDS: float = 1.0
 
 # Internal safety cap on iteration count. Each iteration fetches up to
 # 720 bars, so ~10,000 iterations covers 7,200,000 bars — well beyond
@@ -123,7 +124,7 @@ async def backfill_range(  # pylint: disable=too-many-arguments,too-many-positio
     since: datetime,
     until: datetime | None = None,
     interval_minutes: int = 1,
-    rate_limit_seconds: float = _DEFAULT_RATE_LIMIT_SECONDS,
+    rate_limit_seconds: float = DEFAULT_RATE_LIMIT_SECONDS,
     progress_callback: ProgressCallback | None = None,
 ) -> BackfillResult:
     """Walk ``[since, until]`` for ``symbol``, writing OHLC + snapshots.
@@ -248,7 +249,12 @@ async def backfill_range(  # pylint: disable=too-many-arguments,too-many-positio
     )
 
 
-__all__ = ("BackfillResult", "ProgressCallback", "backfill_range")
+__all__ = (
+    "DEFAULT_RATE_LIMIT_SECONDS",
+    "BackfillResult",
+    "ProgressCallback",
+    "backfill_range",
+)
 
 
 # Helpers exposed for unit testing -- keep _private to discourage
