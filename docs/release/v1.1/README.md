@@ -75,7 +75,7 @@ roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. P2/P3/P4 have 
 | ✅ Hardening (dead man's switch + P0.1–P0.5 + o4 + G1) | merged to `main` 2026-06-02 | Safety / Groundwork | **done** |
 | ✅ **GATE** | soak passed, `v1.0.0` tagged 2026-07-31 | **tag v1.0** | **done** |
 | **P1** | 2026-07-31 → 2026-08-01 | Safety + ready-now | **✅ COMPLETE** |
-| **P2** | not started | Data-infrastructure spine | pending |
+| **P2** | started 2026-08-07 | Data-infrastructure spine | **in progress** (slice 1 ✅) |
 | **P3** | not started | Ops / observability / UX | pending |
 | **P4** | not started | Advisor-feedback cluster | data-gated |
 
@@ -318,7 +318,7 @@ Order is non-negotiable: **backfill ergonomics → import → OHLC+TA → consum
 
 | Slice | Effort | Value | Safety | Notes |
 |---|---|---|---|---|
-| `cli/observe --backfill` ergonomics + scenario catalog | M | med | | `--days`, `--catchup/--since=auto`, `--rate-limit-seconds`, progress, `--resume`, `--intervals`. Rides the shared write path; justified now because the import *is* the bulk-seed event. |
+| `cli/observe --backfill` ergonomics + scenario catalog | M | med | ✅ | **✅ DONE 2026-08-07 (P2 slice 1).** All seven polish items, one focused commit each: `--days`, `--catchup`/`--since auto`, per-chunk progress, `--rate-limit-seconds`, `--resume` (new interval-scoped `StoragePort.get_latest_ohlc_opened_at` cursor — deliberately NOT `price_snapshots`), `--intervals`, horizon-truncation WARN. Live verification surfaced: Kraken's OHLC endpoint retains only ~720 bars/interval, so deep history is import-dump-only (see the dated note in `adaptive-grid.md`). |
 | **Import local Kraken historical dump** | M | med | | **Must precede consumers.** Stream the on-disk 2013–2025 + 2026Q1 dump into `ohlc_bars`/`price_snapshots` via the idempotent `save_ohlc_bars` path; reuse the `grid_backtest.py` CSV parser + altname map. $0, offline. |
 | **OHLCBar integrity validator** | S | med | ⚠️ | **Must land WITH the import (above), not after.** `OHLCBar` has `ge=0` per field but no `low<=open/close<=high` / `low<=high` check — a garbled wire response or malformed 2013-era CSV row persists permanently via `INSERT OR IGNORE`, then every TA indicator (ATR/Bollinger/Stochastic key off high/low) propagates the corruption to advisor + auditor. One `@model_validator`; gates the entire spine. |
 | **Proper OHLC + TA indicators** | L | **high** | | **Pivotal shared input.** RSI/MACD/Bollinger/MAs/ATR/ADX/Stochastic in `metrics_service` → `PerformanceSummary`. Single highest-leverage advisor candidate. Do NOT wire into `cli/live`. |

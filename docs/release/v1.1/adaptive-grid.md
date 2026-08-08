@@ -204,6 +204,20 @@ TA-on-bars is the next-step v1.1 candidate that builds on top.
 
 ### cli/observe --backfill: v1.1 ergonomics + scenario catalog
 
+**✅ SHIPPED 2026-08-07 (P2 slice 1)** — all seven polish items below landed as
+focused commits on `feat/p2-backfill-ergonomics` (`--days`, `--catchup`/`--since
+auto`, per-chunk progress, `--rate-limit-seconds`, `--resume` on a new
+interval-scoped `StoragePort.get_latest_ohlc_opened_at` cursor, `--intervals`,
+horizon-truncation WARN). **Live-verification finding that corrects this
+section's scenario math:** Kraken's live OHLC endpoint retains only the most
+recent **~720 bars per interval** — an 8-day 1m request returned 721 bars (the
+item-7 WARN fired exactly as designed). The scenario table's deep-window call
+counts (e.g. "~130k bars in ~180 calls") are therefore unreachable via the live
+API at fine intervals; pagination cannot walk past the retention horizon. Deep
+history is **import-dump-only** (the next P2 slice), and `--days`/`--since`
+windows deeper than ~720 bars degrade gracefully to "whatever Kraken retains"
+plus the WARN.
+
 **Companion to the shipped backfill feature above.** The substrate
 landed 2026-05-25 but the operator-facing UX assumes a savvy
 caller who computes ISO dates by hand, copies resume cursors out
