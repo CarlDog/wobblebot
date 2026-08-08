@@ -427,8 +427,30 @@ the detail; the full backlog index is
    `--resume --intervals 1h` cron or a small observe-daemon hourly top-up ships.
    Advisor-only per the blueprint — nothing wired into `cli/live`.
    Real-money cost $0.00. Test count 2685 → 2721.
-   Remaining P2 slices in strict order: auditor config-replay → screener →
-   counter-order target (ADR-028/029 already written).
+
+   **Slice 3 follow-up — steady-state hourly-bar top-up** ✅ **2026-08-08**
+   (operator-approved): `cli/observe`'s poll loop now resumes each symbol's 60m
+   bars hourly from the interval-scoped cursor (completed bars only — the live
+   endpoint's in-progress bar would freeze partial under INSERT OR IGNORE);
+   `bar_topup_enabled` flag. Live-verified: BTC cursor 2026-03-31 → last
+   completed hour, TA fields went from null-with-WARN to live values. The
+   forced companion: observe.py crossed pylint's 1000-line gate, so the
+   `--backfill` mode split into `cli/observe_backfill.py` (pure move).
+   Test count 2721 → 2727.
+
+   **Slice 4 — auditor config-replay** ✅ **2026-08-08** (**ADR-028**, +
+   implementation note): `tools/auditor.py` replays `settings.yml` through the
+   REAL `GridEngine` over stored bars (4-price sequence per bar; fresh engine +
+   `:memory:` SQLite + `AuditorExchangeAdapter` per symbol). All three judge
+   corrections honored — daily cap neutered (and ONLY that one: the ADR's
+   bar-time alternative is a trap, see the ADR's new implementation note),
+   placement-fill suppressed, bar-0-open anchor by construction. BTC 1m history
+   imported (4.77M bars). Live-verified: March 2026 BTC at 1m (43,182 bars,
+   ~95s) through the operator's real 3% config — 1 completed cycle +$0.13,
+   offside park/resume exercised. Rec-scoring half stays P4.
+   Real-money cost $0.00. Test count 2727 → 2733.
+   Remaining P2 slices in strict order: screener → counter-order target
+   (ADR-029 already written).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

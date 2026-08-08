@@ -727,6 +727,18 @@ v1.1 candidate that directly serves the 90%-success aspiration.
 
 ### Auditor / strategy + recommendation evaluation tool
 
+**✅ CONFIG-REPLAY HALF SHIPPED 2026-08-08 (P2 slice 4, ADR-028)** —
+`tools/auditor.py`: replays `settings.yml` through the REAL `GridEngine` over
+stored bars (`open→low→high→close` per bar), fresh engine + `:memory:` SQLite +
+`AuditorExchangeAdapter` per symbol. All three judge corrections honored:
+daily-spend cap neutered (and ONLY that cap — the ADR's bar-time alternative is
+a trap since replayed orders persist with wall-clock `created_at`; every other
+cap and the ADR-032 sell guard stay as configured, they're part of the config
+being audited), fill-at-placement suppressed, anchor warm-started at bar-0 open
+by construction. Live-verified: March 2026 BTC/USD at 1m (43,182 bars, ~95s)
+through the operator's real 3% config — 1 completed cycle +$0.13, offside
+park/resume exercised, cap refusals surfaced. Rec-scoring half remains P4.
+
 > **⚠️ Resolved blueprint (2026-06-03):** the config-replay half has a settled
 > design + three load-bearing **adversarial-judge corrections** (neuter
 > `max_daily_spend_usd` for replay; override `place_order`'s same-bar fill;
