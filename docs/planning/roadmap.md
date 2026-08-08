@@ -382,7 +382,8 @@ the detail; the full backlog index is
    exceeds both cache TTLs and no deployed path reaches Anthropic. Real-money cost $0.00
    (pricing pages re-verified, no API calls). Test count 2582 → 2603.
 
-4. **P2 — data-infrastructure spine: IN PROGRESS.** Slice 1 — backfill ergonomics
+4. **P2 — data-infrastructure spine: ✅ COMPLETE (2026-08-07 → 2026-08-08).**
+   Slice 1 — backfill ergonomics
    ✅ **2026-08-07**: all seven polish items from `adaptive-grid.md`'s catalog, one
    focused commit each, full gate green per commit (`--days`, `--catchup`/`--since auto`,
    per-chunk progress logging, `--rate-limit-seconds`, `--resume` on a new
@@ -463,8 +464,20 @@ the detail; the full backlog index is
    correlation +0.86, POL the diversifier at +0.30. v1.5 (spread/volume) and
    v2 (RSI/ADX/BB) recorded, not built. Real-money cost $0.00.
    Test count 2733 → 2756.
-   Remaining P2: counter-order target (ADR-029 already written) — then P2 is
-   complete.
+   **Slice 6 — counter-order target** ✅ **2026-08-08** (**ADR-029** + implementation
+   note): `counter_target_mode` on `GridLevels` — `spacing_up` (default, byte-identical
+   behavior) | `top_sell` (BUY-fill counter SELL → band ceiling; SELL-fill counter
+   unchanged — the ADR's asymmetric design). Read live from `coin_cfg` each tick
+   (`order_size_usd` precedent), never snapshotted into `GridState` — no re-anchor, no
+   migration. Auto-apply exclusion automatic (non-numeric key outside
+   `_WHITELISTED_NUMERIC_KEYS`) + pinned with gate and `proposed_grid` passthrough
+   tests. Two beyond-ADR touchpoints wired + regression-tested (recorded as the ADR's
+   implementation note): `for_coin`'s explicit field enumeration would have silently
+   dropped the mode for override-less coins, and the ADR-023 startup-recovery counter
+   path needed `grid_ceiling` threaded through. `!grid` surfaces the mode. Inventory-
+   accumulation risk documented in `settings.example.yml` + known-limitations.
+   Real-money cost $0.00. Test count 2756 → 2767. **P2 COMPLETE — all six slices
+   shipped 2026-08-07 → 2026-08-08.**
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

@@ -22,7 +22,40 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
-Nothing yet.
+### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
+
+Full P2 phase of `docs/release/v1.1/README.md`'s plan, six slices, per-slice receipts
+(with commit hashes and live-verification notes) in `docs/planning/roadmap.md`'s v1.1
+Track item 4. 2767 tests passing by the end (was 2609 pre-P2). Real-money cost
+$0.00 — every slice runs on public/read-only or offline data.
+
+- **Slice 1** — `cli/observe --backfill` ergonomics: `--days`, `--catchup`, progress,
+  `--rate-limit-seconds`, `--resume` (interval-scoped cursor), `--intervals`, horizon
+  WARN. Surfaced: Kraken's live OHLC endpoint retains only ~720 bars/interval.
+- **Slice 2** — `tools/import_kraken_history.py` + `OHLCBar` validator +
+  `StoragePort.get_ohlc_bars` read-side; the only deep-history path.
+- **Slice 3** — `services/ta_metrics.py` (8 hand-rolled indicators) → 16 TA fields on
+  `PerformanceSummary` via `SummaryBuilder`; staleness guard. Follow-up: hourly 60m-bar
+  top-up in `cli/observe` (`bar_topup_enabled`); backfill mode split to
+  `cli/observe_backfill.py`.
+- **Slice 4** — `tools/auditor.py` (ADR-028): replay `settings.yml` through the real
+  `GridEngine` over stored bars; directional, not exact.
+- **Slice 5** — `cli/screener` v1: rank observed symbols by grid-suitability
+  (band-distance vol/ATR%, flatness, correlation annotation); offline, advisory.
+- **Slice 6** — configurable counter-order target (ADR-029): `counter_target_mode` on
+  `GridLevels`, `spacing_up` (default) | `top_sell` (BUY-fill counter → band ceiling).
+  Auto-apply-excluded by construction; `!grid` surfaces it; inventory-accumulation risk
+  documented in known-limitations.
+
+### Post-merge fleet-review fixes + ADR-033 (2026-08-05 → 2026-08-07)
+
+- **#30** — web: optional-DB warning no longer crashes the whole dashboard.
+- **#31** — services: LLM retry-exhaustion no longer crash-loops the daemon.
+- **#32** — adapters: additive column migrations tolerate cross-process races
+  (`_add_column_if_missing`).
+- **ADR-033** (#33) — cache-aware LLM cost accounting: OpenAI automatic-cache hits are
+  now priced at the cached-input rate in the ADR-014 ledger (they were billed at full
+  input rate); Anthropic `cache_control` enablement stays deferred with triggers.
 
 ## [2.0.0] — Unreleased (developed on the `v1.1` branch)
 

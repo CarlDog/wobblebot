@@ -1073,6 +1073,14 @@ prior entry) since the advisor needs proper market-regime
 signals to pick the right counter target. Both land together
 or `top_sell` recommendations would be poorly grounded.
 
+**Shipped 2026-08-08 (P2 slice 6, ADR-029) — engine knob only.**
+Settled naming differs from the sketch above: the field is
+`counter_target_mode` on `GridLevels` (per-coin overridable), not
+`counter_target` on `GridConfig`. Change 1 (engine knob) and
+change 3 (auto-apply exclusion — automatic, non-numeric key)
+shipped; change 2 (the advisor schema field / regime guidance)
+stays parked with the adaptive mode per the ADR.
+
 ### `cli/auto-tune` daemon
 
 **What:** a long-running variant of `cli/apply --commit` that polls
