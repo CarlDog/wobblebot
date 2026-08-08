@@ -1554,16 +1554,12 @@ async def _migrate_llm_calls_cache_token_columns(conn: aiosqlite.Connection) -> 
     were written). Definitions must stay byte-identical to the CREATE
     TABLE so fresh and migrated DBs don't drift.
     """
-    async with conn.execute("PRAGMA table_info(llm_calls)") as cursor:
-        cols = {row[1] async for row in cursor}
-    if "tokens_cache_read" not in cols:
-        await conn.execute(
-            "ALTER TABLE llm_calls ADD COLUMN tokens_cache_read INTEGER NOT NULL DEFAULT 0"
-        )
-    if "tokens_cache_write" not in cols:
-        await conn.execute(
-            "ALTER TABLE llm_calls ADD COLUMN tokens_cache_write INTEGER NOT NULL DEFAULT 0"
-        )
+    await _add_column_if_missing(
+        conn, "llm_calls", "tokens_cache_read", "INTEGER NOT NULL DEFAULT 0"
+    )
+    await _add_column_if_missing(
+        conn, "llm_calls", "tokens_cache_write", "INTEGER NOT NULL DEFAULT 0"
+    )
 
 
 async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
