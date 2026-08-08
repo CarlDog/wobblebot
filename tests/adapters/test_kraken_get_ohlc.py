@@ -244,3 +244,32 @@ class TestGetOHLCEmptyWindow:
         finally:
             await adapter.aclose()
         assert bars == []
+
+
+class TestGetOHLCValidationWrap:
+    """P2 slice 2 — a bar violating low<=open/close<=high raises
+    ExchangeError (the port's protocol-failure type), not a raw
+    pydantic ValidationError leaking through the port boundary."""
+
+    @pytest.mark.asyncio
+    async def test_garbled_bar_raises_exchange_error(self) -> None:
+        garbled = {
+            "error": [],
+            "result": {
+                "XXBTZUSD": [
+                    # low (79990) > high (79050): corrupt by construction.
+                    [1748191200, "79000.0", "79050.0", "79990.0", "79045.0", "0", "1.2", 4],
+                ],
+                "last": 1748191200,
+            },
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=garbled)
+
+        adapter = _make_adapter(handler)
+        try:
+            with pytest.raises(ExchangeError, match="failed validation"):
+                await adapter.get_ohlc(Symbol(base="BTC", quote="USD"), interval_minutes=1)
+        finally:
+            await adapter.aclose()

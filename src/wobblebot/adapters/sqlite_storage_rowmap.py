@@ -24,7 +24,7 @@ from pydantic import TypeAdapter
 from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OHLCBar, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
@@ -79,6 +79,21 @@ def row_to_price_snapshot(row: aiosqlite.Row) -> PriceSnapshot:
         symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
         price=Price(amount=Decimal(row["price_amount"]), currency=row["price_currency"]),
         observed_at=Timestamp(dt=datetime.fromisoformat(row["observed_at"])),
+    )
+
+
+def row_to_ohlc_bar(row: aiosqlite.Row) -> OHLCBar:
+    return OHLCBar(
+        symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+        interval_minutes=row["interval_minutes"],
+        opened_at=datetime.fromisoformat(row["opened_at"]),
+        open=Decimal(row["open"]),
+        high=Decimal(row["high"]),
+        low=Decimal(row["low"]),
+        close=Decimal(row["close"]),
+        vwap=Decimal(row["vwap"]),
+        volume=Decimal(row["volume"]),
+        count=row["count"],
     )
 
 

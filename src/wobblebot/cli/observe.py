@@ -46,6 +46,8 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    parse_interval_arg,
+    parse_intervals_arg,
     parse_symbol_csv,
     partition_or_exit,
     run_poll_loop,
@@ -57,7 +59,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.backfill import (
     DEFAULT_RATE_LIMIT_SECONDS,
@@ -208,59 +210,6 @@ def _parse_rate_limit_arg(raw: str) -> float:
     if seconds < 0:
         raise argparse.ArgumentTypeError(f"--rate-limit-seconds must be >= 0, got {seconds}")
     return seconds
-
-
-_INTERVAL_SUFFIX_MINUTES: dict[str, int] = {
-    "m": 1,
-    "h": 60,
-    "d": 1440,
-    "w": 10080,
-}
-
-
-def _parse_interval_arg(raw: str) -> int:
-    """Parse ``1m`` / ``5m`` / ``1h`` / ``4h`` / ``1d`` / ``1w`` or bare minutes.
-
-    Returns the canonical minute count. Validates against
-    ``OHLCBar.ALLOWED_INTERVALS`` (Kraken's published set) so an
-    operator can't pass an interval Kraken won't honor.
-    """
-    text = raw.strip().lower()
-    if not text:
-        raise argparse.ArgumentTypeError("interval cannot be empty")
-    suffix = text[-1]
-    if suffix in _INTERVAL_SUFFIX_MINUTES and text[:-1].isdigit():
-        minutes = int(text[:-1]) * _INTERVAL_SUFFIX_MINUTES[suffix]
-    else:
-        try:
-            minutes = int(text)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                f"invalid interval {raw!r}; use 1m/5m/15m/30m/1h/4h/1d/1w "
-                f"or a bare minute count"
-            ) from exc
-    if minutes not in OHLCBar.ALLOWED_INTERVALS:
-        raise argparse.ArgumentTypeError(
-            f"interval {minutes}m not in Kraken's allowed set "
-            f"{sorted(OHLCBar.ALLOWED_INTERVALS)}"
-        )
-    return minutes
-
-
-def _parse_intervals_arg(raw: str) -> list[int]:
-    """Parse ``--intervals 1m,1h`` — a comma list of ``_parse_interval_arg`` values.
-
-    Deduplicates while preserving operator order (the fetch order).
-    """
-    parts = [piece for piece in (p.strip() for p in raw.split(",")) if piece]
-    if not parts:
-        raise argparse.ArgumentTypeError("--intervals cannot be empty")
-    minutes: list[int] = []
-    for part in parts:
-        value = _parse_interval_arg(part)
-        if value not in minutes:
-            minutes.append(value)
-    return minutes
 
 
 # One progress line per this many Kraken requests (~1 request/second at
@@ -929,7 +878,7 @@ def main() -> int:
     interval_group = parser.add_mutually_exclusive_group()
     interval_group.add_argument(
         "--interval",
-        type=_parse_interval_arg,
+        type=parse_interval_arg,
         default=1,
         help=(
             "Backfill bar interval. Accepts 1m/5m/15m/30m/1h/4h/1d/1w or "
@@ -939,7 +888,7 @@ def main() -> int:
     )
     interval_group.add_argument(
         "--intervals",
-        type=_parse_intervals_arg,
+        type=parse_intervals_arg,
         default=None,
         help=(
             "Comma list of backfill bar intervals fetched back-to-back "

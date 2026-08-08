@@ -55,6 +55,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.exceptions import InsufficientBalance
@@ -248,7 +249,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         query. Since each request asks for exactly one pair, we don't
         need to translate the response key — we take the single entry.
         """
-        altname = _symbol_to_kraken_altname(symbol)
+        altname = symbol_to_kraken_altname(symbol)
         result = await self._public_get("/0/public/Ticker", {"pair": altname})
         if not result:
             raise ExchangeError(f"Kraken returned no ticker data for pair {altname!r}")
@@ -265,7 +266,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         extra round-trip when called instead of (or alongside)
         ``get_current_price``.
         """
-        altname = _symbol_to_kraken_altname(symbol)
+        altname = symbol_to_kraken_altname(symbol)
         result = await self._public_get("/0/public/Ticker", {"pair": altname})
         if not result:
             raise ExchangeError(f"Kraken returned no ticker data for pair {altname!r}")
@@ -304,7 +305,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                 f"interval_minutes must be one of "
                 f"{sorted(OHLCBar.ALLOWED_INTERVALS)}; got {interval_minutes}"
             )
-        altname = _symbol_to_kraken_altname(symbol)
+        altname = symbol_to_kraken_altname(symbol)
         params: dict[str, str] = {
             "pair": altname,
             "interval": str(interval_minutes),
@@ -332,8 +333,8 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             if not isinstance(entry, list) or len(entry) < 8:
                 raise ExchangeError(f"Kraken OHLC entry has unexpected shape: {entry!r}")
             opened_at = datetime.fromtimestamp(int(entry[0]), tz=UTC)
-            out.append(
-                OHLCBar(
+            try:
+                parsed_bar = OHLCBar(
                     symbol=symbol,
                     interval_minutes=interval_minutes,
                     opened_at=opened_at,
@@ -345,7 +346,15 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                     volume=Decimal(str(entry[6])),
                     count=int(entry[7]),
                 )
-            )
+            except ValidationError as exc:
+                # Same fail-fast posture as the shape check above: a bar
+                # violating low<=open/close<=high is a corrupt response,
+                # and persisting it would poison every high/low-keyed
+                # indicator downstream (the OHLCBar validator's rationale).
+                raise ExchangeError(
+                    f"Kraken OHLC entry failed validation for pair {altname!r}: {exc}"
+                ) from exc
+            out.append(parsed_bar)
         return out
 
     async def get_balances(self) -> list[Balance]:
@@ -735,7 +744,7 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             raise ExchangeError(
                 "Pair metadata cache not initialized; call _ensure_pair_metadata first"
             )
-        altname = _symbol_to_kraken_altname(symbol)
+        altname = symbol_to_kraken_altname(symbol)
         meta = self._pair_metadata.get(altname)
         if meta is not None:
             return meta
@@ -1078,7 +1087,7 @@ def _apply_kraken_order_update(order: Order, entry: dict[str, Any]) -> Order:
     return order
 
 
-def _symbol_to_kraken_altname(symbol: Symbol) -> str:
+def symbol_to_kraken_altname(symbol: Symbol) -> str:
     """Translate ``Symbol(base, quote)`` to a Kraken altname pair string.
 
     Examples (assuming the alias maps above):

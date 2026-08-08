@@ -36,6 +36,21 @@
 
 ### Import the local Kraken historical dump into the DB (one-time bulk seed)
 
+**✅ SHIPPED 2026-08-07 (P2 slice 2)** — `tools/import_kraken_history.py` (the
+standalone-tool option below, per the P2 blueprint's resolution), plus the two
+gate items that had to land with it: the `OHLCBar` `low<=open/close<=high`
+`@model_validator` (skip-and-log on rejected rows) and the
+`StoragePort.get_ohlc_bars` read-side. Verified live against the real dump:
+BTC/USD @ 1h = 98,541 rows (2013-10-06 → 2026-03-31, base + 2026Q1) imported in
+~1.5s with 0 skips, byte-exact round-trip on first/last bars, idempotent re-run
+inserts 0. Two dump-reality notes: the OHLCVT CSVs have **no vwap column**
+(imported bars carry `vwap=0`, matching Kraken's own no-vwap sentinel — TA
+consumers must not treat 0 as a price), and the dump ends at the last published
+quarter (2026-03-31) while the live API reaches back only ~720 bars — so a
+**gap exists between quarter-end and the live horizon** (~30 days at 1h) until
+Kraken publishes the next quarterly file. `--resume` after an import will
+top up what the live API retains and the horizon WARN flags the rest.
+
 **What (operator-raised 2026-05-30):** we already have a large local Kraken
 1-minute historical dump on disk — `data/kraken-history/` (BTC/ETH/SOL/XRP/DOGE
 + many other pairs, 2013→2025) plus the `data/kraken-history/2026Q1/` quarterly

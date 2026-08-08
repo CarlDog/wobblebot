@@ -2,7 +2,7 @@
 
 Slice 4 of the v1.1 backfill feature. Covers:
 - ``_parse_date_arg`` accepts bare dates + full ISO 8601, defaults to UTC.
-- ``_parse_interval_arg`` accepts 1m/5m/15m/30m/1h/4h/1d/1w + bare minutes.
+- ``parse_interval_arg`` accepts 1m/5m/15m/30m/1h/4h/1d/1w + bare minutes.
 - The integration smoke (full backfill flow against a stub adapter) is
   out of scope for this file -- the backfill service has its own
   service-level tests in tests/services/test_backfill.py.
@@ -15,13 +15,8 @@ from datetime import UTC, datetime, timezone
 
 import pytest
 
-from wobblebot.cli.observe import (
-    _parse_date_arg,
-    _parse_days_arg,
-    _parse_interval_arg,
-    _parse_intervals_arg,
-    _parse_rate_limit_arg,
-)
+from wobblebot.cli._common import parse_interval_arg, parse_intervals_arg
+from wobblebot.cli.observe import _parse_date_arg, _parse_days_arg, _parse_rate_limit_arg
 from wobblebot.domain.value_objects import OHLCBar
 
 pytestmark = pytest.mark.unit
@@ -101,25 +96,25 @@ class TestParseIntervalArg:
         ],
     )
     def test_accepts_kraken_aligned_values(self, raw: str, expected: int) -> None:
-        assert _parse_interval_arg(raw) == expected
+        assert parse_interval_arg(raw) == expected
 
     @pytest.mark.parametrize("raw", ["7m", "2h", "10d", "100", "0"])
     def test_rejects_intervals_kraken_does_not_publish(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match="allowed set"):
-            _parse_interval_arg(raw)
+            parse_interval_arg(raw)
 
     @pytest.mark.parametrize("raw", ["abc", "5x", "", "  "])
     def test_rejects_garbage(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError):
-            _parse_interval_arg(raw)
+            parse_interval_arg(raw)
 
     def test_uppercase_suffix_accepted(self) -> None:
         """Case-insensitive — operator typing ``1M`` shouldn't be rejected."""
-        assert _parse_interval_arg("1M") == 1
-        assert _parse_interval_arg("1H") == 60
+        assert parse_interval_arg("1M") == 1
+        assert parse_interval_arg("1H") == 60
 
     def test_whitespace_tolerated(self) -> None:
-        assert _parse_interval_arg(" 1h ") == 60
+        assert parse_interval_arg(" 1h ") == 60
 
     def test_canonical_set_aligns_with_OHLCBar(self) -> None:
         """The parser's accepted set must equal OHLCBar.ALLOWED_INTERVALS
@@ -127,29 +122,29 @@ class TestParseIntervalArg:
         # Spot-check: every parser-accepted suffix maps to a value in the
         # OHLCBar set.
         for raw in ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"):
-            assert _parse_interval_arg(raw) in OHLCBar.ALLOWED_INTERVALS
+            assert parse_interval_arg(raw) in OHLCBar.ALLOWED_INTERVALS
 
 
 class TestParseIntervalsArg:
     def test_parses_comma_list(self) -> None:
-        assert _parse_intervals_arg("1m,1h") == [1, 60]
+        assert parse_intervals_arg("1m,1h") == [1, 60]
 
     def test_dedupes_preserving_order(self) -> None:
-        assert _parse_intervals_arg("1h,1m,60,1h") == [60, 1]
+        assert parse_intervals_arg("1h,1m,60,1h") == [60, 1]
 
     def test_single_value_ok(self) -> None:
-        assert _parse_intervals_arg("4h") == [240]
+        assert parse_intervals_arg("4h") == [240]
 
     def test_tolerates_whitespace_and_empty_pieces(self) -> None:
-        assert _parse_intervals_arg(" 1m , 1h ,") == [1, 60]
+        assert parse_intervals_arg(" 1m , 1h ,") == [1, 60]
 
     @pytest.mark.parametrize("raw", ["", " ", ","])
     def test_rejects_empty(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match="empty"):
-            _parse_intervals_arg(raw)
+            parse_intervals_arg(raw)
 
     def test_rejects_bad_element(self) -> None:
         """One bad element fails the whole flag — matching --interval's
         strictness rather than silently dropping it."""
         with pytest.raises(argparse.ArgumentTypeError, match="allowed set"):
-            _parse_intervals_arg("1m,7m")
+            parse_intervals_arg("1m,7m")

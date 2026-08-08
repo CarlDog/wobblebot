@@ -37,6 +37,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_llm_call_record,
     row_to_news_item,
     row_to_notification,
+    row_to_ohlc_bar,
     row_to_order,
     row_to_pending_command,
     row_to_price_snapshot,
@@ -549,6 +550,35 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
         return parsed
+
+    async def get_ohlc_bars(
+        self,
+        symbol: Symbol,
+        interval_minutes: int,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[OHLCBar]:
+        conn = self._require_conn()
+        clauses = ["symbol_base = ?", "symbol_quote = ?", "interval_minutes = ?"]
+        params: list[str | int] = [symbol.base, symbol.quote, interval_minutes]
+        if start_time is not None:
+            clauses.append("opened_at >= ?")
+            params.append(start_time.astimezone(UTC).isoformat())
+        if end_time is not None:
+            clauses.append("opened_at <= ?")
+            params.append(end_time.astimezone(UTC).isoformat())
+        sql = f"SELECT * FROM ohlc_bars WHERE {' AND '.join(clauses)} ORDER BY opened_at"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        try:
+            async with conn.execute(sql, tuple(params)) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_ohlc_bar(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load ohlc bars for {symbol}: {exc}") from exc
 
     async def save_news_item(self, item: NewsItem) -> None:
         conn = self._require_conn()

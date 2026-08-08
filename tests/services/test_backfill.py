@@ -35,14 +35,18 @@ _T0 = datetime(2026, 5, 25, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_bar(*, minutes_offset: int, open_price: str = "79000") -> OHLCBar:
+    # high/low bracket open+close so any open_price override still
+    # yields a bar that passes the low<=open/close<=high validator.
+    open_dec = Decimal(open_price)
+    close = Decimal("79050")
     return OHLCBar(
         symbol=_BTC,
         interval_minutes=1,
         opened_at=_T0 + timedelta(minutes=minutes_offset),
-        open=Decimal(open_price),
-        high=Decimal("79100"),
-        low=Decimal("78900"),
-        close=Decimal("79050"),
+        open=open_dec,
+        high=max(open_dec, close) + Decimal("50"),
+        low=min(open_dec, close) - Decimal("150"),
+        close=close,
         vwap=Decimal("79000"),
         volume=Decimal("1.5"),
         count=10,

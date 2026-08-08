@@ -173,3 +173,54 @@ class TestGetLatestOhlcOpenedAt:
         latest = await storage.get_latest_ohlc_opened_at(_BTC, 1)
         assert latest is not None
         assert latest.tzinfo is UTC
+
+
+class TestGetOhlcBars:
+    """P2 slice 2 — the spine's read-side keystone (ASC, [] on miss)."""
+
+    async def test_empty_db_returns_empty_list(self, storage: SQLiteStorageAdapter) -> None:
+        assert await storage.get_ohlc_bars(_BTC, 1) == []
+
+    async def test_returns_ascending_by_opened_at(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(minutes_offset=i) for i in (7, 0, 3)])
+        bars = await storage.get_ohlc_bars(_BTC, 1)
+        assert [b.opened_at for b in bars] == [
+            _T0,
+            _T0 + timedelta(minutes=3),
+            _T0 + timedelta(minutes=7),
+        ]
+
+    async def test_round_trips_field_values(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(close="79042")])
+        (bar,) = await storage.get_ohlc_bars(_BTC, 1)
+        assert bar.close == Decimal("79042")
+        assert bar.volume == Decimal("1.5")
+        assert bar.count == 10
+        assert bar.opened_at.tzinfo is not None
+
+    async def test_scoped_by_interval_and_symbol(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars(
+            [_make_bar(), _make_bar(interval_minutes=60, minutes_offset=60), _make_bar(symbol=_ETH)]
+        )
+        assert len(await storage.get_ohlc_bars(_BTC, 1)) == 1
+        assert len(await storage.get_ohlc_bars(_BTC, 60)) == 1
+        assert len(await storage.get_ohlc_bars(_ETH, 1)) == 1
+
+    async def test_time_window_bounds_inclusive(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(minutes_offset=i) for i in range(5)])
+        bars = await storage.get_ohlc_bars(
+            _BTC,
+            1,
+            start_time=_T0 + timedelta(minutes=1),
+            end_time=_T0 + timedelta(minutes=3),
+        )
+        assert [b.opened_at for b in bars] == [
+            _T0 + timedelta(minutes=1),
+            _T0 + timedelta(minutes=2),
+            _T0 + timedelta(minutes=3),
+        ]
+
+    async def test_limit_takes_oldest_of_window(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(minutes_offset=i) for i in range(5)])
+        bars = await storage.get_ohlc_bars(_BTC, 1, limit=2)
+        assert [b.opened_at for b in bars] == [_T0, _T0 + timedelta(minutes=1)]

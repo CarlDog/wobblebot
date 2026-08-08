@@ -170,6 +170,11 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def get_ohlc_bars(  # type: ignore[no-untyped-def]
+        self, symbol, interval_minutes, *, start_time=None, end_time=None, limit=None
+    ):
+        raise NotImplementedError
+
     async def save_news_item(self, item):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
