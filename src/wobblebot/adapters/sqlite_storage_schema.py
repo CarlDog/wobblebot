@@ -321,6 +321,13 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     tokens_in           INTEGER NOT NULL,
     tokens_out          INTEGER NOT NULL,
     tokens_reasoning    INTEGER,
+    -- ADR-033: cache-served / cache-written prompt tokens as disjoint
+    -- buckets alongside tokens_in (which holds only UNCACHED prompt
+    -- tokens for rows written after the migration). NOT NULL DEFAULT 0
+    -- and no CHECK — ALTER TABLE can't add a CHECK, so a CHECK here
+    -- would make fresh and migrated DBs diverge; Pydantic ge=0 guards.
+    tokens_cache_read   INTEGER NOT NULL DEFAULT 0,
+    tokens_cache_write  INTEGER NOT NULL DEFAULT 0,
     cost_usd            TEXT NOT NULL,
     request_id          TEXT,
     success             INTEGER NOT NULL CHECK (success IN (0, 1)),

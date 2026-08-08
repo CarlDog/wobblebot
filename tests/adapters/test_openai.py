@@ -259,11 +259,12 @@ class TestPureHelpers:
                 "total_tokens": 150,
             },
         }
-        ti, to, tr, rid = extract_openai_tokens(envelope)
-        assert ti == 100
-        assert to == 50
-        assert tr is None
-        assert rid == "x"
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 100
+        assert usage.tokens_out == 50
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+        assert usage.request_id == "x"
 
     def test_extract_openai_tokens_with_reasoning(self) -> None:
         """o-series: reasoning is a subset of completion. Adapter
@@ -276,10 +277,10 @@ class TestPureHelpers:
                 "completion_tokens_details": {"reasoning_tokens": 200},
             },
         }
-        ti, to, tr, _rid = extract_openai_tokens(envelope)
-        assert ti == 100
-        assert to == 100  # 300 - 200 = 100 visible
-        assert tr == 200
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 100
+        assert usage.tokens_out == 100  # 300 - 200 = 100 visible
+        assert usage.tokens_reasoning == 200
 
     def test_extract_openai_tokens_zero_reasoning(self) -> None:
         envelope = {
@@ -290,16 +291,70 @@ class TestPureHelpers:
                 "completion_tokens_details": {"reasoning_tokens": 0},
             },
         }
-        _ti, to, tr, _rid = extract_openai_tokens(envelope)
-        assert to == 75
-        assert tr is None  # zero reasoning → None (no operator-visible signal)
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_out == 75
+        # zero reasoning → None (no operator-visible signal)
+        assert usage.tokens_reasoning is None
 
     def test_extract_openai_tokens_empty_usage(self) -> None:
         envelope = {"id": "x"}
-        ti, to, tr, _rid = extract_openai_tokens(envelope)
-        assert ti == 0
-        assert to == 0
-        assert tr is None
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 0
+        assert usage.tokens_out == 0
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+
+    def test_extract_openai_tokens_with_cached(self) -> None:
+        """prompt_tokens INCLUDES cached_tokens (automatic prompt
+        caching) — adapter subtracts so the buckets stay disjoint.
+        Fixture mirrors a real gpt-5-mini payload shape: the details
+        object carries sibling keys like audio_tokens."""
+        envelope = {
+            "id": "resp-cached",
+            "usage": {
+                "prompt_tokens": 2500,
+                "completion_tokens": 300,
+                "prompt_tokens_details": {"cached_tokens": 1024, "audio_tokens": 0},
+                "completion_tokens_details": {"reasoning_tokens": 100},
+                "total_tokens": 2800,
+            },
+        }
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 1476  # 2500 - 1024 uncached
+        assert usage.tokens_cache_read == 1024
+        assert usage.tokens_cache_write == 0  # OpenAI has no billed write step
+        assert usage.tokens_out == 200  # 300 - 100
+        assert usage.tokens_reasoning == 100
+
+    def test_extract_openai_tokens_null_prompt_details(self) -> None:
+        """Older responses send prompt_tokens_details as null — reads
+        as zero cached, full prompt stays in tokens_in."""
+        envelope = {
+            "id": "x",
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "prompt_tokens_details": None,
+            },
+        }
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 100
+        assert usage.tokens_cache_read == 0
+
+    def test_extract_openai_tokens_cached_exceeds_prompt_clamped(self) -> None:
+        """Defensive clamp: cached > prompt_tokens shouldn't happen
+        (cached is a subset) but must not produce negative tokens_in."""
+        envelope = {
+            "id": "x",
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 150},
+            },
+        }
+        usage = extract_openai_tokens(envelope)
+        assert usage.tokens_in == 0
+        assert usage.tokens_cache_read == 150
 
     def test_parse_message_content_plain(self) -> None:
         envelope = _envelope(content="hello world")

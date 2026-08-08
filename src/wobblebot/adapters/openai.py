@@ -60,7 +60,7 @@ from wobblebot.ports.operator import OperatorIntent
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
-    TokenTuple,
+    TokenUsage,
     execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
@@ -106,41 +106,57 @@ def is_reasoning_model(model: str) -> bool:
     return bool(_REASONING_MODEL_RE.match(model.lower()))
 
 
-def extract_openai_tokens(envelope: dict[str, Any]) -> TokenTuple:
-    """Pull ``TokenTuple`` from an OpenAI Chat Completions response.
+def extract_openai_tokens(envelope: dict[str, Any]) -> TokenUsage:
+    """Pull a ``TokenUsage`` from an OpenAI Chat Completions response.
 
-    OpenAI's usage shape (o-series):
+    OpenAI's usage shape (reasoning model with a prompt-cache hit):
         {
             "prompt_tokens": int,
             "completion_tokens": int,
+            "prompt_tokens_details": {"cached_tokens": int, "audio_tokens": int},
             "completion_tokens_details": {"reasoning_tokens": int, ...},
             "total_tokens": int
         }
 
-    Chat models without reasoning omit ``completion_tokens_details`` or
-    report ``reasoning_tokens=0`` — either way the normalization is:
+    Two normalizations produce the disjoint buckets:
 
-        tokens_reasoning = details.reasoning_tokens (or None if absent)
-        tokens_out = completion_tokens - reasoning_tokens
+    - ``prompt_tokens`` INCLUDES ``prompt_tokens_details.cached_tokens``
+      (OpenAI's automatic prompt caching, no opt-in) →
+      ``tokens_in = prompt_tokens - cached_tokens``,
+      ``tokens_cache_read = cached_tokens``. Cached tokens bill at the
+      discounted cached-input rate (ADR-033).
+    - ``completion_tokens`` INCLUDES ``reasoning_tokens`` →
+      ``tokens_out = completion_tokens - reasoning_tokens``,
+      ``tokens_reasoning = reasoning_tokens`` (or None if absent),
+      matching the additive convention from ``services/llm_pricing``
+      (reasoning_per_million_usd=None falls back to output rate —
+      exactly how OpenAI bills).
 
-    so the recorded columns satisfy the additive convention from
-    ``services/llm_pricing``. Cost math through ``cost_for`` then
-    applies output rate to both (reasoning_per_million_usd=None for
-    OpenAI o-series, which falls back to output rate — exactly how
-    OpenAI bills).
+    Chat models without reasoning omit ``completion_tokens_details``;
+    older responses may omit ``prompt_tokens_details`` or send it as
+    null — both read as zero cached.
     """
     usage = envelope.get("usage", {}) or {}
-    tokens_in = int(usage.get("prompt_tokens", 0))
+    total_prompt = int(usage.get("prompt_tokens", 0))
+    prompt_details = usage.get("prompt_tokens_details") or {}
+    cached_raw = prompt_details.get("cached_tokens", 0)
+    cached = int(cached_raw) if cached_raw else 0
     total_completion = int(usage.get("completion_tokens", 0))
     details = usage.get("completion_tokens_details") or {}
     reasoning_raw = details.get("reasoning_tokens", 0)
     reasoning = int(reasoning_raw) if reasoning_raw else 0
-    # Defensive: if the provider ever reports reasoning > completion
-    # (shouldn't happen — they bill on completion which is the sum),
-    # clamp to avoid a negative tokens_out.
+    # Defensive clamps: the provider shouldn't report a detail count
+    # larger than the total it's part of; clamp to avoid negatives.
+    tokens_in = max(0, total_prompt - cached)
     tokens_out = max(0, total_completion - reasoning)
     tokens_reasoning = reasoning if reasoning > 0 else None
-    return (tokens_in, tokens_out, tokens_reasoning, envelope.get("id"))
+    return TokenUsage(
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_reasoning=tokens_reasoning,
+        tokens_cache_read=cached,
+        request_id=envelope.get("id"),
+    )
 
 
 def parse_message_content(envelope: dict[str, Any]) -> str:

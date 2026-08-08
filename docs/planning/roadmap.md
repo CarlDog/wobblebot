@@ -370,6 +370,18 @@ the detail; the full backlog index is
    reboot incident (resolved clean, reconciler held); a CI gitleaks secret-scanning workflow.
    Full narrative in Stage 8.4.E's digest above.
 
+3. **Cache-aware LLM cost accounting** ✅ 2026-08-02 — **ADR-033**, from the prompt-caching
+   investigation. All three cloud extractors now capture provider cache-usage fields
+   (`TokenUsage` disjoint buckets replacing the `TokenTuple` 4-tuple); `LLMPricePoint` gains
+   verified cached-input/cache-write rates (fallback = full input rate, never under-reports);
+   `llm_calls` gains `tokens_cache_read`/`tokens_cache_write` via additive migration; `/cost`
+   card + `show_llm_costs` surface cached totals. Fixes a live mispricing: `gpt-5-mini`
+   escalations with OpenAI automatic-cache hits were billed at full input rate in the
+   ADR-014 ledger. Actively *enabling* Anthropic `cache_control` is **deferred with
+   triggers** (ADR-033 decision 5; Parked register → CI/infra): the 4h advisor cadence
+   exceeds both cache TTLs and no deployed path reaches Anthropic. Real-money cost $0.00
+   (pricing pages re-verified, no API calls). Test count 2582 → 2603.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

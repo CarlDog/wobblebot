@@ -76,13 +76,20 @@ class GroupRollup:
 
 
 @dataclass(frozen=True)
-class CostSnapshot:
-    """Everything the cost template needs in one immutable bundle."""
+class CostSnapshot:  # pylint: disable=too-many-instance-attributes
+    """Everything the cost template needs in one immutable bundle.
+
+    ``cached_tokens_24h`` is the 24h sum of ``tokens_cache_read``
+    (ADR-033) — prompt tokens served from provider caches at a
+    discounted rate. Nonzero means automatic caching is saving money;
+    the per-token discount is already reflected in the cost totals.
+    """
 
     total_24h_usd: Decimal
     total_7d_usd: Decimal
     call_count_24h: int
     call_count_7d: int
+    cached_tokens_24h: int
     per_day: tuple[DayRollup, ...]
     per_provider_role: tuple[GroupRollup, ...]
     error: str | None = None
@@ -123,6 +130,7 @@ def _empty_snapshot(error: str | None = None) -> CostSnapshot:
         total_7d_usd=Decimal("0"),
         call_count_24h=0,
         call_count_7d=0,
+        cached_tokens_24h=0,
         per_day=(),
         per_provider_role=(),
         error=error,
@@ -232,6 +240,7 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
     total_7d = Decimal("0")
     n_24h = 0
     n_7d = 0
+    cached_24h = 0
     by_day: dict[str, tuple[Decimal, int]] = defaultdict(lambda: (Decimal("0"), 0))
     by_group: dict[str, tuple[Decimal, int]] = defaultdict(lambda: (Decimal("0"), 0))
 
@@ -246,6 +255,7 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
         if ts >= cutoff_24h:
             total_24h += cost
             n_24h += 1
+            cached_24h += row.tokens_cache_read
             group_key = f"{row.provider} / {row.role}"
             prev_cost_g, prev_count_g = by_group[group_key]
             by_group[group_key] = (prev_cost_g + cost, prev_count_g + 1)
@@ -269,6 +279,7 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
         total_7d_usd=total_7d,
         call_count_24h=n_24h,
         call_count_7d=n_7d,
+        cached_tokens_24h=cached_24h,
         per_day=per_day,
         per_provider_role=per_group,
     )

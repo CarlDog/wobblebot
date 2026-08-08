@@ -122,6 +122,20 @@ class TestRollup:
         assert days == sorted(days, reverse=True)
         assert len(snap.per_day) == 3
 
+    def test_cached_tokens_summed_over_24h_window_only(self) -> None:
+        rows = [
+            _row(cost="0.001", hours_ago=1).model_copy(update={"tokens_cache_read": 1024}),
+            _row(cost="0.001", hours_ago=2).model_copy(update={"tokens_cache_read": 500}),
+            # Outside the 24h window — excluded from the cached sum.
+            _row(cost="0.001", hours_ago=48).model_copy(update={"tokens_cache_read": 9999}),
+        ]
+        snap = _rollup(rows, now=datetime.now(UTC))
+        assert snap.cached_tokens_24h == 1524
+
+    def test_cached_tokens_zero_when_no_cache_hits(self) -> None:
+        snap = _rollup([_row(cost="0.001")], now=datetime.now(UTC))
+        assert snap.cached_tokens_24h == 0
+
 
 # --------------------------------------------------------------------- #
 # Routes                                                                #
@@ -167,6 +181,29 @@ class TestCostRoute:
             assert "anthropic / operator" in resp.text
             assert "openai / operator" in resp.text
             assert 'class="bar-chart"' in resp.text  # 7-day spend bars render
+            # No cache hits seeded → the cached-tokens meta line hides.
+            assert "cached input tokens" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_cached_tokens_render_in_card_meta(self, storage: SQLiteStorageAdapter) -> None:
+        """ADR-033: a row with cache hits surfaces the 24h cached-token
+        count in the LLM card's meta line."""
+        await storage.save_llm_call(
+            _row(cost="0.001").model_copy(update={"tokens_cache_read": 2048})
+        )
+
+        from fastapi.testclient import TestClient
+
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get("/cost")
+            assert resp.status_code == 200
+            assert "2,048 cached input tokens" in resp.text
 
 
 class TestCostCardFragment:

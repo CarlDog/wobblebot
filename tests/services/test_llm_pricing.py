@@ -149,6 +149,76 @@ class TestCostFor:
             "llm_pricing module docstring and this test's premise."
         )
 
+    def test_cached_read_uses_explicit_cached_rate(self) -> None:
+        # gpt-5-mini (ADR-033 sweep): $0.25/1M input, $0.025/1M cached.
+        # 1000 uncached → $0.00025; 1000 cached → $0.000025 (10x cheaper)
+        cost = cost_for(
+            "openai", "gpt-5-mini", tokens_in=1000, tokens_out=0, tokens_cache_read=1000
+        )
+        assert cost == Decimal("0.000275")
+
+    def test_cached_read_discounts_vs_uncached(self) -> None:
+        # Same total prompt, split cached vs all-uncached — the cached
+        # split must be strictly cheaper (the whole point of ADR-033).
+        uncached = cost_for("openai", "gpt-5-mini", tokens_in=2000, tokens_out=100)
+        cached = cost_for(
+            "openai", "gpt-5-mini", tokens_in=1000, tokens_out=100, tokens_cache_read=1000
+        )
+        assert cached < uncached
+
+    def test_cached_read_none_falls_back_to_full_input_rate(self) -> None:
+        # gpt-4o has NO verified cached rate (cached=None) — cached
+        # tokens bill at the full $2.50/1M input rate, i.e. exactly the
+        # same cost as if they were in tokens_in (conservative, never
+        # under-reports).
+        folded = cost_for("openai", "gpt-4o", tokens_in=2000, tokens_out=0)
+        split = cost_for("openai", "gpt-4o", tokens_in=1000, tokens_out=0, tokens_cache_read=1000)
+        assert folded == split
+
+    def test_cache_write_uses_explicit_write_rate(self) -> None:
+        # claude-sonnet-4-6: write rate $3.75/1M (1.25x the $3 input).
+        # 1000 in → $0.003; 1000 write → $0.00375; total $0.00675
+        cost = cost_for(
+            "anthropic",
+            "claude-sonnet-4-6",
+            tokens_in=1000,
+            tokens_out=0,
+            tokens_cache_write=1000,
+        )
+        assert cost == Decimal("0.006750")
+
+    def test_cache_write_none_falls_back_to_input_rate(self) -> None:
+        # gpt-4o carries no write rate — falls back to input rate.
+        folded = cost_for("openai", "gpt-4o", tokens_in=2000, tokens_out=0)
+        split = cost_for("openai", "gpt-4o", tokens_in=1000, tokens_out=0, tokens_cache_write=1000)
+        assert folded == split
+
+    def test_default_cache_zero_does_not_affect_cost(self) -> None:
+        without = cost_for("anthropic", "claude-opus-4-7", 100, 100)
+        with_zero = cost_for(
+            "anthropic",
+            "claude-opus-4-7",
+            100,
+            100,
+            tokens_cache_read=0,
+            tokens_cache_write=0,
+        )
+        assert without == with_zero
+
+    def test_negative_cache_tokens_rejected(self) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            cost_for("openai", "gpt-4o", tokens_in=100, tokens_out=100, tokens_cache_read=-1)
+        with pytest.raises(ValueError, match="non-negative"):
+            cost_for("openai", "gpt-4o", tokens_in=100, tokens_out=100, tokens_cache_write=-1)
+
+    def test_deployed_escalation_model_has_verified_cached_rate(self) -> None:
+        # The cpu-only cascade escalates to gpt-5-mini, whose automatic
+        # caching is live TODAY — its cached rate must never regress to
+        # the None fallback without someone noticing.
+        point = get_price_point("openai", "gpt-5-mini")
+        assert point.cached_input_per_million_usd is not None
+        assert point.cached_input_per_million_usd < point.input_per_million_usd
+
     def test_zero_tokens_is_zero_cost(self) -> None:
         cost = cost_for("anthropic", "claude-sonnet-4-6", 0, 0)
         assert cost == Decimal("0.000000")

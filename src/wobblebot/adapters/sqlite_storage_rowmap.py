@@ -322,6 +322,8 @@ def row_to_llm_call_record(row: aiosqlite.Row) -> LLMCallRecord:
         tokens_reasoning=(
             int(row["tokens_reasoning"]) if row["tokens_reasoning"] is not None else None
         ),
+        tokens_cache_read=int(row["tokens_cache_read"]),
+        tokens_cache_write=int(row["tokens_cache_write"]),
         cost_usd=Decimal(row["cost_usd"]),
         request_id=row["request_id"],
         success=bool(row["success"]),

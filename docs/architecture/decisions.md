@@ -2154,6 +2154,80 @@ financial-power-fragmentation invariant. `domain/` stays pure (no config/service
 Amends ADR-006 decisions 1–2 *context*: sells now consult basis before placement; offside
 stay-parked semantics are untouched.
 
+## ADR-033 — Cache-Aware LLM Cost Accounting; Defer Anthropic `cache_control`
+
+**Status:** Accepted
+**Date:** 2026-08-02
+
+**Context:** A prompt-caching investigation (2026-08-02) established two facts. First, the
+ADR-014 ledger misprices cached tokens *today*: OpenAI's prompt caching is automatic on
+`gpt-5-mini` — the cpu-only cascade's escalation seat (ADR-022) — and intra-sweep calls sharing
+the ~1,050-token quant.md system prefix return `prompt_tokens_details.cached_tokens` billed at
+$0.025/1M instead of $0.25/1M; all three provider extractors dropped their cache-usage fields,
+so the ledger billed those tokens at full rate. Anthropic has the inverse hazard: its
+`input_tokens` *excludes* cache fields, so enabling `cache_control` without extractor support
+would silently under-report. Second, actively enabling Anthropic prompt caching would lose
+money at current shape: the advisor sweeps every 4h against 5-minute/1-hour cache TTLs (every
+sweep cold; writes cost 1.25×/2× base input), three of the four role prompts sit under the
+1024-token cacheable floor (quant ≈ 1,050, risk ≈ 700, news ≈ 620, arbitrator ≈ 760), the MoE
+experts share no prefix, and no deployed config path reaches Anthropic at all. Total cloud
+spend to date is ~$0.28, so the honest framing is accounting correctness plus positioning for
+Phase 9 volume — not savings.
+
+**Decision:** Record what providers already report; price it correctly; defer `cache_control`.
+
+1. **Disjoint token buckets.** `TokenUsage` (replacing the `TokenTuple` 4-tuple) carries
+   `tokens_cache_read` and `tokens_cache_write` alongside in/out/reasoning; cost is
+   Σ bucket × rate with no subtraction downstream. Extractors normalize per provider:
+   OpenAI/Gemini prompt totals *include* cached (subtract with clamp); Anthropic's are
+   disjoint on the wire (passthrough). `tokens_in` therefore means *uncached* prompt tokens
+   for rows written after this change — pre-migration OpenAI/Google rows folded cached into
+   `tokens_in`, so prompt-size analytics must read `tokens_in + tokens_cache_read`.
+2. **Optional cached rates, conservative fallback.** `LLMPricePoint` gains
+   `cached_input_per_million_usd` and `cache_write_per_million_usd`; `None` falls back to the
+   *full* input rate, so an unverified entry over-prices (pre-ADR-033 behavior) and can never
+   silently under-report. Rates verified 2026-08-02 for the gpt-5 family, Gemini 2.5, and all
+   current Anthropic entries; the per-entry `verified_date` discipline holds — bumping a date
+   asserts the whole entry was re-checked. The single write-rate column models Anthropic's
+   5-minute-TTL 1.25× premium only; the 1-hour TTL's 2× doesn't fit and is moot while
+   wobblebot never sends `cache_control`.
+3. **Additive migration.** `llm_calls` gains both columns as `INTEGER NOT NULL DEFAULT 0`
+   (PRAGMA-guarded ALTER, byte-identical to the CREATE TABLE; no CHECK, so fresh and migrated
+   DBs can't drift). Legacy rows read 0 — honest, since the counts weren't captured.
+4. **Gate unchanged.** `estimate_cost_ceiling` still assumes zero cache discount — the
+   pre-call ADR-014 gate stays a conservative ceiling by construction.
+5. **Anthropic `cache_control` is DEFERRED, not rejected.** Re-evaluate when either trigger
+   fires: (a) an Anthropic provider enters a *deployed* config path with call cadence inside a
+   cache TTL (the operator-assistant shape — bursty multi-turn — is the natural candidate, but
+   it would first need its volatile engine-state snapshot split out of the system string and
+   the system param converted to a content-block list), or (b) Phase 9 materially raises LLM
+   call volume/cadence. Until then the cache-write column simply stays 0.
+
+**Alternatives considered:**
+- **Implement `cache_control` now.** Rejected: at a 4h cadence every call pays the 1.25–2×
+  write premium and reads nothing back — negative ROI guaranteed by arithmetic, not workload
+  luck.
+- **Prompt reorder (move the static "Respond with JSON…" tail ahead of the dynamic payload).**
+  Considered, dropped: the stable prefix that matters is the system message, already first;
+  the reorder adds ~12 static tokens of prefix for no measurable gain while changing live
+  prompt bytes for a deployed advisor.
+- **Per-TTL write-rate columns.** Rejected as speculative — no code path writes cache entries;
+  one column documents the 5m premium and the deferral note covers the rest.
+
+**Consequences:**
+- **Positive:** The ledger and `/cost` dashboard now reflect what providers actually bill;
+  `gpt-5-mini` escalations with automatic cache hits get cheaper on paper because they *are*
+  cheaper. Cached-token counts are visible (card meta line, `show_llm_costs`).
+- **Positive:** If Anthropic caching is ever enabled, accounting is already correct — no
+  silent under-reporting window.
+- **Negative:** `tokens_in` semantics shift at the migration boundary (see decision 1) —
+  cost math and the sliding-window gate (which sum `cost_usd`) are unaffected.
+- **Migration:** automatic on next daemon start; old rows read both counts as 0.
+
+**Compliance:** Pricing stays code-resident (ADR-014 decision 6); the freshness watchdog
+covers the new columns via the same per-entry `verified_date`. No layer boundaries moved —
+extractors stay in adapters, pricing/gating in services, the record in domain.
+
 **Soak note:** v1.1 branch, NOT in the frozen v1.0 soak image.
 
 **References:**

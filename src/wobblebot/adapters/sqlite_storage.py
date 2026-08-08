@@ -119,6 +119,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await _migrate_advisor_suggestions_expert_opinions(self._conn)
             await _migrate_advisor_suggestions_news_materially_drove(self._conn)
             await _migrate_news_items_publisher_url(self._conn)
+            await _migrate_llm_calls_cache_token_columns(self._conn)
             await _migrate_price_snapshots_unique(self._conn)
             await _migrate_transfer_results_unique_proposal_id(self._conn)
             await self._conn.commit()
@@ -1135,8 +1136,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 INSERT INTO llm_calls (
                     id, timestamp, role, provider, model,
                     tokens_in, tokens_out, tokens_reasoning,
+                    tokens_cache_read, tokens_cache_write,
                     cost_usd, request_id, success, error_kind
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(record.id),
@@ -1147,6 +1149,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     record.tokens_in,
                     record.tokens_out,
                     record.tokens_reasoning,
+                    record.tokens_cache_read,
+                    record.tokens_cache_write,
                     str(record.cost_usd),
                     record.request_id,
                     1 if record.success else 0,
@@ -1538,6 +1542,24 @@ async def _migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
     """
     await _add_column_if_missing(conn, "news_items", "publisher", "TEXT")
     await _add_column_if_missing(conn, "news_items", "url", "TEXT")
+
+
+async def _migrate_llm_calls_cache_token_columns(conn: aiosqlite.Connection) -> None:
+    """Add cache-token columns to pre-ADR-033 llm_calls tables.
+
+    The CREATE TABLE in SCHEMA declares both for new DBs; existing
+    operator ledgers lack them. Additive ``INTEGER NOT NULL DEFAULT 0``
+    — SQLite backfills existing rows with 0, which is the correct
+    forensic reading (cache counts weren't captured when those rows
+    were written). Definitions must stay byte-identical to the CREATE
+    TABLE so fresh and migrated DBs don't drift.
+    """
+    await _add_column_if_missing(
+        conn, "llm_calls", "tokens_cache_read", "INTEGER NOT NULL DEFAULT 0"
+    )
+    await _add_column_if_missing(
+        conn, "llm_calls", "tokens_cache_write", "INTEGER NOT NULL DEFAULT 0"
+    )
 
 
 async def _migrate_price_snapshots_unique(  # pylint: disable=too-many-locals

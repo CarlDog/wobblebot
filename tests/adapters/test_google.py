@@ -135,6 +135,7 @@ def _gemini_envelope(
     prompt_tokens: int = 200,
     candidates_tokens: int = 100,
     thoughts_tokens: int | None = None,
+    cached_tokens: int | None = None,
     response_id: str | None = "rsp-abc",
 ) -> dict[str, object]:
     usage: dict[str, object] = {
@@ -145,6 +146,11 @@ def _gemini_envelope(
     if thoughts_tokens is not None:
         usage["thoughtsTokenCount"] = thoughts_tokens
         usage["totalTokenCount"] = prompt_tokens + candidates_tokens + thoughts_tokens
+    if cached_tokens is not None:
+        # Real Gemini shape: promptTokenCount INCLUDES the cached count
+        # (API reference: total effective prompt size), so the fixture
+        # does NOT add it to the totals — cached is a subset of prompt.
+        usage["cachedContentTokenCount"] = cached_tokens
     envelope: dict[str, object] = {
         "candidates": [
             {
@@ -234,11 +240,12 @@ class TestPureHelpers:
 
     def test_extract_tokens_no_thinking(self) -> None:
         envelope = _gemini_envelope(text="hi", prompt_tokens=50, candidates_tokens=30)
-        ti, to, tr, rid = extract_google_tokens(envelope)
-        assert ti == 50
-        assert to == 30
-        assert tr is None
-        assert rid == "rsp-abc"
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_in == 50
+        assert usage.tokens_out == 30
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+        assert usage.request_id == "rsp-abc"
 
     def test_extract_tokens_with_thinking_additive(self) -> None:
         """Gemini's thinking shape is natively additive — record as-is."""
@@ -248,32 +255,57 @@ class TestPureHelpers:
             candidates_tokens=50,
             thoughts_tokens=300,
         )
-        ti, to, tr, _rid = extract_google_tokens(envelope)
-        assert ti == 100
-        assert to == 50  # NOT subtracted (unlike OpenAI)
-        assert tr == 300
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_in == 100
+        assert usage.tokens_out == 50  # NOT subtracted (unlike OpenAI)
+        assert usage.tokens_reasoning == 300
+
+    def test_extract_tokens_with_cached(self) -> None:
+        """promptTokenCount INCLUDES cachedContentTokenCount (implicit
+        caching, 2.5+) — adapter subtracts so the buckets stay disjoint."""
+        envelope = _gemini_envelope(
+            text="hi",
+            prompt_tokens=2000,
+            candidates_tokens=100,
+            cached_tokens=1500,
+        )
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_in == 500  # 2000 - 1500 uncached
+        assert usage.tokens_cache_read == 1500
+        assert usage.tokens_cache_write == 0  # Gemini has no billed write step
+
+    def test_extract_tokens_cached_exceeds_prompt_clamped(self) -> None:
+        """Defensive clamp mirrors the OpenAI extractor — no negative
+        tokens_in even on a nonsensical payload."""
+        envelope = _gemini_envelope(
+            text="hi", prompt_tokens=100, candidates_tokens=10, cached_tokens=150
+        )
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_in == 0
+        assert usage.tokens_cache_read == 150
 
     def test_extract_tokens_zero_thinking(self) -> None:
         """Explicit zero thinking → None (no signal-free zero column)."""
         envelope = _gemini_envelope(
             text="hi", prompt_tokens=10, candidates_tokens=5, thoughts_tokens=0
         )
-        _ti, _to, tr, _rid = extract_google_tokens(envelope)
-        assert tr is None
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_reasoning is None
 
     def test_extract_tokens_empty_usage(self) -> None:
         envelope: dict[str, object] = {"candidates": []}
-        ti, to, tr, rid = extract_google_tokens(envelope)
-        assert ti == 0
-        assert to == 0
-        assert tr is None
-        assert rid is None
+        usage = extract_google_tokens(envelope)
+        assert usage.tokens_in == 0
+        assert usage.tokens_out == 0
+        assert usage.tokens_reasoning is None
+        assert usage.tokens_cache_read == 0
+        assert usage.request_id is None
 
     def test_extract_tokens_no_response_id(self) -> None:
         """Older Gemini responses omitted responseId; we surface None."""
         envelope = _gemini_envelope(text="hi", response_id=None)
-        _ti, _to, _tr, rid = extract_google_tokens(envelope)
-        assert rid is None
+        usage = extract_google_tokens(envelope)
+        assert usage.request_id is None
 
     def test_parse_candidate_text_basic(self) -> None:
         envelope = _gemini_envelope(text="hello world")

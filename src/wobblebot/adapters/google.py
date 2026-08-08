@@ -61,7 +61,7 @@ from wobblebot.ports.operator import OperatorIntent
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
-    TokenTuple,
+    TokenUsage,
     execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
@@ -75,17 +75,25 @@ _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
 
 
-def extract_google_tokens(envelope: dict[str, Any]) -> TokenTuple:
-    """Pull ``TokenTuple`` from a Gemini ``generateContent`` response.
+def extract_google_tokens(envelope: dict[str, Any]) -> TokenUsage:
+    """Pull a ``TokenUsage`` from a Gemini ``generateContent`` response.
 
-    Gemini's usage shape::
+    Gemini's usage shape (implicit caching on 2.5+ populates
+    ``cachedContentTokenCount``)::
 
         "usageMetadata": {
             "promptTokenCount": int,
+            "cachedContentTokenCount": int,
             "candidatesTokenCount": int,
             "thoughtsTokenCount": int (gemini-2.5+ thinking only),
             "totalTokenCount": int
         }
+
+    ``promptTokenCount`` INCLUDES ``cachedContentTokenCount`` (the API
+    reference defines it as the total effective prompt size, cached
+    content counted in) → ``tokens_in = prompt - cached`` with a
+    defensive clamp, ``tokens_cache_read = cached`` — the disjoint
+    buckets ADR-033's cost math expects.
 
     ``thoughtsTokenCount`` is **additive** to ``candidatesTokenCount``
     — no subtraction needed (unlike OpenAI). Older models without
@@ -96,13 +104,21 @@ def extract_google_tokens(envelope: dict[str, Any]) -> TokenTuple:
     present; older responses omit it.
     """
     usage = envelope.get("usageMetadata", {}) or {}
-    tokens_in = int(usage.get("promptTokenCount", 0))
+    total_prompt = int(usage.get("promptTokenCount", 0))
+    cached_raw = usage.get("cachedContentTokenCount", 0)
+    cached = int(cached_raw) if cached_raw else 0
+    tokens_in = max(0, total_prompt - cached)
     tokens_out = int(usage.get("candidatesTokenCount", 0))
     thoughts_raw = usage.get("thoughtsTokenCount", 0)
     thoughts = int(thoughts_raw) if thoughts_raw else 0
     tokens_reasoning = thoughts if thoughts > 0 else None
-    request_id = envelope.get("responseId")
-    return (tokens_in, tokens_out, tokens_reasoning, request_id)
+    return TokenUsage(
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_reasoning=tokens_reasoning,
+        tokens_cache_read=cached,
+        request_id=envelope.get("responseId"),
+    )
 
 
 def parse_candidate_text(envelope: dict[str, Any]) -> str:

@@ -23,6 +23,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
+    TokenUsage,
     classify_error,
     execute_cloud_call,
 )
@@ -71,14 +72,16 @@ def _ctx(
     )
 
 
-def _simple_extract(envelope: dict[str, Any]) -> tuple[int, int, int | None, str | None]:
+def _simple_extract(envelope: dict[str, Any]) -> TokenUsage:
     """Generic extractor used by tests that don't care about provider shape."""
     usage = envelope.get("usage", {})
-    return (
-        int(usage.get("input_tokens", 0)),
-        int(usage.get("output_tokens", 0)),
-        usage.get("reasoning"),
-        envelope.get("id"),
+    return TokenUsage(
+        tokens_in=int(usage.get("input_tokens", 0)),
+        tokens_out=int(usage.get("output_tokens", 0)),
+        tokens_reasoning=usage.get("reasoning"),
+        tokens_cache_read=int(usage.get("cache_read", 0)),
+        tokens_cache_write=int(usage.get("cache_write", 0)),
+        request_id=envelope.get("id"),
     )
 
 
@@ -180,6 +183,44 @@ class TestExecuteCloudCall:
         )
         rows = await storage.get_llm_calls()
         assert rows[0].tokens_reasoning == 500
+
+    async def test_cache_counts_persist_and_discount_cost(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """ADR-033: cache buckets flow extractor → record → ledger, and
+        cache-read tokens bill at the entry's cached rate, not full
+        input rate."""
+        envelope = {
+            "id": "msg_cached",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_read": 1000,
+                "cache_write": 400,
+            },
+        }
+
+        async def call_fn() -> dict[str, Any]:
+            return envelope
+
+        await execute_cloud_call(
+            ctx=_ctx(storage),  # anthropic / claude-sonnet-4-6
+            estimated_cost_usd=Decimal("0.005"),
+            call_fn=call_fn,
+            extract_tokens=_simple_extract,
+        )
+        rec = (await storage.get_llm_calls())[0]
+        assert rec.tokens_cache_read == 1000
+        assert rec.tokens_cache_write == 400
+        # sonnet-4-6: in 100*$3 + out 200*$15 + read 1000*$0.30
+        #             + write 400*$3.75 (all /1M)
+        # = 0.0003 + 0.003 + 0.0003 + 0.0015 = 0.0051
+        assert rec.cost_usd == Decimal("0.005100")
+        # Cheaper than the same tokens uncached (1100 in * $3 = 0.0033
+        # + 0.003 out + 0.0015 write-at-input... the direct comparison:
+        # billing 1000 cached at full input rate would add 0.0030 not
+        # 0.0003).
+        assert rec.cost_usd < Decimal("0.007800")
 
 
 # --------------------------------------------------------------------- #
