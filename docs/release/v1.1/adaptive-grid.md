@@ -308,6 +308,24 @@ on any quiet afternoon.
 
 ### Proper OHLC + technical analysis indicators for the advisor
 
+**✅ SHIPPED 2026-08-08 (P2 slice 3)** — `services/ta_metrics.py` (NEW module per
+the blueprint, not `metrics.py`; hand-rolled textbook formulas, no pandas/TA-Lib
+dep): RSI(14), MACD(12,26,9), Bollinger(20,2σ), SMA(20/50/200), EMA(12/26),
+ATR(14), ADX(14), Stochastic(14,3), with private `_compute_*_series` for the
+auditor/screener. 16 `float|None` fields on `PerformanceSummary` (which lives in
+`ports/advisor.py`, not `metrics_service` as sketched below), wired via
+`SummaryBuilder` reading the newest 260-bar 60m window through `get_ohlc_bars`;
+`quant.md` teaches the judge the vocabulary (ADX + price-vs-SMA = the direct
+ranging-vs-trending reads ADR-019 wanted). **Staleness guard:** bars whose
+newest open is >3 intervals old yield all-null TA with an actionable WARN
+(verified against the real post-import DB — including the out-of-window case a
+quarter-old dump produces). **Open operational gap, deliberately NOT built in
+this slice:** nothing maintains fresh 1h bars steady-state (the observe daemon
+polls snapshots; auto-gap-fill is 1m/startup-only), so production TA stays null
+— and WARNs every advise cycle — until either the operator crons
+`cli/observe --backfill --resume --intervals 1h` or a small observe-daemon
+hourly top-up ships (operator's call; flagged in the P2 slice-3 receipt).
+
 **Status update (2026-05-25):** the data-acquisition substrate
 (OHLC bar fetch + persistence) is now in place — see the
 backfill section above. This entry is now reduced to the metrics
