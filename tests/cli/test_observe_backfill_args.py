@@ -18,7 +18,7 @@ import pytest
 from wobblebot.cli._common import parse_date_arg as _parse_date_arg
 from wobblebot.cli._common import parse_days_arg as _parse_days_arg
 from wobblebot.cli._common import parse_interval_arg, parse_intervals_arg
-from wobblebot.cli.observe_backfill import _parse_rate_limit_arg
+from wobblebot.cli.observe_backfill import parse_rate_limit_arg
 from wobblebot.domain.value_objects import OHLCBar
 
 pytestmark = pytest.mark.unit
@@ -65,17 +65,17 @@ class TestParseDaysArg:
 class TestParseRateLimitArg:
     @pytest.mark.parametrize("raw,expected", [("0", 0.0), ("0.5", 0.5), ("1", 1.0), ("2.5", 2.5)])
     def test_accepts_non_negative_numbers(self, raw: str, expected: float) -> None:
-        assert _parse_rate_limit_arg(raw) == expected
+        assert parse_rate_limit_arg(raw) == expected
 
     @pytest.mark.parametrize("raw", ["-1", "-0.5"])
     def test_rejects_negative(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match=">= 0"):
-            _parse_rate_limit_arg(raw)
+            parse_rate_limit_arg(raw)
 
     @pytest.mark.parametrize("raw", ["abc", "", "1s"])
     def test_rejects_garbage(self, raw: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError, match="non-negative number"):
-            _parse_rate_limit_arg(raw)
+            parse_rate_limit_arg(raw)
 
 
 class TestParseIntervalArg:

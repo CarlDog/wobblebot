@@ -20,8 +20,8 @@ from wobblebot.domain.value_objects import (
     Symbol,
     Timestamp,
 )
-from wobblebot.ports.advisor import CurrentGridParams
-from wobblebot.services.summary_builder import SummaryBuilder
+from wobblebot.ports.advisor import CurrentGridParams, PerformanceSummary
+from wobblebot.services.summary_builder import _TA_FIELD_NAMES, SummaryBuilder
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -293,6 +293,21 @@ class TestTAFields:
         assert summary.atr_14 is not None
         assert summary.adx_14 is not None
         assert summary.stochastic_k is not None
+
+    async def test_ta_field_shape_pinned_three_ways(self, storage: SQLiteStorageAdapter) -> None:
+        """The 16-field shape lives in three places — ``_TA_FIELD_NAMES``,
+        the builder's healthy-path dict literal, and PerformanceSummary's
+        declarations — and PerformanceSummary ignores extra keys, so a
+        typo'd dict key would silently ship the real field as ``None``
+        (indistinguishable from legitimate no-TA). Pin all three."""
+        assert set(_TA_FIELD_NAMES) <= set(PerformanceSummary.model_fields)
+        await _seed_hourly_bars(storage, count=250)
+        fields = await SummaryBuilder(
+            storage
+        )._compute_ta_fields(  # pylint: disable=protected-access
+            BTC_USD, now=datetime.now(UTC), interval_minutes=60
+        )
+        assert set(fields) == set(_TA_FIELD_NAMES)
 
     async def test_no_bars_yields_all_none(self, storage: SQLiteStorageAdapter) -> None:
         await _seed_prices(storage)

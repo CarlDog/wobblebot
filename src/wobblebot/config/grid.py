@@ -118,11 +118,8 @@ class GridConfig(BaseModel):
         override = self.coins.get(symbol.upper())
         if override is not None:
             return override
-        return CoinGridConfig(
-            spacing_percentage=self.default.spacing_percentage,
-            levels_above=self.default.levels_above,
-            levels_below=self.default.levels_below,
-            order_size_usd=self.default.order_size_usd,
-            counter_target_mode=self.default.counter_target_mode,
-            enabled=True,
-        )
+        # Splat, not per-field enumeration: a hand-copied field list here
+        # silently reverts any newly-added GridLevels field to its class
+        # default for every coin without an override (the ADR-029
+        # counter_target_mode implementation note).
+        return CoinGridConfig(**self.default.model_dump(), enabled=True)

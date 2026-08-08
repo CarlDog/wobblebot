@@ -97,8 +97,23 @@ class AuditorExchangeAdapter(MockExchangeAdapter):
     else (balance checks, fees, trade history) is inherited unchanged.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+    def __init__(
+        self,
+        starting_balances: dict[str, Decimal] | None = None,
+        starting_prices: dict[Symbol, Decimal] | None = None,
+        fee_rate: Decimal | None = None,
+    ) -> None:
+        # Mirrors the parent's keyword signature so mypy checks call
+        # sites; fee_rate=None defers to the parent's default rather
+        # than duplicating its private constant here.
+        if fee_rate is None:
+            super().__init__(starting_balances=starting_balances, starting_prices=starting_prices)
+        else:
+            super().__init__(
+                starting_balances=starting_balances,
+                starting_prices=starting_prices,
+                fee_rate=fee_rate,
+            )
         self._in_place_order = False
 
     async def place_order(self, order: Order) -> Order:
