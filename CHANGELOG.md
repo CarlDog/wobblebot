@@ -22,6 +22,15 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
+### P3 — ops/observability/UX, STARTED (2026-08-08)
+
+- **Slice 1 — stale-heartbeat Discord push alert.** `cli/operator` grows a third
+  background loop that checks every daemon's heartbeat freshness each minute (reusing
+  `/health`'s exact staleness definition) and pushes Discord alerts on stale
+  transitions — `critical` for the `restart:"no"` money-path daemons (live/harvest),
+  `warning` for the rest, 6h repeat while down, recovery notice on return. Closes the
+  gap that let the 2026-07-20 NAS reboot leave live+harvest dead for 11 unnoticed days.
+
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 
 Full P2 phase of `docs/release/v1.1/README.md`'s plan, six slices, per-slice receipts

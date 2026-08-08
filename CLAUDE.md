@@ -20,8 +20,9 @@ rule); this section is a pointer, not a changelog.
   full advisor-architecture replacement warrant the major bump; see `CHANGELOG.md`).
   **P1 is COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2, merged
   2026-08-01). **P2 (data-infrastructure spine) is COMPLETE** (2026-08-07 → 2026-08-08,
-  slices 1–6; slice 6 = ADR-029 counter-order target). P3 (ops/UX) and P4
-  (advisor-feedback, data-gated) remain unstarted. Phase 9 (Kraken Securities equities)
+  slices 1–6; slice 6 = ADR-029 counter-order target). **P3 (ops/UX) is IN PROGRESS**
+  (started 2026-08-08; slice 1 = stale-heartbeat Discord push alert). P4
+  (advisor-feedback, data-gated) remains unstarted. Phase 9 (Kraken Securities equities)
   follows, not immediately after this merge.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04

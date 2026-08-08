@@ -52,6 +52,16 @@ overlapping, inconsistent staleness definitions.
 unfreezes) — no additional baseline period or new infrastructure required
 on top of that, unlike the anomaly detector below.
 
+**Shipped 2026-08-08 (P3 slice 1)** — built to this design with one
+structural choice: a third sibling loop (`_heartbeat_alert_loop`, 60s
+cadence) alongside the forwarder + TTL-expirer tasks rather than
+literally inside the 2s forwarder cycle — same process, same notify()→
+forwarder plumbing, but freshness reads don't open every DB 30×/min
+(thresholds carry ≥5min slack; a 60s check detects within a minute).
+Tracker state is deliberately in-memory: a restarted operator daemon
+re-alerts anything already down on its first check — which IS the
+NAS-reboot scenario this exists for.
+
 ### Anomaly detector daemon — cross-DB outlier watcher
 
 **What:** a new long-running daemon (``cli/anomaly`` or similar)
