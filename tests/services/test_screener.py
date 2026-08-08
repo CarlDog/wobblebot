@@ -9,10 +9,10 @@ returns None (n/a) on thin overlap rather than a fabricated number.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 
+from tests.fixtures import bars_from_closes
 from wobblebot.domain.value_objects import OHLCBar, Symbol
 from wobblebot.services.screener import (
     MIN_BARS,
@@ -31,27 +31,8 @@ _T0 = datetime(2026, 7, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def _bars(symbol: Symbol, closes: list[float]) -> list[OHLCBar]:
-    out = []
-    prev = closes[0]
-    for i, close in enumerate(closes):
-        high = max(prev, close) + 0.5
-        low = min(prev, close) - 0.5
-        out.append(
-            OHLCBar(
-                symbol=symbol,
-                interval_minutes=60,
-                opened_at=_T0 + timedelta(hours=i),
-                open=Decimal(str(prev)),
-                high=Decimal(str(high)),
-                low=Decimal(str(low)),
-                close=Decimal(str(close)),
-                vwap=Decimal("0"),
-                volume=Decimal("1"),
-                count=1,
-            )
-        )
-        prev = close
-    return out
+    """Module binding of the shared builder: ±0.5 spread, this file's epoch."""
+    return bars_from_closes(closes, symbol=symbol, start=_T0, spread=0.5)
 
 
 def _metrics(name: str, vol: float, flat: float, atr: float) -> SymbolMetrics:

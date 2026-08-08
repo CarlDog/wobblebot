@@ -22,11 +22,11 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import StubOHLCAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.observe import _BAR_TOPUP_SEED_BARS, _top_up_bars
 from wobblebot.config.cli import ObserveConfig
 from wobblebot.domain.value_objects import OHLCBar, Symbol
-from wobblebot.ports.exceptions import ExchangeError
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -60,25 +60,9 @@ def _make_bar(opened_at: datetime, symbol: Symbol = _BTC) -> OHLCBar:
     )
 
 
-class _StubAdapter:
-    """Returns one canned page then empty; records get_ohlc calls."""
-
-    def __init__(self, bars: list[OHLCBar] | None = None, *, raise_error: bool = False) -> None:
-        self._bars = list(bars or [])
-        self._raise = raise_error
-        self.calls: list[tuple[Symbol, int, datetime | None]] = []
-
-    async def get_ohlc(self, symbol, interval_minutes=1, since=None):  # type: ignore[no-untyped-def]
-        self.calls.append((symbol, interval_minutes, since))
-        if self._raise:
-            raise ExchangeError("kraken unreachable")
-        page, self._bars = self._bars, []
-        return page
-
-
 class TestTopUpBars:
     async def test_seed_path_fetches_ta_window(self, storage: SQLiteStorageAdapter) -> None:
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _top_up_bars(adapter, storage, [_BTC], now=_NOW)  # type: ignore[arg-type]
         assert len(adapter.calls) == 1
         _, interval, since = adapter.calls[0]
@@ -88,7 +72,7 @@ class TestTopUpBars:
     async def test_resume_path_uses_cursor(self, storage: SQLiteStorageAdapter) -> None:
         cursor = _NOW.replace(minute=0) - 5 * _HOUR
         await storage.save_ohlc_bars([_make_bar(cursor)])
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _top_up_bars(adapter, storage, [_BTC], now=_NOW)  # type: ignore[arg-type]
         assert adapter.calls[0][2] == cursor
 
@@ -96,7 +80,7 @@ class TestTopUpBars:
         """Newest completed bar (11:00 for a 12:30 now) already stored:
         nothing to fetch, zero API burn."""
         await storage.save_ohlc_bars([_make_bar(_NOW.replace(minute=0) - _HOUR)])
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _top_up_bars(adapter, storage, [_BTC], now=_NOW)  # type: ignore[arg-type]
         assert adapter.calls == []
 
@@ -106,7 +90,7 @@ class TestTopUpBars:
         write path would freeze the partial values forever."""
         completed = _make_bar(_NOW.replace(minute=0) - _HOUR)
         in_progress = _make_bar(_NOW.replace(minute=0))
-        adapter = _StubAdapter([completed, in_progress])
+        adapter = StubOHLCAdapter([completed, in_progress])
         await _top_up_bars(adapter, storage, [_BTC], now=_NOW)  # type: ignore[arg-type]
         stored = await storage.get_ohlc_bars(_BTC, 60)
         assert [b.opened_at for b in stored] == [completed.opened_at]
@@ -114,7 +98,7 @@ class TestTopUpBars:
     async def test_adapter_error_absorbed_per_symbol(
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
-        adapter = _StubAdapter(raise_error=True)
+        adapter = StubOHLCAdapter(raise_error=True)
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
             await _top_up_bars(adapter, storage, [_BTC, _ETH], now=_NOW)  # type: ignore[arg-type]
         # Both symbols attempted despite the first failing.

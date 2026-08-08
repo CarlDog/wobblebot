@@ -21,9 +21,11 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import grid_config as shared_grid_config
+from tests.fixtures import safety_config as shared_safety_config
 from tools.auditor import AuditorExchangeAdapter, _replay_symbol
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.config.grid import GridConfig, GridLevels
+from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.models import Order
 from wobblebot.domain.value_objects import (
@@ -68,23 +70,15 @@ def _bar(index: int, o: str, h: str, l: str, c: str) -> OHLCBar:  # noqa: E741
 
 
 def _grid_config(spacing: str = "1.0") -> GridConfig:
-    return GridConfig(
-        default=GridLevels(
-            spacing_percentage=Decimal(spacing),
-            levels_above=1,
-            levels_below=1,
-            order_size_usd=Decimal("10"),
-        ),
-        coins={},
-    )
+    """Module binding of the shared builder: minimal 1+1 grid."""
+    return shared_grid_config(spacing_pct=spacing, above=1, below=1)
 
 
 def _safety_config(daily: str = "1000000000") -> SafetyConfig:
-    return SafetyConfig(
-        max_total_exposure_usd=Decimal("1000"),
-        max_daily_spend_usd=Decimal(daily),
-        max_per_coin_exposure_usd=Decimal("1000"),
-        max_orders_per_coin=20,
+    """Module binding of the shared builder (sell-guard values = schema
+    defaults, so behavior matches the previous hand-rolled config)."""
+    return shared_safety_config(
+        max_total="1000", max_daily=daily, max_per_coin="1000", max_orders=20
     )
 
 
@@ -166,15 +160,7 @@ class TestReplaySymbol:
         refuses the second at layout; the neutered config places both.
         seed_base=1 keeps the SELL leg placeable so balance refusals
         can't pollute the count."""
-        two_below = GridConfig(
-            default=GridLevels(
-                spacing_percentage=Decimal("1.0"),
-                levels_above=1,
-                levels_below=2,
-                order_size_usd=Decimal("10"),
-            ),
-            coins={},
-        )
+        two_below = shared_grid_config(spacing_pct="1.0", above=1, below=2)
         flat = [_bar(0, "100", "100.2", "99.8", "100")]
         tight = await _replay_symbol(
             flat,
