@@ -449,8 +449,22 @@ the detail; the full backlog index is
    ~95s) through the operator's real 3% config — 1 completed cycle +$0.13,
    offside park/resume exercised. Rec-scoring half stays P4.
    Real-money cost $0.00. Test count 2727 → 2733.
-   Remaining P2 slices in strict order: screener → counter-order target
-   (ADR-029 already written).
+
+   **Slice 5 — `cli/screener` v1** ✅ **2026-08-08**: rank observed symbols by
+   grid-suitability, per the blueprint (no ADR, no DB table, log-table output,
+   fully offline in v1 — no credentials). New `ScreenerConfig` section +
+   `StoragePort.list_ohlc_symbols` discovery read + `services/screener.py`
+   (rank-based composite; vol + ATR% as distance-from-band-center — the
+   non-monotonic read; flatness descending; Pearson-from-scratch correlation as
+   a post-score annotation, n/a under 50 aligned bars, self-correlation
+   excluded). Live-verified on the full 11-symbol lineup after a `--resume`
+   1h top-up: default band centers landed mid-distribution of the real vol
+   spread (0.30–0.72%); SOL ranked #1, ADA last (hottest + trendiest), ETH–BTC
+   correlation +0.86, POL the diversifier at +0.30. v1.5 (spread/volume) and
+   v2 (RSI/ADX/BB) recorded, not built. Real-money cost $0.00.
+   Test count 2733 → 2756.
+   Remaining P2: counter-order target (ADR-029 already written) — then P2 is
+   complete.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

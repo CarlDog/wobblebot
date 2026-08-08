@@ -40,7 +40,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Seventeen surfaces (fifteen `cli/` + two `tools/`). One-line index; full behavior in each
+Twenty surfaces (sixteen `cli/` + four `tools/`). One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
@@ -58,8 +58,11 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.web` — FastAPI dashboard (ADR-016/017). Read-mostly; mutations firewalled via `pending_commands`. Needs `WOBBLEBOT_WEB_SESSION_SECRET`.
 - `cli.recalibrate` — scale USD-denominated knobs to a new target balance (operator-initiated; dry-run default).
 - `cli.maintenance` — VACUUM / prune+archive / backup daemon (three concurrent scheduled tasks).
+- `cli.screener` — rank observed symbols by grid-suitability (P2 slice 5). Read-only, offline, advisory (ADR-002); log-table output.
 - `tools/first_real_trade.py` — one-shot live round-trip diagnostic.
 - `tools/run_cloud_check.py` — one-shot cloud-LLM smoke test (`--provider`/`--role`/`--model`/`--dry-run`).
+- `tools/import_kraken_history.py` — stream the local OHLCVT dump into `ohlc_bars`/`price_snapshots` (P2 slice 2; the only deep-history path).
+- `tools/auditor.py` — replay `settings.yml` through the real `GridEngine` over stored bars (ADR-028; directional, not exact).
 
 ### Operator handoff: from dry-run to live trading
 
@@ -219,7 +222,9 @@ to every project. The wobblebot-specific items below extend it:
   3.4b, cli/harvest at Stage 4.2, cli/operator at Stage 5.6 each
   carried their own deprived-env coverage in their slice work;
   cli/web, cli/recalibrate, cli/maintenance — plus the pre-existing
-  cli/news + cli/lurker (observe alias) — round out the 15.
+  cli/news + cli/lurker (observe alias) — round out the original 15;
+  cli/screener (P2 slice 5, 2026-08-08) makes it 16 — it exits 2 on a
+  missing `screener:` section / bad --config and needs no credentials.
   When new entry points ship, add them to this walkthrough.
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
