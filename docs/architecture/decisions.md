@@ -1908,6 +1908,15 @@ real engine's safety caps. Distinct from `cli/shadow` (ADR-008).
 **Soak note:** P2 (post-tag, strict order — after the OHLC/import spine); `v1.1` branch, NOT
 in the frozen v1.0 soak image.
 
+**Implementation note (2026-08-08, shipped):** correction 1's "or override `_check_safety`
+to use bar-time" alternative turned out to be a trap and was NOT taken — replayed orders
+persist with wall-clock `created_at`, so a bar-time `today_start` would match every order
+placed in the whole replay and the cap would accumulate monotonically (strictly worse).
+The implementation neuters `max_daily_spend_usd` only (huge value via `model_copy`; the
+field validates `gt=0`). Every other cap AND the ADR-032 sell guard (which postdates this
+ADR) run exactly as configured: they read replay-internal state, not the wall clock, and
+are part of the config under audit.
+
 **References:**
 - `docs/release/v1.1/README.md` — P2 "Auditor — config-replay half" row + the P2 resolved
   blueprint (auditor corrections 1–3).

@@ -140,6 +140,32 @@ def identity(value: T) -> T:
     return value
 
 
+def parse_date_arg(raw: str) -> datetime:
+    """Parse an ISO 8601 date or datetime; default tz to UTC if naive.
+
+    Accepts bare dates (``2026-04-01``), full ISO 8601 with ``Z`` or
+    ``+HH:MM`` offsets. Bare dates become midnight UTC. Shared by
+    cli/observe's backfill flags and tools/auditor's window flags.
+    """
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def parse_days_arg(raw: str) -> int:
+    """Parse ``--days N`` — a positive integer count of days back from now."""
+    try:
+        days = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid --days {raw!r}; use a positive integer day count"
+        ) from exc
+    if days <= 0:
+        raise argparse.ArgumentTypeError(f"--days must be positive, got {days}")
+    return days
+
+
 _INTERVAL_SUFFIX_MINUTES: dict[str, int] = {
     "m": 1,
     "h": 60,

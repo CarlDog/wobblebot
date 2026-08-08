@@ -19,7 +19,12 @@ from datetime import UTC, datetime, timedelta
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import partition_or_exit, safe_shutdown
+from wobblebot.cli._common import parse_date_arg as _parse_date_arg
+from wobblebot.cli._common import parse_days_arg as _parse_days_arg
+from wobblebot.cli._common import (
+    partition_or_exit,
+    safe_shutdown,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.domain.value_objects import Symbol
@@ -32,31 +37,6 @@ from wobblebot.services.backfill import (
 )
 
 _LOGGER = logging.getLogger("wobblebot.cli.observe_backfill")
-
-
-def _parse_date_arg(raw: str) -> datetime:
-    """Parse an ISO 8601 date or datetime; default tz to UTC if naive.
-
-    Accepts bare dates (``2026-04-01``), full ISO 8601 with ``Z`` or
-    ``+HH:MM`` offsets. Bare dates become midnight UTC.
-    """
-    parsed = datetime.fromisoformat(raw)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
-
-
-def _parse_days_arg(raw: str) -> int:
-    """Parse ``--days N`` — a positive integer count of days back from now."""
-    try:
-        days = int(raw)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"invalid --days {raw!r}; use a positive integer day count"
-        ) from exc
-    if days <= 0:
-        raise argparse.ArgumentTypeError(f"--days must be positive, got {days}")
-    return days
 
 
 def _parse_rate_limit_arg(raw: str) -> float:

@@ -46,6 +46,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    parse_days_arg,
     parse_interval_arg,
     parse_intervals_arg,
     parse_symbol_csv,
@@ -54,11 +55,7 @@ from wobblebot.cli._common import (
     run_with_clean_exit,
     safe_shutdown,
 )
-from wobblebot.cli.observe_backfill import (
-    _backfill_main,
-    _parse_days_arg,
-    _parse_rate_limit_arg,
-)
+from wobblebot.cli.observe_backfill import _backfill_main, _parse_rate_limit_arg
 from wobblebot.config.cli import ObserveConfig
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -477,7 +474,7 @@ def main() -> int:
     )
     since_group.add_argument(
         "--days",
-        type=_parse_days_arg,
+        type=parse_days_arg,
         default=None,
         help=(
             "Backfill lower bound as a day count back from now — shorthand "
