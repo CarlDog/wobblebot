@@ -25,12 +25,10 @@ exception message, and returns. The operator can re-run with
 ``--since <last_opened_at>`` to resume — ``ohlc_bars``'s UNIQUE
 constraint makes any overlap a no-op.
 
-v1.1 limitation: ``price_snapshots`` has no UNIQUE constraint, so
-re-running an overlapping window produces duplicate snapshots. The
-``ohlc_bars`` half stays idempotent. A future cleanup will add a
-UNIQUE constraint + migration; for now operators should re-run from
-the cursor returned in ``BackfillResult.last_opened_at`` rather than
-re-running from the original ``--since``.
+Both write targets are idempotent: ``ohlc_bars`` via its declared
+UNIQUE constraint, and ``price_snapshots`` via the UNIQUE index added
+by ``_migrate_price_snapshots_unique`` (2026-05-25 backfill follow-up)
+— re-running an overlapping window is a no-op for both.
 """
 
 from __future__ import annotations
@@ -49,8 +47,9 @@ from wobblebot.ports.storage import StoragePort
 
 # Kraken's public-API free-tier limit is roughly 1 call/second. 1.0s
 # is the safe default; operators with a paid tier or a more permissive
-# venue can lower this through the kwarg.
-_DEFAULT_RATE_LIMIT_SECONDS: float = 1.0
+# venue can lower this through the kwarg. Public so cli/observe's
+# --rate-limit-seconds flag shares the one default instead of copying it.
+DEFAULT_RATE_LIMIT_SECONDS: float = 1.0
 
 # Internal safety cap on iteration count. Each iteration fetches up to
 # 720 bars, so ~10,000 iterations covers 7,200,000 bars — well beyond
@@ -123,7 +122,7 @@ async def backfill_range(  # pylint: disable=too-many-arguments,too-many-positio
     since: datetime,
     until: datetime | None = None,
     interval_minutes: int = 1,
-    rate_limit_seconds: float = _DEFAULT_RATE_LIMIT_SECONDS,
+    rate_limit_seconds: float = DEFAULT_RATE_LIMIT_SECONDS,
     progress_callback: ProgressCallback | None = None,
 ) -> BackfillResult:
     """Walk ``[since, until]`` for ``symbol``, writing OHLC + snapshots.
@@ -248,7 +247,12 @@ async def backfill_range(  # pylint: disable=too-many-arguments,too-many-positio
     )
 
 
-__all__ = ("BackfillResult", "ProgressCallback", "backfill_range")
+__all__ = (
+    "DEFAULT_RATE_LIMIT_SECONDS",
+    "BackfillResult",
+    "ProgressCallback",
+    "backfill_range",
+)
 
 
 # Helpers exposed for unit testing -- keep _private to discourage

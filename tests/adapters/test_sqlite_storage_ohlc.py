@@ -143,3 +143,33 @@ class TestGetLatestObservedAt:
         latest = await storage.get_latest_observed_at(_BTC)
         assert latest is not None
         assert latest.tzinfo is UTC
+
+
+class TestGetLatestOhlcOpenedAt:
+    """P2 slice 1, item 5 — the --resume cursor (interval-scoped)."""
+
+    async def test_fresh_db_returns_none(self, storage: SQLiteStorageAdapter) -> None:
+        assert await storage.get_latest_ohlc_opened_at(_BTC, 1) is None
+
+    async def test_returns_max_opened_at(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(minutes_offset=i) for i in (0, 7, 3)])
+        latest = await storage.get_latest_ohlc_opened_at(_BTC, 1)
+        assert latest == _T0 + timedelta(minutes=7)
+
+    async def test_scoped_by_interval(self, storage: SQLiteStorageAdapter) -> None:
+        """A 1h backfill's progress must never mask an unfinished 1m one."""
+        await storage.save_ohlc_bars([_make_bar(interval_minutes=60, minutes_offset=120)])
+        assert await storage.get_latest_ohlc_opened_at(_BTC, 1) is None
+        assert await storage.get_latest_ohlc_opened_at(_BTC, 60) == _T0 + timedelta(minutes=120)
+
+    async def test_scoped_by_symbol(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars([_make_bar(symbol=_ETH)])
+        assert await storage.get_latest_ohlc_opened_at(_BTC, 1) is None
+
+    async def test_returned_datetime_is_utc(self, storage: SQLiteStorageAdapter) -> None:
+        """The resolver compares against a tz-aware `until`; a naive
+        return would raise on comparison."""
+        await storage.save_ohlc_bars([_make_bar()])
+        latest = await storage.get_latest_ohlc_opened_at(_BTC, 1)
+        assert latest is not None
+        assert latest.tzinfo is UTC

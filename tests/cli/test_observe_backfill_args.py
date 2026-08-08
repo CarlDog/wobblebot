@@ -15,7 +15,13 @@ from datetime import UTC, datetime, timezone
 
 import pytest
 
-from wobblebot.cli.observe import _parse_date_arg, _parse_interval_arg
+from wobblebot.cli.observe import (
+    _parse_date_arg,
+    _parse_days_arg,
+    _parse_interval_arg,
+    _parse_intervals_arg,
+    _parse_rate_limit_arg,
+)
 from wobblebot.domain.value_objects import OHLCBar
 
 pytestmark = pytest.mark.unit
@@ -41,6 +47,38 @@ class TestParseDateArg:
     def test_invalid_string_raises(self) -> None:
         with pytest.raises(ValueError):
             _parse_date_arg("not-a-date")
+
+
+class TestParseDaysArg:
+    @pytest.mark.parametrize("raw,expected", [("1", 1), ("30", 30), ("180", 180)])
+    def test_accepts_positive_integers(self, raw: str, expected: int) -> None:
+        assert _parse_days_arg(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "-30"])
+    def test_rejects_non_positive(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="positive"):
+            _parse_days_arg(raw)
+
+    @pytest.mark.parametrize("raw", ["abc", "1.5", "", "30d"])
+    def test_rejects_non_integers(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="positive integer"):
+            _parse_days_arg(raw)
+
+
+class TestParseRateLimitArg:
+    @pytest.mark.parametrize("raw,expected", [("0", 0.0), ("0.5", 0.5), ("1", 1.0), ("2.5", 2.5)])
+    def test_accepts_non_negative_numbers(self, raw: str, expected: float) -> None:
+        assert _parse_rate_limit_arg(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["-1", "-0.5"])
+    def test_rejects_negative(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 0"):
+            _parse_rate_limit_arg(raw)
+
+    @pytest.mark.parametrize("raw", ["abc", "", "1s"])
+    def test_rejects_garbage(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="non-negative number"):
+            _parse_rate_limit_arg(raw)
 
 
 class TestParseIntervalArg:
@@ -90,3 +128,28 @@ class TestParseIntervalArg:
         # OHLCBar set.
         for raw in ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"):
             assert _parse_interval_arg(raw) in OHLCBar.ALLOWED_INTERVALS
+
+
+class TestParseIntervalsArg:
+    def test_parses_comma_list(self) -> None:
+        assert _parse_intervals_arg("1m,1h") == [1, 60]
+
+    def test_dedupes_preserving_order(self) -> None:
+        assert _parse_intervals_arg("1h,1m,60,1h") == [60, 1]
+
+    def test_single_value_ok(self) -> None:
+        assert _parse_intervals_arg("4h") == [240]
+
+    def test_tolerates_whitespace_and_empty_pieces(self) -> None:
+        assert _parse_intervals_arg(" 1m , 1h ,") == [1, 60]
+
+    @pytest.mark.parametrize("raw", ["", " ", ","])
+    def test_rejects_empty(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="empty"):
+            _parse_intervals_arg(raw)
+
+    def test_rejects_bad_element(self) -> None:
+        """One bad element fails the whole flag — matching --interval's
+        strictness rather than silently dropping it."""
+        with pytest.raises(argparse.ArgumentTypeError, match="allowed set"):
+            _parse_intervals_arg("1m,7m")

@@ -15,7 +15,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wobblebot.cli.observe import _log_backfill_result
+from wobblebot.cli.observe import (
+    _log_backfill_result,
+    _make_progress_logger,
+    _warn_if_horizon_truncated,
+)
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.backfill import BackfillResult
 
@@ -78,6 +82,35 @@ class TestSuccessLogRendering:
         assert getattr(rec, "snapshots_inserted", None) == 362
 
 
+class TestProgressLogger:
+    """P2 slice 1, item 3 — the per-chunk progress line every Nth request."""
+
+    @pytest.mark.asyncio
+    async def test_logs_on_every_tenth_request(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            await callback(_make_result(requests_made=10, bars_fetched=7200))
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "7200 bars so far" in rendered
+        assert "BTC/USD" in rendered
+        assert _LAST.isoformat() in rendered  # the cursor
+
+    @pytest.mark.asyncio
+    async def test_silent_between_multiples(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            for n in (1, 3, 7, 9, 11, 19):
+                await callback(_make_result(requests_made=n))
+        assert not caplog.records
+
+    @pytest.mark.asyncio
+    async def test_no_cursor_renders_na(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            await callback(_make_result(requests_made=10, last_opened_at=None))
+        assert any("n/a" in r.getMessage() for r in caplog.records)
+
+
 class TestErrorLogRendering:
     def test_error_message_includes_resume_cursor(self, caplog: pytest.LogCaptureFixture) -> None:
         """The whole point of the error path: tell the operator what
@@ -128,3 +161,40 @@ class TestErrorLogRendering:
             )
         rendered = " ".join(r.getMessage() for r in caplog.records)
         assert "none" in rendered.lower()
+
+
+class TestHorizonTruncationWarn:
+    """P2 slice 1, item 7 — WARN when Kraken's retained history falls
+    materially short of the requested window."""
+
+    def _wide_result(self, *, bars_fetched: int) -> BackfillResult:
+        # 30-day window at 1m => ~43,200 expected bars.
+        return _make_result(
+            requested_since=_UNTIL - timedelta(days=30),
+            bars_fetched=bars_fetched,
+        )
+
+    def test_materially_short_result_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(self._wide_result(bars_fetched=720))
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "720 bars" in rendered
+        assert "retained history" in rendered
+
+    def test_full_result_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(self._wide_result(bars_fetched=43_000))
+        assert not caplog.records
+
+    def test_small_window_is_silent_even_when_short(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A 6h window implies ~360 bars at 1m but only 90 at 4h — under
+        the 100-expected floor, boundary noise dominates; never warn."""
+        short = _make_result(interval_minutes=240, bars_fetched=10)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(short)
+        assert not caplog.records
+
+    def test_success_log_path_invokes_the_check(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _log_backfill_result(_BTC, self._wide_result(bars_fetched=720))
+        assert any("retained history" in r.getMessage() for r in caplog.records)

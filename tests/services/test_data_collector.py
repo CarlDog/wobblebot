@@ -165,6 +165,11 @@ class _FailingStorage(StoragePort):
     async def get_latest_observed_at(self, symbol):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def get_latest_ohlc_opened_at(  # type: ignore[no-untyped-def]
+        self, symbol, interval_minutes
+    ):
+        raise NotImplementedError
+
     async def save_news_item(self, item):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

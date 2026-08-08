@@ -382,6 +382,20 @@ the detail; the full backlog index is
    exceeds both cache TTLs and no deployed path reaches Anthropic. Real-money cost $0.00
    (pricing pages re-verified, no API calls). Test count 2582 → 2603.
 
+4. **P2 — data-infrastructure spine: IN PROGRESS.** Slice 1 — backfill ergonomics
+   ✅ **2026-08-07**: all seven polish items from `adaptive-grid.md`'s catalog, one
+   focused commit each, full gate green per commit (`--days`, `--catchup`/`--since auto`,
+   per-chunk progress logging, `--rate-limit-seconds`, `--resume` on a new
+   interval-scoped `StoragePort.get_latest_ohlc_opened_at` cursor, `--intervals`,
+   horizon-truncation WARN). Live scratch-DB verification surfaced a material fact the
+   scenario catalog missed: **Kraken's live OHLC endpoint retains only ~720 bars per
+   interval** (an 8-day 1m request returned 721 bars; the new WARN fired exactly as
+   designed) — deep history is import-dump-only, confirming slice 2's necessity.
+   Real-money cost $0.00 (public read-only endpoints). Test count 2609 → 2657.
+   Remaining P2 slices in strict order: import dump (+ `OHLCBar` validator +
+   `get_ohlc_bars` read-side) → OHLC+TA → auditor config-replay → screener →
+   counter-order target (ADR-028/029 already written).
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
