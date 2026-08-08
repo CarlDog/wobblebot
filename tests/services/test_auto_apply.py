@@ -27,12 +27,14 @@ def _grid(
     levels_above: int = 3,
     levels_below: int = 3,
     order_size: str = "10",
+    counter_target_mode: str = "spacing_up",
 ) -> GridLevels:
     return GridLevels(
         spacing_percentage=Decimal(spacing),
         levels_above=levels_above,
         levels_below=levels_below,
         order_size_usd=Decimal(order_size),
+        counter_target_mode=counter_target_mode,  # type: ignore[arg-type]
     )
 
 
@@ -329,6 +331,17 @@ class TestKeyWhitelist:
         assert result.rejected_keys[0].key == "orange_juice_per_tick"
         assert "not whitelisted" in result.rejected_keys[0].reason
 
+    def test_counter_target_mode_never_auto_applies(self) -> None:
+        """ADR-029 pin: counter_target_mode is non-numeric, so it can
+        never enter _WHITELISTED_NUMERIC_KEYS — the gate rejects it by
+        construction and the knob stays operator-approval-only."""
+        suggestion = _suggestion(recommendations={"counter_target_mode": "top_sell"})
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.applied_keys == []
+        assert len(result.rejected_keys) == 1
+        assert result.rejected_keys[0].key == "counter_target_mode"
+        assert "not whitelisted" in result.rejected_keys[0].reason
+
     def test_mixed_keys_partial_apply(self) -> None:
         """One whitelisted key passes, one level key rejected, one
         unknown rejected. Operator should see all three outcomes."""
@@ -523,6 +536,14 @@ class TestProposedGrid:
         result = evaluate_auto_apply(suggestion, current, _auto_apply(), symbol="BTC")
         assert result.proposed_grid.levels_above == 3
         assert result.proposed_grid.levels_below == 3
+
+    def test_preserves_counter_target_mode(self) -> None:
+        """ADR-029 pin: an operator-set top_sell rides through a numeric
+        auto-apply untouched (model_copy merges applied keys only)."""
+        current = _grid(counter_target_mode="top_sell")
+        suggestion = _suggestion(recommendations={"spacing_percentage": 1.05})
+        result = evaluate_auto_apply(suggestion, current, _auto_apply(), symbol="BTC")
+        assert result.proposed_grid.counter_target_mode == "top_sell"
 
 
 class TestIsCleanApply:

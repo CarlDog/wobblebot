@@ -58,6 +58,16 @@ grid:
     levels_above: 3           # SELL levels above the anchor
     levels_below: 3           # BUY levels below the anchor
     order_size_usd: 5.0       # USD budget per order; per-pair quantization happens at submit
+    # Where a filled BUY's counter SELL goes (ADR-029). `spacing_up` = one
+    # step above the fill (classic grid, more + smaller cycles). `top_sell` =
+    # the top of the band (sell into strength; fewer + larger cycles). SELL
+    # fills always counter one step down in both modes. CAUTION with
+    # top_sell: in a grinding downtrend the SELLs cluster at the ceiling and
+    # don't fill until a recovery, so base inventory accumulates — see
+    # docs/release/v1.0-known-limitations.md. Never auto-applied: the
+    # advisor's auto-apply gate only handles numeric keys, so changing this
+    # is always an operator edit.
+    counter_target_mode: spacing_up
 
   # Multi-coin runs put every configured alt on the uniform `default` above —
   # no per-coin spacing overrides. Add an entry here only to shadow `default`

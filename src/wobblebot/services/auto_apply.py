@@ -34,6 +34,9 @@ Gate rules (per ADR-007 + the AutoApplyConfig docstring):
    tolerates int/Decimal/float on the proposal side.
 
 Anything not in the whitelist is rejected with ``"key not whitelisted"``.
+That covers non-numeric grid knobs by construction — ``counter_target_mode``
+(ADR-029) is a string enum, so it can never enter the numeric whitelist and
+is operator-approval-only; no dedicated gate code exists or is needed.
 
 The result also carries a ``proposed_grid`` — the current ``GridLevels``
 with applied keys merged in. cli/apply uses this to render the unified

@@ -88,6 +88,19 @@ class TestGridLevelsValidation:
         with pytest.raises(ValidationError):
             levels.spacing_percentage = Decimal("2.0")  # type: ignore[misc]
 
+    def test_counter_target_mode_defaults_spacing_up(self) -> None:
+        assert _default_levels().counter_target_mode == "spacing_up"
+
+    def test_counter_target_mode_invalid_value_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="counter_target_mode"):
+            GridLevels(
+                spacing_percentage=Decimal("1.0"),
+                levels_above=5,
+                levels_below=5,
+                order_size_usd=Decimal("10.0"),
+                counter_target_mode="bottom_buy",  # type: ignore[arg-type]
+            )
+
 
 class TestCoinGridConfig:
     def test_enabled_defaults_true(self) -> None:
@@ -126,6 +139,22 @@ class TestGridConfigForCoin:
         assert result.spacing_percentage == Decimal("1.0")
         assert result.levels_above == 5
         assert result.enabled is True
+
+    def test_counter_target_mode_passes_through_for_coin(self) -> None:
+        # Regression (ADR-029 implementation note): for_coin enumerates
+        # fields explicitly — a field missing from that constructor call
+        # silently reverts to its class default for every coin without a
+        # per-coin entry.
+        cfg = GridConfig(
+            default=GridLevels(
+                spacing_percentage=Decimal("1.0"),
+                levels_above=5,
+                levels_below=5,
+                order_size_usd=Decimal("10.0"),
+                counter_target_mode="top_sell",
+            )
+        )
+        assert cfg.for_coin("BTC").counter_target_mode == "top_sell"
 
     def test_per_coin_override_shadows_default(self) -> None:
         cfg = GridConfig(

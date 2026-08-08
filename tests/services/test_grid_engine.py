@@ -205,6 +205,58 @@ class TestFillsAndCounters:
         # Counter BUY = 50500 - 500 = 50000
         assert Decimal("50000") in buys
 
+    async def test_top_sell_buy_fill_counter_goes_to_grid_ceiling(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # ADR-029: under top_sell the BUY-fill counter SELL lands at the
+        # band ceiling (51500), coexisting with the layout SELL already
+        # there — never one spacing step up (50000).
+        exchange = _exchange()
+        engine = GridEngine(
+            exchange,
+            storage,
+            _grid_config(counter_target_mode="top_sell"),
+            _safety_config(),
+        )
+
+        await engine.step(BTC_USD)  # init: BUYs at 48500/49000/49500
+        exchange.set_price(BTC_USD, Decimal("49400"))  # fill the 49500 BUY
+
+        result = await engine.step(BTC_USD)
+
+        assert result.fills == 1
+        assert result.counters_placed == 1
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        sells = [o.price.amount for o in opens if o.side is OrderSide.SELL]
+        assert sells.count(Decimal("51500")) == 2  # layout SELL + counter
+        assert Decimal("50000") not in sells  # the spacing_up target
+
+    async def test_top_sell_sell_fill_counter_unchanged(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # ADR-029 is asymmetric: SELL-fill counters stay one spacing down.
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("1")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(
+            exchange,
+            storage,
+            _grid_config(counter_target_mode="top_sell"),
+            _safety_config(),
+        )
+
+        await engine.step(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("50600"))  # fill the 50500 SELL
+
+        result = await engine.step(BTC_USD)
+
+        assert result.fills == 1
+        assert result.counters_placed == 1
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        buys = sorted(o.price.amount for o in opens if o.side is OrderSide.BUY)
+        assert Decimal("50000") in buys
+
     async def test_round_trip_cycle_returns_to_initial_layout(
         self, storage: SQLiteStorageAdapter
     ) -> None:
@@ -1302,6 +1354,31 @@ class TestPendingCounters:
         opens = await storage.get_open_orders(symbol=BTC_USD)
         sells = [o for o in opens if o.side is OrderSide.SELL]
         assert any(o.price.amount == Decimal("50000") for o in sells)
+
+    async def test_recovered_fill_counter_honors_top_sell(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        # ADR-029 implementation note: the startup-recovery counter path
+        # (ADR-023) must honor counter_target_mode too — a recovered BUY
+        # fill's SELL goes to the band ceiling (51500), not 50000.
+        recovered = self._recovered_order()
+        await storage.save_order(recovered)
+        await self._seed_grid_state(storage)
+        engine = GridEngine(
+            _exchange(price="49500"),
+            storage,
+            _grid_config(counter_target_mode="top_sell"),
+            _safety_config(),
+            pending_counters=[recovered.id],
+        )
+
+        result = await engine.step(BTC_USD)
+
+        assert result.placed == 1
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        sells = [o for o in opens if o.side is OrderSide.SELL]
+        assert any(o.price.amount == Decimal("51500") for o in sells)
+        assert not any(o.price.amount == Decimal("50000") for o in sells)
 
     async def test_different_symbol_pending_counter_untouched(
         self, storage: SQLiteStorageAdapter

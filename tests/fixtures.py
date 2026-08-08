@@ -23,6 +23,7 @@ Tighter caps for cap-trip tests override the relevant kwargs:
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.safety import SafetyConfig, SellGuardConfig
@@ -34,6 +35,7 @@ def grid_config(
     above: int = 3,
     below: int = 3,
     order_size: str = "10",
+    counter_target_mode: Literal["spacing_up", "top_sell"] = "spacing_up",
     coins: dict[str, CoinGridConfig] | None = None,
 ) -> GridConfig:
     """Build a ``GridConfig`` with default-only or with explicit per-coin overrides."""
@@ -43,6 +45,7 @@ def grid_config(
             levels_above=above,
             levels_below=below,
             order_size_usd=Decimal(order_size),
+            counter_target_mode=counter_target_mode,
         ),
         coins=coins or {},
     )
