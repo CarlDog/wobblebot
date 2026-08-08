@@ -213,6 +213,26 @@ class OHLCBar(BaseModel):
             raise ValueError("opened_at must be timezone-aware")
         return v.astimezone(UTC)
 
+    @model_validator(mode="after")
+    def _validate_ohlc_ordering(self) -> "OHLCBar":
+        """Enforce ``low <= open/close <= high`` (P2 spine gate).
+
+        A garbled wire response or a malformed CSV row from the
+        historical import would otherwise persist permanently via the
+        idempotent ``INSERT OR IGNORE`` write path, and every high/low-
+        keyed indicator (ATR / Bollinger / Stochastic) would propagate
+        the corruption into advisor + auditor outputs. ``vwap`` is
+        deliberately unconstrained — Kraken sends 0 for empty bars and
+        the import synthesizes 0 (no vwap column in the dump).
+        """
+        if self.low > self.high:
+            raise ValueError(f"low {self.low} exceeds high {self.high}")
+        if not self.low <= self.open <= self.high:
+            raise ValueError(f"open {self.open} outside [low {self.low}, high {self.high}]")
+        if not self.low <= self.close <= self.high:
+            raise ValueError(f"close {self.close} outside [low {self.low}, high {self.high}]")
+        return self
+
     class Config:
         """Pydantic config."""
 

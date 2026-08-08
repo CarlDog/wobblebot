@@ -94,6 +94,47 @@ class TestOHLCBarTimestampValidation:
         assert bar.opened_at.hour == 17
 
 
+class TestOHLCBarOrderingValidation:
+    """P2 slice 2 — the low<=open/close<=high gate on the whole spine.
+
+    A violating bar persisted via INSERT OR IGNORE would poison every
+    high/low-keyed indicator (ATR/Bollinger/Stochastic) permanently.
+    """
+
+    def test_low_above_high_rejected(self) -> None:
+        with pytest.raises(ValueError, match="exceeds high"):
+            _make(low=Decimal("79200"), high=Decimal("79100"))
+
+    def test_open_above_high_rejected(self) -> None:
+        with pytest.raises(ValueError, match="open .* outside"):
+            _make(open=Decimal("79999"))
+
+    def test_open_below_low_rejected(self) -> None:
+        with pytest.raises(ValueError, match="open .* outside"):
+            _make(open=Decimal("78000"))
+
+    def test_close_above_high_rejected(self) -> None:
+        with pytest.raises(ValueError, match="close .* outside"):
+            _make(close=Decimal("79999"))
+
+    def test_close_below_low_rejected(self) -> None:
+        with pytest.raises(ValueError, match="close .* outside"):
+            _make(close=Decimal("78000"))
+
+    def test_flat_bar_all_equal_accepted(self) -> None:
+        """The 2013-era dump is full of single-trade bars where
+        open==high==low==close — equality must be legal."""
+        flat = Decimal("122.0")
+        bar = _make(open=flat, high=flat, low=flat, close=flat)
+        assert bar.high == flat
+
+    def test_vwap_outside_range_accepted(self) -> None:
+        """vwap is deliberately unconstrained: Kraken sends 0 for empty
+        bars and the historical import synthesizes 0 (no vwap column)."""
+        bar = _make(vwap=Decimal("0"))
+        assert bar.vwap == Decimal("0")
+
+
 class TestOHLCBarFieldValidation:
     @pytest.mark.parametrize("field", ["open", "high", "low", "close", "vwap", "volume"])
     def test_negative_prices_rejected(self, field: str) -> None:

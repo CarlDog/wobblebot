@@ -55,6 +55,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.exceptions import InsufficientBalance
@@ -332,8 +333,8 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             if not isinstance(entry, list) or len(entry) < 8:
                 raise ExchangeError(f"Kraken OHLC entry has unexpected shape: {entry!r}")
             opened_at = datetime.fromtimestamp(int(entry[0]), tz=UTC)
-            out.append(
-                OHLCBar(
+            try:
+                parsed_bar = OHLCBar(
                     symbol=symbol,
                     interval_minutes=interval_minutes,
                     opened_at=opened_at,
@@ -345,7 +346,15 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                     volume=Decimal(str(entry[6])),
                     count=int(entry[7]),
                 )
-            )
+            except ValidationError as exc:
+                # Same fail-fast posture as the shape check above: a bar
+                # violating low<=open/close<=high is a corrupt response,
+                # and persisting it would poison every high/low-keyed
+                # indicator downstream (the OHLCBar validator's rationale).
+                raise ExchangeError(
+                    f"Kraken OHLC entry failed validation for pair {altname!r}: {exc}"
+                ) from exc
+            out.append(parsed_bar)
         return out
 
     async def get_balances(self) -> list[Balance]:
