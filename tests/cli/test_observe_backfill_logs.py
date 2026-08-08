@@ -15,7 +15,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wobblebot.cli.observe import _log_backfill_result, _make_progress_logger
+from wobblebot.cli.observe import (
+    _log_backfill_result,
+    _make_progress_logger,
+    _warn_if_horizon_truncated,
+)
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.backfill import BackfillResult
 
@@ -157,3 +161,40 @@ class TestErrorLogRendering:
             )
         rendered = " ".join(r.getMessage() for r in caplog.records)
         assert "none" in rendered.lower()
+
+
+class TestHorizonTruncationWarn:
+    """P2 slice 1, item 7 — WARN when Kraken's retained history falls
+    materially short of the requested window."""
+
+    def _wide_result(self, *, bars_fetched: int) -> BackfillResult:
+        # 30-day window at 1m => ~43,200 expected bars.
+        return _make_result(
+            requested_since=_UNTIL - timedelta(days=30),
+            bars_fetched=bars_fetched,
+        )
+
+    def test_materially_short_result_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(self._wide_result(bars_fetched=720))
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "720 bars" in rendered
+        assert "retained history" in rendered
+
+    def test_full_result_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(self._wide_result(bars_fetched=43_000))
+        assert not caplog.records
+
+    def test_small_window_is_silent_even_when_short(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A 6h window implies ~360 bars at 1m but only 90 at 4h — under
+        the 100-expected floor, boundary noise dominates; never warn."""
+        short = _make_result(interval_minutes=240, bars_fetched=10)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _warn_if_horizon_truncated(short)
+        assert not caplog.records
+
+    def test_success_log_path_invokes_the_check(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+            _log_backfill_result(_BTC, self._wide_result(bars_fetched=720))
+        assert any("retained history" in r.getMessage() for r in caplog.records)

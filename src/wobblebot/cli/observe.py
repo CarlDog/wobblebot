@@ -540,6 +540,42 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         )
 
 
+# Horizon-truncation WARN (P2 slice 1, item 7): a naive deep --since
+# "succeeds" with only whatever history Kraken retains — silently. The
+# expected-bar math is approximate (bar boundaries, thin markets), so
+# only materially-short results warn: under half the implied bars, on
+# windows big enough (>= 100 expected) that the shortfall can't be
+# boundary noise.
+_HORIZON_WARN_MIN_EXPECTED_BARS = 100
+_HORIZON_WARN_FRACTION = 0.5
+
+
+def _warn_if_horizon_truncated(result: BackfillResult) -> None:
+    """WARN when a clean backfill returned far fewer bars than its window implies."""
+    window_minutes = (result.requested_until - result.requested_since).total_seconds() / 60.0
+    expected = window_minutes / result.interval_minutes
+    if expected < _HORIZON_WARN_MIN_EXPECTED_BARS:
+        return
+    if result.bars_fetched >= expected * _HORIZON_WARN_FRACTION:
+        return
+    _LOGGER.warning(
+        "backfill %s @ %dm returned %d bars but the window implies ~%d — "
+        "Kraken's retained history may not reach back to %s",
+        result.symbol,
+        result.interval_minutes,
+        result.bars_fetched,
+        int(expected),
+        result.requested_since.isoformat(),
+        extra={
+            "symbol": str(result.symbol),
+            "interval_minutes": result.interval_minutes,
+            "bars_fetched": result.bars_fetched,
+            "expected_bars": int(expected),
+            "requested_since": result.requested_since.isoformat(),
+        },
+    )
+
+
 def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
     """Render one symbol's backfill outcome to the log.
 
@@ -586,6 +622,7 @@ def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
                 "elapsed_seconds": round(result.elapsed_seconds, 1),
             },
         )
+        _warn_if_horizon_truncated(result)
 
 
 async def _run_auto_gap_fill(  # pylint: disable=too-many-arguments,too-many-positional-arguments
