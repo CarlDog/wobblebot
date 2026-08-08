@@ -348,3 +348,20 @@ class TestTAFields:
         await storage.save_ohlc_bars(minute_bars)
         summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
         assert summary.rsi_14 is None
+
+    async def test_months_old_bars_still_warn_not_silence(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Bars older than the whole 260-bar fetch window (e.g. a dump
+        import that ended a quarter ago) fall outside the windowed read
+        — the guard must check the cursor and still WARN, not demote
+        the stalest data of all to a silent DEBUG. Caught live
+        2026-08-08."""
+        await _seed_prices(storage)
+        await _seed_hourly_bars(storage, count=50, newest_age_hours=24 * 90)
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.summary_builder"):
+            summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.rsi_14 is None
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "TA fields null" in rendered
+        assert "--resume" in rendered

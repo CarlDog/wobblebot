@@ -192,12 +192,17 @@ class SummaryBuilder:
         Reads the newest ``_TA_LOOKBACK_BARS`` window of ``ohlc_bars``
         at ``interval_minutes``. All-``None`` cases:
 
-        - no bars at that interval (DEBUG — normal before the operator
-          imports/backfills bar history), or
+        - no bars for the pair at that interval AT ALL (DEBUG — normal
+          before the operator imports/backfills bar history), or
         - newest bar older than ``_TA_MAX_STALENESS_INTERVALS``
           intervals (WARN — bar history exists but nothing is keeping
           it fresh; stale indicators presented as current would poison
-          the regime read, so we refuse instead).
+          the regime read, so we refuse instead). Months-old bars fall
+          entirely OUTSIDE the fetch window, so the empty-window case
+          checks the cheap ``get_latest_ohlc_opened_at`` cursor before
+          concluding "never had bars" — otherwise the stalest data of
+          all would demote the actionable WARN to a silent DEBUG
+          (caught in the 2026-08-08 live verification).
 
         Individual indicators may still be ``None`` inside a fresh
         window when it's too short for their period (e.g. sma_200
@@ -207,31 +212,21 @@ class SummaryBuilder:
         window = timedelta(minutes=interval_minutes * _TA_LOOKBACK_BARS)
         bars = await self._storage.get_ohlc_bars(symbol, interval_minutes, start_time=now - window)
         if not bars:
-            _LOGGER.debug(
-                "no %dm bars for %s — TA fields null",
-                interval_minutes,
-                symbol,
-                extra={"symbol": str(symbol), "interval_minutes": interval_minutes},
-            )
+            latest = await self._storage.get_latest_ohlc_opened_at(symbol, interval_minutes)
+            if latest is None:
+                _LOGGER.debug(
+                    "no %dm bars for %s — TA fields null",
+                    interval_minutes,
+                    symbol,
+                    extra={"symbol": str(symbol), "interval_minutes": interval_minutes},
+                )
+                return empty
+            self._warn_stale_bars(symbol, interval_minutes, now=now, newest=latest)
             return empty
-        staleness = now - bars[-1].opened_at
+        newest = bars[-1].opened_at
         max_staleness = timedelta(minutes=interval_minutes * _TA_MAX_STALENESS_INTERVALS)
-        if staleness > max_staleness:
-            _LOGGER.warning(
-                "newest %dm bar for %s is %.1fh old — TA fields null; "
-                "top up with `cli/observe --backfill --resume --intervals %dm` "
-                "or the history import",
-                interval_minutes,
-                symbol,
-                staleness.total_seconds() / 3600.0,
-                interval_minutes,
-                extra={
-                    "symbol": str(symbol),
-                    "interval_minutes": interval_minutes,
-                    "newest_opened_at": bars[-1].opened_at.isoformat(),
-                    "staleness_hours": round(staleness.total_seconds() / 3600.0, 1),
-                },
-            )
+        if now - newest > max_staleness:
+            self._warn_stale_bars(symbol, interval_minutes, now=now, newest=newest)
             return empty
         macd = compute_macd(bars)
         bollinger = compute_bollinger(bars)
@@ -254,6 +249,28 @@ class SummaryBuilder:
             "stochastic_k": stochastic.k if stochastic else None,
             "stochastic_d": stochastic.d if stochastic else None,
         }
+
+    @staticmethod
+    def _warn_stale_bars(
+        symbol: Symbol, interval_minutes: int, *, now: datetime, newest: datetime
+    ) -> None:
+        """The actionable stale-bars WARN, shared by both stale branches."""
+        staleness_hours = (now - newest).total_seconds() / 3600.0
+        _LOGGER.warning(
+            "newest %dm bar for %s is %.1fh old -- TA fields null; "
+            "top up with `cli/observe --backfill --resume --intervals %dm` "
+            "or the history import",
+            interval_minutes,
+            symbol,
+            staleness_hours,
+            interval_minutes,
+            extra={
+                "symbol": str(symbol),
+                "interval_minutes": interval_minutes,
+                "newest_opened_at": newest.isoformat(),
+                "staleness_hours": round(staleness_hours, 1),
+            },
+        )
 
     async def _build_news_summaries(
         self,
