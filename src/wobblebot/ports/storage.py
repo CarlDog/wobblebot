@@ -342,6 +342,40 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: On DB read failure.
         """
 
+    @abstractmethod
+    async def get_ohlc_bars(
+        self,
+        symbol: Symbol,
+        interval_minutes: int,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[OHLCBar]:
+        """Load stored OHLC bars for ``(symbol, interval)``, oldest first.
+
+        The P2 spine's read-side keystone (blueprint 2026-06-03): the
+        TA service, auditor replay, and screener all consume history
+        through this one signature. ``[]`` on miss — an empty window is
+        a domain-data miss, not an error (port error convention).
+
+        Args:
+            symbol: Trading pair.
+            interval_minutes: Bar interval to read; bars of other
+                intervals never mix into the result.
+            start_time: Inclusive lower bound on ``opened_at``.
+            end_time: Inclusive upper bound on ``opened_at``.
+            limit: Maximum rows returned (applied after ASC ordering,
+                i.e. the OLDEST ``limit`` bars of the window).
+
+        Returns:
+            Bars ordered by ``opened_at`` ascending; empty list when
+            nothing matches.
+
+        Raises:
+            StorageError: On DB read failure.
+        """
+
     # News item operations (Stage 3.2.5 — News Ingestion)
     @abstractmethod
     async def save_news_item(self, item: NewsItem) -> None:
