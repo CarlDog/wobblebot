@@ -243,6 +243,13 @@ observe:
   autogapfill_threshold_minutes: 10.0   # gaps below this skip silently
   autogapfill_max_hours: 24.0           # gaps above this warn + skip
 
+  # P2 slice 3 follow-up (2026-08-08): steady-state hourly-bar top-up.
+  # Once per hour the poll loop resumes each symbol's 60m ohlc_bars
+  # from its cursor (a pair with no bars seeds one TA-window's worth),
+  # keeping the advisor's TA fields fresh. ~1 Kraken call per symbol
+  # per hour; completed bars only.
+  bar_topup_enabled: true
+
 # ============================================================================
 # Per-CLI: preflight (cli/preflight)
 # ============================================================================

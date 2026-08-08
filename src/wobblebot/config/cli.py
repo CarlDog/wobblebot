@@ -245,6 +245,14 @@ class ObserveConfig(BaseModel):
     autogapfill_threshold_minutes: float = Field(default=10.0, ge=0.0)
     autogapfill_max_hours: float = Field(default=24.0, gt=0.0)
 
+    # P2 slice 3 follow-up (2026-08-08): steady-state hourly-bar
+    # top-up. Once per hour the poll loop resumes each symbol's 60m
+    # ohlc_bars from its cursor (seeding a TA-window's worth for a
+    # pair with no bars yet), keeping PerformanceSummary's TA fields
+    # fresh without an operator cron. ~1 Kraken call per symbol per
+    # hour; completed bars only.
+    bar_topup_enabled: bool = True
+
     class Config:
         frozen = True
 

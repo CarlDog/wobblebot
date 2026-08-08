@@ -25,7 +25,7 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.observe import _resolve_catchup_since, _resolve_resume_since
+from wobblebot.cli.observe_backfill import _resolve_catchup_since, _resolve_resume_since
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -54,7 +54,7 @@ class TestResolveCatchupSince:
     async def test_no_history_returns_none_with_warning(
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe_backfill"):
             resolved = await _resolve_catchup_since(storage, _BTC, until=_UNTIL)
         assert resolved is None
         rendered = " ".join(r.getMessage() for r in caplog.records)
@@ -74,7 +74,7 @@ class TestResolveCatchupSince:
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
         await _seed_snapshot(storage, _BTC, _UNTIL)
-        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe_backfill"):
             resolved = await _resolve_catchup_since(storage, _BTC, until=_UNTIL)
         assert resolved is None
         assert any("already current" in r.getMessage() for r in caplog.records)
@@ -108,7 +108,7 @@ class TestResolveResumeSince:
     async def test_no_bars_returns_none_with_warning(
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
+        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe_backfill"):
             resolved = await _resolve_resume_since(storage, _BTC, 1, until=_UNTIL)
         assert resolved is None
         rendered = " ".join(r.getMessage() for r in caplog.records)
