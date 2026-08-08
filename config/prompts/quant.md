@@ -20,6 +20,16 @@ current grid configuration. Judge, **from these numbers alone**, whether
 the current grid is well-matched to what this market is actually doing
 right now, and recommend an adjustment: WIDEN, TIGHTEN, or HOLD.
 
+When hourly-bar history is available you also receive standard technical
+indicators: `rsi_14`, MACD(12,26,9) (`macd_line`/`macd_signal`/
+`macd_histogram`), Bollinger(20,2σ) bands, `sma_20`/`sma_50`/`sma_200`,
+`ema_12`/`ema_26`, `atr_14`, `adx_14`, and Stochastic(14,3)
+(`stochastic_k`/`stochastic_d`). **`adx_14` and price-vs-SMA are your most
+direct ranging-vs-trending reads**: high ADX = trending (a grid
+struggles); low ADX with price oscillating around the moving averages =
+ranging (a grid's ideal). `null` TA fields mean no fresh bar history —
+judge from the tick metrics alone and treat the evidence as thinner.
+
 You are consulted only when the deterministic guards did NOT fire — the
 clear cases (a directional run-away, a sharp drawdown, a demonstrably
 working grid, spacing already at the fee floor) are already handled
