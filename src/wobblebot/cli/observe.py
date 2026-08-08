@@ -59,7 +59,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
-from wobblebot.services.backfill import BackfillResult, backfill_range
+from wobblebot.services.backfill import BackfillResult, ProgressCallback, backfill_range
 
 _LOGGER = logging.getLogger("wobblebot.cli.observe")
 
@@ -229,6 +229,44 @@ def _parse_interval_arg(raw: str) -> int:
     return minutes
 
 
+# One progress line per this many Kraken requests (~1 request/second at
+# the default rate limit, so roughly one line every 10s on a long
+# backfill). Chosen to keep the bulk-seed scenario (~2200 requests)
+# under ~220 log lines rather than one per chunk.
+_PROGRESS_LOG_EVERY_REQUESTS = 10
+
+
+def _make_progress_logger(symbol: Symbol) -> ProgressCallback:
+    """Build a per-chunk progress callback that logs every Nth request.
+
+    Wires ``backfill_range``'s existing ``progress_callback`` seam to
+    the operator log so a long backfill isn't a silent terminal (the
+    ~37-minute bulk-seed scenario in adaptive-grid.md L205).
+    """
+
+    async def _log_progress(partial: BackfillResult) -> None:
+        if partial.requests_made % _PROGRESS_LOG_EVERY_REQUESTS != 0:
+            return
+        cursor = partial.last_opened_at.isoformat() if partial.last_opened_at is not None else "n/a"
+        _LOGGER.info(
+            "backfill %s: %d bars so far, cursor at %s, %.1fs elapsed",
+            symbol,
+            partial.bars_fetched,
+            cursor,
+            partial.elapsed_seconds,
+            extra={
+                "symbol": str(symbol),
+                "bars_fetched": partial.bars_fetched,
+                "bars_inserted": partial.bars_inserted,
+                "requests_made": partial.requests_made,
+                "cursor": cursor if cursor != "n/a" else None,
+                "elapsed_seconds": round(partial.elapsed_seconds, 1),
+            },
+        )
+
+    return _log_progress
+
+
 async def _resolve_catchup_since(
     storage: SQLiteStorageAdapter,
     symbol: Symbol,
@@ -378,6 +416,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
                 since=symbol_since,
                 until=until,
                 interval_minutes=interval_minutes,
+                progress_callback=_make_progress_logger(symbol),
             )
             _log_backfill_result(symbol, result)
             if result.error is not None:

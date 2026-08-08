@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from wobblebot.cli.observe import _log_backfill_result
+from wobblebot.cli.observe import _log_backfill_result, _make_progress_logger
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.backfill import BackfillResult
 
@@ -76,6 +76,35 @@ class TestSuccessLogRendering:
         rec = next(r for r in caplog.records if "complete" in r.getMessage())
         assert getattr(rec, "bars_inserted", None) == 362
         assert getattr(rec, "snapshots_inserted", None) == 362
+
+
+class TestProgressLogger:
+    """P2 slice 1, item 3 — the per-chunk progress line every Nth request."""
+
+    @pytest.mark.asyncio
+    async def test_logs_on_every_tenth_request(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            await callback(_make_result(requests_made=10, bars_fetched=7200))
+        rendered = " ".join(r.getMessage() for r in caplog.records)
+        assert "7200 bars so far" in rendered
+        assert "BTC/USD" in rendered
+        assert _LAST.isoformat() in rendered  # the cursor
+
+    @pytest.mark.asyncio
+    async def test_silent_between_multiples(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            for n in (1, 3, 7, 9, 11, 19):
+                await callback(_make_result(requests_made=n))
+        assert not caplog.records
+
+    @pytest.mark.asyncio
+    async def test_no_cursor_renders_na(self, caplog: pytest.LogCaptureFixture) -> None:
+        callback = _make_progress_logger(_BTC)
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.observe"):
+            await callback(_make_result(requests_made=10, last_opened_at=None))
+        assert any("n/a" in r.getMessage() for r in caplog.records)
 
 
 class TestErrorLogRendering:
