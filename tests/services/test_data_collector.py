@@ -175,6 +175,9 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def list_ohlc_symbols(self, interval_minutes):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def save_news_item(self, item):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
