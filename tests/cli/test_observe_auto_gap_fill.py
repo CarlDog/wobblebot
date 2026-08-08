@@ -23,10 +23,11 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import StubOHLCAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.observe import _run_auto_gap_fill
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
-from wobblebot.ports.exceptions import ExchangeError, StorageError
+from wobblebot.ports.exceptions import StorageError
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -52,32 +53,6 @@ async def _seed_snapshot(storage: SQLiteStorageAdapter, symbol: Symbol, at: date
     )
 
 
-class _StubAdapter:
-    """Captures get_ohlc calls; returns one canned page then empty.
-
-    ``raise_at_first_call`` simulates Kraken unreachable at startup.
-    """
-
-    def __init__(
-        self,
-        *,
-        bars_to_return: list[OHLCBar] | None = None,
-        raise_at_first_call: bool = False,
-    ) -> None:
-        self._bars = list(bars_to_return or [])
-        self._raise = raise_at_first_call
-        self.calls: list[tuple[Symbol, int, datetime | None]] = []
-
-    async def get_ohlc(self, symbol, interval_minutes=1, since=None):  # type: ignore[no-untyped-def]
-        self.calls.append((symbol, interval_minutes, since))
-        if self._raise:
-            raise ExchangeError("kraken unreachable at startup")
-        if not self._bars:
-            return []
-        page, self._bars = self._bars, []
-        return page
-
-
 def _make_bar(*, symbol: Symbol, minutes_offset: int, anchor: datetime) -> OHLCBar:
     return OHLCBar(
         symbol=symbol,
@@ -97,7 +72,7 @@ class TestSkipPaths:
     async def test_empty_symbol_list_returns_immediately(
         self, storage: SQLiteStorageAdapter
     ) -> None:
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]
             storage,
@@ -112,7 +87,7 @@ class TestSkipPaths:
         """A symbol the operator just added to observe.symbols has no
         prior price_snapshots. Auto-gap-fill must NOT silently fetch
         unbounded history -- that's an explicit --backfill decision."""
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]
             storage,
@@ -126,7 +101,7 @@ class TestSkipPaths:
     async def test_small_gap_skips(self, storage: SQLiteStorageAdapter) -> None:
         """Normal restart (gap < threshold): no backfill."""
         await _seed_snapshot(storage, _BTC, _NOW - timedelta(minutes=2))
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]
             storage,
@@ -145,7 +120,7 @@ class TestMaxBoundary:
         """A multi-day outage shouldn't trigger automatic hours-long API
         hammering on restart. Operator must explicitly use --backfill."""
         await _seed_snapshot(storage, _BTC, _NOW - timedelta(hours=48))
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
             await _run_auto_gap_fill(
                 adapter,  # type: ignore[arg-type]
@@ -166,7 +141,7 @@ class TestFillingPath:
         latest = _NOW - timedelta(hours=1)
         await _seed_snapshot(storage, _BTC, latest)
         bars = [_make_bar(symbol=_BTC, minutes_offset=i, anchor=latest) for i in range(1, 6)]
-        adapter = _StubAdapter(bars_to_return=bars)
+        adapter = StubOHLCAdapter(bars=bars)
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]
             storage,
@@ -189,7 +164,7 @@ class TestFillingPath:
         design -- operators wanting different granularity use the
         explicit --backfill --interval flag."""
         await _seed_snapshot(storage, _BTC, _NOW - timedelta(hours=6))
-        adapter = _StubAdapter(bars_to_return=[])
+        adapter = StubOHLCAdapter(bars=[])
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]
             storage,
@@ -212,7 +187,7 @@ class TestPerSymbolIsolation:
         the ongoing outage."""
         await _seed_snapshot(storage, _BTC, _NOW - timedelta(hours=1))
         await _seed_snapshot(storage, _ETH, _NOW - timedelta(hours=1))
-        adapter = _StubAdapter(raise_at_first_call=True)
+        adapter = StubOHLCAdapter(raise_error=True)
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.observe"):
             # Must NOT raise — the daemon needs to proceed to its poll loop.
             await _run_auto_gap_fill(
@@ -240,7 +215,7 @@ class TestPerSymbolIsolation:
                     raise StorageError("simulated read failure on BTC")
                 return None  # ETH: treat as no-history -> skip
 
-        adapter = _StubAdapter()
+        adapter = StubOHLCAdapter()
         # Must not raise.
         await _run_auto_gap_fill(
             adapter,  # type: ignore[arg-type]

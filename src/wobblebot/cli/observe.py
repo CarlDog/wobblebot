@@ -55,7 +55,7 @@ from wobblebot.cli._common import (
     run_with_clean_exit,
     safe_shutdown,
 )
-from wobblebot.cli.observe_backfill import _backfill_main, _parse_rate_limit_arg
+from wobblebot.cli.observe_backfill import backfill_main, parse_rate_limit_arg
 from wobblebot.config.cli import ObserveConfig
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -514,7 +514,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--rate-limit-seconds",
-        type=_parse_rate_limit_arg,
+        type=parse_rate_limit_arg,
         default=DEFAULT_RATE_LIMIT_SECONDS,
         help=(
             "Sleep between Kraken OHLC requests during backfill. Default "
@@ -569,7 +569,7 @@ def main() -> int:
         # `--since auto` is the doc'd equivalent spelling of --catchup.
         catchup = args.catchup or args.since == "auto"
         run_with_clean_exit(
-            _backfill_main(
+            backfill_main(
                 config,
                 since_raw=None if args.since == "auto" else args.since,
                 until_raw=args.until,

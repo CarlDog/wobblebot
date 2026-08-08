@@ -22,11 +22,17 @@ Tighter caps for cap-trip tests override the relevant kwargs:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
 from wobblebot.config.grid import CoinGridConfig, GridConfig, GridLevels
 from wobblebot.config.safety import SafetyConfig, SellGuardConfig
+from wobblebot.domain.value_objects import OHLCBar, Symbol
+from wobblebot.ports.exceptions import ExchangeError
+
+_BARS_DEFAULT_SYMBOL = Symbol(base="BTC", quote="USD")
+_BARS_DEFAULT_START = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
 
 
 def grid_config(
@@ -71,3 +77,65 @@ def safety_config(
             max_loss_percentage=Decimal(max_loss_pct),
         ),
     )
+
+
+def bars_from_closes(
+    closes: list[float],
+    *,
+    symbol: Symbol = _BARS_DEFAULT_SYMBOL,
+    start: datetime = _BARS_DEFAULT_START,
+    interval_minutes: int = 60,
+    spread: float = 1.0,
+) -> list[OHLCBar]:
+    """Bars from a close series; open = previous close.
+
+    The subtle correctness rule this consolidates (it was hand-rolled in
+    three test modules): ``high``/``low`` bracket both open and close by
+    ``spread`` so every bar satisfies the P2 ``low <= open/close <= high``
+    validator on ``OHLCBar``. A drifting copy of this bracketing produces
+    ``ValidationError`` in an unrelated test.
+    """
+    bars = []
+    prev_close = closes[0]
+    for i, close in enumerate(closes):
+        high = max(prev_close, close) + spread
+        low = min(prev_close, close) - spread
+        bars.append(
+            OHLCBar(
+                symbol=symbol,
+                interval_minutes=interval_minutes,
+                opened_at=start + timedelta(minutes=interval_minutes * i),
+                open=Decimal(str(prev_close)),
+                high=Decimal(str(high)),
+                low=Decimal(str(low)),
+                close=Decimal(str(close)),
+                vwap=Decimal("0"),
+                volume=Decimal("1"),
+                count=1,
+            )
+        )
+        prev_close = close
+    return bars
+
+
+class StubOHLCAdapter:
+    """Captures ``get_ohlc`` calls; returns one canned page then empty.
+
+    Shared by the observe bar-topup and auto-gap-fill CLI tests (each
+    previously hand-rolled a near-identical stub). ``raise_error``
+    simulates Kraken unreachable.
+    """
+
+    def __init__(self, bars: list[OHLCBar] | None = None, *, raise_error: bool = False) -> None:
+        self._bars = list(bars or [])
+        self._raise = raise_error
+        self.calls: list[tuple[Symbol, int, datetime | None]] = []
+
+    async def get_ohlc(
+        self, symbol: Symbol, interval_minutes: int = 1, since: datetime | None = None
+    ) -> list[OHLCBar]:
+        self.calls.append((symbol, interval_minutes, since))
+        if self._raise:
+            raise ExchangeError("kraken unreachable")
+        page, self._bars = self._bars, []
+        return page

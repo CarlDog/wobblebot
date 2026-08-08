@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import pytest
 
+from tests.fixtures import bars_from_closes
 from wobblebot.domain.value_objects import OHLCBar, Symbol
 from wobblebot.services.ta_metrics import (
     compute_adx,
@@ -31,31 +32,6 @@ pytestmark = pytest.mark.unit
 
 _BTC = Symbol(base="BTC", quote="USD")
 _T0 = datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC)
-
-
-def _bars_from_closes(closes: list[float]) -> list[OHLCBar]:
-    """Bars whose high/low bracket open+close; open = previous close."""
-    bars = []
-    prev_close = closes[0]
-    for i, close in enumerate(closes):
-        high = max(prev_close, close) + 1.0
-        low = min(prev_close, close) - 1.0
-        bars.append(
-            OHLCBar(
-                symbol=_BTC,
-                interval_minutes=60,
-                opened_at=_T0 + timedelta(hours=i),
-                open=Decimal(str(prev_close)),
-                high=Decimal(str(high)),
-                low=Decimal(str(low)),
-                close=Decimal(str(close)),
-                vwap=Decimal("0"),
-                volume=Decimal("1"),
-                count=1,
-            )
-        )
-        prev_close = close
-    return bars
 
 
 def _flat_bars(count: int, *, low: float = 100.0, high: float = 110.0) -> list[OHLCBar]:
@@ -81,25 +57,25 @@ def _flat_bars(count: int, *, low: float = 100.0, high: float = 110.0) -> list[O
 class TestSMA:
     def test_exact_value(self) -> None:
         # (3 + 4 + 5) / 3 = 4.0
-        assert compute_sma(_bars_from_closes([1, 2, 3, 4, 5]), 3) == 4.0
+        assert compute_sma(bars_from_closes([1, 2, 3, 4, 5]), 3) == 4.0
 
     def test_too_short_returns_none(self) -> None:
-        assert compute_sma(_bars_from_closes([1, 2]), 3) is None
+        assert compute_sma(bars_from_closes([1, 2]), 3) is None
 
     def test_zero_period_returns_none(self) -> None:
-        assert compute_sma(_bars_from_closes([1, 2, 3]), 0) is None
+        assert compute_sma(bars_from_closes([1, 2, 3]), 0) is None
 
 
 class TestEMA:
     def test_exact_value(self) -> None:
         # Seed SMA(3) = 2.0, k = 0.5: 4*.5 + 2*.5 = 3.0; 5*.5 + 3*.5 = 4.0
-        assert compute_ema(_bars_from_closes([1, 2, 3, 4, 5]), 3) == 4.0
+        assert compute_ema(bars_from_closes([1, 2, 3, 4, 5]), 3) == 4.0
 
     def test_constant_series_is_constant(self) -> None:
-        assert compute_ema(_bars_from_closes([7.0] * 30), 12) == 7.0
+        assert compute_ema(bars_from_closes([7.0] * 30), 12) == 7.0
 
     def test_too_short_returns_none(self) -> None:
-        assert compute_ema(_bars_from_closes([1, 2]), 3) is None
+        assert compute_ema(bars_from_closes([1, 2]), 3) is None
 
 
 class TestRSI:
@@ -107,71 +83,71 @@ class TestRSI:
         # period=2, closes [1,2,1,2]: gains [1,0,1], losses [0,1,0].
         # Seed: avg_gain=.5, avg_loss=.5 -> RSI 50. Next: avg_gain=.75,
         # avg_loss=.25 -> RS=3 -> RSI 75.
-        assert compute_rsi(_bars_from_closes([1, 2, 1, 2]), period=2) == 75.0
+        assert compute_rsi(bars_from_closes([1, 2, 1, 2]), period=2) == 75.0
 
     def test_pure_uptrend_is_100(self) -> None:
         closes = [float(i) for i in range(1, 20)]
-        assert compute_rsi(_bars_from_closes(closes)) == 100.0
+        assert compute_rsi(bars_from_closes(closes)) == 100.0
 
     def test_pure_downtrend_is_0(self) -> None:
         closes = [float(i) for i in range(20, 1, -1)]
-        assert compute_rsi(_bars_from_closes(closes)) == 0.0
+        assert compute_rsi(bars_from_closes(closes)) == 0.0
 
     def test_flat_series_is_neutral_50(self) -> None:
-        assert compute_rsi(_bars_from_closes([5.0] * 20)) == 50.0
+        assert compute_rsi(bars_from_closes([5.0] * 20)) == 50.0
 
     def test_too_short_returns_none(self) -> None:
-        assert compute_rsi(_bars_from_closes([1.0] * 14)) is None  # needs period+1
+        assert compute_rsi(bars_from_closes([1.0] * 14)) is None  # needs period+1
 
 
 class TestMACD:
     def test_constant_series_is_all_zero(self) -> None:
-        result = compute_macd(_bars_from_closes([50.0] * 40))
+        result = compute_macd(bars_from_closes([50.0] * 40))
         assert result is not None
         assert (result.line, result.signal, result.histogram) == (0.0, 0.0, 0.0)
 
     def test_histogram_is_line_minus_signal(self) -> None:
         closes = [100 + i + (5 if i % 7 == 0 else 0) for i in range(60)]
-        result = compute_macd(_bars_from_closes([float(c) for c in closes]))
+        result = compute_macd(bars_from_closes([float(c) for c in closes]))
         assert result is not None
         assert result.histogram == pytest.approx(result.line - result.signal)
 
     def test_uptrend_line_positive(self) -> None:
-        result = compute_macd(_bars_from_closes([float(i) for i in range(1, 60)]))
+        result = compute_macd(bars_from_closes([float(i) for i in range(1, 60)]))
         assert result is not None
         assert result.line > 0
 
     def test_too_short_returns_none(self) -> None:
         # Needs slow + signal - 1 = 34 bars.
-        assert compute_macd(_bars_from_closes([1.0] * 33)) is None
+        assert compute_macd(bars_from_closes([1.0] * 33)) is None
 
     def test_fast_not_below_slow_returns_none(self) -> None:
-        assert compute_macd(_bars_from_closes([1.0] * 40), fast=26, slow=26) is None
+        assert compute_macd(bars_from_closes([1.0] * 40), fast=26, slow=26) is None
 
 
 class TestBollinger:
     def test_exact_values(self) -> None:
         # Window [2,3,4,5]: middle 3.5, population var 1.25, sigma
         # 1.118034; upper = 3.5 + 2*sigma = 5.736068.
-        result = compute_bollinger(_bars_from_closes([1, 2, 3, 4, 5]), period=4)
+        result = compute_bollinger(bars_from_closes([1, 2, 3, 4, 5]), period=4)
         assert result is not None
         assert result.middle == 3.5
         assert result.upper == pytest.approx(5.736068, abs=1e-6)
         assert result.lower == pytest.approx(1.263932, abs=1e-6)
 
     def test_constant_series_collapses_bands(self) -> None:
-        result = compute_bollinger(_bars_from_closes([9.0] * 25))
+        result = compute_bollinger(bars_from_closes([9.0] * 25))
         assert result is not None
         assert result.upper == result.middle == result.lower == 9.0
 
     def test_middle_equals_sma(self) -> None:
-        bars = _bars_from_closes([float(100 + (i * i) % 13) for i in range(30)])
+        bars = bars_from_closes([float(100 + (i * i) % 13) for i in range(30)])
         result = compute_bollinger(bars)
         assert result is not None
         assert result.middle == pytest.approx(compute_sma(bars, 20))
 
     def test_too_short_returns_none(self) -> None:
-        assert compute_bollinger(_bars_from_closes([1.0] * 19)) is None
+        assert compute_bollinger(bars_from_closes([1.0] * 19)) is None
 
 
 class TestATR:
@@ -255,7 +231,7 @@ class TestStochastic:
 
     def test_d_is_sma_of_k(self) -> None:
         closes = [float(100 + (i * 7) % 11) for i in range(30)]
-        result = compute_stochastic(_bars_from_closes(closes))
+        result = compute_stochastic(bars_from_closes(closes))
         assert result is not None
         assert 0.0 <= result.k <= 100.0
         assert 0.0 <= result.d <= 100.0

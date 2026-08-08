@@ -20,12 +20,15 @@ Contract (published by the 2026-06-03 blueprint):
   when the input is too short for the requested period(s).
 - Compound indicators return frozen ``MACDResult`` /
   ``BollingerResult`` / ``StochasticResult``.
-- The private ``_compute_*_series`` helpers return full series for
-  the auditor / screener; they are NOT a second public API.
+- The private ``_compute_*_series`` helpers are internal iteration
+  state only — nothing outside this module imports them. (The
+  blueprint anticipated the auditor/screener consuming full series;
+  both went other routes: the auditor replays through the real
+  engine, the screener uses ``compute_atr``.)
 
 **Advisor-only.** Nothing here is wired into ``cli/live`` decisions
-(ADR-002); consumers are the advisor summary, the auditor, and the
-screener.
+(ADR-002); consumers are the advisor summary (``SummaryBuilder``, all
+eight indicators) and the screener (``compute_atr``).
 
 Note on ``vwap``: imported dump bars carry ``vwap=0`` (no vwap column
 in Kraken's OHLCVT CSVs). No indicator in this module reads ``vwap``,

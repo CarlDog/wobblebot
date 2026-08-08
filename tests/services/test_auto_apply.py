@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -27,14 +27,14 @@ def _grid(
     levels_above: int = 3,
     levels_below: int = 3,
     order_size: str = "10",
-    counter_target_mode: str = "spacing_up",
+    counter_target_mode: Literal["spacing_up", "top_sell"] = "spacing_up",
 ) -> GridLevels:
     return GridLevels(
         spacing_percentage=Decimal(spacing),
         levels_above=levels_above,
         levels_below=levels_below,
         order_size_usd=Decimal(order_size),
-        counter_target_mode=counter_target_mode,  # type: ignore[arg-type]
+        counter_target_mode=counter_target_mode,
     )
 
 

@@ -467,7 +467,7 @@ vocabulary.
 | **Trade volume** | `vol` (decimal string) | `amount: Amount` |
 | **Balance** | `{"XXBT": "1.5"}` (flat dict) | `Balance(asset, total, available, locked)` — adapter calculates `locked` from open-order set |
 | **Timestamp** | Unix float (seconds.microseconds) | `Timestamp(dt: datetime)` — adapter converts via `to_unix_seconds()` |
-| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base, quote)`; Kraken-format translation in `KrakenAdapter` (`_symbol_to_kraken_altname` + dynamic Assets cache) |
+| **Symbol** | `"XXBTZUSD"` (concatenated) | `Symbol(base, quote)`; Kraken-format translation in `KrakenAdapter` (`symbol_to_kraken_altname` — public since P2 slice 2 — + dynamic Assets cache) |
 
 ---
 

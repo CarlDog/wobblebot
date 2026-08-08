@@ -25,6 +25,7 @@ functions do not re-validate.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -142,7 +143,7 @@ def next_counter_action(
     filled_price: Decimal,
     spacing: Decimal,
     *,
-    counter_target_mode: str = "spacing_up",
+    counter_target_mode: Literal["spacing_up", "top_sell"] = "spacing_up",
     grid_ceiling: Decimal | None = None,
 ) -> GridLevel:
     """Counter-order target for a just-filled grid order.

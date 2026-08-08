@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import pytest
 import pytest_asyncio
 
+from tests.fixtures import bars_from_closes
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.screener import _run, _screen
 from wobblebot.config.cli import ScreenerConfig
-from wobblebot.domain.value_objects import OHLCBar, Symbol
+from wobblebot.domain.value_objects import Symbol
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -40,28 +40,8 @@ async def _seed(
     symbol: Symbol,
     closes: list[float],
 ) -> None:
-    bars = []
-    prev = closes[0]
     start = _NOW - timedelta(hours=len(closes))
-    for i, close in enumerate(closes):
-        high = max(prev, close) + 0.5
-        low = min(prev, close) - 0.5
-        bars.append(
-            OHLCBar(
-                symbol=symbol,
-                interval_minutes=60,
-                opened_at=start + timedelta(hours=i),
-                open=Decimal(str(prev)),
-                high=Decimal(str(high)),
-                low=Decimal(str(low)),
-                close=Decimal(str(close)),
-                vwap=Decimal("0"),
-                volume=Decimal("1"),
-                count=1,
-            )
-        )
-        prev = close
-    await storage.save_ohlc_bars(bars)
+    await storage.save_ohlc_bars(bars_from_closes(closes, symbol=symbol, start=start, spread=0.5))
 
 
 def _wavy(n: int, base: float = 100.0) -> list[float]:
@@ -106,26 +86,10 @@ class TestScreen:
     async def test_lookback_window_limits_bars(self, storage: SQLiteStorageAdapter) -> None:
         """Bars older than the lookback don't count toward MIN_BARS."""
         old_start = _NOW - timedelta(days=90)
-        old_bars = []
-        prev = 100.0
-        for i in range(120):
-            close = 100.0 + (i % 5)
-            old_bars.append(
-                OHLCBar(
-                    symbol=_BTC,
-                    interval_minutes=60,
-                    opened_at=old_start + timedelta(hours=i),
-                    open=Decimal(str(prev)),
-                    high=Decimal(str(max(prev, close) + 0.5)),
-                    low=Decimal(str(min(prev, close) - 0.5)),
-                    close=Decimal(str(close)),
-                    vwap=Decimal("0"),
-                    volume=Decimal("1"),
-                    count=1,
-                )
-            )
-            prev = close
-        await storage.save_ohlc_bars(old_bars)
+        old_closes = [100.0 + (i % 5) for i in range(120)]
+        await storage.save_ohlc_bars(
+            bars_from_closes(old_closes, symbol=_BTC, start=old_start, spread=0.5)
+        )
         config = ScreenerConfig(lookback_days=30)
         rankings, skipped = await _screen(storage, config, symbols=[_BTC], held=[], now=_NOW)
         assert rankings == []

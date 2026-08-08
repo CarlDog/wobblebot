@@ -212,7 +212,7 @@ to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
 
-- **All 15 `cli/` entry points handle deprived envs cleanly.** Cycle
+- **All 16 `cli/` entry points handle deprived envs cleanly.** Cycle
   each CLI through: no `.env`, no `config/settings.yml`, no `config/`
   directory at all, missing per-CLI section, empty credentials,
   bad `--config` path, bad `--profile` name. Expected: clean exit

@@ -7,8 +7,12 @@ rendering. Split out 2026-08-08 when observe.py crossed the 1000-line
 pylint gate — the daemon poll loop and the one-shot backfill mode are
 separate concerns sharing only ``main()``'s dispatch.
 
-Underscore names are intentional: this is cli/observe's private
-implementation, imported only by it and its tests.
+Layer privacy follows the ``cli/_common.py`` convention: module-level
+privacy is a documented fact (only ``cli/observe`` and tests import
+this), while the two symbols observe actually consumes —
+``backfill_main`` and ``parse_rate_limit_arg`` — are public names, so
+no cross-module underscore imports are needed. Everything else here
+is genuinely module-private.
 """
 
 from __future__ import annotations
@@ -19,9 +23,8 @@ from datetime import UTC, datetime, timedelta
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import parse_date_arg as _parse_date_arg
-from wobblebot.cli._common import parse_days_arg as _parse_days_arg
 from wobblebot.cli._common import (
+    parse_date_arg,
     partition_or_exit,
     safe_shutdown,
 )
@@ -39,7 +42,7 @@ from wobblebot.services.backfill import (
 _LOGGER = logging.getLogger("wobblebot.cli.observe_backfill")
 
 
-def _parse_rate_limit_arg(raw: str) -> float:
+def parse_rate_limit_arg(raw: str) -> float:
     """Parse ``--rate-limit-seconds`` — a non-negative float."""
     try:
         seconds = float(raw)
@@ -217,7 +220,7 @@ async def _backfill_one(  # pylint: disable=too-many-arguments,too-many-position
     return result.error is not None
 
 
-async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements,too-many-arguments
+async def backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements,too-many-arguments
     config: WobbleBotConfig,
     *,
     since_raw: str | None,
@@ -252,14 +255,14 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         elif days is not None:
             since = datetime.now(UTC) - timedelta(days=days)
         elif since_raw is not None:
-            since = _parse_date_arg(since_raw)
+            since = parse_date_arg(since_raw)
         else:
             _LOGGER.error(
                 "--backfill requires --since (e.g. --since 2026-04-01), "
                 "--days (e.g. --days 30), --catchup, or --resume"
             )
             return 2
-        until = _parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
+        until = parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
     except ValueError as exc:
         _LOGGER.error("invalid date argument", extra={"error": str(exc)})
         return 2
