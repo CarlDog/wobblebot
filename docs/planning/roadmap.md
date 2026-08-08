@@ -392,9 +392,22 @@ the detail; the full backlog index is
    interval** (an 8-day 1m request returned 721 bars; the new WARN fired exactly as
    designed) — deep history is import-dump-only, confirming slice 2's necessity.
    Real-money cost $0.00 (public read-only endpoints). Test count 2609 → 2657.
-   Remaining P2 slices in strict order: import dump (+ `OHLCBar` validator +
-   `get_ohlc_bars` read-side) → OHLC+TA → auditor config-replay → screener →
-   counter-order target (ADR-028/029 already written).
+
+   **Slice 2 — history import** ✅ **2026-08-07** (same day): the `OHLCBar`
+   `low<=open/close<=high` validator (adapter wraps violations as `ExchangeError`;
+   importer skip-and-logs), the `StoragePort.get_ohlc_bars` read-side (the
+   blueprint's published contract — ASC, `[]` on miss, inclusive bounds),
+   `synthesize_snapshots` promoted public (importer + backfill share the one
+   bar→snapshot rule), shared interval parsers + public `symbol_to_kraken_altname`,
+   and `tools/import_kraken_history.py` (streams base + quarterly OHLCVT CSVs,
+   batch INSERT OR IGNORE, `vwap=0` no-vwap sentinel). Live-verified on the real
+   dump: BTC/USD @ 1h = 98,541 rows (2013-10-06 → 2026-03-31) in ~1.5s, 0 skips,
+   byte-exact first/last round-trip, idempotent re-run inserts 0. Known data gap:
+   quarter-end (2026-03-31) to the live ~720-bar horizon stays unfillable until
+   Kraken publishes the next quarterly dump (the horizon WARN flags it).
+   Real-money cost $0.00 (fully offline). Test count 2657 → 2685.
+   Remaining P2 slices in strict order: OHLC+TA → auditor config-replay →
+   screener → counter-order target (ADR-028/029 already written).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
