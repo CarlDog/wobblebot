@@ -32,6 +32,7 @@ from wobblebot.config.cli import (
     OperatorConfig,
     PreflightConfig,
     SandboxConfig,
+    ScreenerConfig,
     ShadowConfig,
     StatusConfig,
     WebConfig,
@@ -67,6 +68,7 @@ class WobbleBotConfig(BaseModel):
     preflight: PreflightConfig | None = None
     status: StatusConfig | None = None
     sandbox: SandboxConfig | None = None
+    screener: ScreenerConfig | None = None
     news: NewsConfig | None = None
     advise: AdviseConfig | None = None
     advisor: AdvisorConfig | None = None

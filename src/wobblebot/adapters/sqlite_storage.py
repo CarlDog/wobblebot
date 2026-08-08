@@ -580,6 +580,22 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load ohlc bars for {symbol}: {exc}") from exc
 
+    async def list_ohlc_symbols(self, interval_minutes: int) -> list[Symbol]:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """
+                SELECT DISTINCT symbol_base, symbol_quote FROM ohlc_bars
+                WHERE interval_minutes = ?
+                ORDER BY symbol_base, symbol_quote
+                """,
+                (interval_minutes,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [Symbol(base=row[0], quote=row[1]) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to list ohlc symbols: {exc}") from exc
+
     async def save_news_item(self, item: NewsItem) -> None:
         conn = self._require_conn()
         try:

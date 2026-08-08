@@ -1135,6 +1135,23 @@ data-informed instead of speculative.
 
 ### `cli/screener` — symbol-opportunity scanner (operator: "trufflehunt")
 
+**✅ v1 SHIPPED 2026-08-08 (P2 slice 5)** — `cli/screener`, per the P2 resolved
+blueprint which SUPERSEDES this stub's open questions: one-shot (not daemon),
+named `cli/screener`, **no `screener_candidates` table and no web page** (log
+table only), advisory per ADR-002. v1 metrics: vol + ATR% scored as
+distance-from-band-center (non-monotonic — too quiet never cycles, too hot
+trips caps), flatness descending, rank-based composite; correlation to the
+live lineup is a **post-score annotation** (Pearson from scratch; n/a under 50
+aligned bars; a candidate never correlates against itself). All metrics over
+uniform 60m bar closes (the blueprint's snapshot wording predates the import;
+snapshot cadence varies by source). Candidates = symbols with stored bars
+(`--symbols` overrides) — novel candidates need an import/observe first, the
+blueprint's recorded caveat. Live-verified on the 11-symbol lineup: default
+band centers landed mid-distribution of real vols (0.30–0.72%); ETH–BTC +0.86,
+POL/USD the diversifier at +0.30. **v1.5 (recorded, not built):** spread-vs-fee
+via the now-shipped `get_ticker` + volume once `Ticker` carries it. **v2:**
+RSI/ADX/BB refinement.
+
 **What (operator-raised 2026-05-23, working name "cli/trufflehunt"):**
 a daemon (or one-shot tool) that scans Kraken's tradable pairs and
 ranks them by "grid-suitability" — surfaces candidates the operator

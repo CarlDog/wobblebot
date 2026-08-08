@@ -376,6 +376,18 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: On DB read failure.
         """
 
+    @abstractmethod
+    async def list_ohlc_symbols(self, interval_minutes: int) -> list[Symbol]:
+        """List every symbol with at least one stored bar at ``interval_minutes``.
+
+        The screener's discovery surface (P2 slice 5): "rank what we
+        have data for." Deterministic (base, quote) ordering; empty
+        list when no bars exist at that interval.
+
+        Raises:
+            StorageError: On DB read failure.
+        """
+
     # News item operations (Stage 3.2.5 — News Ingestion)
     @abstractmethod
     async def save_news_item(self, item: NewsItem) -> None:

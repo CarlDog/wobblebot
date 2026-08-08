@@ -224,3 +224,23 @@ class TestGetOhlcBars:
         await storage.save_ohlc_bars([_make_bar(minutes_offset=i) for i in range(5)])
         bars = await storage.get_ohlc_bars(_BTC, 1, limit=2)
         assert [b.opened_at for b in bars] == [_T0, _T0 + timedelta(minutes=1)]
+
+
+class TestListOhlcSymbols:
+    """P2 slice 5 — the screener's discovery surface."""
+
+    async def test_empty_db_returns_empty(self, storage: SQLiteStorageAdapter) -> None:
+        assert await storage.list_ohlc_symbols(60) == []
+
+    async def test_lists_symbols_at_interval_only(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_ohlc_bars(
+            [
+                _make_bar(symbol=_BTC, interval_minutes=60, minutes_offset=0),
+                _make_bar(symbol=_BTC, interval_minutes=60, minutes_offset=60),
+                _make_bar(symbol=_ETH, interval_minutes=60, minutes_offset=0),
+                _make_bar(symbol=_BTC, interval_minutes=1, minutes_offset=0),
+            ]
+        )
+        assert await storage.list_ohlc_symbols(60) == [_BTC, _ETH]
+        assert await storage.list_ohlc_symbols(1) == [_BTC]
+        assert await storage.list_ohlc_symbols(240) == []

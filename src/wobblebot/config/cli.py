@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from wobblebot.domain.value_objects import Symbol
+from wobblebot.domain.value_objects import OHLCBar, Symbol
 
 LogFormat = Literal["plain", "json"]
 # The deployment's trading mode — the SINGLE source of truth, set in the
@@ -286,6 +286,38 @@ class PreflightConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Check CLI (read-only price + balance fetch)
 # ---------------------------------------------------------------------------
+
+
+class ScreenerConfig(BaseModel):
+    """Settings for ``cli/screener`` — grid-suitability ranking (P2 slice 5).
+
+    v1 ranks symbols that already have local bar history (the observe
+    DB); no Kraken calls, no credentials. The two band centers encode
+    the non-monotonic volatility read: too quiet = no cycles, too hot =
+    caps trip — closest to the center ranks best.
+    """
+
+    db: str = "data/wobblebot-observe.db"
+    lookback_days: int = Field(default=30, gt=0)
+    interval_minutes: int = 60
+    # Sweet-spot centers for the band-distance ranks. Units: vol is the
+    # stdev of close-to-close returns per bar (fraction, not %); ATR is
+    # a percentage of the latest close per bar.
+    vol_band_center: float = Field(default=0.005, gt=0)
+    atr_band_center_pct: float = Field(default=0.5, gt=0)
+    log_format: LogFormat = "plain"
+
+    class Config:
+        frozen = True
+
+    @field_validator("interval_minutes")
+    @classmethod
+    def _validate_interval(cls, v: int) -> int:
+        if v not in OHLCBar.ALLOWED_INTERVALS:
+            raise ValueError(
+                f"interval_minutes must be one of {sorted(OHLCBar.ALLOWED_INTERVALS)}; got {v}"
+            )
+        return v
 
 
 class StatusConfig(BaseModel):
