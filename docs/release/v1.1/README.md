@@ -58,7 +58,9 @@ this plan (still named for the `v1.1` branch it was developed on) **ships as `2.
 ADR-022 replaced the advisor's whole decision architecture, both past what SemVer's minor
 bump should carry (see `CHANGELOG.md`'s `[2.0.0]` section). **P1 is now COMPLETE** (2026-07-31
 → 2026-08-01) and merged to `main` — see the P1 table below for per-item receipts and
-roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. P2/P3/P4 have not started.
+roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. **P2 is COMPLETE**
+(2026-08-07 → 2026-08-08, all six slices — see the P2 table + roadmap item 4). P3/P4 have
+not started.
 
 | | |
 |---|---|
@@ -75,7 +77,7 @@ roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. P2/P3/P4 have 
 | ✅ Hardening (dead man's switch + P0.1–P0.5 + o4 + G1) | merged to `main` 2026-06-02 | Safety / Groundwork | **done** |
 | ✅ **GATE** | soak passed, `v1.0.0` tagged 2026-07-31 | **tag v1.0** | **done** |
 | **P1** | 2026-07-31 → 2026-08-01 | Safety + ready-now | **✅ COMPLETE** |
-| **P2** | started 2026-08-07 | Data-infrastructure spine | **in progress** (slice 1 ✅) |
+| **P2** | 2026-08-07 → 2026-08-08 | Data-infrastructure spine | **✅ COMPLETE** (all six slices) |
 | **P3** | not started | Ops / observability / UX | pending |
 | **P4** | not started | Advisor-feedback cluster | data-gated |
 
@@ -534,6 +536,28 @@ ADRs.
 
 Externally-gated work. **Ship an item only when its named trigger fires** — never batch-build a
 cluster. Full detail in the per-area docs.
+
+### P2-close audit refactor queue (2026-08-08 — internal quality, no external gate)
+
+Queued by the P2 phase-end audit's refactor scan; each ships as a small focused change the
+next time its file is touched (trigger noted where sharper):
+
+- **`cli/_common.py` argtypes extraction** — the 581-line module holds 8 unrelated concerns;
+  the P2-promoted argparse value parsers (`parse_date_arg`/`parse_days_arg`/
+  `parse_interval*_arg`) are a self-contained ~80-line `cli/_argtypes.py`.
+- **`config/cli.py` split-or-disable** (850 lines, no `too-many-lines` disable) — decide
+  BEFORE the next 1-2 per-CLI config sections tip it over pylint's 1000 hard gate.
+- **`grid_ceiling(levels)` domain helper** — `levels[-1].price` is inlined at 2 engine call
+  sites; the ascending-sort invariant it depends on is documented only at
+  `compute_grid_levels`. Pin it next time a third consumer appears.
+- **`StoragePort.get_ohlc_bars` `limit` param** — zero production callers and oldest-first
+  semantics (every other limit-bearing read is newest-first); drop it or invert to newest-N
+  before the first real caller reaches for it.
+- **Interval-error message formatting** — hand-written at 4 sites over the single-sourced
+  `ALLOWED_INTERVALS` set; consolidate on the next touch of any of them.
+- **`AuditorExchangeAdapter` overrides the mock's private `_match_open_orders`** — replace
+  with a `fill_on_place: bool` seam on `MockExchangeAdapter` next time either file changes.
+- **`_compute_atr_series` two-line pass-through** in `ta_metrics.py` — inline on next touch.
 
 ### Auto-action cluster (needs P4 outcome data + own ADRs)
 - **`cli/auto-tune` daemon** — operator demonstrates advisor trust + a no-value-for-checks use case + ADR removing the operator-trigger.

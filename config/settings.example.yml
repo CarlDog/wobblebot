@@ -864,6 +864,10 @@ profiles:
   # Aggressive: tight spacing, more orders, looser caps. Shadow
   # gets a bigger synthetic pot so multi-cycle behavior has room
   # to play out before hitting balance constraints.
+  # CAUTION: the Stage 8.6 backtest found ~1% spacing catastrophic in
+  # trends (3% is the least-bad static default — see grid.default above);
+  # 0.6% is tighter still and suits short chop-window shadow experiments,
+  # not unattended live sessions.
   aggressive:
     grid:
       default:

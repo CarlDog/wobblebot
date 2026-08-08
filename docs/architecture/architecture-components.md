@@ -83,9 +83,29 @@ All ports are defined as abstract interfaces in `src/wobblebot/ports/`.
 - `services/summary_builder.py`. Composes:
   - Stage 3.1 metrics (volatility, max drawdown, flatness, cycle stats) from observe DB
   - Stage 3.2.5 recent news (narrowed `NewsItemSummary` view to keep prompt-token cost down)
+  - P2 slice 3: the 16 `float | None` TA fields (RSI/MACD/Bollinger/SMA/EMA/ATR/ADX/stochastic)
+    computed by `services/ta_metrics.py` over a 260-bar 60m `get_ohlc_bars` window, with a
+    staleness guard that nulls them (plus an actionable WARN) when bars lag >3 intervals
   - Operator's current grid config (delta-aware recommendations)
   - into a `PerformanceSummary` consumed by `AdvisorPort.get_recommendation`.
 - Optional separate `news_storage` parameter lets the builder stitch prices from one DB and news from another (the Stage 3.3 three-DB shape).
+
+### 5g. TA Metrics (`services/ta_metrics.py`, P2 slice 3)
+- Hand-rolled textbook indicator formulas (incl. Wilder smoothing) — deliberately **no
+  pandas/TA-Lib runtime dependency**. Eight `compute_*` functions over `list[OHLCBar]`,
+  each returning `float | None` (None on insufficient bars); compounds return frozen
+  `MACDResult` / `BollingerResult` / `StochasticResult` dataclasses.
+- Advisor-only by design: consumed by `SummaryBuilder` (all eight) and the screener
+  (`compute_atr`); **never wired into `cli/live`** (ADR-002 boundary).
+
+### 5h. Screener (`services/screener.py` + `cli/screener`, P2 slice 5)
+- Ranks observed symbols by grid-suitability over stored 60m bars: volatility and ATR%
+  scored as **distance from a configured band center** (the non-monotonic read — too quiet
+  never cycles, too hot trips the caps), flatness descending, rank-based composite.
+- Strongest |Pearson| correlation vs the live lineup attaches as a **post-score
+  annotation**, not a factor (n/a under 50 aligned bars; self-correlation excluded).
+- Fully offline in v1 (no credentials, no DB writes, log-table output). Advisory only
+  (ADR-002) — the operator gates every symbol addition.
 
 ### 5d. Auto-Apply Gate (`evaluate_auto_apply`, Stage 3.4b)
 - `services/auto_apply.py`. Pure function: takes (`AdvisorSuggestion`, current `GridLevels`, `AutoApplyConfig`) → `AutoApplyResult` with per-key applied / rejected breakdown.
