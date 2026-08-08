@@ -84,7 +84,7 @@ class BackfillResult:  # pylint: disable=too-many-instance-attributes
 ProgressCallback = Callable[[BackfillResult], Awaitable[None]]
 
 
-def _synthesize_snapshots(
+def synthesize_snapshots(
     bars: list[OHLCBar],
 ) -> list[tuple[Symbol, Price, Timestamp]]:
     """Translate each bar's ``(opened_at, open)`` into a price snapshot.
@@ -92,7 +92,10 @@ def _synthesize_snapshots(
     Per the slice-3 design decision (workshopped 2026-05-25): the
     synthesized snapshot's timestamp is the bar's ``opened_at`` and
     the price is ``open`` — modelling what cli/observe's poll would
-    have observed at that exact instant.
+    have observed at that exact instant. Public because the historical
+    importer (tools/import_kraken_history.py) shares this exact rule —
+    two hand-rolled copies of "which field becomes the snapshot" would
+    drift.
     """
     return [
         (
@@ -193,7 +196,7 @@ async def backfill_range(  # pylint: disable=too-many-arguments,too-many-positio
             try:
                 bars_inserted += await storage.save_ohlc_bars(in_window)
                 snapshots_inserted += await storage.save_price_snapshots(
-                    _synthesize_snapshots(in_window)
+                    synthesize_snapshots(in_window)
                 )
             except StorageError as exc:
                 error = f"{type(exc).__name__}: {exc}"
@@ -252,6 +255,7 @@ __all__ = (
     "BackfillResult",
     "ProgressCallback",
     "backfill_range",
+    "synthesize_snapshots",
 )
 
 
