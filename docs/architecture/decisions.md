@@ -1967,6 +1967,17 @@ bounds).
 
 **Soak note:** P2 (post-tag); `v1.1` branch, NOT in the frozen v1.0 soak image.
 
+**Implementation note (2026-08-08, shipped):** two touchpoints beyond the ADR text.
+(1) `GridConfig.for_coin` enumerates fields explicitly when materializing the default tier,
+so the new field had to be added to that constructor call — omitting it would silently
+revert every coin without a per-coin entry to `spacing_up` (regression-tested).
+(2) The ADR-023 startup-recovery path (`_place_pending_counters`) is a second counter-
+placement call site; `grid_ceiling` is threaded through so recovered BUY fills honor
+`top_sell` too (regression-tested). Also made explicit: under `top_sell` the counter SELL
+coexists with the layout SELL already at the ceiling — two orders at the same price
+(`_try_place` has no price-level dedup); that is the intended SELLs-cluster-at-the-ceiling
+behavior. The `!grid` operator query surfaces the mode.
+
 **References:**
 - `docs/release/v1.1/README.md` — P2 "Configurable counter-order target" row + the P2
   resolved blueprint (`top_sell` asymmetry).

@@ -528,14 +528,20 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # doesn't spuriously re-place the full grid on top.
             if self._pending_counter_ids:
                 pc_placed, pc_refusals, pc_deferred = await self._place_pending_counters(
-                    symbol, spacing, coin_cfg
+                    symbol, spacing, coin_cfg, grid_ceiling=levels[-1].price
                 )
                 placed += pc_placed
                 refusals += pc_refusals
                 sells_deferred += pc_deferred
 
             for filled in fills:
-                target = next_counter_action(filled.side, filled.price.amount, spacing)
+                target = next_counter_action(
+                    filled.side,
+                    filled.price.amount,
+                    spacing,
+                    counter_target_mode=coin_cfg.counter_target_mode,
+                    grid_ceiling=levels[-1].price,
+                )
                 # Per ADR-006 decision 2 the counter is sized to the filled
                 # portion, not re-derived from order_size_usd. This keeps
                 # cycles base-amount-balanced — without it, each cycle's
@@ -675,7 +681,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
 
     async def _place_pending_counters(
-        self, symbol: Symbol, spacing: Decimal, coin_cfg: CoinGridConfig
+        self,
+        symbol: Symbol,
+        spacing: Decimal,
+        coin_cfg: CoinGridConfig,
+        *,
+        grid_ceiling: Decimal,
     ) -> tuple[int, int, int]:
         """Place counter-orders queued by startup reconciliation (ADR-023).
 
@@ -702,7 +713,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 continue
             if order.symbol != symbol:
                 continue
-            target = next_counter_action(order.side, order.price.amount, spacing)
+            target = next_counter_action(
+                order.side,
+                order.price.amount,
+                spacing,
+                counter_target_mode=coin_cfg.counter_target_mode,
+                grid_ceiling=grid_ceiling,
+            )
             counter_amount = Amount(value=order.filled_amount, asset=order.amount.asset)
             outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
             if outcome == "placed":

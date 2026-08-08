@@ -330,6 +330,7 @@ def _render_grid_config(result: GridConfigResult) -> dict[str, Any]:
         f"**Levels above**: {result.levels_above}",
         f"**Levels below**: {result.levels_below}",
         f"**Order size**: `${result.order_size_usd:,.2f}`",
+        f"**Counter target**: `{result.counter_target_mode}`",
     ]
     return {
         "title": f"Grid config — {scope}",

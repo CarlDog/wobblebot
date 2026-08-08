@@ -229,6 +229,39 @@ class TestNextCounterAction:
         second = next_counter_action(first.side, first.price, Decimal("1"))
         assert second == GridLevel(side=OrderSide.BUY, price=Decimal("99"))
 
+    def test_top_sell_buy_fill_goes_to_ceiling(self) -> None:
+        # ADR-029: under top_sell the BUY-fill counter SELL lands at the
+        # band ceiling, not one spacing step up.
+        result = next_counter_action(
+            filled_side=OrderSide.BUY,
+            filled_price=Decimal("99"),
+            spacing=Decimal("1"),
+            counter_target_mode="top_sell",
+            grid_ceiling=Decimal("105"),
+        )
+        assert result == GridLevel(side=OrderSide.SELL, price=Decimal("105"))
+
+    def test_top_sell_sell_fill_unchanged(self) -> None:
+        # ADR-029 is asymmetric: SELL-fill counters are identical in both modes.
+        result = next_counter_action(
+            filled_side=OrderSide.SELL,
+            filled_price=Decimal("101"),
+            spacing=Decimal("1"),
+            counter_target_mode="top_sell",
+            grid_ceiling=Decimal("105"),
+        )
+        assert result == GridLevel(side=OrderSide.BUY, price=Decimal("100"))
+
+    def test_top_sell_without_ceiling_raises(self) -> None:
+        # Fail loud — a silent spacing_up fallback would mask a wiring bug.
+        with pytest.raises(ValueError, match="grid_ceiling"):
+            next_counter_action(
+                filled_side=OrderSide.BUY,
+                filled_price=Decimal("99"),
+                spacing=Decimal("1"),
+                counter_target_mode="top_sell",
+            )
+
 
 class TestIsOffside:
     def _grid(self) -> list[GridLevel]:

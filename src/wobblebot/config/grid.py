@@ -25,6 +25,7 @@ operator may be holding a stale spacing they plan to fix before enabling.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -43,6 +44,13 @@ class GridLevels(BaseModel):
     levels_above: int = Field(gt=0)
     levels_below: int = Field(gt=0)
     order_size_usd: Decimal = Field(gt=Decimal("0"))
+    # ADR-029: where a filled BUY's counter SELL goes. ``spacing_up`` = one
+    # spacing step above the fill (classic grid); ``top_sell`` = the top of
+    # the configured band (sell into strength; carries inventory-accumulation
+    # risk in a grinding downtrend). SELL-fill counters are unaffected. Read
+    # live each tick — never snapshotted into GridState. Non-numeric, so the
+    # auto-apply gate rejects it by construction (operator-approval-only).
+    counter_target_mode: Literal["spacing_up", "top_sell"] = "spacing_up"
 
     class Config:
         frozen = True
@@ -115,5 +123,6 @@ class GridConfig(BaseModel):
             levels_above=self.default.levels_above,
             levels_below=self.default.levels_below,
             order_size_usd=self.default.order_size_usd,
+            counter_target_mode=self.default.counter_target_mode,
             enabled=True,
         )

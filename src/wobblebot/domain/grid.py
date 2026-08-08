@@ -141,17 +141,32 @@ def next_counter_action(
     filled_side: OrderSide,
     filled_price: Decimal,
     spacing: Decimal,
+    *,
+    counter_target_mode: str = "spacing_up",
+    grid_ceiling: Decimal | None = None,
 ) -> GridLevel:
     """Counter-order target for a just-filled grid order.
 
+    Under ``spacing_up`` (default, ADR-006 classic grid):
     BUY at ``P`` → SELL at ``P + spacing``.
     SELL at ``P`` → BUY at ``P - spacing``.
+
+    Under ``top_sell`` (ADR-029, asymmetric): only the BUY-fill counter
+    changes — the SELL goes to ``grid_ceiling`` (the highest configured
+    level). SELL-fill counters are identical in both modes.
 
     Pure arithmetic — does not check whether the counter price is
     still inside the grid window. The engine decides whether to act on
     the counter (it might be offside, or duplicate an existing order).
     """
     if filled_side == OrderSide.BUY:
+        if counter_target_mode == "top_sell":
+            if grid_ceiling is None:
+                raise ValueError(
+                    "counter_target_mode='top_sell' requires grid_ceiling "
+                    "(the highest configured level price)"
+                )
+            return GridLevel(side=OrderSide.SELL, price=grid_ceiling)
         return GridLevel(side=OrderSide.SELL, price=filled_price + spacing)
     return GridLevel(side=OrderSide.BUY, price=filled_price - spacing)
 

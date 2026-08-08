@@ -594,6 +594,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 levels_above=tier.levels_above,
                 levels_below=tier.levels_below,
                 order_size_usd=float(tier.order_size_usd),
+                counter_target_mode=tier.counter_target_mode,
             )
         coin = self._grid_config.for_coin(query.symbol.base)
         return GridConfigResult(
@@ -602,6 +603,7 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             levels_above=coin.levels_above,
             levels_below=coin.levels_below,
             order_size_usd=float(coin.order_size_usd),
+            counter_target_mode=coin.counter_target_mode,
         )
 
     async def _answer_status_report(  # pylint: disable=too-many-locals
