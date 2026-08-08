@@ -251,6 +251,24 @@ observe:
   bar_topup_enabled: true
 
 # ============================================================================
+# Per-CLI: screener (cli/screener)
+# ============================================================================
+# P2 slice 5: rank symbols with stored bar history by grid-suitability.
+# Read-only + offline (no Kraken calls in v1); output is a log table.
+# The two band centers encode the non-monotonic volatility read: too
+# quiet = the grid never cycles, too hot = the caps trip -- closest to
+# the center ranks best. Advisory only (ADR-002): the operator gates
+# every symbol addition.
+screener:
+  db: "data/wobblebot-observe.db"
+  lookback_days: 30
+  interval_minutes: 60
+  vol_band_center: 0.005                # stdev of per-bar returns (fraction)
+  atr_band_center_pct: 0.5              # ATR(14) as % of latest close
+  log_format: plain
+
+
+# ============================================================================
 # Per-CLI: preflight (cli/preflight)
 # ============================================================================
 # Diagnostic single-step against live Kraken with adapter in
