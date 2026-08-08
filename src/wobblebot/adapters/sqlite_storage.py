@@ -521,6 +521,35 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             parsed = parsed.replace(tzinfo=UTC)
         return parsed
 
+    async def get_latest_ohlc_opened_at(
+        self, symbol: Symbol, interval_minutes: int
+    ) -> datetime | None:
+        """Return the most-recent ``ohlc_bars.opened_at`` for ``(symbol, interval)``.
+
+        The ``--resume`` cursor (see the port docstring): scoped to the
+        interval so a 1h backfill's progress never masks an unfinished
+        1m one. Returns None when no bars exist at that interval.
+        """
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """
+                SELECT MAX(opened_at) AS latest
+                FROM ohlc_bars
+                WHERE symbol_base = ? AND symbol_quote = ? AND interval_minutes = ?
+                """,
+                (symbol.base, symbol.quote, interval_minutes),
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read latest ohlc opened_at for {symbol}: {exc}") from exc
+        if row is None or row[0] is None:
+            return None
+        parsed = datetime.fromisoformat(str(row[0]))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
     async def save_news_item(self, item: NewsItem) -> None:
         conn = self._require_conn()
         try:

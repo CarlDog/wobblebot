@@ -285,6 +285,41 @@ def _make_progress_logger(symbol: Symbol) -> ProgressCallback:
     return _log_progress
 
 
+def _cursor_to_since(
+    latest: datetime | None,
+    symbol: Symbol,
+    *,
+    until: datetime,
+    mode: str,
+    missing: str,
+) -> datetime | None:
+    """Translate a stored cursor into a backfill lower bound, or ``None`` to skip.
+
+    Shared by ``--catchup`` and ``--resume``: no stored cursor means the
+    symbol needs an explicit seed (WARN), a cursor at/past ``until``
+    means nothing to fetch (INFO). Both skip reasons are logged here.
+    """
+    if latest is None:
+        _LOGGER.warning(
+            "%s: no %s for %s; seed it with --since or --days",
+            mode,
+            missing,
+            symbol,
+            extra={"symbol": str(symbol)},
+        )
+        return None
+    if latest >= until:
+        _LOGGER.info(
+            "%s: %s already current (latest %s)",
+            mode,
+            symbol,
+            latest.isoformat(),
+            extra={"symbol": str(symbol), "latest": latest.isoformat()},
+        )
+        return None
+    return latest
+
+
 async def _resolve_catchup_since(
     storage: SQLiteStorageAdapter,
     symbol: Symbol,
@@ -293,29 +328,37 @@ async def _resolve_catchup_since(
 ) -> datetime | None:
     """Resolve one symbol's ``--catchup`` lower bound from stored history.
 
-    Returns the latest ``price_snapshots.observed_at`` for ``symbol`` —
-    the same cursor the startup auto-gap-fill reads — or ``None`` when
-    there is nothing to backfill (no prior history, or already current
-    at ``until``). Both skip reasons are logged here; storage failures
-    propagate as ``WobbleBotPortError`` for the caller to handle.
+    Reads the latest ``price_snapshots.observed_at`` — the same cursor
+    the startup auto-gap-fill uses. Storage failures propagate as
+    ``WobbleBotPortError`` for the caller to handle.
     """
     latest = await storage.get_latest_observed_at(symbol)
-    if latest is None:
-        _LOGGER.warning(
-            "catchup: no prior history for %s; seed it with --since or --days",
-            symbol,
-            extra={"symbol": str(symbol)},
-        )
-        return None
-    if latest >= until:
-        _LOGGER.info(
-            "catchup: %s already current (latest observation %s)",
-            symbol,
-            latest.isoformat(),
-            extra={"symbol": str(symbol), "latest_observed_at": latest.isoformat()},
-        )
-        return None
-    return latest
+    return _cursor_to_since(latest, symbol, until=until, mode="catchup", missing="prior history")
+
+
+async def _resolve_resume_since(
+    storage: SQLiteStorageAdapter,
+    symbol: Symbol,
+    interval_minutes: int,
+    *,
+    until: datetime,
+) -> datetime | None:
+    """Resolve one symbol's ``--resume`` lower bound from ``ohlc_bars``.
+
+    Reads the latest ``opened_at`` at the requested interval — the
+    honest "continue where the backfill left off" cursor, deliberately
+    NOT ``price_snapshots`` (which daemon polls also feed, overstating
+    backfill progress). Storage failures propagate as
+    ``WobbleBotPortError`` for the caller to handle.
+    """
+    latest = await storage.get_latest_ohlc_opened_at(symbol, interval_minutes)
+    return _cursor_to_since(
+        latest,
+        symbol,
+        until=until,
+        mode="resume",
+        missing=f"ohlc bars at {interval_minutes}m",
+    )
 
 
 async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
@@ -327,6 +370,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
     symbols_override: list[Symbol] | None,
     days: int | None = None,
     catchup: bool = False,
+    resume: bool = False,
     rate_limit_seconds: float = DEFAULT_RATE_LIMIT_SECONDS,
 ) -> int:
     """One-shot backfill mode for ``cli/observe --backfill``.
@@ -344,7 +388,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
 
     try:
         since: datetime | None
-        if catchup:
+        if catchup or resume:
             since = None  # resolved per symbol from stored history below
         elif days is not None:
             since = datetime.now(UTC) - timedelta(days=days)
@@ -353,7 +397,7 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         else:
             _LOGGER.error(
                 "--backfill requires --since (e.g. --since 2026-04-01), "
-                "--days (e.g. --days 30), or --catchup"
+                "--days (e.g. --days 30), --catchup, or --resume"
             )
             return 2
         until = _parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
@@ -396,7 +440,10 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         if exit_code is not None:
             return exit_code
 
-        since_label = "auto (per-symbol catchup)" if since is None else since.isoformat()
+        if since is not None:
+            since_label = since.isoformat()
+        else:
+            since_label = "auto (per-symbol resume)" if resume else "auto (per-symbol catchup)"
         _LOGGER.info(
             "backfill starting: %d symbol(s), %dm interval, %s -> %s",
             len(symbols),
@@ -415,11 +462,18 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         for symbol in symbols:
             symbol_since = since
             if symbol_since is None:
+                mode = "resume" if resume else "catchup"
                 try:
-                    symbol_since = await _resolve_catchup_since(storage, symbol, until=until)
+                    if resume:
+                        symbol_since = await _resolve_resume_since(
+                            storage, symbol, interval_minutes, until=until
+                        )
+                    else:
+                        symbol_since = await _resolve_catchup_since(storage, symbol, until=until)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
-                        "catchup: failed reading latest observation for %s: %s",
+                        "%s: failed reading cursor for %s: %s",
+                        mode,
                         symbol,
                         exc,
                         extra={"symbol": str(symbol), "error": str(exc)},
@@ -752,6 +806,18 @@ def main() -> int:
             "--backfill."
         ),
     )
+    since_group.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resolve each symbol's backfill lower bound from its latest "
+            "ohlc_bars row at the requested --interval — the honest "
+            "'continue where the backfill left off' cursor (unlike "
+            "--catchup, unaffected by daemon price polls). Symbols with "
+            "no bars at that interval are skipped with a warning. Only "
+            "used with --backfill."
+        ),
+    )
     parser.add_argument(
         "--until",
         default=None,
@@ -811,6 +877,7 @@ def main() -> int:
                 symbols_override=symbols_override,
                 days=args.days,
                 catchup=catchup,
+                resume=args.resume,
                 rate_limit_seconds=args.rate_limit_seconds,
             ),
             logger=_LOGGER,

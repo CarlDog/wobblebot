@@ -317,6 +317,31 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: On DB read failure.
         """
 
+    @abstractmethod
+    async def get_latest_ohlc_opened_at(
+        self, symbol: Symbol, interval_minutes: int
+    ) -> datetime | None:
+        """Return the most-recent ``ohlc_bars.opened_at`` for ``(symbol, interval)``.
+
+        Backs ``cli/observe --backfill --resume`` (P2 slice 1): the
+        honest cursor for "continue the backfill I was running" is the
+        last bar actually written at that interval — NOT
+        ``get_latest_observed_at``, whose ``price_snapshots`` source is
+        also fed by daemon polls and would overstate backfill progress.
+
+        Args:
+            symbol: Trading pair.
+            interval_minutes: Bar interval the backfill runs at; cursors
+                are tracked independently per interval.
+
+        Returns:
+            UTC datetime of the most-recent bar's ``opened_at``, or
+            ``None`` if no bars exist for the pair at that interval.
+
+        Raises:
+            StorageError: On DB read failure.
+        """
+
     # News item operations (Stage 3.2.5 — News Ingestion)
     @abstractmethod
     async def save_news_item(self, item: NewsItem) -> None:
