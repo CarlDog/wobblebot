@@ -19,6 +19,7 @@ from wobblebot.cli.observe import (
     _parse_date_arg,
     _parse_days_arg,
     _parse_interval_arg,
+    _parse_intervals_arg,
     _parse_rate_limit_arg,
 )
 from wobblebot.domain.value_objects import OHLCBar
@@ -127,3 +128,28 @@ class TestParseIntervalArg:
         # OHLCBar set.
         for raw in ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"):
             assert _parse_interval_arg(raw) in OHLCBar.ALLOWED_INTERVALS
+
+
+class TestParseIntervalsArg:
+    def test_parses_comma_list(self) -> None:
+        assert _parse_intervals_arg("1m,1h") == [1, 60]
+
+    def test_dedupes_preserving_order(self) -> None:
+        assert _parse_intervals_arg("1h,1m,60,1h") == [60, 1]
+
+    def test_single_value_ok(self) -> None:
+        assert _parse_intervals_arg("4h") == [240]
+
+    def test_tolerates_whitespace_and_empty_pieces(self) -> None:
+        assert _parse_intervals_arg(" 1m , 1h ,") == [1, 60]
+
+    @pytest.mark.parametrize("raw", ["", " ", ","])
+    def test_rejects_empty(self, raw: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="empty"):
+            _parse_intervals_arg(raw)
+
+    def test_rejects_bad_element(self) -> None:
+        """One bad element fails the whole flag — matching --interval's
+        strictness rather than silently dropping it."""
+        with pytest.raises(argparse.ArgumentTypeError, match="allowed set"):
+            _parse_intervals_arg("1m,7m")

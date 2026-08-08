@@ -247,6 +247,22 @@ def _parse_interval_arg(raw: str) -> int:
     return minutes
 
 
+def _parse_intervals_arg(raw: str) -> list[int]:
+    """Parse ``--intervals 1m,1h`` — a comma list of ``_parse_interval_arg`` values.
+
+    Deduplicates while preserving operator order (the fetch order).
+    """
+    parts = [piece for piece in (p.strip() for p in raw.split(",")) if piece]
+    if not parts:
+        raise argparse.ArgumentTypeError("--intervals cannot be empty")
+    minutes: list[int] = []
+    for part in parts:
+        value = _parse_interval_arg(part)
+        if value not in minutes:
+            minutes.append(value)
+    return minutes
+
+
 # One progress line per this many Kraken requests (~1 request/second at
 # the default rate limit, so roughly one line every 10s on a long
 # backfill). Chosen to keep the bulk-seed scenario (~2200 requests)
@@ -372,12 +388,15 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
     catchup: bool = False,
     resume: bool = False,
     rate_limit_seconds: float = DEFAULT_RATE_LIMIT_SECONDS,
+    intervals: list[int] | None = None,
 ) -> int:
     """One-shot backfill mode for ``cli/observe --backfill``.
 
     Walks each configured symbol through ``services.backfill.backfill_range``
     against Kraken's OHLC endpoint, writes ohlc_bars + price_snapshots,
-    prints a per-symbol summary, exits.
+    prints a per-symbol summary, exits. ``intervals`` (from
+    ``--intervals``) overrides the single ``interval_minutes``; stats are
+    reported per (symbol, interval).
 
     Returns 0 on full success; 1 if any symbol's backfill terminated
     on an error; 2 on argument / config / credential failure.
@@ -440,61 +459,66 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         if exit_code is not None:
             return exit_code
 
+        effective_intervals = intervals if intervals else [interval_minutes]
+        intervals_label = ",".join(f"{m}m" for m in effective_intervals)
         if since is not None:
             since_label = since.isoformat()
         else:
             since_label = "auto (per-symbol resume)" if resume else "auto (per-symbol catchup)"
         _LOGGER.info(
-            "backfill starting: %d symbol(s), %dm interval, %s -> %s",
+            "backfill starting: %d symbol(s), %s interval(s), %s -> %s",
             len(symbols),
-            interval_minutes,
+            intervals_label,
             since_label,
             until.isoformat(),
             extra={
                 "symbols": [str(s) for s in symbols],
                 "since": since_label,
                 "until": until.isoformat(),
-                "interval_minutes": interval_minutes,
+                "intervals_minutes": effective_intervals,
             },
         )
 
         any_error = False
         for symbol in symbols:
-            symbol_since = since
-            if symbol_since is None:
-                mode = "resume" if resume else "catchup"
-                try:
-                    if resume:
-                        symbol_since = await _resolve_resume_since(
-                            storage, symbol, interval_minutes, until=until
-                        )
-                    else:
-                        symbol_since = await _resolve_catchup_since(storage, symbol, until=until)
-                except WobbleBotPortError as exc:
-                    _LOGGER.warning(
-                        "%s: failed reading cursor for %s: %s",
-                        mode,
-                        symbol,
-                        exc,
-                        extra={"symbol": str(symbol), "error": str(exc)},
-                    )
-                    any_error = True
-                    continue
+            for interval in effective_intervals:
+                symbol_since = since
                 if symbol_since is None:
-                    continue  # skip reason already logged by the resolver
-            result = await backfill_range(
-                adapter,
-                storage,
-                symbol=symbol,
-                since=symbol_since,
-                until=until,
-                interval_minutes=interval_minutes,
-                rate_limit_seconds=rate_limit_seconds,
-                progress_callback=_make_progress_logger(symbol),
-            )
-            _log_backfill_result(symbol, result)
-            if result.error is not None:
-                any_error = True
+                    mode = "resume" if resume else "catchup"
+                    try:
+                        if resume:
+                            symbol_since = await _resolve_resume_since(
+                                storage, symbol, interval, until=until
+                            )
+                        else:
+                            symbol_since = await _resolve_catchup_since(
+                                storage, symbol, until=until
+                            )
+                    except WobbleBotPortError as exc:
+                        _LOGGER.warning(
+                            "%s: failed reading cursor for %s: %s",
+                            mode,
+                            symbol,
+                            exc,
+                            extra={"symbol": str(symbol), "error": str(exc)},
+                        )
+                        any_error = True
+                        continue
+                    if symbol_since is None:
+                        continue  # skip reason already logged by the resolver
+                result = await backfill_range(
+                    adapter,
+                    storage,
+                    symbol=symbol,
+                    since=symbol_since,
+                    until=until,
+                    interval_minutes=interval,
+                    rate_limit_seconds=rate_limit_seconds,
+                    progress_callback=_make_progress_logger(symbol),
+                )
+                _log_backfill_result(symbol, result)
+                if result.error is not None:
+                    any_error = True
 
         _LOGGER.info(
             "backfill done: %d symbol(s), succeeded=%s",
@@ -527,14 +551,16 @@ def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
             result.last_opened_at.isoformat() if result.last_opened_at is not None else "none"
         )
         _LOGGER.error(
-            "backfill %s failed after %d bar(s) in %.1fs: %s; resume with --since %s",
+            "backfill %s @ %dm failed after %d bar(s) in %.1fs: %s; resume with --since %s",
             symbol,
+            result.interval_minutes,
             result.bars_inserted,
             result.elapsed_seconds,
             result.error,
             resume_at,
             extra={
                 "symbol": str(symbol),
+                "interval_minutes": result.interval_minutes,
                 "error": result.error,
                 "resume_at": resume_at if resume_at != "none" else None,
                 "bars_inserted_before_failure": result.bars_inserted,
@@ -543,14 +569,16 @@ def _log_backfill_result(symbol: Symbol, result: BackfillResult) -> None:
         )
     else:
         _LOGGER.info(
-            "backfill %s complete: %d bars inserted, %d snapshots, %d Kraken req, %.1fs",
+            "backfill %s @ %dm complete: %d bars inserted, %d snapshots, %d Kraken req, %.1fs",
             symbol,
+            result.interval_minutes,
             result.bars_inserted,
             result.snapshots_inserted,
             result.requests_made,
             result.elapsed_seconds,
             extra={
                 "symbol": str(symbol),
+                "interval_minutes": result.interval_minutes,
                 "bars_fetched": result.bars_fetched,
                 "bars_inserted": result.bars_inserted,
                 "snapshots_inserted": result.snapshots_inserted,
@@ -836,7 +864,8 @@ def main() -> int:
             "used with --backfill."
         ),
     )
-    parser.add_argument(
+    interval_group = parser.add_mutually_exclusive_group()
+    interval_group.add_argument(
         "--interval",
         type=_parse_interval_arg,
         default=1,
@@ -844,6 +873,18 @@ def main() -> int:
             "Backfill bar interval. Accepts 1m/5m/15m/30m/1h/4h/1d/1w or "
             "a bare minute count from Kraken's published set. Default 1m "
             "(max-fidelity). Only used with --backfill."
+        ),
+    )
+    interval_group.add_argument(
+        "--intervals",
+        type=_parse_intervals_arg,
+        default=None,
+        help=(
+            "Comma list of backfill bar intervals fetched back-to-back "
+            "per symbol (e.g. 1m,1h — the auditor wants 1m, the "
+            "historian 1h). Same accepted forms as --interval; stats "
+            "report per (symbol, interval). Mutually exclusive with "
+            "--interval. Only used with --backfill."
         ),
     )
     args = parser.parse_args()
@@ -879,6 +920,7 @@ def main() -> int:
                 catchup=catchup,
                 resume=args.resume,
                 rate_limit_seconds=args.rate_limit_seconds,
+                intervals=args.intervals,
             ),
             logger=_LOGGER,
         )
