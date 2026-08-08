@@ -694,6 +694,7 @@ class TestGridConfigQuery:
         assert result.spacing_percentage == 1.0
         assert result.levels_above == 3
         assert result.order_size_usd == 10.0
+        assert result.counter_target_mode == "spacing_up"
 
     async def test_grid_config_for_eth_uses_override(
         self,

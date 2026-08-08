@@ -210,6 +210,7 @@ class GridConfigResult(BaseModel):
     levels_above: int = Field(ge=0)
     levels_below: int = Field(ge=0)
     order_size_usd: float = Field(gt=0)
+    counter_target_mode: Literal["spacing_up", "top_sell"] = "spacing_up"
 
     class Config:
         frozen = True
