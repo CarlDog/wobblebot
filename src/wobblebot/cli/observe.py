@@ -559,7 +559,7 @@ def _warn_if_horizon_truncated(result: BackfillResult) -> None:
     if result.bars_fetched >= expected * _HORIZON_WARN_FRACTION:
         return
     _LOGGER.warning(
-        "backfill %s @ %dm returned %d bars but the window implies ~%d — "
+        "backfill %s @ %dm returned %d bars but the window implies ~%d -- "
         "Kraken's retained history may not reach back to %s",
         result.symbol,
         result.interval_minutes,
