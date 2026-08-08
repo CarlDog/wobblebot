@@ -377,7 +377,58 @@ async def _resolve_resume_since(
     )
 
 
-async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
+async def _backfill_one(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    adapter: KrakenAdapter,
+    storage: SQLiteStorageAdapter,
+    symbol: Symbol,
+    interval: int,
+    *,
+    since: datetime | None,
+    until: datetime,
+    resume: bool,
+    rate_limit_seconds: float,
+) -> bool:
+    """Run one (symbol, interval) backfill; returns True when it errored.
+
+    ``since=None`` means per-symbol resolution: ``--resume`` reads the
+    interval-scoped ``ohlc_bars`` cursor, ``--catchup`` the latest
+    stored observation. A resolver skip (nothing to fetch) is not an
+    error; a cursor-read failure is.
+    """
+    symbol_since = since
+    if symbol_since is None:
+        mode = "resume" if resume else "catchup"
+        try:
+            if resume:
+                symbol_since = await _resolve_resume_since(storage, symbol, interval, until=until)
+            else:
+                symbol_since = await _resolve_catchup_since(storage, symbol, until=until)
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "%s: failed reading cursor for %s: %s",
+                mode,
+                symbol,
+                exc,
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            return True
+        if symbol_since is None:
+            return False  # skip reason already logged by the resolver
+    result = await backfill_range(
+        adapter,
+        storage,
+        symbol=symbol,
+        since=symbol_since,
+        until=until,
+        interval_minutes=interval,
+        rate_limit_seconds=rate_limit_seconds,
+        progress_callback=_make_progress_logger(symbol),
+    )
+    _log_backfill_result(symbol, result)
+    return result.error is not None
+
+
+async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements,too-many-return-statements,too-many-arguments
     config: WobbleBotConfig,
     *,
     since_raw: str | None,
@@ -482,43 +533,17 @@ async def _backfill_main(  # pylint: disable=too-many-locals,too-many-branches,t
         any_error = False
         for symbol in symbols:
             for interval in effective_intervals:
-                symbol_since = since
-                if symbol_since is None:
-                    mode = "resume" if resume else "catchup"
-                    try:
-                        if resume:
-                            symbol_since = await _resolve_resume_since(
-                                storage, symbol, interval, until=until
-                            )
-                        else:
-                            symbol_since = await _resolve_catchup_since(
-                                storage, symbol, until=until
-                            )
-                    except WobbleBotPortError as exc:
-                        _LOGGER.warning(
-                            "%s: failed reading cursor for %s: %s",
-                            mode,
-                            symbol,
-                            exc,
-                            extra={"symbol": str(symbol), "error": str(exc)},
-                        )
-                        any_error = True
-                        continue
-                    if symbol_since is None:
-                        continue  # skip reason already logged by the resolver
-                result = await backfill_range(
+                errored = await _backfill_one(
                     adapter,
                     storage,
-                    symbol=symbol,
-                    since=symbol_since,
+                    symbol,
+                    interval,
+                    since=since,
                     until=until,
-                    interval_minutes=interval,
+                    resume=resume,
                     rate_limit_seconds=rate_limit_seconds,
-                    progress_callback=_make_progress_logger(symbol),
                 )
-                _log_backfill_result(symbol, result)
-                if result.error is not None:
-                    any_error = True
+                any_error = any_error or errored
 
         _LOGGER.info(
             "backfill done: %d symbol(s), succeeded=%s",
