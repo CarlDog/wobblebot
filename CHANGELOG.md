@@ -48,7 +48,20 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   bounce): cancel-first atomically — any failed cancel aborts with the old anchor
   untouched — then a fresh grid placed in-process, through the same confirm-before-
   execute firewall as every command. Bundled: a three-way catalog drift test (typed
-  unions ↔ help catalog ↔ intent-parser prompt).
+  unions ↔ help catalog ↔ intent-parser prompt). Live e2e verified 2026-08-09
+  (operator-approved BTC re-anchor on the NAS; three findings queued — see
+  `docs/planning/roadmap.md`).
+- **Slice 5 — re-anchor banner action button + snooze.** The dashboard's re-anchor
+  recommendation banners grow their two buttons: **Re-anchor** routes through the
+  same `pending_commands` confirm page as every mutation (ADR-002 firewall — the
+  button itself moves nothing), and **Snooze 24h** suppresses that symbol's banner
+  via a new UI-local `reanchor_snoozes` table in operator.db (deliberately NOT a
+  firewall write — hiding a banner moves no money; survives daemon bounces; a
+  snooze-lookup failure shows every banner rather than hiding one). Each banner
+  now also carries the fee-only decision economics line the operator asked for:
+  projected cost ≈ 0.40% taker on the cancelled + re-laid ladder notional
+  (paper-loss-on-stranded-inventory rejected as misleading — cancelling sells
+  nothing).
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

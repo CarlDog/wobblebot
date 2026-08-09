@@ -400,7 +400,16 @@ endpoints first (since deep linking needs the row identity to be
 addressable in the URL); deep linking second (more design
 discussion needed).
 
-### Re-anchor banner — action button + snooze
+### Re-anchor banner — action button + snooze — ✅ SHIPPED 2026-08-09 (P3 slice 5)
+
+> **Shipped to the blueprint:** `POST /commands/reanchor` through the shared
+> pending_commands confirm flow; `POST /commands/snooze-reanchor` UI-local into the
+> new `reanchor_snoozes` table (pinned by test: a snooze writes zero firewall rows);
+> fee-only projected-cost line = 2 × `KRAKEN_TAKER_FEE_RATE` × the symbol's open
+> notional (cancelled + re-laid ladder, approximated equal), with the honest
+> tooltip; snooze lookup fails OPEN (a storage failure shows every banner — a
+> reappearing banner beats a hidden recommendation). Receipt in
+> `docs/planning/roadmap.md` (v1.1 Track item 5).
 
 > **Blueprint 2026-06-03** (feature-dev + judge): the chain resolved to an
 > **in-process** re-anchor + a shared **`engine_state`** keystone table; snooze is
