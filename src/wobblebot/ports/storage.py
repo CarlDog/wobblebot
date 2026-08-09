@@ -1072,6 +1072,40 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def save_reanchor_snooze(self, symbol: Symbol, snoozed_until: datetime) -> None:
+        """Upsert one symbol's re-anchor banner snooze (P3 banner button).
+
+        cli/web calls this when the operator clicks "Snooze" on a
+        re-anchor recommendation banner. Keyed on ``(base, quote)`` —
+        re-snoozing a symbol replaces its previous expiry. UI-local
+        state: a snooze suppresses a dashboard banner and nothing
+        else, so it deliberately does NOT cross ``pending_commands``.
+
+        Args:
+            symbol: The symbol whose banner is being snoozed.
+            snoozed_until: Suppress the banner until this instant.
+
+        Raises:
+            StorageError: On persistence failure.
+        """
+
+    @abstractmethod
+    async def get_reanchor_snoozes(self) -> dict[Symbol, datetime]:
+        """Return every symbol's banner-snooze expiry (P3 banner button).
+
+        Expired snoozes are still returned — storage reports what was
+        written; consumers compare ``snoozed_until`` against their own
+        ``now`` (mirrors :meth:`get_engine_states`' freshness posture).
+
+        Returns:
+            Mapping of symbol -> snooze expiry. Empty when no symbol
+            has ever been snoozed.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
     async def save_status_report_taken(
         self, channel_id: str, user_id: str, taken_at: datetime
     ) -> None:

@@ -302,6 +302,12 @@ class _FailingStorage(StoragePort):
     async def get_engine_states(self):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def save_reanchor_snooze(self, symbol, snoozed_until):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_reanchor_snoozes(self):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def save_status_report_taken(self, channel_id, user_id, taken_at):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

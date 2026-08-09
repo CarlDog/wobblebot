@@ -1546,6 +1546,49 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             )
         return out
 
+    async def save_reanchor_snooze(self, symbol: Symbol, snoozed_until: datetime) -> None:
+        """Upsert one symbol's banner-snooze expiry (P3 banner button).
+
+        Same one-row-per-symbol upsert shape as ``save_engine_state``;
+        re-snoozing replaces the previous expiry.
+        """
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO reanchor_snoozes (symbol_base, symbol_quote, snoozed_until)
+                VALUES (?, ?, ?)
+                ON CONFLICT(symbol_base, symbol_quote) DO UPDATE SET
+                    snoozed_until = excluded.snoozed_until
+                """,
+                (symbol.base, symbol.quote, snoozed_until.astimezone(UTC).isoformat()),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to upsert reanchor snooze for {symbol}: {exc}") from exc
+
+    async def get_reanchor_snoozes(self) -> dict[Symbol, datetime]:
+        """Every symbol's snooze expiry; corrupt rows skipped, not fatal."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT symbol_base, symbol_quote, snoozed_until FROM reanchor_snoozes"
+            ) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read reanchor snoozes: {exc}") from exc
+        out: dict[Symbol, datetime] = {}
+        for db_row in rows:
+            try:
+                snoozed_until = datetime.fromisoformat(db_row["snoozed_until"])
+            except ValueError:
+                continue
+            if snoozed_until.tzinfo is None:
+                snoozed_until = snoozed_until.replace(tzinfo=UTC)
+            out[Symbol(base=db_row["symbol_base"], quote=db_row["symbol_quote"])] = snoozed_until
+        return out
+
     async def save_status_report_taken(
         self, channel_id: str, user_id: str, taken_at: datetime
     ) -> None:
