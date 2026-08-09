@@ -15,6 +15,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
@@ -1029,6 +1030,42 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             Dict from canonical daemon name to last-beat timestamp
             (UTC, tz-aware). Empty dict when no heartbeats have been
             written.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
+    async def save_engine_state(self, row: EngineStateRow) -> None:
+        """Upsert one symbol's engine-visibility row (ADR-030).
+
+        ``cli/live`` calls this once per symbol per tick so the web
+        tier can render paused / offside truthfully. Keyed on
+        ``(symbol.base, symbol.quote)`` — each write replaces the
+        symbol's previous state.
+
+        Args:
+            row: The symbol's current engine state.
+
+        Raises:
+            StorageError: On persistence failure. Callers should
+                swallow + log — a visibility write must never break
+                a trading tick (same contract as the daemon
+                heartbeat).
+        """
+
+    @abstractmethod
+    async def get_engine_states(self) -> list[EngineStateRow]:
+        """Return every symbol's most-recent engine-state row (ADR-030).
+
+        Consumers must apply their own freshness guard on
+        ``updated_at`` — a row from a dead engine is still returned
+        here (storage reports what was written, not whether the
+        writer is alive).
+
+        Returns:
+            One row per symbol ever written, unordered. Empty list
+            when the table is empty.
 
         Raises:
             StorageError: On retrieval failure.
