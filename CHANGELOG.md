@@ -86,6 +86,14 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Slice 8 — Docker HEALTHCHECKs on all 8 services.** A wedged-but-alive
+  daemon (stuck socket, blocked Ollama, deadlocked write) used to show green
+  in Portainer forever; now every container runs `tools/healthcheck.py` —
+  daemons classify their own heartbeat/content freshness through the exact
+  machinery the /health page uses, and the web container does a liveness GET
+  against a new unauthenticated, content-free `/healthz`. Exit codes strictly
+  0/1 (Docker reserves 2). Interval operator-tunable via
+  `HEALTHCHECK_INTERVAL`.
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

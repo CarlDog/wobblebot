@@ -502,7 +502,32 @@ discussion that "auto-cancellation feels wrong; lean into
 banner + action button instead." Shipping order matches the
 dependency: re-anchor mechanism → action button → snooze.
 
-### Web actions: wait-for-completion + auto-refresh (no fire-and-forget)
+### Pause stays non-destructive (+ candidate "halt" compound)
+
+**Operator question 2026-08-09:** "should a 'pause' action also undo
+any current transactions?" **Answer ratified: NO — pause must stay
+non-destructive.** Two load-bearing reasons: (1) the state-aware
+buttons' safe default (P3 slice 6) shows PAUSE whenever engine state
+is absent or stale, precisely because an extra pause is a harmless
+idempotent no-op — if pause cancelled orders, that safe default would
+become a destructive misfire; (2) it composes: `cancel_open_orders`
+already exists for the destructive half, and the ADR-006 parking
+posture keeps ladder position through interruptions by default.
+
+**The honest gap the question exposes:** a paused symbol is NOT
+inert — its resting limit orders stay live on Kraken and CAN fill
+while paused (the fill is detected and countered only after resume).
+An operator pausing to "stop everything on this symbol" may be
+surprised. Two follow-ups, cheap first:
+
+1. **Say it at the decision point** — the pause confirm page (web +
+   the Discord embed) gains one line: "resting orders remain live and
+   can fill while paused; use cancel_open_orders to pull them." Ride
+   with the wait-for-completion slice (same surface).
+2. **Optional `halt` compound** (pause + cancel in one confirmed,
+   clearly-destructive command) if composing the two by hand proves
+   annoying in practice. Not built until the annoyance is real — an
+   explicit second command, never a change to pause's semantics.
 
 **What:** when the operator approves an action in the web UI, the UI
 should follow the action to its actual outcome and then refresh —
