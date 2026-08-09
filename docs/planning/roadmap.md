@@ -635,6 +635,16 @@ the detail; the full backlog index is
    + CSS only; all slice-5 test assertions unchanged. Side observations
    queued from the same review: BABY/USD dust balance renders a full empty
    card; Recent Fills paints BUY rows with a loss-red ▼ (money-out ≠ loss).
+   **Same-session addendum — activity stat** ✅ **2026-08-09**
+   (operator-requested, the v0 of the new re-anchor-viability item): a sixth
+   banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
+   enough to cycle even a correctly-placed grid — the BTC-re-anchor-sat-idle
+   observation, made visible). Computed from the sparkline series already in
+   the snapshot (one fetch now serves sparklines + banner; zero new
+   queries); "—" when the series is thin; deliberately a fact, not a
+   probability claim. The full screener-backed viability weighting is filed
+   in `operator-ux.md` + the v1.1 README P3 table, deferred behind the
+   committed ops items. Test count 2854 → 2855.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
