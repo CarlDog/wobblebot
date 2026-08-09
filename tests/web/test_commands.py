@@ -370,3 +370,101 @@ class TestConfirm:
         assert row2.status == "expired"
         assert row2.confirming_user_id is None
         assert row2.confirmed_at is None
+
+
+# --------------------------------------------------------------------- #
+# Re-anchor button + UI-local snooze (P3 banner slice)                   #
+# --------------------------------------------------------------------- #
+
+
+class TestReanchorAndSnooze:
+    @pytest.mark.asyncio
+    async def test_reanchor_post_creates_reanchor_row(self, storage: SQLiteStorageAdapter) -> None:
+        """The banner button lands a ReanchorCommand in the same
+        awaiting_confirmation flow as pause — no firewall shortcut."""
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            form = client.get("/commands/pause")  # any page with a CSRF token
+            token = csrf_from(form.text)
+            resp = client.post(
+                "/commands/reanchor",
+                data={"symbol": "BTC/USD", "csrf_token": token},
+            )
+            assert resp.status_code == 303
+            assert _PENDING_ID_RE.search(resp.headers["location"]) is not None
+        rows = await storage.get_pending_commands(status="awaiting_confirmation")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.command.kind == "reanchor"
+        assert row.command.symbol.base == "BTC"
+        assert row.command.symbol.quote == "USD"
+        assert row.channel_id == "web"
+
+    def test_reanchor_invalid_symbol_renders_400(self, client: TestClient) -> None:
+        login_as(client)
+        form = client.get("/commands/pause")
+        token = csrf_from(form.text)
+        resp = client.post(
+            "/commands/reanchor",
+            data={"symbol": "notavalidsymbol", "csrf_token": token},
+        )
+        assert resp.status_code == 400
+        assert "Invalid symbol" in resp.text
+
+    def test_reanchor_post_without_csrf_returns_403(self, client: TestClient) -> None:
+        login_as(client)
+        resp = client.post("/commands/reanchor", data={"symbol": "BTC/USD"})
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_snooze_writes_row_and_skips_the_firewall(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The load-bearing UI-local pin: a snooze writes ONLY the
+        reanchor_snoozes row — zero pending_commands rows, because
+        suppressing a banner moves no money (P3 blueprint)."""
+        from datetime import UTC, datetime, timedelta
+
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        before = datetime.now(UTC)
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            form = client.get("/commands/pause")
+            token = csrf_from(form.text)
+            resp = client.post(
+                "/commands/snooze-reanchor",
+                data={"symbol": "BTC/USD", "csrf_token": token},
+            )
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/"
+        snoozes = await storage.get_reanchor_snoozes()
+        assert len(snoozes) == 1
+        ((symbol, until),) = snoozes.items()
+        assert (symbol.base, symbol.quote) == ("BTC", "USD")
+        assert before + timedelta(hours=23) < until < before + timedelta(hours=25)
+        for status_filter in ("awaiting_confirmation", "approved"):
+            assert await storage.get_pending_commands(status=status_filter) == []
+
+    def test_snooze_invalid_symbol_returns_400(self, client: TestClient) -> None:
+        login_as(client)
+        form = client.get("/commands/pause")
+        token = csrf_from(form.text)
+        resp = client.post(
+            "/commands/snooze-reanchor",
+            data={"symbol": "notavalidsymbol", "csrf_token": token},
+        )
+        assert resp.status_code == 400
+
+    def test_snooze_post_without_csrf_returns_403(self, client: TestClient) -> None:
+        login_as(client)
+        resp = client.post("/commands/snooze-reanchor", data={"symbol": "BTC/USD"})
+        assert resp.status_code == 403

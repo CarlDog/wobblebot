@@ -9,10 +9,12 @@
      hx-trigger="every 15s"
      hx-swap="outerHTML transition:true">
 
-  {# Re-anchor recommendation banners (Stage 8.4.E soak Day 4).
+  {# Re-anchor recommendation banners (Stage 8.4.E soak Day 4;
+     action button + snooze landed with the P3 banner slice).
      Severity = max(drift_tier, age_tier); drift gates the trigger
-     so calm-market parked grids don't get scary banners. v1.0
-     info-only; action button + snooze are v1.1. #}
+     so calm-market parked grids don't get scary banners. The
+     Re-anchor button goes through pending_commands (confirm page
+     next — the ADR-002 firewall); Snooze is UI-local. #}
   {% for rec in snapshot.reanchor_recommendations %}
     <div class="reanchor-banner reanchor-{{ rec.severity }}" role="status">
       <strong>⚠ Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}.</strong>
@@ -21,6 +23,22 @@
       grid anchored at ${{ "%.2f"|format(rec.anchor_price) }},
       oldest order {{ rec.oldest_order_age_seconds | humanize_duration }} old.
       Re-anchoring would reposition the ladder to catch the current band.
+      <span class="reanchor-fee"
+            title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">
+        Projected cost ≈ ${{ "%.2f"|format(rec.projected_fee_usd) }} in fees.
+      </span>
+      <span class="reanchor-actions">
+        <form method="post" action="/commands/reanchor">
+          {{ csrf_input(request) }}
+          <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
+          <button type="submit" class="reanchor-act">Re-anchor {{ rec.symbol.base }}/{{ rec.symbol.quote }}…</button>
+        </form>
+        <form method="post" action="/commands/snooze-reanchor">
+          {{ csrf_input(request) }}
+          <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
+          <button type="submit" class="reanchor-snooze">Snooze 24h</button>
+        </form>
+      </span>
     </div>
   {% endfor %}
 

@@ -50,6 +50,7 @@ from wobblebot.ports.operator import (
     OperatorCommand,
     PauseCommand,
     PendingCommand,
+    ReanchorCommand,
     ResumeCommand,
     StopCommand,
 )
@@ -68,6 +69,9 @@ router = APIRouter(prefix="/commands", tags=["commands"])
 # pass their TTL.
 _WEB_TTL_MINUTES = 10
 _WEB_CHANNEL_ID = "web"
+# Banner snooze horizon ("Snooze 24h" per the P3 blueprint). Fixed —
+# a duration picker is speculative surface until an operator asks.
+_SNOOZE_HOURS = 24
 
 
 # --------------------------------------------------------------------- #
@@ -262,6 +266,72 @@ async def stop_submit(
         storage=storage,
     )
     return _redirect_to_confirm(pending.id)
+
+
+@router.post("/reanchor")
+async def reanchor_submit(
+    request: Request,
+    _csrf: None = Depends(require_csrf_token),
+    symbol: str = Form(..., min_length=1, max_length=32),
+    user: User = Depends(require_user),
+    storage: StoragePort = Depends(get_operator_storage),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    """Banner "Re-anchor" button (ADR-031, P3 banner slice).
+
+    Same firewall shape as pause/resume: a ``ReanchorCommand`` row in
+    ``awaiting_confirmation``, then the shared confirm page. The
+    destructive part (cancel + fresh anchor + re-lay) only runs after
+    the operator approves AND cli/live's ``status='approved'`` poll
+    picks it up — the button itself moves nothing.
+    """
+    try:
+        parsed = _parse_symbol(symbol)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "command_form.html",
+            {
+                "page_title": "Re-anchor symbol",
+                "verb": "reanchor",
+                "verb_label": "Re-anchor",
+                "form_action": "/commands/reanchor",
+                "username": user.username,
+                "needs_symbol": True,
+                "error": f"Invalid symbol: {exc}",
+            },
+            status_code=400,
+        )
+    pending = await _create_pending(
+        command=ReanchorCommand(symbol=parsed),
+        user=user,
+        storage=storage,
+    )
+    return _redirect_to_confirm(pending.id)
+
+
+@router.post("/snooze-reanchor")
+async def snooze_reanchor_submit(
+    _request: Request,
+    _csrf: None = Depends(require_csrf_token),
+    symbol: str = Form(..., min_length=1, max_length=32),
+    _user: User = Depends(require_user),
+    storage: StoragePort = Depends(get_operator_storage),
+) -> Response:
+    """Banner "Snooze 24h" button — deliberately UI-local (P3 blueprint).
+
+    Writes the ``reanchor_snoozes`` row directly instead of a
+    ``pending_commands`` round-trip: snoozing a banner moves no money
+    and touches no engine state, so the ADR-002 firewall doesn't
+    apply. Still auth + CSRF gated like every other mutation.
+    """
+    try:
+        parsed = _parse_symbol(symbol)
+    except ValueError:
+        return HTMLResponse("Invalid symbol", status_code=400)
+    snoozed_until = datetime.now(UTC) + timedelta(hours=_SNOOZE_HOURS)
+    await storage.save_reanchor_snooze(parsed, snoozed_until)
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # --------------------------------------------------------------------- #
