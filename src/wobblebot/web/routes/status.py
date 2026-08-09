@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol
@@ -40,11 +41,21 @@ from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_cool_down_minutes,
     get_live_storage,
+    get_live_tick_seconds,
     get_observe_storage,
+    get_operator_storage,
     get_templates,
 )
 
 _LOGGER = logging.getLogger(__name__)
+# ADR-030 freshness guard: an engine_state row counts as CURRENT only
+# when written within this many live-engine ticks. At the 5s default
+# tick, 3 ticks = 15s ≈ one htmx poll interval — a dead engine's rows
+# age out of the badge layer within one dashboard refresh.
+_ENGINE_STATE_FRESHNESS_TICKS = 3
+# Fallback when cli/web has no live: section to read tick_seconds
+# from — matches LiveConfig's schema default.
+_DEFAULT_TICK_SECONDS = 5.0
 # Window used both for the latest-price fetch AND the trend
 # baseline (oldest snapshot in the window). 15 min is short enough
 # to feel live, long enough to smooth per-tick noise.
@@ -200,6 +211,14 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # cool-down window is operator-disabled, or the window has elapsed.
     cool_down_active: bool = False
     cool_down_resumes_at: datetime | None = None
+    # ADR-030: per-symbol engine visibility. Only FRESH rows (written
+    # within ~3 live ticks) appear here — the loader drops stale rows
+    # so a dead engine's last write can never render as current state.
+    # Empty when operator.db is unwired, cli/live never wrote (its
+    # operator_db unset), or every row aged out. The template asserts
+    # paused/offside ONLY from entries present here; absence renders
+    # nothing new.
+    engine_states: dict[Symbol, EngineStateRow] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -455,12 +474,14 @@ def _compute_balance_metrics(
     return (free_usd, usd_total + held_value, held_value)
 
 
-async def _load_snapshot(  # pylint: disable=too-many-locals
+async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
     *,
     operator_tz: str = "UTC",
     cool_down_minutes: float | None = None,
+    operator_storage: StoragePort | None = None,
+    live_tick_seconds: float | None = None,
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -520,6 +541,9 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         live_storage, list(open_orders), prices, order_ages
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
+    engine_states = await _load_engine_states(
+        operator_storage, tick_seconds=live_tick_seconds, now=now
+    )
     last_cap_trip_age: float | None = None
     cool_down = check_cool_down(
         last_cap_trip.tripped_at if last_cap_trip else None,
@@ -569,6 +593,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals
         last_cap_trip_age_seconds=last_cap_trip_age,
         cool_down_active=cool_down.active,
         cool_down_resumes_at=cool_down.resumes_at,
+        engine_states=engine_states,
     )
 
 
@@ -586,6 +611,39 @@ async def _load_last_cap_trip(live_storage: StoragePort) -> CapTripRecord | None
             "last-cap-trip lookup failed; session card omitted", extra={"error": str(exc)}
         )
         return None
+
+
+async def _load_engine_states(
+    operator_storage: StoragePort | None,
+    *,
+    tick_seconds: float | None,
+    now: datetime,
+) -> dict[Symbol, EngineStateRow]:
+    """FRESH engine_state rows keyed by symbol (ADR-030); stale dropped.
+
+    Freshness = ``updated_at`` within ``_ENGINE_STATE_FRESHNESS_TICKS``
+    of the writer's tick cadence. Rows from a dead or stopped engine
+    age out here — the badge layer asserts nothing it can't currently
+    know. A storage failure degrades to "no state" (same posture as
+    :func:`_load_last_cap_trip`); "no rows at all" and "operator.db
+    unwired" land on the identical safe default.
+    """
+    if operator_storage is None:
+        return {}
+    try:
+        rows = await operator_storage.get_engine_states()
+    except StorageError as exc:
+        _LOGGER.warning(
+            "engine-state lookup failed; state badges omitted", extra={"error": str(exc)}
+        )
+        return {}
+    tick = tick_seconds if tick_seconds is not None else _DEFAULT_TICK_SECONDS
+    threshold_seconds = _ENGINE_STATE_FRESHNESS_TICKS * tick
+    return {
+        row.symbol: row
+        for row in rows
+        if (now - row.updated_at).total_seconds() <= threshold_seconds
+    }
 
 
 async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
@@ -659,6 +717,8 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
     cool_down_minutes: float | None = Depends(get_cool_down_minutes),
+    operator_storage: StoragePort = Depends(get_operator_storage),
+    live_tick_seconds: float | None = Depends(get_live_tick_seconds),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
 
@@ -671,6 +731,8 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
         observe_storage,
         operator_tz=prefs.timezone,
         cool_down_minutes=cool_down_minutes,
+        operator_storage=operator_storage,
+        live_tick_seconds=live_tick_seconds,
     )
     return templates.TemplateResponse(
         request,
@@ -693,6 +755,8 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
     cool_down_minutes: float | None = Depends(get_cool_down_minutes),
+    operator_storage: StoragePort = Depends(get_operator_storage),
+    live_tick_seconds: float | None = Depends(get_live_tick_seconds),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
 
@@ -704,6 +768,8 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
         observe_storage,
         operator_tz=prefs.timezone,
         cool_down_minutes=cool_down_minutes,
+        operator_storage=operator_storage,
+        live_tick_seconds=live_tick_seconds,
     )
     return templates.TemplateResponse(
         request,

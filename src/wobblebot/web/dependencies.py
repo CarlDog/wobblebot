@@ -67,6 +67,17 @@ def get_cool_down_minutes(request: Request) -> float | None:
     return request.app.state.cool_down_minutes  # type: ignore[no-any-return]
 
 
+def get_live_tick_seconds(request: Request) -> float | None:
+    """Pull ``LiveConfig.tick_seconds`` off ``app.state`` (ADR-030).
+
+    Feeds the engine_state freshness guard (~3 ticks): the dashboard
+    must know the writer's cadence to judge whether a row is current.
+    ``None`` when ``cli/web`` wasn't given a ``live:`` section — the
+    guard falls back to the schema-default tick.
+    """
+    return request.app.state.live_tick_seconds  # type: ignore[no-any-return]
+
+
 def get_templates(request: Request) -> Jinja2Templates:
     """Pull the shared ``Jinja2Templates`` instance off ``app.state``.
     Routes use this to render HTML responses."""

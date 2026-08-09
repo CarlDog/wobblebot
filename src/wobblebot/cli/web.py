@@ -251,6 +251,9 @@ async def _bootstrap_app(
         # v1.1 session card — read straight off the same live: section
         # cli/live itself uses, so the two processes can't drift.
         cool_down_minutes=config.live.cool_down_minutes if config.live else None,
+        # ADR-030 freshness guard — same live: section, same no-drift
+        # rationale: the guard must measure in the writer's cadence.
+        live_tick_seconds=config.live.tick_seconds if config.live else None,
     )
     return app, opened, kraken_http
 

@@ -127,8 +127,11 @@
     {% else %}
       {# Per-symbol sub-sections. Each carries:
          - symbol name + current price + trend arrow
-         - inline pause + resume icon buttons (state-unaware in v1.0;
-           engine cross-process state visibility is a v1.1 candidate)
+         - PAUSED / OFFSIDE badge from the engine_state table (ADR-030)
+           — asserted only from FRESH rows; a stale or absent row
+           renders nothing rather than guessing
+         - inline pause + resume icon buttons (still state-unaware;
+           the state-aware button slice consumes the same table later)
          - filtered open-orders table #}
       {% for symbol in snapshot.symbols %}
         {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
@@ -141,6 +144,12 @@
           <div class="symbol-header">
             <div class="symbol-id">
               <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>
+              {% set estate = snapshot.engine_states.get(symbol) %}
+              {% if estate and estate.paused %}
+                <span class="engine-badge engine-badge-paused" title="engine reports this symbol paused">PAUSED</span>
+              {% elif estate and estate.offside %}
+                <span class="engine-badge engine-badge-offside" title="price outside the grid band for {{ estate.offside_ticks }} ticks — engine parked">OFFSIDE</span>
+              {% endif %}
               {% set price = snapshot.current_prices.get(symbol) %}
               {% if price %}
                 <strong class="symbol-price">${{ "%.2f"|format(price) }}</strong>
