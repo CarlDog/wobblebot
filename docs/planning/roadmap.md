@@ -652,6 +652,25 @@ the detail; the full backlog index is
    scripts rule: the local repo's 74-day-old cli/live heartbeat correctly
    reads `unhealthy: stale`, exit 1. Test count 2855 → 2864.
 
+   **Slice 9 — logging-quality audit, installment 1 (engine path)** ✅
+   **2026-08-09**: audit-and-enrich per the ratified observability.md plan —
+   `grid_engine` + `reconciler` + `cost_basis`, the tail the operator
+   watches during live trading and the source of every recent
+   symbol-less-log incident. Every state-change line now answers
+   what/which/how-much in the MESSAGE string (plain format is
+   message-only; `extra=` stays for JSON consumers): fills carry
+   symbol/side/amount/price ("grid fill: BTC/USD BUY 0.001 @ 65100"),
+   re-layout completions carry placed/target + refusal/deferral counts (the
+   line that would have made the 2026-08-09 starvation loop diagnosable
+   from the tail), offside/spread/sell-guard transitions name the symbol
+   and the numbers, reconciler lines carry symbol/side/price/exchange_id
+   (previously 11 identical anonymous lines per restart), refusals name
+   side/price/reason. New `docs/implementation/logging-conventions.md`
+   ratifies the six rules + the incident receipts; message-prefix pin
+   tests updated. Remaining modules (adapters/services/cli/web) follow in
+   later installments — per-module commits as planned. Zero behavior
+   change. Test count 2864 (log-text only).
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

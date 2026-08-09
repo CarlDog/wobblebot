@@ -86,6 +86,15 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Slice 9 — logging-quality audit, installment 1 (engine path).** Every
+  state-change line in `grid_engine`/`reconciler`/`cost_basis` now says
+  what/which/how-much in the message itself — fills carry symbol/side/
+  amount/price, re-layout completions carry placed-vs-target counts, offside
+  and sell-guard transitions name the symbol and numbers — so the container
+  tail is finally a readable activity view (the bare `grid fill` / anonymous
+  `grid offside; parking` era ends). Conventions ratified in
+  `docs/implementation/logging-conventions.md`. Log text only; zero behavior
+  change.
 - **Slice 8 — Docker HEALTHCHECKs on all 8 services.** A wedged-but-alive
   daemon (stuck socket, blocked Ollama, deadlocked write) used to show green
   in Portainer forever; now every container runs `tools/healthcheck.py` —
