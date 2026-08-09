@@ -396,6 +396,13 @@ news:
 
   log_format: plain
   log_file_path: "data/logs/news.log"  # daily rotation, 7-day retention. null = stderr only.
+  # P3 slice 2: emit a liveness heartbeat into operator.db each poll
+  # cycle. news_items inserts are dedup-gated (a quiet news window
+  # writes nothing), so /health and the stale-heartbeat push alert read
+  # this beat instead of MAX(fetched_at) — a healthy daemon on a slow
+  # news night no longer reads as stale. null = no heartbeats (shows
+  # UNKNOWN on the health surfaces).
+  operator_db: "data/wobblebot-operator.db"
 
 # ============================================================================
 # Per-CLI: advise (cli/advise — Stage 3.3 Passive Advisory Workflow)
@@ -640,6 +647,13 @@ operator:
   # Notification forwarder poll cadence. Lower = faster Discord
   # surfacing; higher = less CPU + DB load.
   forwarder_poll_seconds: 2.0
+  # P3 slice 2: canonical daemon names (e.g. "cli/harvest") the
+  # stale-heartbeat push alert must NOT alert on — for daemons you have
+  # deliberately taken down. Muting silences the Discord push only;
+  # /health keeps showing the true freshness state. (Deliberately not
+  # keyed off harvester.enabled — that flag gates withdrawal execution,
+  # and the harvest daemon legitimately runs proposals-only with it off.)
+  heartbeat_alert_mute: []
   # TTL expirer poll cadence. Doesn't need to be fast — the operator's
   # expectation is "wait a minute, maybe two".
   ttl_expirer_poll_seconds: 30.0

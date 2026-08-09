@@ -3,20 +3,23 @@
 Two detection strategies live side-by-side:
 
 1. **Approach B — derive from primary writes.** For daemons whose
-   primary table sees frequent writes, we read the latest row
-   timestamp and compare against a threshold:
+   primary table sees frequent unconditional writes, we read the
+   latest row timestamp and compare against a threshold:
 
    * ``cli/observe`` → ``price_snapshots.observed_at``
-   * ``cli/news``    → ``news_items.fetched_at``
    * ``cli/advise``  → ``advisor_suggestions.created_at``
 
 2. **Heartbeat table.** Daemons whose primary writes are conditional
-   (cli/live without fills, cli/harvest without proposals, etc.)
-   upsert a row in ``operator.db``'s ``daemon_heartbeats`` table at
-   the top of each tick loop. We read those rows directly:
+   (cli/live without fills, cli/harvest without proposals, cli/news
+   when dedup leaves nothing new to insert) upsert a row in
+   ``operator.db``'s ``daemon_heartbeats`` table at the top of each
+   tick loop. We read those rows directly:
 
    * ``cli/live``       — heartbeat from the main tick loop
    * ``cli/harvest``    — heartbeat from each poll cycle
+   * ``cli/news``       — heartbeat from each poll cycle (P3 slice 2:
+     news was misfiled as Approach B — ``news_items`` inserts are
+     dedup-gated, so a quiet news window read as a stale daemon)
    * ``cli/operator``   — heartbeat from the forwarder loop
    * ``cli/maintenance``— heartbeat from each of the three scheduled tasks
 
@@ -384,7 +387,6 @@ def _classify_heartbeat(
 async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     *,
     observe_db: Path | None,
-    news_db: Path | None,
     advise_db: Path | None,
     operator_db: Path | None = None,
     thresholds: DaemonHealthThresholds | None = None,
@@ -392,19 +394,20 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
 ) -> list[DaemonHealth]:
     """Read freshness for every detectable daemon.
 
-    The three Approach-B daemons (observe / news / advise) derive
-    freshness from their primary write tables. The four
-    heartbeat-based daemons (live / harvest / operator / maintenance)
-    derive freshness from rows in operator.db's ``daemon_heartbeats``
-    table — each emits an upsert at the top of its tick loop so the
-    classifier has a reliable "the loop ran recently" signal even
-    when the daemon would otherwise have nothing to write.
+    The two Approach-B daemons (observe / advise) derive freshness
+    from their primary write tables. The five heartbeat-based daemons
+    (live / harvest / news / operator / maintenance) derive freshness
+    from rows in operator.db's ``daemon_heartbeats`` table — each
+    emits an upsert at the top of its tick loop so the classifier has
+    a reliable "the loop ran recently" signal even when the daemon
+    would otherwise have nothing to write. (``news_db`` was dropped
+    in P3 slice 2 when cli/news moved to heartbeats.)
 
     Args:
-        observe_db / news_db / advise_db: Paths to the Approach-B
-            DBs. ``None`` → UNKNOWN.
+        observe_db / advise_db: Paths to the Approach-B DBs.
+            ``None`` → UNKNOWN.
         operator_db: Path to operator.db where heartbeats live.
-            ``None`` → the four heartbeat-based daemons show UNKNOWN.
+            ``None`` → the five heartbeat-based daemons show UNKNOWN.
         thresholds: Per-daemon staleness thresholds. ``None`` falls
             back to ``settings.example.yml`` defaults; production
             callers should derive via
@@ -413,8 +416,8 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
 
     Returns:
         One :class:`DaemonHealth` per daemon in display order:
-        observe, news, advise (Approach B), then live, harvest,
-        operator, maintenance (heartbeat-based).
+        observe, news, advise, then live, harvest, operator,
+        maintenance.
     """
     current = now or datetime.now(UTC)
     t = thresholds or DaemonHealthThresholds()
@@ -429,12 +432,10 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             threshold_seconds=t.observe_seconds,
             now=current,
         ),
-        await _read_daemon(
+        _classify_heartbeat(
             name="cli/news",
             label="News Collector",
-            db_path=news_db,
-            table="news_items",
-            column="fetched_at",
+            heartbeats=heartbeats,
             threshold_seconds=t.news_seconds,
             now=current,
         ),

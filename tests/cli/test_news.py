@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -13,7 +14,7 @@ from wobblebot.adapters.cryptocompare_news import CryptoCompareAdapter
 from wobblebot.adapters.kraken_status_news import KrakenStatusAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.news import _build_sources, _poll_source
+from wobblebot.cli.news import _build_sources, _poll_source, _run_loop
 from wobblebot.config.cli import (
     CryptoCompareSpec,
     KrakenStatusSpec,
@@ -290,6 +291,55 @@ class TestPollSource:
         rows = await storage.get_news_items()
         assert len(rows) == 1
         assert rows[0].source == "rss:coindesk"
+
+
+class TestLivenessHeartbeat:
+    """P3 slice 2: cli/news emits a daemon_heartbeats row per poll cycle."""
+
+    async def test_run_loop_emits_heartbeat(self, storage: SQLiteStorageAdapter) -> None:
+        operator_storage = SQLiteStorageAdapter(":memory:")
+        await operator_storage.connect()
+        try:
+            stop = asyncio.Event()
+            source = _StubSource("rss:quiet", items=[])  # quiet night — zero inserts
+            task = asyncio.create_task(
+                _run_loop(
+                    [source],
+                    storage,
+                    NewsConfig(rss_feeds=[]),
+                    timedelta(hours=1),  # one cycle, then sleep until stopped
+                    stop,
+                    operator_storage=operator_storage,
+                )
+            )
+            await asyncio.sleep(0.05)
+            stop.set()
+            await asyncio.wait_for(task, timeout=2.0)
+            beats = await operator_storage.get_daemon_heartbeats()
+            # The load-bearing claim: liveness registers even when dedup
+            # left NOTHING to insert into news_items.
+            assert "cli/news" in beats
+        finally:
+            await operator_storage.close()
+
+    async def test_run_loop_without_operator_storage_is_silent(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """operator_db unwired → no heartbeat, no crash (emit is a no-op)."""
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            _run_loop(
+                [_StubSource("rss:quiet", items=[])],
+                storage,
+                NewsConfig(rss_feeds=[]),
+                timedelta(hours=1),
+                stop,
+                operator_storage=None,
+            )
+        )
+        await asyncio.sleep(0.05)
+        stop.set()
+        assert await asyncio.wait_for(task, timeout=2.0) == 0
 
 
 # Reference to httpx so tests on Slice B/C don't unbalance imports.

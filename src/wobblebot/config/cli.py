@@ -459,6 +459,13 @@ class NewsConfig(BaseModel):
     dedup: NewsDedupConfig = Field(default_factory=NewsDedupConfig)
     log_format: LogFormat = "plain"
     log_file_path: str | None = "data/logs/news.log"
+    # P3 slice 2: emit a daemon_heartbeats row each poll cycle so the
+    # /health page + the operator daemon's stale-heartbeat push alert
+    # read LIVENESS instead of MAX(news_items.fetched_at) — which only
+    # advances on genuinely-new inserts, so a quiet news night made a
+    # healthy daemon read as stale. Default None → no heartbeat
+    # emission; the health surfaces show cli/news as UNKNOWN.
+    operator_db: str | None = None
 
     class Config:
         frozen = True
@@ -639,6 +646,15 @@ class OperatorConfig(BaseModel):
     # surfacing; higher = less CPU + DB load. 2s is a reasonable
     # default for a hobby bot.
     forwarder_poll_seconds: float = Field(default=2.0, gt=0)
+
+    # P3 slice 2: canonical daemon names (e.g. "cli/harvest") the
+    # stale-heartbeat push alert must NOT alert on — for daemons the
+    # operator has deliberately taken down. Muting only silences the
+    # push alerts; /health keeps showing the true freshness state.
+    # (Deliberately NOT keyed off e.g. harvester.enabled — that flag
+    # gates withdrawal *execution*, and the harvest daemon legitimately
+    # runs in proposals-only mode with it False.)
+    heartbeat_alert_mute: list[str] = Field(default_factory=list)
 
     # TTL expirer poll cadence. Scans pending_commands WHERE
     # status='awaiting_confirmation' AND ttl_expires_at < now and
