@@ -921,7 +921,15 @@ Cosmetic UX issue, not a data correctness one.
 probe battery showed how dominant the tally stack is relative
 to the narrative.
 
-### Bespoke notification-card renderers (proactive push embeds)
+### Bespoke notification-card renderers (proactive push embeds) — ✅ SHIPPED 2026-08-09 (P3 slice 7)
+
+> **Shipped to Approach B exactly as blueprinted below**, plus an 8th typed
+> event: `command_result` (the dispatch echo from the 2026-08-09 re-anchor
+> finding — see the next entry). The heartbeat-alert and maintenance raise
+> sites stay on the legacy path deliberately (purpose-written titles; typing
+> them is renderer work without payoff). Build-sequence step 6 (drop
+> `context` + the legacy fields path once all rows are new-format) remains
+> the post-soak cleanup. Receipt in `docs/planning/roadmap.md`.
 
 **What:** give the *proactive* Discord notifications — the events
 ``cli/live`` / ``cli/harvest`` raise through ``NotifierPort`` — the
@@ -1022,7 +1030,14 @@ the bespoke-renderer treatment the query responses did, so they sit
 on the generic forwarder path. Pick up alongside the other Discord
 P3 format items.
 
-### Command-result echo to Discord (a new `notify()` raise site)
+### Command-result echo to Discord (a new `notify()` raise site) — ✅ SHIPPED 2026-08-09 (P3 slice 7)
+
+> **Shipped typed from day one** (bundled with the renderers, so the interim
+> plain-`notify()` step below was skipped): `_process_pending_commands` gains
+> a notifier and emits a `CommandResultEvent` after every dispatch — success
+> or failure, all command kinds. Pinned by an e2e test on a real reanchor
+> dispatch ("re-anchored … placed M/L" lands as a notification row). The ✅
+> now gets its receipt.
 
 **What:** when `cli/live` dispatches an approved command, the
 `CommandResult` is written only to the `pending_commands` row

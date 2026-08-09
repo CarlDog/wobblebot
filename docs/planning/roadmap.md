@@ -598,6 +598,30 @@ the detail; the full backlog index is
    template + CSS — zero Python changes; both POSTs still cross
    `pending_commands`. Real-money cost $0.00. Test count 2833 → 2837.
 
+   **Slice 7 — bespoke notification-card renderers + command-result echo** ✅
+   **2026-08-09** (built to the 2026-06-03 Approach-B blueprint): new
+   `ports/notification_events.py` — 8 frozen models on a `kind`-discriminated
+   union (the blueprint's 7 proactive events + `command_result`, the 2026-08-09
+   e2e finding's echo) — and `services/notification_embed_render.py`, the
+   push-side twin of the v1.0 query renderer (`match` over the union, no
+   fallthrough; green=wanted activity, red=stop-the-presses, amber=money-moved).
+   **Zero schema migration as ratified:** the event serializes into the existing
+   `context_json` column; `row_to_notification` reconstructs via a module
+   `TypeAdapter` keyed on `kind` (the `_COMMAND_ADAPTER` pattern), old rows and
+   unknown kinds degrade to the legacy title/message/context-fields path (which
+   moved from `cli/operator` into the service), and typed rows still expose the
+   raw dict as `context` so the web /notifications + /history pages render
+   unchanged. All 7 raise sites migrated to `event=` (fixing the blueprint's two
+   latent warts: `symbols` as a real sequence; `session_end`'s "unknown"
+   sentinels → `None`). **The echo (finding 2) ships typed from day one:**
+   `_process_pending_commands` gains a notifier and emits `CommandResultEvent`
+   after every dispatch — the operator's ✅ now gets "re-anchored BTC/USD: … ;
+   cancelled N, placed M/L" back in Discord instead of silence (pinned by an
+   e2e test on a real reanchor dispatch). Heartbeat-alert + maintenance
+   notifications stay on the legacy path deliberately (purpose-written
+   titles; typing them is renderer work without a payoff today). Real-money
+   cost $0.00. Test count 2837 → 2854.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
