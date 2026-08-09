@@ -322,6 +322,28 @@ believe the wrappers also cancel; an audit would prove it.
 **Trigger:** post-v1.0; before Phase 9 (equities) raises LLM
 call volume + Phase 9's new advisors compound the risk.
 
+**Live evidence to fold in (2026-08-09, re-anchor e2e test):**
+the timeout half of this audit now has a verified failure mode.
+The FIRST operator message after a daemon restart timed out —
+`assistant parse failed: AssistantError: Ollama chat request
+failed: ReadTimeout:` (note httpx ``ReadTimeout``'s empty
+``str()``; the adapter's type-name prefix is what made the log
+usable). Cause: cold KV cache after the restart → full prompt
+eval of the near-4k-token operator prompt (engine snapshot +
+history) on the CPU-only NAS ran right up to the 60s client
+timeout — Ollama's ``/api/ps`` showed the model's keep-alive
+bumped at the exact second the client gave up, i.e. the server
+FINISHED the work just too late. The identical retry parsed in
+~26s on the warm cache. So: (a) the timeout fires on a
+predictable cold-start case, not only on genuine hangs;
+(b) mitigations, cheapest first: bump
+``operator.assistant.timeout_seconds`` (already config-tunable,
+default 60) on CPU-only deployments; a real-shaped warmup at
+startup (the current warmup prompt is tiny and pre-fills none
+of the real prefix); or one automatic retry on ``ReadTimeout``
+(the retry is exactly the case that succeeds). Fold whichever
+lands into this audit's scope.
+
 ### Remote backup destinations (S3 / rclone / SFTP)
 
 **What:** implementations of `services/backuper.BackupDestination`

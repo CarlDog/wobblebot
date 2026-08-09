@@ -1003,7 +1003,44 @@ the bespoke-renderer treatment the query responses did, so they sit
 on the generic forwarder path. Pick up alongside the other Discord
 P3 format items.
 
-### Operator command catalog: single source of truth across prompt + code
+### Command-result echo to Discord (a new `notify()` raise site)
+
+**What:** when `cli/live` dispatches an approved command, the
+`CommandResult` is written only to the `pending_commands` row
+(`_process_pending_commands` → `result_json`, visible on the web
+/history page). **No notification row is created**, so the
+forwarder posts nothing back to the channel — the operator's ✅
+gets silence whether the command succeeded, partially succeeded,
+or failed.
+
+**Observed live (2026-08-09, ADR-031 re-anchor e2e test):** the
+operator approved `reanchor on BTC/USD`; the engine executed and
+recorded `re-anchored BTC/USD: 74769.80 -> 65193.50; cancelled 0,
+placed 0/6 (3 refused) (3 sells deferred)` — a materially
+surprising outcome (zero orders working) that Discord never
+surfaced. Verifying it required reading the DB directly. The
+`pause` follow-up had the same silent-success shape.
+
+**Proposed:** in `_process_pending_commands`, after persisting the
+dispatched row, raise a notification via the existing `notify()`
+helper — title from the command kind + symbol, message =
+`CommandResult.message` (already written as an operator-readable
+audit line), level `info` on success / `error` on failure. The
+2s forwarder then posts it with zero new plumbing. When the
+**Bespoke notification-card renderers** item (above) lands, this
+becomes its 8th typed event (`command_result`) rather than a
+generic card — but the plain `notify()` echo should NOT wait for
+the renderer work; it is a few lines and closes a real feedback
+hole in the ADR-013 confirm loop.
+
+**Why it matters:** the confirm flow's whole premise is that the
+operator stays in the loop; an approval that reports nothing
+breaks the loop exactly at the moment the operator committed to a
+side effect. "Cancelled N, placed M/L" is precisely the receipt
+the ✅ deserves.
+
+**Trigger:** found 2026-08-09 during the first live re-anchor
+e2e (P3 slice 4 verification); queued into the P3 Discord batch.
 
 **What:** today the catalog of available operator commands and
 queries is defined in two places that have to be kept in sync by

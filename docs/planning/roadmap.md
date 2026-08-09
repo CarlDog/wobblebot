@@ -549,6 +549,23 @@ the detail; the full backlog index is
    for exactly this moment) — passed first try. Real-money cost $0.00.
    Test count 2804 → 2820.
 
+   **Live e2e verification** ✅ **2026-08-09** (operator-approved, real money, NAS
+   deployment): full chain exercised — Discord `re-anchor BTC` → 1.5B parse → confirm
+   embed → operator ✅ → firewall dispatch (2s) → engine. Audit trail: `re-anchored
+   BTC/USD: 74769.80000 -> 65193.50000; cancelled 0, placed 0/6 (3 refused) (3 sells
+   deferred)` — BTC had been parked offside since the 16:42 UTC restart (hence
+   cancelled 0); all 3 BUYs refused (free USD ≈ $2.81 after ETH's $15 of open-BUY
+   reservations), all 3 SELLs cost-basis-deferred. `engine_state` confirmed the new
+   anchor + badges. **Three findings queued from the test** (operator paused BTC via
+   the command path to stop the loop, itself a second successful e2e): (1) zero-order
+   layout starvation → per-tick silent retry loop (`engine.md` new entry); (2) command
+   results never echo to Discord — the ✅ gets silence, which hid "placed 0/6"
+   (`operator-ux.md` new entry); (3) first parse after a daemon restart blows the 60s
+   Ollama client timeout on cold-cache full-prompt eval — retry parsed in ~26s warm
+   (`observability.md`, folded into the Ollama hang audit). Also reconfirmed the
+   logging-audit case: plain format hid which symbol was looping and that placed=0.
+   Real-money cost $0.00 (re-anchor placed nothing; pause has no order side effects).
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

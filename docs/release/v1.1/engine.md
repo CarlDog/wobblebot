@@ -683,3 +683,49 @@ different precisions). Cleaner v1.1 entry pending — likely a
 reconciler edge case worth tracing before fixing the partial-
 grid messaging, since both affect the operator's restart
 experience.
+
+### Zero-order layout starvation: back-off / re-park instead of per-tick retry
+
+**What:** when a layout places **zero** of its target orders, the
+symbol ends the tick onside with no open orders — so the engine's
+no-orders self-heal (`no open orders detected; re-laying out grid
+at existing anchor`) fires again next tick, and every tick after,
+indefinitely. Each cycle re-attempts the full layout and re-fails
+the same way.
+
+**Observed live (2026-08-09, ADR-031 re-anchor e2e test):** the
+first operator re-anchor moved BTC/USD from a stale offside anchor
+(74,769.80) to current price (65,193.50) and placed `0/6` — 3 BUYs
+refused (free USD ≈ $2.81; ETH's 3 open BUYs reserved $15 of the
+$17.81 balance) and 3 SELLs deferred by the cost-basis sell guard.
+The engine then looped the re-layout **every 5s tick for ~11
+minutes** until the operator paused the symbol. Roughly one balance
+round-trip per tick plus two INFO lines — not dangerous, but a
+busy-wait with no exit condition and no operator signal.
+
+**Why it's silent:** the insufficient-balance refusal was
+(correctly) demoted to DEBUG in v1.1 (`e05a931` — it's an expected
+per-tick condition), and the sell-guard deferral logs once, not per
+retry. So the only INFO evidence is the re-layout pair itself,
+which doesn't carry the symbol or the placed-count in the message
+string (see the logging-quality audit item, `observability.md`).
+
+**Proposed:** after a layout completes with `placed == 0`, treat
+the symbol as **starved**: skip the self-heal re-layout for a
+backoff window (e.g. reuse the offside park shape — check
+cheaply each tick whether conditions changed: free quote balance
+above one order's notional, or a sell no longer below basis —
+and only then re-attempt), and emit ONE WARN with the refusal/
+deferral breakdown so the operator learns about it once. A
+partial layout (`placed >= 1`) keeps today's behavior — the
+standing orders make the next tick's no-orders check moot.
+
+**Relation to the entry above:** the partial-grid item is the
+*messaging* for the degraded-but-working case; this is the
+*behavior* for the fully-starved case, which the "places what it
+can, moves on, no retry loop" claim above turns out not to cover —
+with zero placed there IS a retry loop, via the self-heal.
+
+**Why deferred:** surfaced 2026-08-09 by the first live re-anchor;
+self-resolves when funds free or price recovers, and `pause` is a
+clean manual stop. Queue behind the P3 re-anchor chain work.
