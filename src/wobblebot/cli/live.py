@@ -55,6 +55,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     collect_overrides,
+    emit_engine_state,
     emit_heartbeat,
     identity,
     install_signal_handlers,
@@ -70,6 +71,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
@@ -521,6 +523,51 @@ async def _process_pending_commands(
     return len(approved)
 
 
+async def _emit_engine_states(
+    engine: GridEngine,
+    symbols: list[Symbol],
+    storage: StoragePort,
+    operator_storage: StoragePort | None,
+) -> None:
+    """Publish one engine_state row per symbol (ADR-030). Best-effort.
+
+    Reads paused/offside from the ENGINE accessors, never from
+    StepResult (whose ``offside`` is False on every non-"stepped"
+    action — a paused symbol would misreport as onside).
+    reference_price/anchored_at come from the persisted GridState;
+    a failed grid-state read degrades those two fields to None
+    rather than skipping the row — paused/offside visibility is the
+    load-bearing part. No-op when operator_db is unwired (skips the
+    grid-state reads too).
+    """
+    if operator_storage is None:
+        return
+    now = datetime.now(UTC)
+    for symbol in symbols:
+        reference_price = None
+        anchored_at = None
+        try:
+            grid_state = await storage.get_grid_state(symbol)
+        except WobbleBotPortError:
+            grid_state = None  # visibility degrade, never a tick-breaker
+        if grid_state is not None:
+            reference_price = grid_state.reference_price
+            anchored_at = grid_state.created_at.dt
+        ticks = engine.offside_ticks(symbol)
+        await emit_engine_state(
+            operator_storage,
+            EngineStateRow(
+                symbol=symbol,
+                paused=engine.is_paused(symbol),
+                offside=ticks > 0,
+                offside_ticks=ticks,
+                reference_price=reference_price,
+                anchored_at=anchored_at,
+                updated_at=now,
+            ),
+        )
+
+
 async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements,too-many-branches
     adapter: KrakenAdapter,
     engine: GridEngine,
@@ -650,6 +697,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             if await _run_one_tick(adapter, engine, live, tick, started_value_usd, notifier):
                 exit_code = 1
                 break
+
+            # ADR-030: publish per-symbol engine visibility AFTER the
+            # tick so the row reflects this tick's paused/offside
+            # outcome. Best-effort — never breaks the loop.
+            await _emit_engine_states(engine, list(live.symbols), storage, operator_storage)
 
             # Periodic terminal-visible heartbeat. Cheap (just a log
             # line) — no Kraken/Storage calls. Proves the loop is

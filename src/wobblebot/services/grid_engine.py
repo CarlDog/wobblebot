@@ -372,6 +372,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """Snapshot of currently paused symbols (immutable copy)."""
         return frozenset(self._paused_symbols)
 
+    def offside_ticks(self, symbol: Symbol) -> int:
+        """Consecutive offside ticks for ``symbol``; 0 = onside.
+
+        ADR-030 visibility accessor — cli/live reads this (not
+        ``StepResult.offside``, which is ``False`` on every
+        non-"stepped" action) when publishing the symbol's
+        ``engine_state`` row.
+        """
+        return self._offside_ticks.get(symbol, 0)
+
     def request_stop(self) -> None:
         """Set the soft-stop flag.
 
