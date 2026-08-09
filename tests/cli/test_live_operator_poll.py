@@ -102,7 +102,7 @@ async def test_only_approved_rows_dispatch(storage: SQLiteStorageAdapter) -> Non
     # Plus one approved that SHOULD dispatch.
     await storage.save_pending_command(_pending(status="approved"))
 
-    processed = await _process_pending_commands(svc, storage)
+    processed = await _process_pending_commands(svc, storage, None)
     assert processed == 1  # only the approved row
 
     # Engine sees the pause from the one approved command
@@ -124,7 +124,7 @@ async def test_approved_pause_command_dispatches_successfully(
     pending = _pending(status="approved", command=PauseCommand(symbol=BTC_USD))
     await storage.save_pending_command(pending)
 
-    processed = await _process_pending_commands(svc, storage)
+    processed = await _process_pending_commands(svc, storage, None)
     assert processed == 1
     assert engine.is_paused(BTC_USD) is True
 
@@ -148,7 +148,7 @@ async def test_approved_reanchor_dispatches_through_firewall(
     pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
     await storage.save_pending_command(pending)
 
-    processed = await _process_pending_commands(svc, storage)
+    processed = await _process_pending_commands(svc, storage, None)
     assert processed == 1
 
     fetched = await storage.get_pending_command(pending.id)
@@ -169,7 +169,7 @@ async def test_approved_stop_command_marks_engine(storage: SQLiteStorageAdapter)
     pending = _pending(status="approved", command=StopCommand())
     await storage.save_pending_command(pending)
 
-    await _process_pending_commands(svc, storage)
+    await _process_pending_commands(svc, storage, None)
     assert engine.is_stop_requested is True
 
     fetched = await storage.get_pending_command(pending.id)
@@ -184,7 +184,7 @@ async def test_approved_stop_command_marks_engine(storage: SQLiteStorageAdapter)
 
 async def test_empty_table_returns_zero(storage: SQLiteStorageAdapter) -> None:
     svc, _engine = _operator_service(storage)
-    assert await _process_pending_commands(svc, storage) == 0
+    assert await _process_pending_commands(svc, storage, None) == 0
 
 
 async def test_table_with_only_unapproved_rows_returns_zero(
@@ -192,7 +192,7 @@ async def test_table_with_only_unapproved_rows_returns_zero(
 ) -> None:
     svc, engine = _operator_service(storage)
     await storage.save_pending_command(_pending(status="awaiting_confirmation"))
-    assert await _process_pending_commands(svc, storage) == 0
+    assert await _process_pending_commands(svc, storage, None) == 0
     assert engine.is_paused(BTC_USD) is False  # nothing dispatched
 
 
@@ -213,7 +213,7 @@ async def test_oldest_approved_dispatches_first(storage: SQLiteStorageAdapter) -
     await storage.save_pending_command(newer)
     await storage.save_pending_command(older)
 
-    processed = await _process_pending_commands(svc, storage)
+    processed = await _process_pending_commands(svc, storage, None)
     assert processed == 2
     # Both side effects applied
     assert engine.is_stop_requested is True
@@ -236,3 +236,49 @@ async def test_live_config_accepts_operator_db_field() -> None:
 async def test_live_config_operator_db_defaults_to_none() -> None:
     cfg = LiveConfig(symbols=[BTC_USD])
     assert cfg.operator_db is None
+
+
+# --------------------------------------------------------------------- #
+# Command-result echo (P3 renderers slice — the ✅'s receipt)             #
+# --------------------------------------------------------------------- #
+
+
+async def test_dispatch_echoes_command_result_notification(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """The 2026-08-09 finding's fix: an approved command's dispatch
+    writes a CommandResultEvent notification row, so the forwarder
+    posts the outcome back to Discord instead of the ✅ getting
+    silence."""
+    from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
+    from wobblebot.ports.notification_events import CommandResultEvent
+
+    svc, _engine = _operator_service(storage)
+    await storage.save_pending_command(
+        _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    )
+
+    await _process_pending_commands(svc, storage, SqliteNotifierAdapter(storage))
+
+    rows = await storage.get_notifications(forwarded=False)
+    echoes = [r for r in rows if isinstance(r.notification.event, CommandResultEvent)]
+    assert len(echoes) == 1
+    event = echoes[0].notification.event
+    assert isinstance(event, CommandResultEvent)
+    assert event.command_kind == "reanchor"
+    assert event.symbol == "BTC/USD"
+    assert event.success is True
+    assert "re-anchored" in event.message
+    assert echoes[0].notification.level == "info"
+
+
+async def test_dispatch_echo_none_notifier_is_silent_noop(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """A live deployment without operator_db wiring keeps working —
+    the echo is best-effort like every notification."""
+    svc, _engine = _operator_service(storage)
+    await storage.save_pending_command(_pending(status="approved"))
+    processed = await _process_pending_commands(svc, storage, None)
+    assert processed == 1
+    assert await storage.get_notifications() == []

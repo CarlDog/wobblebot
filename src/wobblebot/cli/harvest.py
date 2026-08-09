@@ -62,6 +62,11 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferResult
+from wobblebot.ports.notification_events import (
+    HarvestProposalEvent,
+    WithdrawalFailedEvent,
+    WithdrawalSubmittedEvent,
+)
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
@@ -183,15 +188,15 @@ async def _run_cycle(
             f"{proposal.rationale} "
             f"Run `cli/harvest --execute {proposal.proposal_id}` to act."
         ),
-        context={
-            "proposal_id": proposal.proposal_id,
-            "direction": proposal.direction,
-            "asset": proposal.asset,
-            "amount": str(proposal.amount),
-            "current_exchange_balance": str(proposal.current_exchange_balance),
-            "target_exchange_balance": str(proposal.target_exchange_balance),
-            "rationale": proposal.rationale,
-        },
+        event=HarvestProposalEvent(
+            proposal_id=proposal.proposal_id,
+            direction=proposal.direction,
+            asset=proposal.asset,
+            amount=proposal.amount,
+            current_exchange_balance=proposal.current_exchange_balance,
+            target_exchange_balance=proposal.target_exchange_balance,
+            rationale=proposal.rationale,
+        ),
     )
 
     if storage is not None:
@@ -491,14 +496,14 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
                 f"Kraken /Withdraw rejected proposal {proposal.proposal_id}: {exc}. "
                 "No money moved."
             ),
-            context={
-                "proposal_id": proposal.proposal_id,
-                "asset": proposal.asset,
-                "amount": str(proposal.amount),
-                "destination": destination,
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-            },
+            event=WithdrawalFailedEvent(
+                proposal_id=proposal.proposal_id,
+                asset=proposal.asset,
+                amount=proposal.amount,
+                destination=destination,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            ),
         )
         return 1
 
@@ -554,14 +559,14 @@ async def _execute_command(  # pylint: disable=too-many-return-statements,too-ma
             f"refid={refid}, destination={destination}, status=pending. "
             "Money has left the exchange."
         ),
-        context={
-            "proposal_id": proposal.proposal_id,
-            "transaction_id": refid,
-            "asset": proposal.asset,
-            "amount": str(proposal.amount),
-            "destination": destination,
-            "status": "pending",
-        },
+        event=WithdrawalSubmittedEvent(
+            proposal_id=proposal.proposal_id,
+            transaction_id=refid,
+            asset=proposal.asset,
+            amount=proposal.amount,
+            destination=destination,
+            status="pending",
+        ),
     )
     return 0
 

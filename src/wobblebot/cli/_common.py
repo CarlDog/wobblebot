@@ -47,6 +47,7 @@ from dotenv import find_dotenv, load_dotenv
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.ports.notification_events import NotificationEvent
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
 
@@ -288,13 +289,17 @@ async def emit_engine_state(operator_storage: StoragePort | None, row: EngineSta
         )
 
 
-async def notify(
+async def notify(  # pylint: disable=too-many-arguments
+    # Keyword-only facade over the Notification model — its parameter
+    # list mirrors the model's fields 1:1, so the count grows with the
+    # model, not with call-site complexity.
     notifier: NotifierPort | None,
     *,
     level: str,
     title: str,
     message: str,
     context: dict[str, Any] | None = None,
+    event: NotificationEvent | None = None,
 ) -> None:
     """Best-effort outbound notification emit. Failures logged, never raised.
 
@@ -308,10 +313,16 @@ async def notify(
         notifier: Where to write the row. ``None`` is a no-op (operator
             ran without ``operator_db`` configured).
         level: ``info | warning | error | critical``.
-        title: Short human label; appears as the Discord embed title.
-        message: Longer human message; appears as the embed description.
-        context: Optional structured context dict (rendered as embed
-            fields by the cli/operator forwarder).
+        title: Short human label; the legacy embed title, and the
+            fallback if a typed row ever fails to reconstruct.
+        message: Longer human message; the legacy embed description
+            and the plain-text fallback for typed rows.
+        context: Optional structured context dict (legacy path —
+            rendered as generic embed fields by the forwarder). Pass
+            ``event`` XOR ``context``: when ``event`` is set, storage
+            serializes the event and ignores this dict.
+        event: Typed event payload (P3 renderers slice) — the
+            forwarder renders these with the bespoke per-event embed.
     """
     if notifier is None:
         return
@@ -323,6 +334,7 @@ async def notify(
                 message=message,
                 timestamp=Timestamp(dt=datetime.now(UTC)),
                 context=context or {},
+                event=event,
             )
         )
     except WobbleBotPortError as exc:
