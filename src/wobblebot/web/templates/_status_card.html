@@ -17,28 +17,50 @@
      next — the ADR-002 firewall); Snooze is UI-local. #}
   {% for rec in snapshot.reanchor_recommendations %}
     <div class="reanchor-banner reanchor-{{ rec.severity }}" role="status">
-      <strong>⚠ Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}.</strong>
-      Current price <strong>${{ "%.2f"|format(rec.current_price) }}</strong>
-      is {{ "%.1f"|format(rec.drift_in_spacings) }} spacings from the nearest open order;
-      grid anchored at ${{ "%.2f"|format(rec.anchor_price) }},
-      oldest order {{ rec.oldest_order_age_seconds | humanize_duration }} old.
-      Re-anchoring would reposition the ladder to catch the current band.
-      <span class="reanchor-fee"
-            title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">
-        Projected cost ≈ ${{ "%.2f"|format(rec.projected_fee_usd) }} in fees.
-      </span>
-      <span class="reanchor-actions">
-        <form method="post" action="/commands/reanchor">
-          {{ csrf_input(request) }}
-          <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
-          <button type="submit" class="reanchor-act">Re-anchor {{ rec.symbol.base }}/{{ rec.symbol.quote }}…</button>
-        </form>
-        <form method="post" action="/commands/snooze-reanchor">
-          {{ csrf_input(request) }}
-          <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
-          <button type="submit" class="reanchor-snooze">Snooze 24h</button>
-        </form>
-      </span>
+      <div class="reanchor-head">
+        <span class="reanchor-title">⚠ Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}</span>
+        <span class="reanchor-chip">{{ rec.severity }}</span>
+      </div>
+      {# The stat row mirrors the scoreboard's big-number/small-label
+         pattern so the decision facts scan instead of read. #}
+      <div class="reanchor-stats">
+        <div class="reanchor-stat">
+          <strong>${{ "%.2f"|format(rec.current_price) }}</strong>
+          <span>current price</span>
+        </div>
+        <div class="reanchor-stat">
+          <strong>{{ "%.1f"|format(rec.drift_in_spacings) }}</strong>
+          <span>spacings off grid</span>
+        </div>
+        <div class="reanchor-stat">
+          <strong>${{ "%.2f"|format(rec.anchor_price) }}</strong>
+          <span>grid anchor</span>
+        </div>
+        <div class="reanchor-stat">
+          <strong>{{ rec.oldest_order_age_seconds | humanize_duration }}</strong>
+          <span>oldest order</span>
+        </div>
+        <div class="reanchor-stat"
+             title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">
+          <strong>≈${{ "%.2f"|format(rec.projected_fee_usd) }}</strong>
+          <span>Projected cost (fees)</span>
+        </div>
+      </div>
+      <div class="reanchor-foot">
+        <span class="reanchor-note">Re-anchoring cancels this ladder and re-places it around the current price.</span>
+        <span class="reanchor-actions">
+          <form method="post" action="/commands/snooze-reanchor">
+            {{ csrf_input(request) }}
+            <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
+            <button type="submit" class="reanchor-snooze">Snooze 24h</button>
+          </form>
+          <form method="post" action="/commands/reanchor">
+            {{ csrf_input(request) }}
+            <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
+            <button type="submit" class="reanchor-act">Re-anchor {{ rec.symbol.base }}/{{ rec.symbol.quote }}</button>
+          </form>
+        </span>
+      </div>
     </div>
   {% endfor %}
 
