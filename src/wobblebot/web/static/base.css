@@ -1603,6 +1603,33 @@ table.data th {
   background: #475569;
 }
 
+/* ---- Engine-state badges (ADR-030) ------------------------------------
+   Per-symbol PAUSED / OFFSIDE tags on the status card, same pill shape
+   as .mode-badge. Rendered ONLY from fresh engine_state rows — absence
+   of a badge means "no current claim", never "active". */
+.engine-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  margin-left: 6px;
+  border-radius: 4px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+.engine-badge-paused {
+  /* Amber — operator-initiated hold; attention, not danger. */
+  background: #d97706;
+}
+.engine-badge-offside {
+  /* Slate-blue — market-position state (parked outside the band),
+     distinct from the amber operator-hold and the red danger family. */
+  background: #64748b;
+}
+
 /* ---- Responsive (narrow / mobile) ------------------------------------
    Minimal pass so the dashboard is usable on a phone: wide data tables
    scroll inside their card instead of blowing out the viewport, the

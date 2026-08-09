@@ -399,6 +399,30 @@ class TestOffside:
         offside_records = [r for r in caplog.records if "offside" in r.getMessage()]
         assert offside_records, "expected an offside log warning"
 
+    async def test_offside_ticks_accessor_tracks_and_resets(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """ADR-030 visibility accessor: 0 onside, counts while offside,
+        back to 0 on recovery. This is what feeds engine_state — NOT
+        StepResult.offside, which is False on non-'stepped' actions."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        assert engine.offside_ticks(BTC_USD) == 0  # never stepped
+
+        await engine.step(BTC_USD)
+        assert engine.offside_ticks(BTC_USD) == 0  # onside after init
+
+        exchange.set_price(BTC_USD, Decimal("48000"))
+        await engine.step(BTC_USD)
+        first = engine.offside_ticks(BTC_USD)
+        assert first >= 1
+        await engine.step(BTC_USD)
+        assert engine.offside_ticks(BTC_USD) > first  # still counting
+
+        exchange.set_price(BTC_USD, Decimal("50000"))
+        await engine.step(BTC_USD)
+        assert engine.offside_ticks(BTC_USD) == 0  # recovery resets
+
     async def test_returns_inside_resumes_normal(self, storage: SQLiteStorageAdapter) -> None:
         exchange = _exchange()
         engine = GridEngine(exchange, storage, _grid_config(), _safety_config())

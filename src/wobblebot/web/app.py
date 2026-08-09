@@ -152,7 +152,7 @@ def _release_check_status(request: Request) -> ReleaseCheckResult | None:
     return getattr(request.app.state, "release_check_result", None)
 
 
-def create_app(  # pylint: disable=too-many-arguments
+def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     *,
     config: WebConfig,
     trading_mode: TradingMode = "live",
@@ -166,6 +166,7 @@ def create_app(  # pylint: disable=too-many-arguments
     kraken_health_probe: KrakenHealthProbe | None = None,
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
     cool_down_minutes: float | None = None,
+    live_tick_seconds: float | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -293,6 +294,10 @@ def create_app(  # pylint: disable=too-many-arguments
     # v1.1 session card — ADR-024 cool-down window, threaded through
     # like trading_mode above (lives on LiveConfig, not WebConfig).
     app.state.cool_down_minutes = cool_down_minutes
+    # ADR-030 engine_state freshness guard — the dashboard judges row
+    # currency in units of the WRITER's tick cadence, threaded through
+    # like cool_down_minutes (lives on LiveConfig, not WebConfig).
+    app.state.live_tick_seconds = live_tick_seconds
     # Stage 8.4.E health-icon work — KrakenHealthProbe singleton.
     # cli/web constructs one in production; tests pass None when they
     # don't care (the /health page renders Kraken as "not configured").

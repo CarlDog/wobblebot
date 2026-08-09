@@ -434,4 +434,26 @@ CREATE TABLE IF NOT EXISTS cap_trips (
     tripped_at      TEXT NOT NULL,
     session_pnl_usd TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------- --
+-- engine_state — per-symbol engine visibility (ADR-030, P3)         --
+-- ---------------------------------------------------------------- --
+-- cli/live upserts one row per symbol per tick (best-effort, like
+-- daemon_heartbeats — a visibility write must never break a trading
+-- tick); cli/web reads them so the dashboard renders paused/offside
+-- truthfully instead of assuming active. Consumers apply a freshness
+-- guard on updated_at (~3 ticks) — a dead engine's stale rows must
+-- never render as current state. reference_price/anchored_at are
+-- NULL until the symbol's grid anchors. Lives in operator.db.
+CREATE TABLE IF NOT EXISTS engine_state (
+    symbol_base     TEXT NOT NULL CHECK (length(symbol_base) > 0),
+    symbol_quote    TEXT NOT NULL CHECK (length(symbol_quote) > 0),
+    paused          INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+    offside         INTEGER NOT NULL DEFAULT 0 CHECK (offside IN (0, 1)),
+    offside_ticks   INTEGER NOT NULL DEFAULT 0 CHECK (offside_ticks >= 0),
+    reference_price TEXT,
+    anchored_at     TEXT,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (symbol_base, symbol_quote)
+);
 """

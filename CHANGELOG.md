@@ -37,6 +37,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   the truth) and cli/news reclassified from content-freshness to a real liveness
   heartbeat (`news.operator_db`) — a quiet news night no longer reads as a stale
   daemon. `fetch_daemon_freshness` drops its now-unused `news_db` parameter.
+- **Slice 3 — `engine_state` keystone (ADR-030).** New per-symbol visibility table in
+  operator.db: `cli/live` publishes paused/offside/anchor state each tick (best-effort,
+  read from engine accessors), and the dashboard renders PAUSED/OFFSIDE badges from
+  rows fresher than ~3 engine ticks — a dead engine's state ages out within one
+  dashboard refresh, and the "web sees all symbols active" gap is closed. Unblocks the
+  re-anchor chain (ADR-031 command → banner button → state-aware pause/resume).
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

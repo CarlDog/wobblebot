@@ -6,6 +6,7 @@ All domain models, value objects, and deterministic business rules live here.
 """
 
 from wobblebot.domain.cost_basis import CostBasis, SellAssessment, assess_sell, replay_average_cost
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.exceptions import (
     DailySpendCapExceeded,
     ExposureLimitExceeded,
@@ -63,4 +64,6 @@ __all__ = [
     "SellAssessment",
     "replay_average_cost",
     "assess_sell",
+    # Engine state (ADR-030)
+    "EngineStateRow",
 ]

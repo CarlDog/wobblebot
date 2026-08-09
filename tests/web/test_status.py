@@ -45,6 +45,7 @@ def _build_client(
     live: SQLiteStorageAdapter | None,
     *,
     cool_down_minutes: float | None = None,
+    live_tick_seconds: float | None = None,
 ) -> TestClient:
     app = create_app(
         config=WebConfig(bcrypt_cost=10),
@@ -52,6 +53,7 @@ def _build_client(
         session_secret="x" * 64,
         live_storage=live,
         cool_down_minutes=cool_down_minutes,
+        live_tick_seconds=live_tick_seconds,
     )
     return TestClient(app, follow_redirects=False)
 
@@ -713,3 +715,133 @@ class TestLoadSnapshot:
         snap = await _load_snapshot(live_storage, None, cool_down_minutes=60.0)
         assert snap.cool_down_active is False
         assert snap.last_cap_trip is not None  # the record persists; just not "active"
+
+
+# --------------------------------------------------------------------- #
+# Engine-state badges (ADR-030, P3 slice 3)                              #
+# --------------------------------------------------------------------- #
+
+
+def _engine_row(
+    *,
+    symbol: str = "BTC/USD",
+    paused: bool = False,
+    offside: bool = False,
+    offside_ticks: int = 0,
+    age_seconds: float = 0.0,
+):  # type: ignore[no-untyped-def]
+    from wobblebot.domain.engine_state import EngineStateRow
+
+    base, quote = symbol.split("/")
+    return EngineStateRow(
+        symbol=Symbol(base=base, quote=quote),
+        paused=paused,
+        offside=offside,
+        offside_ticks=offside_ticks,
+        reference_price=Decimal("30000"),
+        anchored_at=datetime.now(UTC) - timedelta(hours=1),
+        updated_at=datetime.now(UTC) - timedelta(seconds=age_seconds),
+    )
+
+
+@pytest.mark.asyncio
+class TestLoadEngineStates:
+    async def test_fresh_kept_stale_dropped(self, operator_storage: SQLiteStorageAdapter) -> None:
+        """The ADR's core invariant: a dead engine's rows age out. At the
+        5s default tick, 3 ticks = 15s — a 2s-old row survives, a
+        60s-old row vanishes."""
+        from wobblebot.web.routes.status import _load_engine_states
+
+        await operator_storage.save_engine_state(_engine_row(symbol="BTC/USD", age_seconds=2))
+        await operator_storage.save_engine_state(
+            _engine_row(symbol="ETH/USD", paused=True, age_seconds=60)
+        )
+        states = await _load_engine_states(
+            operator_storage, tick_seconds=5.0, now=datetime.now(UTC)
+        )
+        assert set(states) == {Symbol(base="BTC", quote="USD")}
+
+    async def test_threshold_scales_with_tick_seconds(
+        self, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """An operator running a 60s tick keeps rows fresh for 180s —
+        the guard measures in the WRITER's cadence, not wall-clock."""
+        from wobblebot.web.routes.status import _load_engine_states
+
+        await operator_storage.save_engine_state(_engine_row(age_seconds=60))
+        states = await _load_engine_states(
+            operator_storage, tick_seconds=60.0, now=datetime.now(UTC)
+        )
+        assert len(states) == 1
+
+    async def test_none_storage_and_failure_degrade_to_empty(
+        self, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.ports.exceptions import StorageError
+        from wobblebot.web.routes.status import _load_engine_states
+
+        assert await _load_engine_states(None, tick_seconds=5.0, now=datetime.now(UTC)) == {}
+
+        class _Broken(SQLiteStorageAdapter):
+            async def get_engine_states(self):  # type: ignore[no-untyped-def]
+                raise StorageError("boom")
+
+        broken = _Broken(":memory:")
+        await broken.connect()
+        try:
+            assert await _load_engine_states(broken, tick_seconds=5.0, now=datetime.now(UTC)) == {}
+        finally:
+            await broken.close()
+
+
+@pytest.mark.asyncio
+class TestEngineStateBadges:
+    async def test_paused_badge_renders_from_fresh_row(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=True, age_seconds=1))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "engine-badge-paused" in resp.text
+            assert "PAUSED" in resp.text
+
+    async def test_offside_badge_renders_with_tick_count(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(
+            _engine_row(offside=True, offside_ticks=12, age_seconds=1)
+        )
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert "engine-badge-offside" in resp.text
+            assert "12 ticks" in resp.text
+
+    async def test_stale_row_renders_no_badge(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """A dead engine's stale paused row must NOT keep the badge up
+        — never render as confidently-anything on old data."""
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=True, age_seconds=300))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "engine-badge" not in resp.text
+
+    async def test_no_rows_renders_no_badge(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """operator.db present but engine never wrote (e.g. live's
+        operator_db unset): identical safe default as stale."""
+        await live_storage.save_order(_make_order())
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "engine-badge" not in resp.text

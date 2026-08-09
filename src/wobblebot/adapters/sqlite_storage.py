@@ -48,6 +48,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     serialize_expert_opinions,
 )
 from wobblebot.adapters.sqlite_storage_schema import SCHEMA
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
@@ -1448,6 +1449,101 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=UTC)
             out[name] = parsed
+        return out
+
+    async def save_engine_state(self, row: EngineStateRow) -> None:
+        """Upsert one symbol's engine-visibility row (ADR-030).
+
+        ON CONFLICT on the ``(base, quote)`` PK keeps the table one
+        row per symbol. Storage failures raise; cli/live's
+        ``emit_engine_state`` wraps the call so a transient DB hiccup
+        never breaks a trading tick.
+        """
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO engine_state (
+                    symbol_base, symbol_quote, paused, offside,
+                    offside_ticks, reference_price, anchored_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol_base, symbol_quote) DO UPDATE SET
+                    paused = excluded.paused,
+                    offside = excluded.offside,
+                    offside_ticks = excluded.offside_ticks,
+                    reference_price = excluded.reference_price,
+                    anchored_at = excluded.anchored_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    row.symbol.base,
+                    row.symbol.quote,
+                    int(row.paused),
+                    int(row.offside),
+                    row.offside_ticks,
+                    str(row.reference_price) if row.reference_price is not None else None,
+                    (
+                        row.anchored_at.astimezone(UTC).isoformat()
+                        if row.anchored_at is not None
+                        else None
+                    ),
+                    row.updated_at.astimezone(UTC).isoformat(),
+                ),
+            )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to upsert engine state for {row.symbol}: {exc}") from exc
+
+    async def get_engine_states(self) -> list[EngineStateRow]:
+        """Return every symbol's engine-state row (ADR-030); [] when empty.
+
+        Corrupt rows are skipped rather than poisoning the read —
+        the dashboard degrades to "no state for that symbol", which
+        the freshness guard already treats safely.
+        """
+        conn = self._require_conn()
+        try:
+            async with conn.execute("""
+                SELECT symbol_base, symbol_quote, paused, offside,
+                       offside_ticks, reference_price, anchored_at, updated_at
+                FROM engine_state
+                """) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read engine states: {exc}") from exc
+        out: list[EngineStateRow] = []
+        for db_row in rows:
+            try:
+                updated_at = datetime.fromisoformat(db_row["updated_at"])
+                anchored_at = (
+                    datetime.fromisoformat(db_row["anchored_at"])
+                    if db_row["anchored_at"] is not None
+                    else None
+                )
+                reference_price = (
+                    Decimal(db_row["reference_price"])
+                    if db_row["reference_price"] is not None
+                    else None
+                )
+            except (ValueError, ArithmeticError):
+                continue
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=UTC)
+            if anchored_at is not None and anchored_at.tzinfo is None:
+                anchored_at = anchored_at.replace(tzinfo=UTC)
+            out.append(
+                EngineStateRow(
+                    symbol=Symbol(base=db_row["symbol_base"], quote=db_row["symbol_quote"]),
+                    paused=bool(db_row["paused"]),
+                    offside=bool(db_row["offside"]),
+                    offside_ticks=int(db_row["offside_ticks"]),
+                    reference_price=reference_price,
+                    anchored_at=anchored_at,
+                    updated_at=updated_at,
+                )
+            )
         return out
 
     async def save_status_report_taken(

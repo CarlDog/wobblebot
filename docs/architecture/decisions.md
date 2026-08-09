@@ -2030,6 +2030,21 @@ credential-free DB-only web tier (ADR-016/017).
 **Soak note:** P3 (post-tag, parallel to P2); `v1.1` branch, NOT in the frozen v1.0 soak
 image.
 
+**Implementation note (2026-08-08, shipped):** four clarifications beyond the ADR text.
+(1) The emit reads the ENGINE's accessors (`is_paused`, a new `offside_ticks`) — never
+`StepResult.offside`, which is `False` on every non-"stepped" action, so a paused symbol
+would have misreported as onside. (2) `reference_price`/`anchored_at` are nullable: a
+pre-anchor symbol writes an honest NULL row, and a failed grid-state read degrades those
+two fields rather than dropping the row (paused/offside visibility is the load-bearing
+part). (3) This slice renders PAUSED/OFFSIDE **badges** asserted only from fresh rows —
+absent/stale rows render nothing; decision 3's "safe show-pause default" applies to the
+state-aware BUTTONS, which land in their own slice reading the same table. The freshness
+guard measures in the writer's cadence (`live.tick_seconds`, threaded to `cli/web` like
+`cool_down_minutes`). (4) Recorded, not built: the table has no mode discriminator (a
+future `cli/shadow` with an operator_db would collide), and the operator assistant's
+hardcoded-"active" `EngineStateSnapshot` could now be fed from this table — both are
+follow-up candidates, not ADR-030 scope.
+
 **References:**
 - `docs/release/v1.1/README.md` — P3 resolved blueprints, "THE KEYSTONE — `engine_state`
   table."

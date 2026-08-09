@@ -44,6 +44,7 @@ from typing import Any, NoReturn, Protocol, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
+from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.ports.notifier import Notification, NotifierPort
@@ -53,6 +54,7 @@ T = TypeVar("T")
 
 _NOTIFY_LOGGER = logging.getLogger("wobblebot.cli.notify")
 _HEARTBEAT_LOGGER = logging.getLogger("wobblebot.cli.heartbeat")
+_ENGINE_STATE_LOGGER = logging.getLogger("wobblebot.cli.engine_state")
 _SHUTDOWN_LOGGER = logging.getLogger("wobblebot.cli.shutdown")
 
 ShutdownPhase = tuple[str, Callable[[], Awaitable[None]]]
@@ -253,6 +255,33 @@ async def emit_heartbeat(operator_storage: StoragePort | None, daemon_name: str)
             exc,
             extra={
                 "daemon": daemon_name,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
+
+
+async def emit_engine_state(operator_storage: StoragePort | None, row: EngineStateRow) -> None:
+    """Best-effort engine-state upsert (ADR-030). Failures logged, never raised.
+
+    ``cli/live`` publishes one row per symbol per tick so the web
+    tier can render paused / offside truthfully. Same contract as
+    :func:`emit_heartbeat`: a visibility write must never break a
+    trading tick, and ``None`` storage (operator_db unwired) is a
+    silent no-op.
+    """
+    if operator_storage is None:
+        return
+    try:
+        await operator_storage.save_engine_state(row)
+    except WobbleBotPortError as exc:
+        _ENGINE_STATE_LOGGER.warning(
+            "engine-state emit for %s failed: %s: %s; continuing",
+            row.symbol,
+            type(exc).__name__,
+            exc,
+            extra={
+                "symbol": str(row.symbol),
                 "error": str(exc),
                 "error_type": type(exc).__name__,
             },
