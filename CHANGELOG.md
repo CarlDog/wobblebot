@@ -43,6 +43,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   rows fresher than ~3 engine ticks — a dead engine's state ages out within one
   dashboard refresh, and the "web sees all symbols active" gap is closed. Unblocks the
   re-anchor chain (ADR-031 command → banner button → state-aware pause/resume).
+- **Slice 4 — operator-initiated re-anchor command (ADR-031).** "Re-anchor BTC" over
+  Discord now re-centers a parked grid on the current price without a restart (no DMS
+  bounce): cancel-first atomically — any failed cancel aborts with the old anchor
+  untouched — then a fresh grid placed in-process, through the same confirm-before-
+  execute firewall as every command. Bundled: a three-way catalog drift test (typed
+  unions ↔ help catalog ↔ intent-parser prompt).
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

@@ -533,6 +533,22 @@ the detail; the full backlog index is
    in the ADR note: shadow-mode discriminator; feeding the assistant's hardcoded-
    "active" snapshot from this table. Real-money cost $0.00. Test count 2783 → 2804.
 
+   **Slice 4 — operator-initiated re-anchor command** ✅ **2026-08-09** (**ADR-031** +
+   implementation note): `GridEngine.request_reanchor` under the per-symbol lock —
+   **cancel-FIRST atomically** (any failed cancel OR an indeterminate open-order fetch
+   aborts before `save_grid_state`; regression-pinned with a one-cancel-fails stub),
+   then a fresh `GridState` from the CURRENT coin config at execution price, offside
+   counter cleared, auto-resume, and the layout placed **in-process** via the new
+   shared `_place_layout` (judge correction A — pinned by the offside test: re-anchor
+   while parked places orders, never a silent zero-order park). `ReanchorCommand`
+   rides the existing firewall with zero new machinery (union + TypeAdapter); all
+   kind-sensitive surfaces updated in one commit (confirm-embed symbol, 3 Jinja
+   guards, help 16→17, operator.md vocabulary + the reanchor-vs-cancel
+   disambiguation for the 1.5B parser). **Bundled: the command-catalog SSOT drift
+   test** (union ↔ _HELP_ENTRIES ↔ operator.md, three-way; the P3 table scheduled it
+   for exactly this moment) — passed first try. Real-money cost $0.00.
+   Test count 2804 → 2820.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
