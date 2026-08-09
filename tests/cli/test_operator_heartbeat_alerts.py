@@ -111,6 +111,27 @@ class TestTrackerTransitions:
         tracker = _HeartbeatAlertTracker()
         assert tracker.evaluate([_health("cli/operator")], _NOW) == []
 
+    def test_muted_daemon_never_alerts_or_recovers(self) -> None:
+        """P3 slice 2: operator.heartbeat_alert_mute — a deliberately-down
+        daemon (harvest, per the 2026-08-08 operator decision) emits no
+        alerts, no repeats, and no recovery notices; unmuted daemons in
+        the same evaluation still alert."""
+        tracker = _HeartbeatAlertTracker(muted=frozenset({"cli/harvest"}))
+        alerts = tracker.evaluate([_health("cli/harvest"), _health("cli/live")], _NOW)
+        assert [a[3]["daemon"] for a in alerts] == ["cli/live"]
+        # Repeat window elapsed: still nothing for the muted daemon.
+        later = _NOW + timedelta(days=1)
+        alerts = tracker.evaluate([_health("cli/harvest"), _health("cli/live")], later)
+        assert [a[3]["daemon"] for a in alerts] == ["cli/live"]
+        # Muted daemon comes back: no recovery notice either.
+        assert (
+            tracker.evaluate(
+                [_health("cli/harvest", status=DaemonStatus.FRESH)],
+                later + timedelta(minutes=1),
+            )
+            == []
+        )
+
     def test_alert_message_carries_age_and_threshold(self) -> None:
         tracker = _HeartbeatAlertTracker()
         alerts = tracker.evaluate([_health(age_seconds=11 * 86400)], _NOW)
@@ -142,7 +163,6 @@ class TestAlertLoop:
             _heartbeat_alert_loop(
                 notifier=notifier,
                 observe_db=None,
-                news_db=None,
                 advise_db=None,
                 operator_db=None,
                 thresholds=DaemonHealthThresholds(),
@@ -170,7 +190,6 @@ class TestAlertLoop:
             _heartbeat_alert_loop(
                 notifier=notifier,
                 observe_db=None,
-                news_db=None,
                 advise_db=None,
                 operator_db=None,
                 thresholds=DaemonHealthThresholds(),

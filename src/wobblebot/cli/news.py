@@ -47,6 +47,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     add_config_args,
     collect_overrides,
+    emit_heartbeat,
     identity,
     install_signal_handlers,
     load_operator_env,
@@ -176,12 +177,13 @@ async def _poll_source(
     return (len(items), saved, deduped)
 
 
-async def _run_loop(
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     sources: list[NewsPort],
     storage: SQLiteStorageAdapter,
     news: NewsConfig,
     interval: timedelta,
     stop_event: asyncio.Event,
+    operator_storage: SQLiteStorageAdapter | None = None,
 ) -> int:
     started_at = time.monotonic()
     total_fetched = 0
@@ -201,6 +203,10 @@ async def _run_loop(
 
     async def _one_cycle() -> None:
         nonlocal total_fetched, total_saved, total_deduped
+        # P3 slice 2: liveness heartbeat. news_items writes are
+        # dedup-gated (a quiet news window inserts nothing), so the
+        # health surfaces read this beat, not MAX(fetched_at).
+        await emit_heartbeat(operator_storage, "cli/news")
         for source in sources:
             if stop_event.is_set():
                 break
@@ -291,6 +297,22 @@ async def _main_async(config: WobbleBotConfig) -> int:
     storage = SQLiteStorageAdapter(config.news.db)
     await storage.connect()
 
+    # Optional operator.db handle for the liveness heartbeat. A failed
+    # open degrades to no-heartbeat (UNKNOWN on /health) — never a
+    # reason to stop polling news.
+    operator_storage: SQLiteStorageAdapter | None = None
+    if config.news.operator_db is not None:
+        operator_storage = SQLiteStorageAdapter(config.news.operator_db)
+        try:
+            await operator_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open operator db; heartbeats disabled: %s",
+                exc,
+                extra={"path": config.news.operator_db, "error": str(exc)},
+            )
+            operator_storage = None
+
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
@@ -298,15 +320,22 @@ async def _main_async(config: WobbleBotConfig) -> int:
         await _close_news_sources(sources)
 
     try:
-        return await _run_loop(sources, storage, config.news, interval, stop_event)
-    finally:
-        await safe_shutdown(
-            [
-                ("close_news_sources", _close_all_sources),
-                ("close_news_storage", storage.close),
-            ],
-            logger=_LOGGER,
+        return await _run_loop(
+            sources,
+            storage,
+            config.news,
+            interval,
+            stop_event,
+            operator_storage=operator_storage,
         )
+    finally:
+        phases: list[tuple[str, Any]] = [
+            ("close_news_sources", _close_all_sources),
+            ("close_news_storage", storage.close),
+        ]
+        if operator_storage is not None:
+            phases.append(("close_operator_storage", operator_storage.close))
+        await safe_shutdown(phases, logger=_LOGGER)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

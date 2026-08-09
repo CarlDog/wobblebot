@@ -72,22 +72,6 @@ def _build_observe_db(path: Path, *, observed_at: datetime | None) -> None:
         conn.close()
 
 
-def _build_news_db(path: Path, *, fetched_at: datetime | None) -> None:
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(
-            "CREATE TABLE news_items (" " id INTEGER PRIMARY KEY, fetched_at TEXT NOT NULL" ")"
-        )
-        if fetched_at is not None:
-            conn.execute(
-                "INSERT INTO news_items(fetched_at) VALUES (?)",
-                (fetched_at.isoformat(),),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def _build_advise_db(path: Path, *, created_at: datetime | None) -> None:
     conn = sqlite3.connect(path)
     try:
@@ -135,37 +119,31 @@ def _by_name(rows: list[DaemonHealth]) -> dict[str, DaemonHealth]:
 
 
 class TestAllFresh:
-    async def test_all_three_fresh_under_threshold(
+    async def test_approach_b_fresh_under_threshold(
         self, db_paths: dict[str, Path], now: datetime
     ) -> None:
         # observe wrote 30s ago (threshold 120s) — fresh
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=30))
-        # news wrote 5min ago (threshold 900s) — fresh
-        _build_news_db(db_paths["news"], fetched_at=now - timedelta(seconds=300))
         # advise wrote 20min ago (threshold 3600s) — fresh
         _build_advise_db(db_paths["advise"], created_at=now - timedelta(seconds=1200))
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
 
         by_name = _by_name(rows)
         assert by_name["cli/observe"].status is DaemonStatus.FRESH
-        assert by_name["cli/news"].status is DaemonStatus.FRESH
         assert by_name["cli/advise"].status is DaemonStatus.FRESH
 
     async def test_display_order(self, db_paths: dict[str, Path], now: datetime) -> None:
         """Approach-B daemons first, then heartbeat-based daemons."""
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=30))
-        _build_news_db(db_paths["news"], fetched_at=now - timedelta(seconds=300))
         _build_advise_db(db_paths["advise"], created_at=now - timedelta(seconds=1200))
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
@@ -192,18 +170,15 @@ class TestStale:
     ) -> None:
         # 361s old, default observe threshold is 360s (2 * 30s + 5min slack).
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=361))
-        _build_news_db(db_paths["news"], fetched_at=now - timedelta(seconds=10))
         _build_advise_db(db_paths["advise"], created_at=now - timedelta(seconds=10))
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
         by_name = _by_name(rows)
         assert by_name["cli/observe"].status is DaemonStatus.STALE
-        assert by_name["cli/news"].status is DaemonStatus.FRESH
         assert by_name["cli/advise"].status is DaemonStatus.FRESH
 
     async def test_at_exact_threshold_still_fresh(
@@ -211,12 +186,10 @@ class TestStale:
     ) -> None:
         """Boundary: age == threshold should classify as fresh."""
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=360))
-        _build_news_db(db_paths["news"], fetched_at=now)
         _build_advise_db(db_paths["advise"], created_at=now)
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
@@ -228,13 +201,15 @@ class TestStale:
 # --------------------------------------------------------------------- #
 
 
-_APPROACH_B_NAMES = ("cli/observe", "cli/news", "cli/advise")
-_HEARTBEAT_NAMES = ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance")
+_APPROACH_B_NAMES = ("cli/observe", "cli/advise")
+# P3 slice 2 moved cli/news here — its news_items writes are dedup-gated,
+# so a quiet news window made a healthy daemon read as stale.
+_HEARTBEAT_NAMES = ("cli/news", "cli/live", "cli/harvest", "cli/operator", "cli/maintenance")
 
 
 class TestUnknown:
     async def test_none_path_yields_unknown(self, now: datetime) -> None:
-        rows = await fetch_daemon_freshness(observe_db=None, news_db=None, advise_db=None, now=now)
+        rows = await fetch_daemon_freshness(observe_db=None, advise_db=None, now=now)
         by_name = _by_name(rows)
         for name in _APPROACH_B_NAMES:
             assert by_name[name].status is DaemonStatus.UNKNOWN
@@ -252,7 +227,6 @@ class TestUnknown:
         # No files created at the paths.
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
@@ -267,12 +241,10 @@ class TestUnknown:
     ) -> None:
         # Tables exist but no rows.
         _build_empty_observe_db(db_paths["observe"])
-        _build_news_db(db_paths["news"], fetched_at=None)
         _build_advise_db(db_paths["advise"], created_at=None)
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
             now=now,
         )
@@ -290,7 +262,6 @@ class TestUnknown:
         db_paths["observe"].write_bytes(b"this is not a sqlite database")
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=None,
             advise_db=None,
             now=now,
         )
@@ -307,16 +278,18 @@ class TestUnknown:
 
 class TestMixed:
     async def test_one_fresh_one_stale_one_unknown(
-        self, db_paths: dict[str, Path], now: datetime
+        self, db_paths: dict[str, Path], tmp_path: Path, now: datetime
     ) -> None:
         _build_observe_db(db_paths["observe"], observed_at=now - timedelta(seconds=60))
-        _build_news_db(db_paths["news"], fetched_at=now - timedelta(hours=2))
+        # news heartbeat 2h old (threshold 65m) — STALE
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {"cli/news": now - timedelta(hours=2)})
         # advise_db deliberately not created — UNKNOWN
 
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=db_paths["news"],
             advise_db=db_paths["advise"],
+            operator_db=op_db,
             now=now,
         )
         by_name = _by_name(rows)
@@ -327,7 +300,7 @@ class TestMixed:
     async def test_threshold_seconds_surfaces_on_every_row(
         self, db_paths: dict[str, Path], now: datetime
     ) -> None:
-        rows = await fetch_daemon_freshness(observe_db=None, news_db=None, advise_db=None, now=now)
+        rows = await fetch_daemon_freshness(observe_db=None, advise_db=None, now=now)
         # Per-daemon thresholds documented in design; UI shows them
         # alongside age. Just verify they're present + positive.
         for r in rows:
@@ -369,13 +342,12 @@ class TestHeartbeatBasedDaemons:
         with the unwired-or-unreachable detail."""
         rows = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=None,
             advise_db=None,
             operator_db=None,
             now=now,
         )
         by_name = _by_name(rows)
-        for name in ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance"):
+        for name in _HEARTBEAT_NAMES:
             assert by_name[name].status is DaemonStatus.UNKNOWN
             assert by_name[name].detail == "operator.db unwired or unreachable"
 
@@ -387,10 +359,10 @@ class TestHeartbeatBasedDaemons:
         op_db = tmp_path / "operator.db"
         _build_operator_db_with_heartbeats(op_db, {})
         rows = await fetch_daemon_freshness(
-            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+            observe_db=None, advise_db=None, operator_db=op_db, now=now
         )
         by_name = _by_name(rows)
-        for name in ("cli/live", "cli/harvest", "cli/operator", "cli/maintenance"):
+        for name in _HEARTBEAT_NAMES:
             assert by_name[name].status is DaemonStatus.UNKNOWN
             assert by_name[name].detail == "no heartbeat yet"
 
@@ -404,7 +376,7 @@ class TestHeartbeatBasedDaemons:
             },
         )
         rows = await fetch_daemon_freshness(
-            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+            observe_db=None, advise_db=None, operator_db=op_db, now=now
         )
         by_name = _by_name(rows)
         assert by_name["cli/live"].status is DaemonStatus.FRESH
@@ -418,16 +390,34 @@ class TestHeartbeatBasedDaemons:
         op_db = tmp_path / "operator.db"
         _build_operator_db_with_heartbeats(op_db, {"cli/live": now - timedelta(seconds=400)})
         rows = await fetch_daemon_freshness(
-            observe_db=None, news_db=None, advise_db=None, operator_db=op_db, now=now
+            observe_db=None, advise_db=None, operator_db=op_db, now=now
         )
         by_name = _by_name(rows)
         assert by_name["cli/live"].status is DaemonStatus.STALE
+
+    async def test_news_reclassification_pin(self, tmp_path: Path, now: datetime) -> None:
+        """P3 slice 2 pin: a quiet news window (zero new inserts) with a
+        FRESH heartbeat classifies FRESH — liveness, not content
+        recency, is the signal. The pre-slice behavior (reading
+        MAX(news_items.fetched_at)) made exactly this case read STALE."""
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {"cli/news": now - timedelta(minutes=5)})
+        rows = await fetch_daemon_freshness(
+            observe_db=None, advise_db=None, operator_db=op_db, now=now
+        )
+        news = _by_name(rows)["cli/news"]
+        assert news.status is DaemonStatus.FRESH
+        # And with no heartbeat row at all: honest UNKNOWN, not stale.
+        _build_operator_db_with_heartbeats(tmp_path / "op2.db", {})
+        rows2 = await fetch_daemon_freshness(
+            observe_db=None, advise_db=None, operator_db=tmp_path / "op2.db", now=now
+        )
+        assert _by_name(rows2)["cli/news"].detail == "no heartbeat yet"
 
     async def test_missing_operator_db_file_is_unwired(self, tmp_path: Path, now: datetime) -> None:
         """operator_db points at a path that doesn't exist."""
         rows = await fetch_daemon_freshness(
             observe_db=None,
-            news_db=None,
             advise_db=None,
             operator_db=tmp_path / "missing.db",
             now=now,
@@ -560,7 +550,6 @@ class TestFetchDaemonFreshnessHonorsThresholds:
         # Default → fresh.
         rows_default = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=None,
             advise_db=None,
             now=now,
         )
@@ -572,7 +561,6 @@ class TestFetchDaemonFreshnessHonorsThresholds:
         )
         rows_tight = await fetch_daemon_freshness(
             observe_db=db_paths["observe"],
-            news_db=None,
             advise_db=None,
             thresholds=tight,
             now=now,

@@ -99,6 +99,7 @@ class TestOperatorConfig:
         assert cfg.context_window_turns == 10
         assert cfg.confirm_ttl_seconds == 300
         assert cfg.forwarder_poll_seconds == 2.0
+        assert cfg.heartbeat_alert_mute == []
         assert cfg.live_db is None
         assert cfg.advise_db is None
         assert cfg.news_db is None

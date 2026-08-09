@@ -347,8 +347,14 @@ class _HeartbeatAlertTracker:
     exactly what the NAS-reboot incident needed.
     """
 
-    def __init__(self, *, repeat_seconds: float = _HEARTBEAT_REPEAT_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        repeat_seconds: float = _HEARTBEAT_REPEAT_SECONDS,
+        muted: frozenset[str] = frozenset(),
+    ) -> None:
         self._repeat_seconds = repeat_seconds
+        self._muted = muted
         self._last_status: dict[str, DaemonStatus] = {}
         self._last_alert_at: dict[str, datetime] = {}
 
@@ -388,6 +394,11 @@ class _HeartbeatAlertTracker:
         for health in healths:
             if health.name == "cli/operator":
                 continue
+            if health.name in self._muted:
+                # Operator-declared expected-down (P3 slice 2,
+                # operator.heartbeat_alert_mute). No alerts, no
+                # recovery notices; /health still shows the truth.
+                continue
             if health.status is DaemonStatus.UNKNOWN:
                 continue  # no signal; keep prior definitive status
             prior = self._last_status.get(health.name)
@@ -421,12 +432,12 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
     *,
     notifier: NotifierPort,
     observe_db: Path | None,
-    news_db: Path | None,
     advise_db: Path | None,
     operator_db: Path | None,
     thresholds: DaemonHealthThresholds,
     stop_event: asyncio.Event,
     check_seconds: float = _HEARTBEAT_CHECK_SECONDS,
+    muted: frozenset[str] = frozenset(),
 ) -> None:
     """Background task: freshness check + push alert, until ``stop_event``.
 
@@ -435,12 +446,14 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
     read is logged and skipped — the alerting layer must never crash
     the operator daemon.
     """
-    tracker = _HeartbeatAlertTracker()
+    tracker = _HeartbeatAlertTracker(muted=muted)
     _LOGGER.info(
-        "heartbeat alert monitor started",
+        "heartbeat alert monitor started%s",
+        f" (muted: {', '.join(sorted(muted))})" if muted else "",
         extra={
             "check_seconds": check_seconds,
             "repeat_seconds": _HEARTBEAT_REPEAT_SECONDS,
+            "muted": sorted(muted),
         },
     )
 
@@ -449,7 +462,6 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
         try:
             healths = await fetch_daemon_freshness(
                 observe_db=observe_db,
-                news_db=news_db,
                 advise_db=advise_db,
                 operator_db=operator_db,
                 thresholds=thresholds,
@@ -1524,11 +1536,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         _heartbeat_alert_loop(
             notifier=SqliteNotifierAdapter(operator_storage),
             observe_db=Path(operator_cfg.observe_db) if operator_cfg.observe_db else None,
-            news_db=Path(operator_cfg.news_db) if operator_cfg.news_db else None,
             advise_db=Path(operator_cfg.advise_db) if operator_cfg.advise_db else None,
             operator_db=Path(operator_cfg.operator_db),
             thresholds=derive_thresholds_from_config(config),
             stop_event=stop_event,
+            muted=frozenset(operator_cfg.heartbeat_alert_mute),
         ),
         name="operator-heartbeat-alerts",
     )
