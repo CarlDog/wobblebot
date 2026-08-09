@@ -846,44 +846,55 @@ h2 {
 }
 
 /* Re-anchor recommendation banners (drift + age heuristic).
-   Severity tier drives color: mild=yellow, moderate=orange,
-   strong=red. Same hue family as alert/warning conventions. */
+   Structural shell only — the card treatment, tier accents, and
+   internal layout live in the "Banner internals" block further down
+   (kept together so the cascade reads top-to-bottom: shell, card,
+   accents). */
 .reanchor-banner {
-  padding: 12px 16px;
-  border-radius: 6px;
+  padding: 16px 20px;
+  border-radius: 8px;
   margin-bottom: 14px;
   font-size: 13px;
   line-height: 1.5;
-  border-left: 4px solid;
 }
 
 .reanchor-banner strong {
   font-weight: 600;
 }
 
+/* Banner internals (P3 banner slice; re-restyled 2026-08-09 after two
+   rounds of operator design review). Composition rules learned the
+   hard way:
+   1. A RECOMMENDATION is not an ALARM — the banner is a clean card on
+      the normal surface, and the severity tier lives in exactly four
+      accents: left border, chip, the drift number, the primary button.
+      Tinting all the text produced an unreadable monochrome slab.
+      (The session-cap banner keeps its full wash deliberately — an
+      active cool-down IS an alarm.)
+   2. The stat row distributes edge-to-edge (space-between) — clustering
+      the stats left of a big void read as lopsided.
+   Re-anchor goes through the pending_commands confirm page; Snooze is
+   UI-local. */
+.reanchor-banner {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-left-width: 4px;
+  color: var(--text-primary);
+}
+
+/* The tier's first accent: the left edge. */
 .reanchor-mild {
-  background: var(--banner-mild-bg);
-  border-color: var(--banner-mild-border);
-  color: var(--banner-mild-text);
+  border-left-color: var(--banner-mild-border);
 }
 
 .reanchor-moderate {
-  background: var(--banner-moderate-bg);
-  border-color: var(--banner-moderate-border);
-  color: var(--banner-moderate-text);
+  border-left-color: var(--banner-moderate-border);
 }
 
 .reanchor-strong {
-  background: var(--banner-strong-bg);
-  border-color: var(--banner-strong-border);
-  color: var(--banner-strong-text);
+  border-left-color: var(--banner-strong-border);
 }
 
-/* Banner internals (P3 banner slice; restyled after the 2026-08-09
-   operator design review — the prose paragraph became a header +
-   scoreboard-style stat row + action row, so the decision facts scan
-   instead of read). Re-anchor goes through the pending_commands
-   confirm page; Snooze is UI-local. */
 .reanchor-head {
   display: flex;
   align-items: center;
@@ -894,6 +905,25 @@ h2 {
 .reanchor-title {
   font-size: 14px;
   font-weight: 600;
+  color: var(--text-primary);
+}
+
+.reanchor-icon,
+.reanchor-mild .reanchor-chip,
+.reanchor-mild .reanchor-stat-severity strong {
+  color: var(--banner-mild-text);
+}
+
+.reanchor-moderate .reanchor-icon,
+.reanchor-moderate .reanchor-chip,
+.reanchor-moderate .reanchor-stat-severity strong {
+  color: var(--banner-moderate-text);
+}
+
+.reanchor-strong .reanchor-icon,
+.reanchor-strong .reanchor-chip,
+.reanchor-strong .reanchor-stat-severity strong {
+  color: var(--banner-strong-text);
 }
 
 .reanchor-chip {
@@ -901,17 +931,17 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 2px 8px;
+  padding: 2px 10px;
   border-radius: 9999px;
   border: 1px solid currentColor;
-  opacity: 0.9;
 }
 
 .reanchor-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 36px;
-  margin: 12px 0 2px;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin: 14px 0 4px;
 }
 
 .reanchor-stat {
@@ -920,15 +950,18 @@ h2 {
 }
 
 .reanchor-stat strong {
-  font-size: 19px;
-  font-weight: 650;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 .reanchor-stat span {
   font-size: 11px;
-  opacity: 0.75;
+  color: var(--text-secondary);
+  margin-top: 2px;
 }
 
 .reanchor-foot {
@@ -937,12 +970,14 @@ h2 {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin-top: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .reanchor-note {
   font-size: 12px;
-  opacity: 0.8;
+  color: var(--text-secondary);
 }
 
 .reanchor-actions {
@@ -965,8 +1000,8 @@ h2 {
   cursor: pointer;
 }
 
-/* Primary: filled with the tier's border color — the one loud element
-   in the banner. Text stays dark-on-fill for contrast on all tiers. */
+/* Primary: filled with the tier's border color — the banner's one
+   loud element. Dark text on the amber/orange fills, white on red. */
 .reanchor-act {
   border: none;
   color: #14181f;
@@ -982,23 +1017,24 @@ h2 {
 
 .reanchor-strong .reanchor-act {
   background: var(--banner-strong-border);
+  color: #ffffff;
 }
 
 .reanchor-act:hover {
   filter: brightness(1.12);
 }
 
-/* Secondary: quiet ghost — present, never competing. */
+/* Secondary: quiet ghost in the neutral palette — present, never
+   competing with the primary or masquerading as a tier element. */
 .reanchor-snooze {
-  border: 1px solid currentColor;
-  color: inherit;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
   background: transparent;
-  opacity: 0.65;
 }
 
 .reanchor-snooze:hover {
-  opacity: 1;
-  background: rgb(0 0 0 / 8%);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
 }
 
 /* Session card (v1.1, ADR-024): last loss-cap trip, so it stays
