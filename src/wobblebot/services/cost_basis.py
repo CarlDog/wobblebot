@@ -93,7 +93,11 @@ class SellGuard:
             self._defer_ticks[symbol] = consecutive
             if consecutive == 1:
                 _LOGGER.warning(
-                    "sell guard: deferring SELL below cost basis",
+                    "sell guard: deferring %s SELL @ %s below avg cost %s (%s%% loss)",
+                    symbol,
+                    proposed_price,
+                    assessment.average_cost,
+                    assessment.loss_percentage,
                     extra={
                         "symbol": str(symbol),
                         "proposed_price": str(proposed_price),
@@ -103,7 +107,10 @@ class SellGuard:
                 )
             elif consecutive % _DEFER_SUMMARY_EVERY_TICKS == 0:
                 _LOGGER.info(
-                    "sell guard: still deferring SELLs below cost basis",
+                    "sell guard: still deferring %s SELLs below avg cost %s (%d consecutive)",
+                    symbol,
+                    assessment.average_cost,
+                    consecutive,
                     extra={
                         "symbol": str(symbol),
                         "consecutive_defers": consecutive,
@@ -112,7 +119,8 @@ class SellGuard:
                 )
         elif self._defer_ticks.pop(symbol, 0):
             _LOGGER.info(
-                "sell guard: SELL recovered above cost basis",
+                "sell guard: %s SELL recovered above cost basis",
+                symbol,
                 extra={"symbol": str(symbol)},
             )
 

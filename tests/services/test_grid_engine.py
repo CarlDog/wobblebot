@@ -666,7 +666,7 @@ class TestPartialGridPlacementLogging:
         debug_refusals = [
             r
             for r in caplog.records
-            if r.levelno == logging.DEBUG and "insufficient balance" in r.getMessage()
+            if r.levelno == logging.DEBUG and "refused: insufficient" in r.getMessage()
         ]
         assert len(debug_refusals) == 3
 
@@ -682,7 +682,7 @@ class TestPartialGridPlacementLogging:
         with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
             await engine.step(BTC_USD)
 
-        summaries = [r for r in caplog.records if r.getMessage() == "grid initialized"]
+        summaries = [r for r in caplog.records if r.getMessage().startswith("grid initialized for")]
         assert len(summaries) == 1
         assert summaries[0].target_levels == 6  # 3 above + 3 below
         assert summaries[0].levels_placed == 3
@@ -707,7 +707,9 @@ class TestPartialGridPlacementLogging:
 
         assert result.action == "stepped"
         assert result.placed == 6
-        summaries = [r for r in caplog.records if r.getMessage() == "grid re-layout complete"]
+        summaries = [
+            r for r in caplog.records if r.getMessage().startswith("grid re-layout complete for")
+        ]
         assert len(summaries) == 1
         assert summaries[0].target_levels == 6
         assert summaries[0].levels_placed == 6

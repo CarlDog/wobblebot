@@ -367,8 +367,12 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
                 recovered_fill_count += 1
                 needs_counter_order_ids.append(stale.id)
                 _LOGGER.warning(
-                    "reconciler: storage-only order recovered a real fill "
+                    "reconciler: %s %s (%s) recovered a real fill of %s "
                     "while the daemon was down; queuing a counter-order",
+                    stale.symbol,
+                    stale.side.value.upper(),
+                    stale.exchange_id,
+                    resolution.order.filled_amount,
                     extra={
                         "exchange_id": stale.exchange_id,
                         "symbol": str(stale.symbol),
@@ -384,7 +388,11 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
                 )
                 canceled_count += 1
                 _LOGGER.info(
-                    "reconciler: storage-only order marked canceled",
+                    "reconciler: storage-only %s %s @ %s (%s) marked canceled",
+                    stale.symbol,
+                    stale.side.value.upper(),
+                    stale.price.amount,
+                    stale.exchange_id,
                     extra={
                         "exchange_id": stale.exchange_id,
                         "symbol": str(stale.symbol),
