@@ -18,7 +18,7 @@
   {% for rec in snapshot.reanchor_recommendations %}
     <div class="reanchor-banner reanchor-{{ rec.severity }}" role="status">
       <div class="reanchor-head">
-        <span class="reanchor-title">⚠ Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}</span>
+        <span class="reanchor-title"><span class="reanchor-icon">⚠</span> Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}</span>
         <span class="reanchor-chip">{{ rec.severity }}</span>
       </div>
       {# The stat row mirrors the scoreboard's big-number/small-label
@@ -28,7 +28,7 @@
           <strong>${{ "%.2f"|format(rec.current_price) }}</strong>
           <span>current price</span>
         </div>
-        <div class="reanchor-stat">
+        <div class="reanchor-stat reanchor-stat-severity">
           <strong>{{ "%.1f"|format(rec.drift_in_spacings) }}</strong>
           <span>spacings off grid</span>
         </div>
