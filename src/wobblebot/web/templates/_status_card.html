@@ -158,11 +158,12 @@
            Previously only sections with open orders got the border; the
            no-orders state degraded to a flat header which read as a
            different visual hierarchy. Consistent framing is clearer. #}
-        <section class="symbol-section">
+        {% set estate = snapshot.engine_states.get(symbol) %}
+        {% set is_paused = estate and estate.paused %}
+        <section class="symbol-section{% if is_paused %} symbol-paused{% endif %}">
           <div class="symbol-header">
             <div class="symbol-id">
               <span class="symbol-name">{{ symbol.base }}/{{ symbol.quote }}</span>
-              {% set estate = snapshot.engine_states.get(symbol) %}
               {% if estate and estate.paused %}
                 <span class="engine-badge engine-badge-paused" title="engine reports this symbol paused">PAUSED</span>
               {% elif estate and estate.offside %}
@@ -194,31 +195,40 @@
               {% endif %}
             </div>
             <div class="symbol-actions">
-              {# Pause symbol — POSTs to /commands/pause; redirects to
-                 confirm page; ADR-002 firewall via pending_commands. #}
-              <form method="post" action="/commands/pause" class="inline-form">
-                {{ csrf_input(request) }}
-                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
-                <button type="submit" class="icon-btn"
-                        title="Pause {{ symbol.base }}/{{ symbol.quote }} trading"
-                        aria-label="Pause {{ symbol.base }}/{{ symbol.quote }}">
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <rect x="6" y="5" width="4" height="14" rx="1"/>
-                    <rect x="14" y="5" width="4" height="14" rx="1"/>
-                  </svg>
-                </button>
-              </form>
-              <form method="post" action="/commands/resume" class="inline-form">
-                {{ csrf_input(request) }}
-                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
-                <button type="submit" class="icon-btn"
-                        title="Resume {{ symbol.base }}/{{ symbol.quote }} trading"
-                        aria-label="Resume {{ symbol.base }}/{{ symbol.quote }}">
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                </button>
-              </form>
+              {# State-aware action (P3 blueprint): exactly ONE of
+                 pause/resume, from the FRESH engine_state row. Paused →
+                 resume; anything else — active, absent, or stale — falls
+                 to the safe default, pause (the engine handles a pause
+                 of an already-paused symbol idempotently, while a blind
+                 resume could unknowingly restart trading). Offside stays
+                 a badge, never a button — the lever against offside is
+                 re-anchor. Both POSTs still cross pending_commands. #}
+              {% if is_paused %}
+                <form method="post" action="/commands/resume" class="inline-form">
+                  {{ csrf_input(request) }}
+                  <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                  <button type="submit" class="icon-btn"
+                          title="Resume {{ symbol.base }}/{{ symbol.quote }} trading"
+                          aria-label="Resume {{ symbol.base }}/{{ symbol.quote }}">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  </button>
+                </form>
+              {% else %}
+                <form method="post" action="/commands/pause" class="inline-form">
+                  {{ csrf_input(request) }}
+                  <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                  <button type="submit" class="icon-btn"
+                          title="Pause {{ symbol.base }}/{{ symbol.quote }} trading"
+                          aria-label="Pause {{ symbol.base }}/{{ symbol.quote }}">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <rect x="6" y="5" width="4" height="14" rx="1"/>
+                      <rect x="14" y="5" width="4" height="14" rx="1"/>
+                    </svg>
+                  </button>
+                </form>
+              {% endif %}
             </div>
           </div>
           {% if sym_orders %}

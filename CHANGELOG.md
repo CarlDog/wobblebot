@@ -62,6 +62,13 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   projected cost ≈ 0.40% taker on the cancelled + re-laid ladder notional
   (paper-loss-on-stranded-inventory rejected as misleading — cancelling sells
   nothing).
+- **Slice 6 — state-aware per-symbol pause/resume buttons.** The status card
+  renders exactly one action per symbol from the fresh `engine_state` row: resume
+  on paused symbols, pause on everything else — including absent or stale state,
+  the deliberate safe default (an extra pause is an idempotent no-op; a blind
+  resume could restart trading on a dead engine's old claim). Paused sections dim.
+  Offside remains a badge, never a button — the lever against offside is
+  re-anchor. Pure template + CSS; the ADR-002 firewall path is unchanged.
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

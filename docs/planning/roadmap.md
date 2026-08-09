@@ -584,6 +584,20 @@ the detail; the full backlog index is
    contract (storage reports what was written; consumers own the now-comparison).
    Real-money cost $0.00. Test count 2820 → 2833.
 
+   **Slice 6 — state-aware per-symbol pause/resume buttons** ✅ **2026-08-09** (the
+   re-anchor chain's last link, built to the 2026-06-03 blueprint): the status
+   card's per-symbol actions collapse from both-buttons-always to exactly ONE,
+   branched on the FRESH `engine_state` row the keystone already delivers to the
+   template — paused → resume; active, **absent, or stale → pause (the ratified
+   safe default: pausing an already-paused symbol is an idempotent no-op, while a
+   blind resume could unknowingly restart trading)**. The ADR-030 freshness
+   invariant extends to actions (pinned by test: a 300s-old paused row offers
+   pause, not resume). Offside stays a badge, never a button. Paused sections get
+   the blueprint's dimmed-row visual (body at 0.55 opacity + dashed border; the
+   header with the badge and the resume control stays full-strength). Pure
+   template + CSS — zero Python changes; both POSTs still cross
+   `pending_commands`. Real-money cost $0.00. Test count 2833 → 2837.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

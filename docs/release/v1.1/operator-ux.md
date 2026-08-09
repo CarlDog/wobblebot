@@ -307,7 +307,17 @@ release ceremony (Stage 8.4.F).
 **Trigger:** v1.0 tag ships; operator wants to know when v1.1
 work is available without manually checking GitHub.
 
-### State-aware per-symbol pause/resume buttons
+### State-aware per-symbol pause/resume buttons — ✅ SHIPPED 2026-08-09 (P3 slice 6)
+
+> **Shipped to the blueprint** (superseding the "How" below, which predates the
+> ADR-030 keystone): the template branches on the FRESH `engine_state` row already
+> in `StatusSnapshot.engine_states` — no new `get_paused_symbols()` /
+> `paused_symbols` plumbing was needed. One icon per symbol; **absent or stale
+> state falls to pause, the ratified safe default** (idempotent if already paused;
+> a blind resume could restart trading) — pinned by a stale-row test. Offside stays
+> a badge. Paused sections dim (body 0.55 + dashed border; header and the resume
+> control stay full-strength). Pure template + CSS. Receipt in
+> `docs/planning/roadmap.md` (v1.1 Track item 5).
 
 **What:** the status card's per-symbol pause/resume icons
 (Stage 8.4.E soak Day 4) currently show BOTH actions for every
