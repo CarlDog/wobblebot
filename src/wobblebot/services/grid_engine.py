@@ -447,7 +447,127 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         return (cancelled, failed)
 
+    async def request_reanchor(self, symbol: Symbol) -> tuple[bool, str]:
+        """Re-center ``symbol``'s grid on the current price (ADR-031).
+
+        Cancel-FIRST, atomically: the symbol's open orders are canceled
+        before anything else, and if ANY cancel fails (or the open-order
+        fetch itself fails, leaving the cancel set indeterminate) the
+        re-anchor aborts with ``(False, msg)`` — a new anchor is NEVER
+        saved over still-live orders. Only on a clean cancel does it
+        save a fresh ``GridState`` at the current price (built from the
+        CURRENT coin config, so a pending config change lands with the
+        new anchor), clear the offside counter, auto-resume if paused,
+        and place the new layout IN-PROCESS — never via the next-tick
+        auto-re-layout gate, whose ``if not offside:`` guard would
+        silently park a symbol whose price moved past the fresh band
+        (judge correction A).
+
+        Runs under the per-symbol lock; dispatched between ticks by
+        cli/live's pending-command poll, so no step is in flight.
+        Returns ``(ok, message)`` — the message carries the old → new
+        anchor and counts, and becomes the pending_commands audit
+        record (``save_grid_state`` is a destructive upsert; this
+        message is where the old anchor survives).
+        """
+        async with self._lock_for(symbol):
+            return await self._reanchor_unlocked(symbol)
+
+    async def _reanchor_unlocked(self, symbol: Symbol) -> tuple[bool, str]:
+        # pylint: disable=too-many-locals
+        # Same rationale as _tick's disable: every local is a distinct
+        # stage signal of a linear procedure (price, old anchor, cancel
+        # counts, new state, placement tallies); helper-splitting would
+        # obscure the cancel-first -> save -> place ordering that IS
+        # the safety argument.
+        coin_cfg = self._config.for_coin(symbol.base)
+        try:
+            ticker = await self._exchange.get_ticker(symbol)
+        except ExchangeError as exc:
+            return (False, f"re-anchor aborted: price fetch failed ({exc}); nothing changed")
+        current_price = ticker.last
+        old_state = await self._storage.get_grid_state(symbol)
+        old_anchor = str(old_state.reference_price) if old_state else "none"
+        try:
+            cancelled, failed = await self.cancel_open_orders(symbol=symbol)
+        except ExchangeError as exc:
+            return (
+                False,
+                f"re-anchor aborted: open-order fetch failed ({exc}); "
+                f"orders may still be LIVE and the anchor is unchanged",
+            )
+        if failed > 0:
+            # The ADR's regression pin: never save a new anchor over
+            # orders we could not cancel.
+            return (
+                False,
+                f"re-anchor aborted: {failed} cancel(s) failed "
+                f"({cancelled} succeeded); orders may still be LIVE and "
+                f"the anchor is unchanged",
+            )
+        state = GridState(
+            symbol=symbol,
+            reference_price=current_price,
+            spacing_percentage=coin_cfg.spacing_percentage,
+            levels_above=coin_cfg.levels_above,
+            levels_below=coin_cfg.levels_below,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        await self._storage.save_grid_state(state)
+        self._offside_ticks.pop(symbol, None)
+        resumed = self.resume_symbol(symbol)
+        levels = compute_grid_levels(
+            reference_price=state.reference_price,
+            spacing_percentage=state.spacing_percentage,
+            levels_above=state.levels_above,
+            levels_below=state.levels_below,
+        )
+        placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
+        message = (
+            f"re-anchored {symbol}: {old_anchor} -> {current_price}; "
+            f"cancelled {cancelled}, placed {placed}/{len(levels)}"
+            f"{f' ({refusals} refused)' if refusals else ''}"
+            f"{f' ({sells_deferred} sells deferred)' if sells_deferred else ''}"
+            f"{' (auto-resumed)' if resumed else ''}"
+        )
+        _LOGGER.info(
+            "grid re-anchored",
+            extra={
+                "symbol": str(symbol),
+                "old_anchor": old_anchor,
+                "new_anchor": str(current_price),
+                "cancelled": cancelled,
+                "placed": placed,
+                "refusals": refusals,
+                "sells_deferred": sells_deferred,
+                "auto_resumed": resumed,
+            },
+        )
+        return (True, message)
+
     # ------------------------------------------------------------------ initialization
+
+    async def _place_layout(
+        self, symbol: Symbol, levels: list[GridLevel], coin_cfg: CoinGridConfig
+    ) -> tuple[int, int, int]:
+        """Place every level of a layout; returns (placed, refusals, sells_deferred).
+
+        The one placement loop shared by ``_initialize``, the auto
+        re-layout branch, and ``request_reanchor`` — three call sites
+        with an identical per-outcome tally that would otherwise drift.
+        """
+        placed = 0
+        refusals = 0
+        sells_deferred = 0
+        for level in levels:
+            outcome = await self._try_place(symbol, level, coin_cfg)
+            if outcome == "placed":
+                placed += 1
+            elif outcome == "sell_deferred":
+                sells_deferred += 1
+            else:
+                refusals += 1
+        return (placed, refusals, sells_deferred)
 
     async def _initialize(
         self,
@@ -470,17 +590,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             levels_above=state.levels_above,
             levels_below=state.levels_below,
         )
-        placed = 0
-        refusals = 0
-        sells_deferred = 0
-        for level in levels:
-            outcome = await self._try_place(symbol, level, coin_cfg)
-            if outcome == "placed":
-                placed += 1
-            elif outcome == "sell_deferred":
-                sells_deferred += 1
-            else:
-                refusals += 1
+        placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
         _LOGGER.info(
             "grid initialized",
             extra={
@@ -610,15 +720,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                         "no open orders detected; re-laying out grid at existing anchor",
                         extra=log_extra,
                     )
-                relayout_placed = relayout_refusals = relayout_deferred = 0
-                for level in levels:
-                    outcome = await self._try_place(symbol, level, coin_cfg)
-                    if outcome == "placed":
-                        relayout_placed += 1
-                    elif outcome == "sell_deferred":
-                        relayout_deferred += 1
-                    else:
-                        relayout_refusals += 1
+                relayout_placed, relayout_refusals, relayout_deferred = await self._place_layout(
+                    symbol, levels, coin_cfg
+                )
                 placed += relayout_placed
                 refusals += relayout_refusals
                 sells_deferred += relayout_deferred

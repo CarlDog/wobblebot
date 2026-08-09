@@ -7,7 +7,8 @@ each union covers:
 - :data:`OperatorCommand` — state-mutating actions
   (:class:`PauseCommand` | :class:`ResumeCommand` |
   :class:`PauseAllCommand` | :class:`ResumeAllCommand` |
-  :class:`CancelOpenOrdersCommand` | :class:`StopCommand`).
+  :class:`CancelOpenOrdersCommand` | :class:`ReanchorCommand` |
+  :class:`StopCommand`).
 - :data:`OperatorQuery` — read-only state questions
   (:class:`StatusQuery` ... :class:`HelpQuery`, 9 variants).
 - :data:`OperatorIntent` — the outermost union the assistant emits
@@ -144,6 +145,26 @@ class CancelOpenOrdersCommand(BaseModel):
         frozen = True
 
 
+class ReanchorCommand(BaseModel):
+    """Re-center one symbol's grid on the current price (ADR-031).
+
+    Cancel-FIRST + in-process re-layout inside
+    ``GridEngine.request_reanchor``: open orders are canceled before
+    anything else, and any cancel failure aborts with the old anchor
+    untouched. Distinct from ``CancelOpenOrdersCommand``, which removes
+    orders but leaves the anchor where it was — re-anchor MOVES the
+    anchor and re-places the grid around the current price. Symbol is
+    required; there is deliberately no re-anchor-all (each re-anchor is
+    a per-symbol capital decision).
+    """
+
+    kind: Literal["reanchor"] = "reanchor"
+    symbol: SymbolInput
+
+    class Config:
+        frozen = True
+
+
 class StopCommand(BaseModel):
     """Request a soft stop of ``cli/live``.
 
@@ -165,6 +186,7 @@ OperatorCommand = Annotated[
     | PauseAllCommand
     | ResumeAllCommand
     | CancelOpenOrdersCommand
+    | ReanchorCommand
     | StopCommand,
     Field(discriminator="kind"),
 ]
@@ -394,6 +416,7 @@ OperatorIntent = Annotated[
 
 __all__ = (
     "CancelOpenOrdersCommand",
+    "ReanchorCommand",
     "GridConfigQuery",
     "HarvesterStatusQuery",
     "HelpQuery",

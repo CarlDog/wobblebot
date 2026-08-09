@@ -17,6 +17,7 @@ from wobblebot.ports.operator import (
     PauseCommand,
     PendingCommand,
     PendingCommandStatus,
+    ReanchorCommand,
     StopCommand,
 )
 
@@ -80,6 +81,16 @@ async def test_get_pending_command_returns_none_when_missing(
     storage: SQLiteStorageAdapter,
 ) -> None:
     assert await storage.get_pending_command(uuid4()) is None
+
+
+async def test_reanchor_command_round_trips(storage: SQLiteStorageAdapter) -> None:
+    pending = _pending(command=ReanchorCommand(symbol=Symbol(base="BTC", quote="USD")))
+    await storage.save_pending_command(pending)
+    fetched = await storage.get_pending_command(pending.id)
+    assert fetched is not None
+    assert isinstance(fetched.command, ReanchorCommand)
+    assert fetched.command.kind == "reanchor"
+    assert str(fetched.command.symbol) == "BTC/USD"
 
 
 async def test_command_kind_persists_correctly(storage: SQLiteStorageAdapter) -> None:

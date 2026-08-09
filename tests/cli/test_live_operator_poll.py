@@ -27,6 +27,7 @@ from wobblebot.ports.operator import (
     PauseCommand,
     PendingCommand,
     PendingCommandStatus,
+    ReanchorCommand,
     StopCommand,
 )
 from wobblebot.services.grid_engine import GridEngine
@@ -45,7 +46,7 @@ def _ts(offset_seconds: int = 0) -> Timestamp:
 def _pending(
     *,
     status: PendingCommandStatus = "approved",
-    command: PauseCommand | StopCommand | None = None,
+    command: PauseCommand | StopCommand | ReanchorCommand | None = None,
     created_offset_seconds: int = 0,
 ) -> PendingCommand:
     return PendingCommand(
@@ -135,6 +136,32 @@ async def test_approved_pause_command_dispatches_successfully(
     assert fetched.result is not None
     assert fetched.result.success is True
     assert fetched.result.command_kind == "pause"
+
+
+async def test_approved_reanchor_dispatches_through_firewall(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """ADR-031 end-to-end: an approved reanchor row moves the anchor and
+    places the layout in-process, via the same WHERE status='approved'
+    poll every other command uses (zero new firewall machinery)."""
+    svc, _engine = _operator_service(storage)
+    pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    await storage.save_pending_command(pending)
+
+    processed = await _process_pending_commands(svc, storage)
+    assert processed == 1
+
+    fetched = await storage.get_pending_command(pending.id)
+    assert fetched is not None
+    assert fetched.status == "dispatched"
+    assert fetched.result is not None
+    assert fetched.result.success is True
+    assert fetched.result.command_kind == "reanchor"
+    assert "re-anchored" in fetched.result.message
+    state = await storage.get_grid_state(BTC_USD)
+    assert state is not None  # anchor saved at the mock price
+    opens = await storage.get_open_orders(symbol=BTC_USD)
+    assert len(opens) > 0  # layout placed in-process
 
 
 async def test_approved_stop_command_marks_engine(storage: SQLiteStorageAdapter) -> None:

@@ -17,7 +17,7 @@
   <dl class="kv">
     <dt>Command</dt>
     <dd>{{ pending.command.kind }}</dd>
-    {% if pending.command.kind in ("pause", "resume") %}
+    {% if pending.command.kind in ("pause", "resume", "reanchor") %}
       <dt>Symbol</dt>
       <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
     {% endif %}

@@ -59,6 +59,7 @@ from wobblebot.ports.operator import (
     PauseCommand,
     ProposalEntry,
     QueryResult,
+    ReanchorCommand,
     RecentFillsQuery,
     RecentFillsResult,
     RecentNewsQuery,
@@ -141,6 +142,11 @@ _HELP_ENTRIES: tuple[HelpEntry, ...] = (
         kind="cancel_open_orders",
         category="command",
         description="Cancel open grid orders on a symbol (or all).",
+    ),
+    HelpEntry(
+        kind="reanchor",
+        category="command",
+        description="Re-center one symbol's grid on the current price (cancels its orders first).",
     ),
     HelpEntry(
         kind="stop", category="command", description="Soft-stop the engine (clean shutdown)."
@@ -229,7 +235,11 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
 
     # ------------------------------------------------------------------ commands
 
-    async def dispatch_command(self, command: OperatorCommand) -> CommandResult:
+    async def dispatch_command(  # pylint: disable=too-many-return-statements
+        self, command: OperatorCommand
+    ) -> CommandResult:
+        # One return per union variant — same growth pattern (and same
+        # disable) as answer_query below.
         match command:
             case PauseCommand():
                 return self._dispatch_pause(command)
@@ -241,6 +251,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 return self._dispatch_resume_all()
             case CancelOpenOrdersCommand():
                 return await self._dispatch_cancel_open_orders(command)
+            case ReanchorCommand():
+                return await self._dispatch_reanchor(command)
             case StopCommand():
                 return self._dispatch_stop()
             case _:
@@ -336,6 +348,24 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 "cancelled": cancelled,
                 "failed": failed,
             },
+        )
+
+    async def _dispatch_reanchor(self, command: ReanchorCommand) -> CommandResult:
+        """ADR-031: cancel-FIRST re-anchor via ``GridEngine.request_reanchor``.
+
+        The engine owns the atomicity (abort before save on any cancel
+        failure); this dispatcher just relays ``(ok, message)``. The
+        message carries the old → new anchor — with ``save_grid_state``
+        being a destructive upsert, the dispatched pending_commands row
+        holding this result IS the audit trail of where the anchor was.
+        """
+        ok, message = await self._engine.request_reanchor(command.symbol)
+        return CommandResult(
+            success=ok,
+            command_kind="reanchor",
+            message=message,
+            executed_at=_now(),
+            side_effects={"symbol": str(command.symbol)},
         )
 
     def _dispatch_stop(self) -> CommandResult:

@@ -1232,6 +1232,122 @@ class TestCancelOpenOrders:
             await engine.cancel_open_orders(symbol=BTC_USD)
 
 
+class _OneCancelFailsExchange(MockExchangeAdapter):
+    """MockExchangeAdapter where exactly one cancel raises (the rest work)."""
+
+    def __init__(self, *args: object, fail_price: Decimal, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._fail_price = fail_price
+
+    async def cancel_order(self, order):  # type: ignore[no-untyped-def]
+        if order.price.amount == self._fail_price:
+            raise ExchangeError("EOrder:Cancel failed")
+        return await super().cancel_order(order)
+
+
+class TestRequestReanchor:
+    """ADR-031: cancel-FIRST atomicity + in-process layout (judge correction A)."""
+
+    async def test_clean_reanchor_moves_anchor_and_places_in_process(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # anchor 50000, 6 orders
+        # In-band move (50200 crosses no level) so the mock's price-cross
+        # matching fills nothing — this test isolates the re-anchor
+        # mechanics; fills-before-reanchor recovery is the next tick's
+        # _detect_fills job, unchanged by ADR-031.
+        exchange.set_price(BTC_USD, Decimal("50200"))
+
+        ok, message = await engine.request_reanchor(BTC_USD)
+
+        assert ok is True
+        state = await storage.get_grid_state(BTC_USD)
+        assert state is not None
+        assert state.reference_price == Decimal("50200")
+        # In-process placement: fresh layout exists WITHOUT any step().
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(opens) == 6
+        prices = {o.price.amount for o in opens}
+        assert Decimal("49698") in prices  # 50200 - 1% — the new band
+        assert Decimal("49500") not in prices  # the old band is gone
+        assert "50000 -> 50200" in message
+
+    async def test_failed_cancel_aborts_before_save(self, storage: SQLiteStorageAdapter) -> None:
+        """THE regression pin: save_grid_state is NOT called when any
+        cancel fails — never a new anchor over still-live orders."""
+        exchange = _OneCancelFailsExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+            fail_price=Decimal("49000"),  # one of the BUY levels
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("50200"))  # in-band: no fills
+
+        ok, message = await engine.request_reanchor(BTC_USD)
+
+        assert ok is False
+        assert "anchor is unchanged" in message
+        state = await storage.get_grid_state(BTC_USD)
+        assert state is not None
+        assert state.reference_price == Decimal("50000")  # untouched
+        # The un-cancellable order is still open — consistent state.
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        assert any(o.price.amount == Decimal("49000") for o in opens)
+
+    async def test_fetch_failure_aborts_with_live_orders_warning(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exch = _FetchFailExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+
+        ok, message = await engine.request_reanchor(BTC_USD)
+
+        assert ok is False
+        assert "LIVE" in message
+        assert await storage.get_grid_state(BTC_USD) is None  # nothing saved
+
+    async def test_offside_symbol_still_places_layout(self, storage: SQLiteStorageAdapter) -> None:
+        """Judge correction A: the next-tick auto-re-layout gate sits
+        inside `if not offside:` — a re-anchor relying on it would park
+        the symbol with ZERO orders right after the operator asked for
+        a re-center. In-process placement must lay the grid regardless
+        of prior offside state."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("40000"))  # far below the band
+        await engine.step(BTC_USD)  # goes offside, parks
+        assert engine.offside_ticks(BTC_USD) >= 1
+
+        ok, _message = await engine.request_reanchor(BTC_USD)
+
+        assert ok is True
+        assert engine.offside_ticks(BTC_USD) == 0  # counter cleared
+        opens = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(opens) > 0  # NOT parked with zero orders
+        state = await storage.get_grid_state(BTC_USD)
+        assert state is not None
+        assert state.reference_price == Decimal("40000")
+
+    async def test_paused_symbol_auto_resumes(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        engine.pause_symbol(BTC_USD)
+
+        ok, message = await engine.request_reanchor(BTC_USD)
+
+        assert ok is True
+        assert engine.is_paused(BTC_USD) is False
+        assert "auto-resumed" in message
+
+
 # ---------------------------------------------------------------------------
 # Ordermin/costmin ExchangeError handling (v1.1 backlog: engine
 # ordermin-awareness)

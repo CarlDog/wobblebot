@@ -35,7 +35,7 @@
             <td>{{ p.created_at.dt | tz_format(operator_tz) }}</td>
             <td>
               {{ p.command.kind }}
-              {% if p.command.kind in ("pause", "resume") %}
+              {% if p.command.kind in ("pause", "resume", "reanchor") %}
                 <code>{{ p.command.symbol.base }}/{{ p.command.symbol.quote }}</code>
               {% endif %}
             </td>

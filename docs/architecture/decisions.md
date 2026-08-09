@@ -2102,6 +2102,24 @@ DMS bounce) and ADR-006 (per-symbol lock, offside semantics).
 
 **Soak note:** P3 (post-tag, parallel to P2); `v1.1` branch, NOT in the frozen v1.0 soak image.
 
+**Implementation note (2026-08-09, shipped):** five clarifications beyond the ADR text.
+(1) An indeterminate cancel set (the open-order FETCH failing) aborts exactly like a failed
+cancel — the message says orders "may still be LIVE". (2) The new `GridState` is built from
+the CURRENT coin config, not the old persisted state, so a pending config change lands with
+the new anchor (deliberate). (3) `save_grid_state` is a destructive upsert with no audit
+row — the engine's returned message carries old → new anchor, and the dispatched
+`pending_commands` row holding that `CommandResult` IS the audit trail. The anchor lands at
+EXECUTION price, not approval price (the approve→dispatch gap is unbounded by TTL; the
+message shows where it actually landed). (4) The placement loop was extracted to
+`_place_layout` (third identical copy: `_initialize`, the auto-re-layout branch, and this).
+(5) Recorded, not built: `cancel_open_orders` has no inter-cancel pacing (the SIGINT
+shutdown path's ADR-027 pacing guard doesn't apply here); a single-symbol re-anchor is
+~2×levels private calls back-to-back, relying on the adapter's rate-limit backoff — and it
+briefly stalls the tick loop (the DMS is re-armed each iteration before the poll, so the
+timer stays protective). Fills that occurred before the re-anchor are untouched: the
+exchange-authoritative cancel skips filled orders and the next tick's `_detect_fills`
+recovers them normally.
+
 **References:**
 - `docs/release/v1.1/README.md` — P3 resolved blueprints, "Re-anchor chain" (judge correction
   A).
