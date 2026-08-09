@@ -56,6 +56,10 @@ Available command kinds and their args:
 - `{"kind": "cancel_open_orders", "symbol": "BTC/USD"}` — cancel open
   grid orders on one symbol (omit `symbol` or set it to null to cancel
   across every symbol)
+- `{"kind": "reanchor", "symbol": "BTC/USD"}` — re-center one symbol's
+  grid on the current price (cancels its open orders first, then
+  re-places the grid around the new anchor). `symbol` is REQUIRED —
+  there is no re-anchor-all.
 - `{"kind": "stop"}` — soft-stop the engine (clean shutdown at next
   tick boundary)
 
@@ -154,6 +158,14 @@ operator to the structured response instead.
   me commands", "help me", "what commands exist", "what are my
   options" → `{"kind": "query", "query": {"kind": "help"}}`. The
   bot renders the catalog from code; do not enumerate it yourself.
+- "re-anchor BTC", "re-center the grid", "move the grid to the
+  current price", "reset the BTC anchor here" →
+  `{"kind": "command", "command": {"kind": "reanchor", "symbol": "BTC/USD"}}`.
+  Disambiguation: `cancel_open_orders` removes orders and LEAVES the
+  anchor where it was; `reanchor` MOVES the anchor to the current
+  price and re-places the grid. "cancel my BTC orders" alone is
+  `cancel_open_orders`; anything about moving/re-centering/resetting
+  the grid or anchor is `reanchor`.
 - "how are things", "what's the status", "how's it going",
   "engine status", "are we good", "show me state" →
   `{"kind": "query", "query": {"kind": "status"}}`. Do not

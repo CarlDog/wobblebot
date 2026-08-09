@@ -19,6 +19,7 @@ from wobblebot.ports.operator import (
     OperatorCommand,
     PauseAllCommand,
     PauseCommand,
+    ReanchorCommand,
     ResumeAllCommand,
     ResumeCommand,
     StopCommand,
@@ -90,6 +91,19 @@ class TestCancelOpenOrdersCommand:
         assert cmd.symbol == _btc
 
 
+class TestReanchorCommand:
+    def test_kind_and_symbol(self) -> None:
+        cmd = ReanchorCommand(symbol=_btc)
+        assert cmd.kind == "reanchor"
+        assert cmd.symbol == _btc
+
+    def test_symbol_required(self) -> None:
+        # Deliberately no re-anchor-all: each re-anchor is a per-symbol
+        # capital decision (ADR-031).
+        with pytest.raises(ValidationError):
+            TypeAdapter(ReanchorCommand).validate_python({"kind": "reanchor"})
+
+
 class TestStopCommand:
     def test_no_args(self) -> None:
         cmd = StopCommand()
@@ -108,6 +122,7 @@ class TestOperatorCommandUnion:
             ({"kind": "resume_all"}, ResumeAllCommand),
             ({"kind": "cancel_open_orders"}, CancelOpenOrdersCommand),
             ({"kind": "cancel_open_orders", "symbol": "BTC/USD"}, CancelOpenOrdersCommand),
+            ({"kind": "reanchor", "symbol": "BTC/USD"}, ReanchorCommand),
             ({"kind": "stop"}, StopCommand),
         ],
     )

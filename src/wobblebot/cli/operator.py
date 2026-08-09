@@ -916,7 +916,7 @@ async def _handle_command_intent(  # pylint: disable=too-many-arguments
 def _summarize_command(intent: IntentCommand) -> str:
     """Render a concise one-line summary of a Command intent for the embed."""
     command = intent.command
-    if command.kind in ("pause", "resume", "cancel_open_orders"):
+    if command.kind in ("pause", "resume", "cancel_open_orders", "reanchor"):
         symbol = getattr(command, "symbol", None)
         symbol_str = str(symbol) if symbol is not None else "all symbols"
         return f"`{command.kind}` on {symbol_str}"

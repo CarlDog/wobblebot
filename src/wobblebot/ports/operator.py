@@ -209,6 +209,7 @@ __all__ = (
     "OperatorPort",
     # Re-exports from operator_intents (full set)
     "CancelOpenOrdersCommand",
+    "ReanchorCommand",
     "GridConfigQuery",
     "HarvesterStatusQuery",
     "HelpQuery",

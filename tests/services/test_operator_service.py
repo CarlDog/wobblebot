@@ -29,6 +29,7 @@ from wobblebot.ports.operator import (
     OpenOrdersResult,
     PauseAllCommand,
     PauseCommand,
+    ReanchorCommand,
     RecentFillsQuery,
     RecentFillsResult,
     RecentNewsQuery,
@@ -323,6 +324,78 @@ class TestCancelOpenOrders:
         assert result.success is False
         assert result.side_effects["cancelled"] == 5
         assert result.side_effects["failed"] == 1
+
+
+class TestReanchor:
+    async def test_reanchor_moves_anchor_and_relays_message(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        engine = GridEngine(exchange_with_btc_and_eth, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # anchor at the mock's BTC price
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(ReanchorCommand(symbol=BTC_USD))
+
+        assert result.success is True
+        assert result.command_kind == "reanchor"
+        assert "re-anchored BTC/USD" in result.message
+        assert "->" in result.message  # old -> new anchor: the audit record
+        assert result.side_effects["symbol"] == "BTC/USD"
+
+    async def test_reanchor_failed_cancel_reports_failure_anchor_untouched(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        """ADR-031 pin at the dispatch layer: a partial cancel comes back
+        success=False and the persisted anchor is unchanged."""
+        exch = _OneCancelFailsExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(ReanchorCommand(symbol=BTC_USD))
+
+        assert result.success is False
+        assert "anchor is unchanged" in result.message
+        state = await storage.get_grid_state(BTC_USD)
+        assert state is not None
+        assert state.reference_price == Decimal("50000")
+
+    async def test_reanchor_fetch_failure_reports_live_orders(
+        self,
+        storage: SQLiteStorageAdapter,
+    ) -> None:
+        exch = _FetchFailExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exch, storage, _grid_config(), _safety_config())
+        svc = OperatorService(
+            engine=engine,
+            storage=storage,
+            active_symbols=(BTC_USD,),
+            grid_config=_grid_config(),
+        )
+
+        result = await svc.dispatch_command(ReanchorCommand(symbol=BTC_USD))
+
+        assert result.success is False
+        assert "LIVE" in result.message
 
 
 class TestStop:
@@ -728,13 +801,14 @@ class TestHelpQuery:
         result = await svc.answer_query(HelpQuery())
         assert isinstance(result, HelpResult)
         kinds = {e.kind for e in result.entries}
-        # 6 commands
+        # 7 commands
         assert {
             "pause",
             "resume",
             "pause_all",
             "resume_all",
             "cancel_open_orders",
+            "reanchor",
             "stop",
         } <= kinds
         # 9 queries
@@ -750,7 +824,7 @@ class TestHelpQuery:
             "help",
         } <= kinds
         assert "status_report" in kinds
-        assert len(result.entries) == 16
+        assert len(result.entries) == 17
 
 
 # --------------------------------------------------------------------- #

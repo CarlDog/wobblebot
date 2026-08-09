@@ -68,6 +68,7 @@ from wobblebot.ports.operator import (
     PendingCommandStatus,
     ProposalEntry,
     QueryResult,
+    ReanchorCommand,
     RecentFillsQuery,
     RecentFillsResult,
     RecentNewsQuery,
@@ -128,6 +129,7 @@ __all__ = [
     "PauseAllCommand",
     "ResumeAllCommand",
     "CancelOpenOrdersCommand",
+    "ReanchorCommand",
     "StopCommand",
     # Query variants
     "StatusQuery",
