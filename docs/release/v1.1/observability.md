@@ -62,6 +62,18 @@ Tracker state is deliberately in-memory: a restarted operator daemon
 re-alerts anything already down on its first check — which IS the
 NAS-reboot scenario this exists for.
 
+**First live check (same day) caught a real incident** — cli/harvest
+down since the 2026-08-05 bump (P1 key-scope gate refusing per ADR-003;
+`restart:"no"` kept it down) — plus one false-positive class: cli/news
+freshness derived from `MAX(news_items.fetched_at)`, which only
+advances on genuinely-new inserts, so a quiet news night read as a
+stale daemon. **Slice 2 (also 2026-08-08) shipped both fixes:**
+`operator.heartbeat_alert_mute` (explicit expected-down list — the
+operator declared harvest deliberately off; muting silences the push
+only, /health keeps showing truth) and cli/news reclassified to the
+heartbeat table (`news.operator_db` + a per-cycle `emit_heartbeat`) —
+liveness, not content recency, is the signal.
+
 ### Anomaly detector daemon — cross-DB outlier watcher
 
 **What:** a new long-running daemon (``cli/anomaly`` or similar)

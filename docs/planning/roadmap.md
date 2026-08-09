@@ -497,6 +497,26 @@ the detail; the full backlog index is
    new table, no new config, no ADR (per the observability.md design).
    Real-money cost $0.00. Test count 2768 → 2779.
 
+   **Deployed same-session** (NAS → `sha-2c65ec8`) — and the monitor **caught a real
+   incident on its first check**: `cli/harvest` had been DOWN since the 2026-08-05
+   2.0.0 bump (`Exited (3)` — the P1 key-scope gate refusing per ADR-003: the NAS
+   Harvester key lacks Kraken Withdraw scope; `restart:"no"` kept it down, invisible
+   in running-container views). **Operator decision 2026-08-08: harvester stays off
+   for now.** Second alert: cli/news WARNING was the content-freshness blind spot
+   (news_items inserts are dedup-gated → quiet night reads stale).
+
+   **Slice 2 — alert-quality follow-up** ✅ **2026-08-08** (both findings from
+   slice 1's first live check): (1) `operator.heartbeat_alert_mute` — explicit
+   expected-down list consumed by the alert tracker (NAS mutes `cli/harvest` per the
+   operator decision; deliberately NOT keyed off `harvester.enabled`, which gates
+   withdrawal *execution* — the daemon legitimately runs proposals-only with it off);
+   muting silences the push only, /health keeps showing truth. (2) cli/news moves to
+   the heartbeat classifier — new `news.operator_db` + `emit_heartbeat` per poll
+   cycle; `fetch_daemon_freshness` drops the `news_db` param (news was misfiled as
+   Approach-B; its primary writes are dedup-gated, the exact conditional-write case
+   the heartbeat table exists for). Reclassification pin test: quiet news window +
+   fresh heartbeat = FRESH. Real-money cost $0.00. Test count 2779 → 2783.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

@@ -30,6 +30,13 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   transitions — `critical` for the `restart:"no"` money-path daemons (live/harvest),
   `warning` for the rest, 6h repeat while down, recovery notice on return. Closes the
   gap that let the 2026-07-20 NAS reboot leave live+harvest dead for 11 unnoticed days.
+  Its first live check caught a real one: cli/harvest down since the 2026-08-05 bump
+  (the 2.0.0 key-scope gate refusing a Harvester key without Withdraw scope, ADR-003).
+- **Slice 2 — alert-quality follow-up.** `operator.heartbeat_alert_mute` (explicit
+  expected-down list — muting silences the Discord push only; `/health` keeps showing
+  the truth) and cli/news reclassified from content-freshness to a real liveness
+  heartbeat (`news.operator_db`) — a quiet news night no longer reads as a stale
+  daemon. `fetch_daemon_freshness` drops its now-unused `news_db` parameter.
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 
