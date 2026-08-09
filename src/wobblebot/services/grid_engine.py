@@ -474,6 +474,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             return await self._reanchor_unlocked(symbol)
 
     async def _reanchor_unlocked(self, symbol: Symbol) -> tuple[bool, str]:
+        # pylint: disable=too-many-locals
+        # Same rationale as _tick's disable: every local is a distinct
+        # stage signal of a linear procedure (price, old anchor, cancel
+        # counts, new state, placement tallies); helper-splitting would
+        # obscure the cancel-first -> save -> place ordering that IS
+        # the safety argument.
         coin_cfg = self._config.for_coin(symbol.base)
         try:
             ticker = await self._exchange.get_ticker(symbol)
