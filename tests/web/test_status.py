@@ -1025,3 +1025,66 @@ class TestReanchorBannerSnoozeAndFee:
                 assert "reanchor-banner" not in resp.text
         finally:
             await observe.close()
+
+
+# --------------------------------------------------------------------- #
+# State-aware pause/resume buttons (P3 blueprint: one icon, safe default)#
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestStateAwareButtons:
+    """Exactly ONE of pause/resume renders per symbol, from FRESH
+    engine_state only. The asymmetric safe default: absent or stale
+    state shows PAUSE — an idempotent no-op if already paused —
+    never RESUME, which could unknowingly restart trading."""
+
+    async def test_paused_symbol_renders_resume_only_and_dims(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=True, age_seconds=2))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert 'action="/commands/resume"' in resp.text
+            assert 'action="/commands/pause"' not in resp.text
+            assert "symbol-paused" in resp.text
+
+    async def test_active_symbol_renders_pause_only(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=False, age_seconds=2))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert 'action="/commands/pause"' in resp.text
+            assert 'action="/commands/resume"' not in resp.text
+            assert "symbol-paused" not in resp.text
+
+    async def test_absent_state_safe_defaults_to_pause(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert 'action="/commands/pause"' in resp.text
+            assert 'action="/commands/resume"' not in resp.text
+            assert "symbol-paused" not in resp.text
+
+    async def test_stale_paused_state_safe_defaults_to_pause(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The ADR-030 invariant extended to actions: a dead engine's
+        old 'paused' claim must not keep offering resume."""
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=True, age_seconds=300))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert 'action="/commands/pause"' in resp.text
+            assert 'action="/commands/resume"' not in resp.text
+            assert "symbol-paused" not in resp.text

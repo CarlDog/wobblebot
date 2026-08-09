@@ -1670,6 +1670,18 @@ table.data th {
   background: #64748b;
 }
 
+/* Paused-symbol dimming (P3 state-aware buttons): the section's BODY
+   fades so a held symbol reads as inactive at a glance, while the
+   header — badge, price, and the resume button — stays full-strength
+   (dimming the one control that un-pauses would fight its purpose). */
+.symbol-paused > *:not(.symbol-header) {
+  opacity: 0.55;
+}
+
+.symbol-paused {
+  border-style: dashed;
+}
+
 /* ---- Responsive (narrow / mobile) ------------------------------------
    Minimal pass so the dashboard is usable on a phone: wide data tables
    scroll inside their card instead of blowing out the viewport, the
