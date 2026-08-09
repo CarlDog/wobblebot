@@ -502,6 +502,41 @@ discussion that "auto-cancellation feels wrong; lean into
 banner + action button instead." Shipping order matches the
 dependency: re-anchor mechanism → action button → snooze.
 
+### Re-anchor viability weighting (probability-of-success on the banner)
+
+**What:** weight (or annotate) re-anchor recommendations by the
+likelihood that a re-anchored grid would actually *cycle* — not just
+by how misplaced the current one is. Operator-observed 2026-08-09:
+the drift+age heuristic recommended (and the operator executed) a
+BTC re-anchor that then sat idle — the market wasn't oscillating a
+full spacing, so the rotation bought correctly-positioned orders
+that nothing touches. Drift+age answers "is the grid misplaced?";
+this item answers "is re-anchoring worth it *here, now*?"
+
+**Shipped v0 (2026-08-09, same-day):** the banner's honest activity
+stat — **recent range over the 2h sparkline window, in grid
+spacings** ("0.4× spacing" = the market isn't moving enough to cycle
+even a correctly-placed grid). Computed from the already-fetched
+sparkline series (zero new queries); deliberately a FACT, not a
+probability claim — the operator does the weighting, per the advisor
+philosophy (transparent guardrail, operator owns the call).
+
+**The full item (deferred):** reuse the P2 screener's per-symbol
+grid-suitability machinery (`services/screener.py` — volatility as
+band-distance vs spacing, ATR% over stored bars) to give each banner
+a viability annotation over a longer window than 2h, and/or shade
+the severity tier down when viability is poor. Design questions for
+the slice: window length (the screener's lookback vs the banner's
+urgency), whether a poor-viability strong-drift banner should still
+render loud (a parked grid bleeds opportunity even when re-anchoring
+is also unattractive — arguably a different recommendation entirely:
+"consider pausing"), and keeping the annotation an *annotation* —
+never auto-suppressing a banner on a model's say-so.
+
+**Trigger:** operator question 2026-08-09 ("do we weight them
+according to probability of success/current activity?"), decided:
+v0 stat now, full weighting after the committed P3 ops items.
+
 ### Status card recent-fills section enhancement
 
 **What:** today the "last fill X ago" timestamp lives in the

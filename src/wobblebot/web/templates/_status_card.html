@@ -41,6 +41,11 @@
           <span>oldest order</span>
         </div>
         <div class="reanchor-stat"
+             title="Recent price range over the 2h sparkline window, in grid spacings. Well under 1× means the market isn't moving enough to cycle even a correctly-placed grid — a re-anchor would buy an idle ladder. This is a fact, not a forecast; you do the weighting.">
+          <strong>{% if rec.recent_range_spacings is not none %}{{ "%.1f"|format(rec.recent_range_spacings) }}×{% else %}—{% endif %}</strong>
+          <span>2h range vs spacing</span>
+        </div>
+        <div class="reanchor-stat"
              title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">
           <strong>≈${{ "%.2f"|format(rec.projected_fee_usd) }}</strong>
           <span>Projected cost (fees)</span>
