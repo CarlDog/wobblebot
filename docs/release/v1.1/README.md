@@ -400,7 +400,11 @@ P2). **The judge found two DECISIVE bugs** — what follows is the *corrected* d
 not to the un-annotated architect drafts.
 
 **THE KEYSTONE — `engine_state` table** (engine→web per-symbol visibility; the re-anchor chain's
-shared unblock):
+shared unblock): **✅ SHIPPED 2026-08-08 (P3 slice 3)** — built to this blueprint + the ADR-030
+implementation note (emit reads engine accessors, not StepResult; nullable pre-anchor fields;
+badges-only rendering this slice, fresh-rows-only; the show-pause button default lands with the
+state-aware-buttons slice). The chain's remaining links (re-anchor command → banner button →
+state-aware buttons) are now unblocked.
 - New `engine_state` table in **operator.db** (per-symbol `paused, offside, offside_ticks,
   reference_price, anchored_at, updated_at`, PK `(base,quote)`). `cli/live` upserts one row/symbol/tick,
   **best-effort** like `emit_heartbeat` (swallow `StorageError`) via a new `emit_engine_state`

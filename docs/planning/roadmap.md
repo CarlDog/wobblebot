@@ -517,6 +517,22 @@ the detail; the full backlog index is
    the heartbeat table exists for). Reclassification pin test: quiet news window +
    fresh heartbeat = FRESH. Real-money cost $0.00. Test count 2779 → 2783.
 
+   **Slice 3 — `engine_state` keystone** ✅ **2026-08-08** (**ADR-030** +
+   implementation note): the re-anchor chain's shared unblock. New `engine_state`
+   table in operator.db (per-symbol paused/offside/offside_ticks/reference_price/
+   anchored_at/updated_at, PK (base,quote)); frozen-dataclass `EngineStateRow`
+   (cost_basis precedent — deliberately not pydantic); `StoragePort.save_engine_state`
+   / `get_engine_states` on the heartbeat contract. `cli/live` publishes per symbol
+   per tick from `_run_loop` (engine accessors ONLY — new `GridEngine.offside_ticks()`;
+   StepResult.offside is False on non-"stepped" actions and must not feed the row);
+   nullable anchor fields; failed grid-state read degrades, never drops. Dashboard
+   renders PAUSED/OFFSIDE badges from rows fresher than 3× `live.tick_seconds`
+   (threaded to cli/web like cool_down_minutes) — absent/stale rows render nothing;
+   a dead engine's claim ages out within one refresh. Closes the "web sees all
+   symbols active" gap. No config keys, no migration (new table). Recorded follow-ups
+   in the ADR note: shadow-mode discriminator; feeding the assistant's hardcoded-
+   "active" snapshot from this table. Real-money cost $0.00. Test count 2783 → 2804.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
