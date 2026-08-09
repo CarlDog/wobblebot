@@ -635,6 +635,23 @@ the detail; the full backlog index is
    + CSS only; all slice-5 test assertions unchanged. Side observations
    queued from the same review: BABY/USD dust balance renders a full empty
    card; Recent Fills paints BUY rows with a loss-red ▼ (money-out ≠ loss).
+
+   **Slice 8 — Docker HEALTHCHECKs on all 8 services** ✅ **2026-08-09**: new
+   `tools/healthcheck.py` (exit strictly 0/1 — Docker reserves 2, so even
+   config failures map to 1) with two modes: `--daemon cli/X` classifies
+   freshness through the SAME machinery /health uses
+   (`fetch_daemon_freshness` + `derive_thresholds_from_config` — one
+   staleness definition, thresholds track operator-tuned cadences), and
+   `--http URL` does a liveness GET for the web container against the new
+   **unauthenticated `/healthz`** (content-free `{"status":"ok"}` — the real
+   /health stays behind auth). Compose gains per-service `healthcheck:`
+   blocks (interval `${HEALTHCHECK_INTERVAL:-60s}` per the compose-var rule;
+   120s start_period covers boot; UNKNOWN counts unhealthy past it). Closes
+   the wedged-but-alive gap: a daemon whose loop stopped looping now goes
+   red in Portainer instead of green forever. Manually verified per the
+   scripts rule: the local repo's 74-day-old cli/live heartbeat correctly
+   reads `unhealthy: stale`, exit 1. Test count 2855 → 2864.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

@@ -179,6 +179,20 @@ async def health_overall_json(
     return JSONResponse({"overall": snapshot.overall.value})
 
 
+@router.get("/healthz", response_class=JSONResponse)
+async def healthz() -> JSONResponse:
+    """Unauthenticated liveness probe for the Docker HEALTHCHECK.
+
+    Deliberately auth-free and content-free (``{"status": "ok"}``,
+    nothing else): the container's healthcheck can't hold a session,
+    and a liveness probe that leaks data would be worse than none.
+    Everything with actual health content stays behind ``require_user``
+    on ``/health``. Reachable only via the loopback port binding +
+    the DSM reverse proxy, same as every other route.
+    """
+    return JSONResponse({"status": "ok"})
+
+
 @router.get("/health", response_class=HTMLResponse)
 async def health_page(
     request: Request,
