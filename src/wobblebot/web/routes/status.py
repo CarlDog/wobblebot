@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
+from wobblebot.config.grid import KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
@@ -104,8 +105,11 @@ class ReanchorRecommendation:
 
     Rendered as a colored banner on the dashboard. Severity tier
     drives the color: mild (yellow) -> moderate (orange) ->
-    strong (red). Action button + snooze are v1.1 candidates;
-    v1.0 ships info-only.
+    strong (red). The banner carries the Re-anchor action button
+    (through pending_commands) + Snooze (UI-local) per the P3
+    blueprint; ``projected_fee_usd`` is the fee-only decision
+    economics line (paper-loss-on-stranded-inventory was rejected
+    as misleading — cancelling doesn't sell the asset).
     """
 
     symbol: Symbol
@@ -114,6 +118,12 @@ class ReanchorRecommendation:
     oldest_order_age_seconds: int
     current_price: Decimal
     anchor_price: Decimal
+    # Fee-only projected cost of acting on the banner: taker rate on
+    # the cancelled ladder's notional + the same again for the re-laid
+    # ladder (approximated as equal). Cancels themselves are free on
+    # Kraken — this is the ceiling on fees the rotation itself commits
+    # you to, deliberately excluding unrealized inventory swings.
+    projected_fee_usd: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -537,8 +547,9 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
     order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
+    snoozed = await _load_reanchor_snoozes(operator_storage, now=now)
     reanchor_recs = await _load_reanchor_recommendations(
-        live_storage, list(open_orders), prices, order_ages
+        live_storage, list(open_orders), prices, order_ages, snoozed
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
@@ -646,24 +657,51 @@ async def _load_engine_states(
     }
 
 
+async def _load_reanchor_snoozes(
+    operator_storage: StoragePort | None,
+    *,
+    now: datetime,
+) -> set[Symbol]:
+    """Symbols with an UNEXPIRED banner snooze; degrades to empty.
+
+    Storage failure or an unwired operator.db degrade to "nothing
+    snoozed" — the worst case is a banner the operator asked to
+    hide reappearing, never a hidden recommendation.
+    """
+    if operator_storage is None:
+        return set()
+    try:
+        snoozes = await operator_storage.get_reanchor_snoozes()
+    except StorageError as exc:
+        _LOGGER.warning(
+            "reanchor-snooze lookup failed; showing all banners", extra={"error": str(exc)}
+        )
+        return set()
+    return {symbol for symbol, until in snoozes.items() if until > now}
+
+
 async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
     live_storage: StoragePort,
     open_orders: list[Order],
     current_prices: dict[Symbol, Decimal],
     order_ages: dict[str, int],
+    snoozed: set[Symbol],
 ) -> tuple[ReanchorRecommendation, ...]:
     """Per-symbol re-anchor recommendations from drift + age heuristic.
 
     Drift = distance from current price to the nearest open order,
     expressed in units of grid spacing. Age = oldest open order
     for that symbol. ``_classify_reanchor_severity`` gates and
-    tiers; per-symbol storage failures are logged + skipped.
+    tiers; symbols in ``snoozed`` are suppressed entirely;
+    per-symbol storage failures are logged + skipped.
     """
     if not open_orders:
         return ()
     symbols = {o.symbol for o in open_orders}
     recommendations: list[ReanchorRecommendation] = []
     for symbol in symbols:
+        if symbol in snoozed:
+            continue
         current = current_prices.get(symbol)
         if current is None:
             continue
@@ -690,6 +728,11 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
         severity = _classify_reanchor_severity(drift, oldest_age)
         if severity is None:
             continue
+        # Fee-only decision economics (P3 blueprint): taker rate on the
+        # cancelled ladder's notional, plus the same again for the
+        # re-laid ladder (approximated as equal to the current one).
+        open_notional = sum((o.price.amount * o.amount.value for o in symbol_orders), Decimal(0))
+        projected_fee = open_notional * KRAKEN_TAKER_FEE_RATE * Decimal(2)
         recommendations.append(
             ReanchorRecommendation(
                 symbol=symbol,
@@ -698,6 +741,7 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
                 oldest_order_age_seconds=oldest_age,
                 current_price=current,
                 anchor_price=state.reference_price,
+                projected_fee_usd=projected_fee,
             )
         )
     return tuple(recommendations)

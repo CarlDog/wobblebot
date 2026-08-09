@@ -879,6 +879,46 @@ h2 {
   color: var(--banner-strong-text);
 }
 
+/* Banner action row (P3 banner slice): Re-anchor goes through the
+   pending_commands confirm page; Snooze is UI-local. currentColor
+   keeps the buttons tinted to the banner's severity tier. */
+.reanchor-fee {
+  display: block;
+  margin-top: 4px;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.reanchor-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reanchor-actions form {
+  display: inline;
+  margin: 0;
+}
+
+.reanchor-actions button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.reanchor-actions button:hover {
+  background: rgb(0 0 0 / 8%);
+}
+
+.reanchor-actions .reanchor-snooze {
+  opacity: 0.7;
+}
+
 /* Session card (v1.1, ADR-024): last loss-cap trip, so it stays
    visible on the dashboard even if the operator missed the bell.
    Active cool-down reuses the "strong" (red) tier since a new

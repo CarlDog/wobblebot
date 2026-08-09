@@ -845,3 +845,183 @@ class TestEngineStateBadges:
             resp = client.get("/dashboard")
             assert resp.status_code == 200
             assert "engine-badge" not in resp.text
+
+
+# --------------------------------------------------------------------- #
+# Re-anchor banner: snooze filter + fee-only economics (P3 banner slice)#
+# --------------------------------------------------------------------- #
+
+
+async def _seed_drifted_grid(live_storage: SQLiteStorageAdapter) -> Order:
+    """A BTC grid anchored at 30000 with one open order at the anchor.
+
+    Paired with a current price of 30600 (2.0 spacings at 1% spacing)
+    this trips the mild banner tier — drift gates, age stays zero.
+    """
+    from wobblebot.domain.grid import GridState
+
+    await live_storage.save_grid_state(
+        GridState(
+            symbol=Symbol(base="BTC", quote="USD"),
+            reference_price=Decimal("30000"),
+            spacing_percentage=Decimal("1.0"),
+            levels_above=3,
+            levels_below=3,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+    )
+    return _make_order(price="30000")
+
+
+@pytest.mark.asyncio
+class TestReanchorBannerSnoozeAndFee:
+    async def test_projected_fee_is_double_taker_on_open_notional(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """$30 open notional -> $0.24 projected: 0.40% taker on the
+        cancelled ladder plus the same again for the re-laid one."""
+        from wobblebot.web.routes.status import _load_reanchor_recommendations
+
+        order = await _seed_drifted_grid(live_storage)
+        recs = await _load_reanchor_recommendations(
+            live_storage,
+            [order],
+            {Symbol(base="BTC", quote="USD"): Decimal("30600")},
+            {str(order.id): 0},
+            set(),
+        )
+        assert len(recs) == 1
+        assert recs[0].severity == "mild"
+        assert recs[0].projected_fee_usd == Decimal("0.24")
+
+    async def test_snoozed_symbol_suppresses_banner(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        from wobblebot.web.routes.status import _load_reanchor_recommendations
+
+        order = await _seed_drifted_grid(live_storage)
+        recs = await _load_reanchor_recommendations(
+            live_storage,
+            [order],
+            {Symbol(base="BTC", quote="USD"): Decimal("30600")},
+            {str(order.id): 0},
+            {Symbol(base="BTC", quote="USD")},
+        )
+        assert recs == ()
+
+    async def test_active_snooze_filters_expired_does_not(
+        self, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Round-trips through the real adapter: an unexpired snooze
+        suppresses, an expired one is ignored on read."""
+        from wobblebot.web.routes.status import _load_reanchor_snoozes
+
+        now = datetime.now(UTC)
+        await operator_storage.save_reanchor_snooze(
+            Symbol(base="BTC", quote="USD"), now + timedelta(hours=23)
+        )
+        await operator_storage.save_reanchor_snooze(
+            Symbol(base="ETH", quote="USD"), now - timedelta(minutes=1)
+        )
+        active = await _load_reanchor_snoozes(operator_storage, now=now)
+        assert active == {Symbol(base="BTC", quote="USD")}
+
+    async def test_resnooze_upserts_expiry(self, operator_storage: SQLiteStorageAdapter) -> None:
+        """One row per symbol: a second snooze replaces the first."""
+        from wobblebot.web.routes.status import _load_reanchor_snoozes
+
+        now = datetime.now(UTC)
+        sym = Symbol(base="BTC", quote="USD")
+        await operator_storage.save_reanchor_snooze(sym, now - timedelta(minutes=1))
+        await operator_storage.save_reanchor_snooze(sym, now + timedelta(hours=24))
+        assert await _load_reanchor_snoozes(operator_storage, now=now) == {sym}
+        snoozes = await operator_storage.get_reanchor_snoozes()
+        assert len(snoozes) == 1
+
+    async def test_snooze_lookup_degrades_to_show_all(
+        self, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Unwired operator.db or a storage failure shows every banner
+        — the failure mode is a reappearing banner, never a hidden one."""
+        from wobblebot.ports.exceptions import StorageError
+        from wobblebot.web.routes.status import _load_reanchor_snoozes
+
+        now = datetime.now(UTC)
+        assert await _load_reanchor_snoozes(None, now=now) == set()
+
+        class _Broken(SQLiteStorageAdapter):
+            async def get_reanchor_snoozes(self):  # type: ignore[no-untyped-def]
+                raise StorageError("boom")
+
+        broken = _Broken(":memory:")
+        await broken.connect()
+        try:
+            assert await _load_reanchor_snoozes(broken, now=now) == set()
+        finally:
+            await broken.close()
+
+    async def test_banner_renders_fee_line_and_action_buttons(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Full pipeline render: the banner carries the fee line, the
+        firewall-bound Re-anchor form, and the UI-local Snooze form."""
+        order = await _seed_drifted_grid(live_storage)
+        await live_storage.save_order(order)
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            await observe.save_price_snapshot(
+                Symbol(base="BTC", quote="USD"),
+                Price(amount=Decimal("30600"), currency="USD"),
+                Timestamp(dt=datetime.now(UTC)),
+            )
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert "reanchor-banner" in resp.text
+                assert "Projected cost" in resp.text
+                assert 'action="/commands/reanchor"' in resp.text
+                assert 'action="/commands/snooze-reanchor"' in resp.text
+        finally:
+            await observe.close()
+
+    async def test_snoozed_banner_absent_from_render(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The end-to-end suppress: snooze row in operator.db hides the
+        banner the previous test proved renders."""
+        order = await _seed_drifted_grid(live_storage)
+        await live_storage.save_order(order)
+        await operator_storage.save_reanchor_snooze(
+            Symbol(base="BTC", quote="USD"), datetime.now(UTC) + timedelta(hours=24)
+        )
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            await observe.save_price_snapshot(
+                Symbol(base="BTC", quote="USD"),
+                Price(amount=Decimal("30600"), currency="USD"),
+                Timestamp(dt=datetime.now(UTC)),
+            )
+            app = create_app(
+                config=WebConfig(bcrypt_cost=10),
+                operator_storage=operator_storage,
+                session_secret="x" * 64,
+                live_storage=live_storage,
+                observe_storage=observe,
+            )
+            with TestClient(app, follow_redirects=False) as client:
+                login_as(client)
+                resp = client.get("/dashboard")
+                assert resp.status_code == 200
+                assert "reanchor-banner" not in resp.text
+        finally:
+            await observe.close()

@@ -566,6 +566,24 @@ the detail; the full backlog index is
    logging-audit case: plain format hid which symbol was looping and that placed=0.
    Real-money cost $0.00 (re-anchor placed nothing; pause has no order side effects).
 
+   **Slice 5 — re-anchor banner action button + snooze** ✅ **2026-08-09** (built to
+   the 2026-06-03 blueprint): the v1.0 info-only banners grow their two buttons.
+   **Re-anchor** posts `ReanchorCommand` through the existing web firewall flow
+   (`POST /commands/reanchor` → shared confirm page → `status='approved'` →
+   cli/live's poll — zero new confirm machinery); **Snooze 24h** upserts the new
+   `reanchor_snoozes` table (operator.db, PK (base,quote)) and is deliberately
+   **UI-local per the blueprint** — no `pending_commands` row (pinned by test: a
+   snooze leaves the firewall table empty). `_load_reanchor_snoozes` degrades
+   fail-open (a lookup failure SHOWS all banners — the bad outcome is a reappearing
+   banner, never a hidden recommendation); expired rows are ignored on read.
+   Banner adds the blueprint's fee-only economics line: `projected_fee_usd` =
+   `KRAKEN_TAKER_FEE_RATE × open-notional × 2` (cancelled + re-laid ladder,
+   approximated equal; paper-loss-on-stranded rejected in the blueprint as
+   misleading), with the honest tooltip on the estimate. New StoragePort pair
+   `save_reanchor_snooze`/`get_reanchor_snoozes` mirrors the engine_state
+   contract (storage reports what was written; consumers own the now-comparison).
+   Real-money cost $0.00. Test count 2820 → 2833.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
