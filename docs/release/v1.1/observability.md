@@ -236,7 +236,15 @@ missing retry).
 **Trigger:** post-v1.0 cleanup phase OR next time a Kraken /
 Ollama / cloud-LLM timeout incident surfaces uneven coverage.
 
-### Logging-quality audit + enrichment pass (application-wide)
+### Logging-quality audit + enrichment pass (application-wide) — ◐ installment 1 shipped 2026-08-09
+
+> **Installment 1 (engine path) shipped:** `grid_engine` + `reconciler` +
+> `cost_basis` enriched to the ratified conventions — now written down in
+> **`docs/implementation/logging-conventions.md`** (the six rules + the
+> incident receipts, including the 2026-08-09 evidence: symbol-less lines
+> hid WHICH grid was busy-looping, and DEBUG-demoted refusals without a
+> counted summary hid that a re-layout placed 0/6). Remaining modules
+> (adapters, other services, cli, web) follow per-module as planned below.
 
 **What:** a systematic sweep of every log site in the codebase
 (~90+ call sites) to make each line *self-explanatory* — the message

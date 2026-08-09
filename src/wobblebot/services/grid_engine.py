@@ -300,7 +300,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if max_spread is None or ticker.spread_percentage <= max_spread:
             if self._wide_spread_ticks.pop(symbol, 0):
                 _LOGGER.info(
-                    "spread back to normal; resuming",
+                    "%s spread back to normal (%s%%); resuming",
+                    symbol,
+                    ticker.spread_percentage,
                     extra={
                         "symbol": str(symbol),
                         "spread_percentage": str(ticker.spread_percentage),
@@ -312,7 +314,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         self._wide_spread_ticks[symbol] = consecutive
         if consecutive == 1:
             _LOGGER.warning(
-                "spread too wide; skipping tick",
+                "%s spread too wide (%s%% > %s%% cap; bid %s / ask %s); skipping tick",
+                symbol,
+                ticker.spread_percentage,
+                max_spread,
+                ticker.bid,
+                ticker.ask,
                 extra={
                     "symbol": str(symbol),
                     "spread_percentage": str(ticker.spread_percentage),
@@ -323,7 +330,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             )
         elif consecutive % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
             _LOGGER.info(
-                "still skipping ticks; spread remains wide",
+                "%s still skipping ticks; spread remains wide (%s%%, %d consecutive ticks)",
+                symbol,
+                ticker.spread_percentage,
+                consecutive,
                 extra={
                     "symbol": str(symbol),
                     "spread_percentage": str(ticker.spread_percentage),
@@ -348,7 +358,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if symbol in self._paused_symbols:
             return False
         self._paused_symbols.add(symbol)
-        _LOGGER.info("symbol paused by operator", extra={"symbol": str(symbol)})
+        _LOGGER.info("%s paused by operator", symbol, extra={"symbol": str(symbol)})
         return True
 
     def resume_symbol(self, symbol: Symbol) -> bool:
@@ -361,7 +371,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if symbol not in self._paused_symbols:
             return False
         self._paused_symbols.discard(symbol)
-        _LOGGER.info("symbol resumed by operator", extra={"symbol": str(symbol)})
+        _LOGGER.info("%s resumed by operator", symbol, extra={"symbol": str(symbol)})
         return True
 
     def is_paused(self, symbol: Symbol) -> bool:
@@ -429,7 +439,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 cancelled += 1
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 _LOGGER.warning(
-                    "cancel_open_orders: per-order cancel failed",
+                    "cancel_open_orders: cancel of %s %s @ %s (%s) failed: %s",
+                    order.symbol,
+                    order.side,
+                    order.price.amount,
+                    order.exchange_id,
+                    exc,
                     extra={
                         "symbol": str(order.symbol),
                         "exchange_id": order.exchange_id,
@@ -438,7 +453,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 )
                 failed += 1
         _LOGGER.info(
-            "cancel_open_orders complete",
+            "cancel_open_orders complete for %s: %d cancelled, %d failed",
+            symbol if symbol else "all symbols",
+            cancelled,
+            failed,
             extra={
                 "symbol": str(symbol) if symbol else None,
                 "cancelled": cancelled,
@@ -531,7 +549,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             f"{' (auto-resumed)' if resumed else ''}"
         )
         _LOGGER.info(
-            "grid re-anchored",
+            "%s",
+            message,
             extra={
                 "symbol": str(symbol),
                 "old_anchor": old_anchor,
@@ -592,7 +611,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         )
         placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
         _LOGGER.info(
-            "grid initialized",
+            "grid initialized for %s: anchor %s, placed %d/%d%s%s",
+            symbol,
+            state.reference_price,
+            placed,
+            len(levels),
+            f" ({refusals} refused)" if refusals else "",
+            f" ({sells_deferred} sells deferred)" if sells_deferred else "",
             extra={
                 "symbol": str(symbol),
                 "reference_price": str(state.reference_price),
@@ -712,12 +737,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     # re-anchor command (separate, not-yet-built P3 item)
                     # is the fix flow this warning points at.
                     _LOGGER.warning(
-                        "no open orders detected; re-laying out grid at a stale anchor",
+                        "%s has no open orders; re-laying out grid at a stale anchor",
+                        symbol,
                         extra=log_extra,
                     )
                 else:
                     _LOGGER.info(
-                        "no open orders detected; re-laying out grid at existing anchor",
+                        "%s has no open orders; re-laying out grid at existing anchor",
+                        symbol,
                         extra=log_extra,
                     )
                 relayout_placed, relayout_refusals, relayout_deferred = await self._place_layout(
@@ -731,7 +758,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 # now that per-level insufficient-balance refusals log
                 # at DEBUG instead of WARN (see _try_place).
                 _LOGGER.info(
-                    "grid re-layout complete",
+                    "grid re-layout complete for %s: placed %d/%d%s%s",
+                    symbol,
+                    relayout_placed,
+                    len(levels),
+                    f" ({relayout_refusals} refused)" if relayout_refusals else "",
+                    f" ({relayout_deferred} sells deferred)" if relayout_deferred else "",
                     extra={
                         "symbol": str(symbol),
                         "target_levels": len(levels),
@@ -742,7 +774,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 )
         elif fills:
             _LOGGER.warning(
-                "fills detected while offside; counters suppressed",
+                "%d fill(s) on %s detected while offside; counters suppressed",
+                len(fills),
+                symbol,
                 extra={
                     "symbol": str(symbol),
                     "current_price": str(current_price),
@@ -759,7 +793,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             self._offside_ticks[symbol] = consecutive
             if consecutive == 1:
                 _LOGGER.warning(
-                    "grid offside; parking until price returns to the band",
+                    "%s offside at %s (band %s - %s); parking until price returns",
+                    symbol,
+                    current_price,
+                    levels[0].price if levels else "?",
+                    levels[-1].price if levels else "?",
                     extra={
                         "symbol": str(symbol),
                         "current_price": str(current_price),
@@ -769,7 +807,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 )
             elif consecutive % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
                 _LOGGER.info(
-                    "grid still offside; parked",
+                    "%s still offside at %s; parked (%d consecutive ticks)",
+                    symbol,
+                    current_price,
+                    consecutive,
                     extra={
                         "symbol": str(symbol),
                         "current_price": str(current_price),
@@ -778,7 +819,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 )
         elif self._offside_ticks.pop(symbol, 0):
             _LOGGER.info(
-                "grid back onside; resuming",
+                "%s back onside at %s; resuming",
+                symbol,
+                current_price,
                 extra={"symbol": str(symbol), "current_price": str(current_price)},
             )
 
@@ -820,7 +863,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             order = await self._storage.get_order(order_id)
             if order is None:
                 _LOGGER.error(
-                    "pending recovery counter references a missing storage order; dropping",
+                    "pending recovery counter references missing storage order %s; dropping",
+                    order_id,
                     extra={"order_id": str(order_id)},
                 )
                 self._pending_counter_ids.discard(order_id)
@@ -952,7 +996,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     # cache computed before it.
                     self._sell_guard.invalidate(symbol)
                 _LOGGER.info(
-                    "grid fill",
+                    "grid fill: %s %s %s @ %s",
+                    symbol,
+                    resolution.order.side.value.upper(),
+                    resolution.order.filled_amount,
+                    resolution.order.price.amount,
                     extra={
                         "symbol": str(symbol),
                         "side": resolution.order.side.value,
@@ -1006,7 +1054,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         decision = await self._check_safety(symbol, level, coin_cfg)
         if not decision.ok:
             _LOGGER.warning(
-                "order refused by safety cap",
+                "%s %s @ %s refused by safety cap: %s",
+                symbol,
+                level.side.value.upper(),
+                level.price,
+                decision.reason,
                 extra={
                     "symbol": str(symbol),
                     "side": level.side.value,
@@ -1035,7 +1087,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # and generic-exchange-error refusals below, which mean
             # something is actually wrong.
             _LOGGER.debug(
-                "order refused by exchange: insufficient balance",
+                "%s %s @ %s refused: insufficient %s (need %s, have %s)",
+                symbol,
+                level.side.value.upper(),
+                level.price,
+                exc.asset,
+                exc.required,
+                exc.available,
                 extra={
                     "symbol": str(symbol),
                     "side": level.side.value,
@@ -1052,7 +1110,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # propagate, or it aborts every remaining level in the same
             # layout/re-layout loop instead of skipping just this one.
             _LOGGER.warning(
-                "order refused by exchange",
+                "%s %s @ %s refused by exchange: %s",
+                symbol,
+                level.side.value.upper(),
+                level.price,
+                exc,
                 extra={
                     "symbol": str(symbol),
                     "side": level.side.value,
