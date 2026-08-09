@@ -28,6 +28,7 @@ from wobblebot.domain.value_objects import Amount, OHLCBar, OrderSide, Price, Sy
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
+from wobblebot.ports.notification_events import NotificationEvent
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import (
     CommandResult,
@@ -41,6 +42,7 @@ from wobblebot.ports.operator import (
 # serialized dict. Cheap to construct once.
 _COMMAND_ADAPTER: TypeAdapter[OperatorCommand] = TypeAdapter(OperatorCommand)
 _INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
+_EVENT_ADAPTER: TypeAdapter[NotificationEvent] = TypeAdapter(NotificationEvent)
 
 
 def row_to_order(row: aiosqlite.Row) -> Order:
@@ -260,13 +262,29 @@ def row_to_notification(row: aiosqlite.Row) -> PersistedNotification:
     Builds the inner :class:`Notification` from the persisted columns,
     then wraps it with the row-level ``id`` / ``forwarded`` /
     ``forwarded_at`` / ``created_at`` fields.
+
+    P3 renderers slice: ``context_json`` holds EITHER a typed event
+    dict (has a ``"kind"`` discriminator — reconstructed via the
+    module TypeAdapter) or a legacy plain context dict. Typed rows
+    also expose the raw dict as ``context`` so every generic consumer
+    (web /notifications, /history) keeps rendering fields unchanged.
+    An unknown/corrupt ``kind`` degrades to the legacy path rather
+    than poisoning the read.
     """
+    raw = json.loads(row["context_json"])
+    event: NotificationEvent | None = None
+    if isinstance(raw, dict) and "kind" in raw:
+        try:
+            event = _EVENT_ADAPTER.validate_python(raw)
+        except ValueError:
+            event = None
     notification = Notification(
         level=row["level"],
         title=row["title"],
         message=row["message"],
         timestamp=Timestamp(dt=datetime.fromisoformat(row["timestamp"])),
-        context=json.loads(row["context_json"]),
+        context=raw if isinstance(raw, dict) else {},
+        event=event,
     )
     return PersistedNotification(
         id=row["id"],
