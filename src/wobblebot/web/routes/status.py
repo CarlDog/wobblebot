@@ -100,7 +100,9 @@ router = APIRouter(tags=["status"])
 
 
 @dataclass(frozen=True)
-class ReanchorRecommendation:
+class ReanchorRecommendation:  # pylint: disable=too-many-instance-attributes
+    # Display DTO for the banner — the attribute count grows with the
+    # decision facts it carries (same posture as StatusSnapshot).
     """Per-symbol recommendation that the operator consider re-anchoring.
 
     Rendered as a colored banner on the dashboard. Severity tier
@@ -124,6 +126,13 @@ class ReanchorRecommendation:
     # Kraken — this is the ceiling on fees the rotation itself commits
     # you to, deliberately excluding unrealized inventory swings.
     projected_fee_usd: Decimal = Decimal("0")
+    # Recent price range (sparkline window) expressed in grid spacings —
+    # the honest activity stat (operator-requested 2026-08-09): well
+    # under 1x means the market isn't moving enough to cycle even a
+    # correctly-placed grid, so a re-anchor would buy an idle ladder.
+    # Deliberately a FACT, not a probability claim — the operator does
+    # the weighting. None when the price series is too thin.
+    recent_range_spacings: float | None = None
 
 
 @dataclass(frozen=True)
@@ -547,9 +556,22 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
     order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
+    # A card renders for every symbol you have orders for, hold a balance
+    # in, or traded recently — so a parked/held coin (e.g. offside BTC)
+    # keeps its card + price even when its last fill ages out of the
+    # display window. Sorted by (base, quote) for stable order.
+    all_symbols = tuple(
+        sorted(
+            symbols_with_orders | held_symbols | {t.symbol for t in recent},
+            key=lambda s: (s.base, s.quote),
+        )
+    )
+    # One series fetch serves both the sparklines and the banner's
+    # activity stat (recent range in spacings).
+    price_series = await _load_price_series(observe_storage, set(all_symbols))
     snoozed = await _load_reanchor_snoozes(operator_storage, now=now)
     reanchor_recs = await _load_reanchor_recommendations(
-        live_storage, list(open_orders), prices, order_ages, snoozed
+        live_storage, list(open_orders), prices, order_ages, snoozed, price_series
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
@@ -563,24 +585,10 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     )
     if last_cap_trip is not None:
         last_cap_trip_age = (now - last_cap_trip.tripped_at.dt).total_seconds()
-    # A card renders for every symbol you have orders for, hold a balance
-    # in, or traded recently — so a parked/held coin (e.g. offside BTC)
-    # keeps its card + price even when its last fill ages out of the
-    # display window. Sorted by (base, quote) for stable order.
-    all_symbols = tuple(
-        sorted(
-            symbols_with_orders | held_symbols | {t.symbol for t in recent},
-            key=lambda s: (s.base, s.quote),
-        )
-    )
     orders_by_symbol: dict[Symbol, tuple[Order, ...]] = {
         sym: tuple(o for o in open_orders if o.symbol == sym) for sym in all_symbols
     }
-    sparklines = _build_sparklines(
-        await _load_price_series(observe_storage, set(all_symbols)),
-        orders_by_symbol,
-        prices,
-    )
+    sparklines = _build_sparklines(price_series, orders_by_symbol, prices)
     return StatusSnapshot(
         live_wired=True,
         open_orders=tuple(open_orders),
@@ -680,12 +688,16 @@ async def _load_reanchor_snoozes(
     return {symbol for symbol, until in snoozes.items() if until > now}
 
 
-async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
+async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
+    # too-many-arguments: the loader consumes the snapshot's already-
+    # fetched slices (orders, prices, ages, snoozes, series) rather
+    # than re-querying storage — each param saves a duplicate query.
     live_storage: StoragePort,
     open_orders: list[Order],
     current_prices: dict[Symbol, Decimal],
     order_ages: dict[str, int],
     snoozed: set[Symbol],
+    price_series: dict[Symbol, list[Decimal]],
 ) -> tuple[ReanchorRecommendation, ...]:
     """Per-symbol re-anchor recommendations from drift + age heuristic.
 
@@ -694,6 +706,8 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
     for that symbol. ``_classify_reanchor_severity`` gates and
     tiers; symbols in ``snoozed`` are suppressed entirely;
     per-symbol storage failures are logged + skipped.
+    ``price_series`` (the sparkline window) feeds the banner's
+    activity stat — recent range in spacings.
     """
     if not open_orders:
         return ()
@@ -733,6 +747,8 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
         # re-laid ladder (approximated as equal to the current one).
         open_notional = sum((o.price.amount * o.amount.value for o in symbol_orders), Decimal(0))
         projected_fee = open_notional * KRAKEN_TAKER_FEE_RATE * Decimal(2)
+        series = price_series.get(symbol)
+        recent_range = float((max(series) - min(series)) / spacing) if series else None
         recommendations.append(
             ReanchorRecommendation(
                 symbol=symbol,
@@ -742,6 +758,7 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals
                 current_price=current,
                 anchor_price=state.reference_price,
                 projected_fee_usd=projected_fee,
+                recent_range_spacings=recent_range,
             )
         )
     return tuple(recommendations)

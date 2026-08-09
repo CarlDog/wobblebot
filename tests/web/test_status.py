@@ -889,10 +889,12 @@ class TestReanchorBannerSnoozeAndFee:
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
             {str(order.id): 0},
             set(),
+            {},
         )
         assert len(recs) == 1
         assert recs[0].severity == "mild"
         assert recs[0].projected_fee_usd == Decimal("0.24")
+        assert recs[0].recent_range_spacings is None  # no series -> no claim
 
     async def test_snoozed_symbol_suppresses_banner(
         self, live_storage: SQLiteStorageAdapter
@@ -906,8 +908,27 @@ class TestReanchorBannerSnoozeAndFee:
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
             {str(order.id): 0},
             {Symbol(base="BTC", quote="USD")},
+            {},
         )
         assert recs == ()
+
+    async def test_recent_range_stat_in_spacings(self, live_storage: SQLiteStorageAdapter) -> None:
+        """The activity stat: a 600-wide 2h range at 300 spacing = 2.0x.
+        A fact from the sparkline series, not a probability claim."""
+        from wobblebot.web.routes.status import _load_reanchor_recommendations
+
+        order = await _seed_drifted_grid(live_storage)
+        sym = Symbol(base="BTC", quote="USD")
+        recs = await _load_reanchor_recommendations(
+            live_storage,
+            [order],
+            {sym: Decimal("30600")},
+            {str(order.id): 0},
+            set(),
+            {sym: [Decimal("30000"), Decimal("30250"), Decimal("30600")]},
+        )
+        assert len(recs) == 1
+        assert recs[0].recent_range_spacings == pytest.approx(2.0)
 
     async def test_active_snooze_filters_expired_does_not(
         self, operator_storage: SQLiteStorageAdapter
