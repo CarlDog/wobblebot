@@ -229,3 +229,12 @@ class TestKrakenMaintenanceRollsUpToRed:
             resp = c.get("/health")
             assert resp.status_code == 200
             assert "health-overall-red" in resp.text
+
+
+class TestHealthzLiveness:
+    def test_healthz_is_unauthenticated_and_content_free(self, client_no_probe) -> None:  # type: ignore[no-untyped-def]
+        """The Docker HEALTHCHECK's target: no session, no data — just
+        {"status": "ok"}. Everything informative stays behind auth."""
+        resp = client_no_probe.get("/healthz")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}

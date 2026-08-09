@@ -93,6 +93,12 @@ services:
     container_name: wobblebot-live
     command: python -m wobblebot.cli.live --profile cpu-only
     restart: "no"
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/live", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # Read-only price + balance collection. Safe to auto-restart.
@@ -101,6 +107,12 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-observe
     command: python -m wobblebot.cli.observe --profile cpu-only
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/observe", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # News ingestion (RSS + Kraken status feed; CryptoCompare retired).
@@ -110,6 +122,12 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-news
     command: python -m wobblebot.cli.news --profile cpu-only
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/news", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # Advisor (LLM-driven). Advisory only per ADR-002; no money risk.
@@ -118,6 +136,12 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-advise
     command: python -m wobblebot.cli.advise --profile cpu-only
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/advise", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # Treasury monitor. Touches money (cli/harvest --execute path),
@@ -128,6 +152,12 @@ services:
     container_name: wobblebot-harvest
     command: python -m wobblebot.cli.harvest --profile cpu-only
     restart: "no"
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/harvest", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # Discord operator interface. No money risk (ADR-002 firewall:
@@ -138,6 +168,12 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-operator
     command: python -m wobblebot.cli.operator --profile cpu-only
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/operator", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # FastAPI dashboard. Binds inside the container; DSM reverse
@@ -156,6 +192,12 @@ services:
       # DSM reverse proxy for wobblebot.your-nas must target
       # http://localhost:28080 (NOT :8000) to match.
       - "127.0.0.1:28080:8000"
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--http", "http://localhost:8000/healthz"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 60s
 
   # ------------------------------------------------------------------
   # Background maintenance (VACUUM + prune + backup). No money
@@ -165,6 +207,12 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-maintenance
     command: python -m wobblebot.cli.maintenance --profile cpu-only
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/maintenance", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   # ------------------------------------------------------------------
   # One-shot CLI dispatcher. No default command; no auto-restart.
