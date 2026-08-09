@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.notification_events import NotificationEvent
 
 
 class Notification(BaseModel):
@@ -20,6 +21,13 @@ class Notification(BaseModel):
     message: str
     timestamp: Timestamp = Field(..., description="When the notification was raised")
     context: dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    # Typed event payload (P3 renderers slice). When set, storage
+    # serializes THIS into context_json (the event dict carries a
+    # "kind" discriminator; a plain context dict never does) and the
+    # forwarder renders the bespoke per-event embed. None on legacy
+    # rows and on the raise sites that deliberately stay generic
+    # (heartbeat alerts, maintenance).
+    event: NotificationEvent | None = None
 
 
 class PersistedNotification(BaseModel):

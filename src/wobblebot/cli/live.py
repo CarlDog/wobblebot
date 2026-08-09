@@ -75,6 +75,13 @@ from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
+from wobblebot.ports.notification_events import (
+    CommandResultEvent,
+    FillEvent,
+    LossCapEvent,
+    SessionEndEvent,
+    SessionStartEvent,
+)
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import CommandResult
 from wobblebot.ports.storage import StoragePort
@@ -395,12 +402,12 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                         f"{result.fills} order(s) filled on {symbol}; "
                         f"{result.counters_placed} counter(s) placed."
                     ),
-                    context={
-                        "symbol": str(symbol),
-                        "fills": result.fills,
-                        "counters_placed": result.counters_placed,
-                        "tick": tick,
-                    },
+                    event=FillEvent(
+                        symbol=str(symbol),
+                        fills=result.fills,
+                        counters_placed=result.counters_placed,
+                        tick=tick,
+                    ),
                 )
         except WobbleBotPortError as exc:
             _LOGGER.warning(
@@ -448,11 +455,11 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 f"Session PnL {session_pnl} exceeded cap "
                 f"-{live.max_session_loss_usd} USD; cli/live stopping."
             ),
-            context={
-                "session_pnl_usd": str(session_pnl),
-                "limit": str(live.max_session_loss_usd),
-                "tick": tick,
-            },
+            event=LossCapEvent(
+                session_pnl_usd=session_pnl,
+                limit_usd=live.max_session_loss_usd,
+                tick=tick,
+            ),
         )
         return True
     return False
@@ -461,6 +468,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
 async def _process_pending_commands(
     operator_service: OperatorService,
     operator_storage: StoragePort,
+    notifier: NotifierPort | None,
 ) -> int:
     """Drain approved ``pending_commands`` rows; dispatch + mark each.
 
@@ -471,6 +479,12 @@ async def _process_pending_commands(
     refusal, ``OperatorError``) mark the row ``failed`` and record the
     error message in the result; the loop continues so one bad command
     doesn't starve the others. Returns the number of rows processed.
+
+    Each dispatch also echoes its ``CommandResult`` back through
+    ``notify()`` (P3 renderers slice, from the 2026-08-09 re-anchor e2e
+    finding): the operator's ✅ used to get silence — which hid a
+    "placed 0/6" re-anchor outcome — because the result landed only in
+    this table. Best-effort like every notification.
     """
     approved = await operator_storage.get_pending_commands(status="approved")
     if not approved:
@@ -519,6 +533,25 @@ async def _process_pending_commands(
             _LOGGER.warning(
                 "failed to persist dispatched pending_command",
                 extra={"pending_id": str(pending.id), "error": str(exc)},
+            )
+        # The ✅'s receipt: echo the result to Discord via the forwarder.
+        result = updated.result
+        if result is not None:
+            symbol = getattr(pending.command, "symbol", None)
+            await notify(
+                notifier,
+                level="info" if result.success else "error",
+                title=(
+                    f"Command {'executed' if result.success else 'failed'}: "
+                    f"{pending.command.kind}"
+                ),
+                message=result.message,
+                event=CommandResultEvent(
+                    command_kind=pending.command.kind,
+                    symbol=str(symbol) if symbol is not None else None,
+                    success=result.success,
+                    message=result.message,
+                ),
             )
     return len(approved)
 
@@ -618,14 +651,14 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             f"Starting portfolio value={started_value_usd} USD "
             f"(USD balance={started_usd})."
         ),
-        context={
-            "symbols": [str(s) for s in live.symbols],
-            "tick_seconds": live.tick_seconds,
-            "max_runtime_seconds": max_runtime_seconds,
-            "max_session_loss_usd": str(live.max_session_loss_usd),
-            "starting_usd": str(started_usd),
-            "starting_value_usd": str(started_value_usd),
-        },
+        event=SessionStartEvent(
+            symbols=tuple(str(s) for s in live.symbols),
+            tick_seconds=live.tick_seconds,
+            max_runtime_seconds=max_runtime_seconds,
+            max_session_loss_usd=live.max_session_loss_usd,
+            starting_usd=started_usd,
+            starting_value_usd=started_value_usd,
+        ),
     )
 
     exit_code = 0
@@ -679,7 +712,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # PauseCommand takes effect on the current tick.
             if operator_service is not None and operator_storage is not None:
                 try:
-                    await _process_pending_commands(operator_service, operator_storage)
+                    await _process_pending_commands(operator_service, operator_storage, notifier)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "pending_commands poll failed; continuing: %s",
@@ -817,18 +850,18 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 f"USD {started_usd} -> {ending_usd_str}). "
                 f"Cancelled {cancelled} open order(s); {failed} cancel failure(s)."
             ),
-            context={
-                "ticks": tick,
-                "duration_seconds": duration_seconds,
-                "starting_usd": str(started_usd),
-                "ending_usd": ending_usd_str,
-                "starting_value_usd": str(started_value_usd),
-                "ending_value_usd": ending_value_str,
-                "session_pnl_usd": session_pnl_str,
-                "open_orders_cancelled": cancelled,
-                "open_orders_cancel_failed": failed,
-                "exit_code": exit_code,
-            },
+            event=SessionEndEvent(
+                ticks=tick,
+                duration_seconds=duration_seconds,
+                starting_usd=started_usd,
+                ending_usd=ended_usd if ended_known else None,
+                starting_value_usd=started_value_usd,
+                ending_value_usd=ended_value_usd if ended_known else None,
+                session_pnl_usd=session_pnl if ended_known else None,
+                open_orders_cancelled=cancelled,
+                open_orders_cancel_failed=failed,
+                exit_code=exit_code,
+            ),
         )
     return exit_code
 

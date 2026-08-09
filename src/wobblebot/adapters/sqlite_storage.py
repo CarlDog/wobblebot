@@ -1073,7 +1073,14 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
     async def save_notification(self, notification: Notification) -> int:
         conn = self._require_conn()
         created_at = datetime.now(UTC).isoformat()
-        context_json = json.dumps(notification.context)
+        # P3 renderers slice: a typed event serializes into the SAME
+        # context_json column (no schema migration). The event dict's
+        # "kind" key is the read-side discriminator — a plain context
+        # dict never carries one. Raise sites pass event XOR context.
+        if notification.event is not None:
+            context_json = notification.event.model_dump_json()
+        else:
+            context_json = json.dumps(notification.context)
         try:
             cursor = await conn.execute(
                 """

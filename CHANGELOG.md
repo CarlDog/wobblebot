@@ -69,6 +69,18 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   resume could restart trading on a dead engine's old claim). Paused sections dim.
   Offside remains a badge, never a button — the lever against offside is
   re-anchor. Pure template + CSS; the ADR-002 firewall path is unchanged.
+- **Slice 7 — bespoke notification embeds + command-result echo.** The proactive
+  Discord cards (session start/end, fills, loss cap, harvester proposals,
+  withdrawals) get the per-event embed treatment the query responses got in v1.0:
+  a typed `NotificationEvent` union rendered by `match` — green for wanted
+  activity, red for stop-the-presses, amber when money moved — replacing the
+  one-size-fits-all title+dict-dump card. Zero schema migration: events ride the
+  existing `context_json` column; pre-existing rows and the deliberately-generic
+  raise sites (heartbeat alerts, maintenance) keep the legacy card. And the ✅
+  finally gets its receipt: every dispatched command now echoes its result back
+  to Discord as a typed `command_result` card ("re-anchored BTC/USD: … placed
+  0/6") instead of recording it only in the web history — closing the gap that
+  hid a zero-order re-anchor outcome during the 2026-08-09 live test.
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

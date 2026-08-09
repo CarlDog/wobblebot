@@ -42,9 +42,6 @@ from uuid import UUID, uuid4
 from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.discord_transport import (
     ACK_EMOJI,
-    COLOR_ERROR,
-    COLOR_INFO,
-    COLOR_WARNING,
     CONFIRM_EMOJI,
     REJECT_EMOJI,
     WARN_EMOJI,
@@ -108,6 +105,7 @@ from wobblebot.services.daemon_health import (
 from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
+from wobblebot.services.notification_embed_render import render_notification_embed
 from wobblebot.services.operator_service import OperatorService
 
 _LOGGER = logging.getLogger("wobblebot.cli.operator")
@@ -116,13 +114,6 @@ _LOGGER = logging.getLogger("wobblebot.cli.operator")
 # --------------------------------------------------------------------- #
 # Notification forwarder                                                #
 # --------------------------------------------------------------------- #
-
-_LEVEL_TO_COLOR = {
-    "info": COLOR_INFO,
-    "warning": COLOR_WARNING,
-    "error": COLOR_ERROR,
-    "critical": COLOR_ERROR,
-}
 
 
 async def _forward_pending_notifications(
@@ -150,13 +141,12 @@ async def _forward_pending_notifications(
         if row.id is None:  # defensive; persisted rows always have an id
             continue
         try:
+            # P3 renderers slice: typed rows get the bespoke per-event
+            # embed; legacy rows (and the deliberately-generic raise
+            # sites) keep the title/message/context-fields shape.
             await transport.send_embed(
                 channel_id,
-                title=row.notification.title,
-                description=row.notification.message,
-                color=_LEVEL_TO_COLOR.get(row.notification.level, COLOR_INFO),
-                fields=_render_context_fields(row.notification.context),
-                footer=f"level={row.notification.level} • id={row.id}",
+                **render_notification_embed(row.notification, row.id),
             )
             await storage.mark_notification_forwarded(row.id, Timestamp(dt=datetime.now(UTC)))
             forwarded += 1
@@ -170,24 +160,6 @@ async def _forward_pending_notifications(
                 },
             )
     return forwarded
-
-
-def _render_context_fields(context: dict[str, Any], max_fields: int = 8) -> list[tuple[str, str]]:
-    """Render a context dict as Discord embed fields (name, value pairs).
-
-    Discord caps embeds at 25 fields and 1024 chars per value; we
-    self-limit to ``max_fields`` and truncate long values so a verbose
-    context dict doesn't blow up the embed.
-    """
-    fields: list[tuple[str, str]] = []
-    for idx, (key, value) in enumerate(context.items()):
-        if idx >= max_fields:
-            break
-        text = str(value)
-        if len(text) > 200:
-            text = text[:197] + "..."
-        fields.append((str(key), text))
-    return fields
 
 
 async def _forwarder_loop(
