@@ -81,6 +81,11 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   to Discord as a typed `command_result` card ("re-anchored BTC/USD: … placed
   0/6") instead of recording it only in the web history — closing the gap that
   hid a zero-order re-anchor outcome during the 2026-08-09 live test.
+- **Banner redesign (slice 5 follow-up).** The re-anchor banner's prose
+  paragraph became a structured card in the dashboard's own idiom: title +
+  severity chip, a scannable stat row (price, drift, anchor, order age,
+  projected fee), and a proper action hierarchy — filled severity-tinted
+  Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
 
 ### P2 — data-infrastructure spine, COMPLETE (2026-08-07 → 2026-08-08)
 

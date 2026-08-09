@@ -622,6 +622,20 @@ the detail; the full backlog index is
    titles; typing them is renderer work without a payoff today). Real-money
    cost $0.00. Test count 2837 → 2854.
 
+   **Slice 5 follow-up — banner redesign** ✅ **2026-08-09** (operator design
+   review over the live dashboard, driven via Claude-in-Chrome against a real
+   ADA/USD moderate banner): the prose-paragraph banner — the only prose
+   component on the page — became a structured card matching the dashboard's
+   own scoreboard idiom: header row (title + severity chip), a
+   big-number/small-label **stat row** (current price / spacings off grid /
+   grid anchor / oldest order / projected fee — the fee promoted from an
+   italic afterthought to a first-class stat with the honest tooltip), and an
+   action row with real hierarchy (Re-anchor = filled severity-tinted
+   primary; Snooze = quiet ghost; right-aligned; ellipsis dropped). Template
+   + CSS only; all slice-5 test assertions unchanged. Side observations
+   queued from the same review: BABY/USD dust balance renders a full empty
+   card; Recent Fills paints BUY rows with a loss-red ▼ (money-out ≠ loss).
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
