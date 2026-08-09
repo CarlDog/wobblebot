@@ -645,6 +645,16 @@ the detail; the full backlog index is
    probability claim. The full screener-backed viability weighting is filed
    in `operator-ux.md` + the v1.1 README P3 table, deferred behind the
    committed ops items. Test count 2854 → 2855.
+   **Round-2 polish** ✅ **2026-08-09** (operator: the tinted slab + the
+   left-crammed layout both failed the bar; new STANDING RULE recorded — the
+   web UI must look professional, render-and-look before claiming done): the
+   banner became a clean card on the normal surface — white values over
+   muted labels, scoreboard idiom — with severity in exactly four accents
+   (left edge, chip, drift number, primary button) and the stat row
+   distributed edge-to-edge. A recommendation is not an alarm: the
+   session-cap banner keeps its wash deliberately. Live-verified via
+   Claude-in-Chrome screenshot. Known nit for the next web slice: the
+   projected-cost label's capital P breaks label-case consistency.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
