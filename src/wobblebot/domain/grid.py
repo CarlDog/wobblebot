@@ -37,9 +37,11 @@ class GridState(BaseModel):
     """Per-symbol persistent grid anchor.
 
     Captures the parameters needed to reconstitute the grid layout each
-    tick. Created once when the engine first sees a symbol (anchored to
-    the price observed at that moment) and never re-anchored — per
-    ADR-006 decision 1, the grid stays parked.
+    tick. Created when the engine first sees a symbol (anchored to the
+    price observed at that moment); per ADR-006 decision 1 the grid
+    stays parked and never auto-re-anchors — the ONLY path that moves
+    the anchor is the operator-initiated re-anchor command (ADR-031),
+    which replaces this row wholesale after a clean cancel.
 
     Per ADR-006 decision 4, this is the *only* grid-related entity that
     persists. ``GridSlot`` is derived each tick from
