@@ -502,6 +502,39 @@ discussion that "auto-cancellation feels wrong; lean into
 banner + action button instead." Shipping order matches the
 dependency: re-anchor mechanism → action button → snooze.
 
+### Web actions: wait-for-completion + auto-refresh (no fire-and-forget)
+
+**What:** when the operator approves an action in the web UI, the UI
+should follow the action to its actual outcome and then refresh —
+not stop at "approved". Operator-filed 2026-08-09: "when we click
+things in the webui, the webui should wait for the action to
+complete accordingly, and then auto-update. right now, i think it
+works async."
+
+**The current gap:** the confirm page's terminal state is the ROW
+transition (`approved`), not the ACTION's outcome. Execution happens
+up to a tick later when cli/live's `status='approved'` poll picks the
+row up, and the result (now echoed to Discord as a `command_result`
+card) reaches the dashboard only via the 15s htmx refresh. Between
+click and visible outcome the operator is flying blind in the web UI.
+
+**Design constraint (load-bearing):** the web tier CANNOT execute
+synchronously — ADR-002/ADR-013 route every mutation through
+`pending_commands` precisely so cli/live is the only executor.
+"Wait for completion" therefore means *watch the row*, never *run
+the command*: the command_result page polls its `pending_id` (htmx,
+~2s) until the row reaches a terminal state (`dispatched` → show
+`CommandResult.message`, success or failure; `expired` → say so),
+with an honest timeout ("cli/live hasn't picked this up — is the
+live daemon running?" — the heartbeat data can answer that) rather
+than an infinite spinner. On completion, refresh/redirect so the
+dashboard reflects the new state. Snooze is already synchronous
+(UI-local) and needs nothing.
+
+**Trigger:** operator-filed 2026-08-09 during the banner-polish
+session; queue with the web per-entity action buttons slice (same
+surface, same row-watching machinery).
+
 ### Re-anchor viability weighting (probability-of-success on the banner)
 
 **What:** weight (or annotate) re-anchor recommendations by the
