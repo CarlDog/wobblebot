@@ -73,7 +73,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp
+from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
 from wobblebot.ports.notification_events import (
     CommandResultEvent,
@@ -163,7 +163,9 @@ async def _cancel_all_open(
             await adapter.cancel_order(o)
             cancelled += 1
             _LOGGER.info(
-                "shutdown cancelled",
+                "shutdown cancelled (symbol=%s, exchange_id=%s)",
+                o.symbol,
+                o.exchange_id,
                 extra={"symbol": str(o.symbol), "exchange_id": o.exchange_id},
             )
         except WobbleBotPortError as exc:
@@ -222,7 +224,9 @@ def _log_dms_confirmation(
     """
     if trigger_at is not None:
         _LOGGER.debug(
-            "dead man's switch confirmed armed", extra={"trigger_at": trigger_at.isoformat()}
+            "dead man's switch confirmed armed (trigger_at=%s)",
+            trigger_at.isoformat(),
+            extra={"trigger_at": trigger_at.isoformat()},
         )
         return 0
     unconfirmed_ticks += 1
@@ -410,7 +414,11 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             # notification pipeline. To re-enable per-tick visibility
             # temporarily, run with WOBBLEBOT_LOG_LEVEL=DEBUG.
             _LOGGER.debug(
-                "tick complete",
+                "tick complete (tick=%s, symbol=%s, action=%s, fills=%s)",
+                tick,
+                symbol,
+                result.action,
+                result.fills,
                 extra={
                     "tick": tick,
                     "symbol": str(symbol),
@@ -480,8 +488,8 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     if session_pnl < -live.max_session_loss_usd:
         _LOGGER.error(
             "session loss cap exceeded; stopping (session_pnl_usd=%s, limit=%s, tick=%s)",
-            session_pnl,
-            live.max_session_loss_usd,
+            fmt_decimal(session_pnl),
+            fmt_decimal(live.max_session_loss_usd),
             tick,
             extra={
                 "session_pnl_usd": str(session_pnl),
@@ -702,7 +710,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
         live.max_runtime_minutes * 60.0 if live.max_runtime_minutes is not None else None
     )
     _LOGGER.info(
-        "session start",
+        "session start (symbols=%s, tick_seconds=%s, max_runtime_seconds=%s, "
+        "max_session_loss_usd=%s)",
+        [str(s) for s in live.symbols],
+        live.tick_seconds,
+        max_runtime_seconds,
+        fmt_decimal(live.max_session_loss_usd),
         extra={
             "symbols": [str(s) for s in live.symbols],
             "tick_seconds": live.tick_seconds,
@@ -776,7 +789,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(
-                    "max runtime reached; stopping",
+                    "max runtime reached; stopping (elapsed_seconds=%s)",
+                    round(elapsed, 1),
                     extra={"elapsed_seconds": round(elapsed, 1)},
                 )
                 break
@@ -903,7 +917,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
         ending_value_str = str(ended_value_usd) if ended_known else "unknown"
         session_pnl_str = str(session_pnl) if ended_known else "unknown"
         _LOGGER.info(
-            "session end",
+            "session end (ticks=%s, duration_seconds=%s, starting_usd=%s, ending_usd=%s)",
+            tick,
+            duration_seconds,
+            fmt_decimal(started_usd),
+            ending_usd_str,
             extra={
                 "ticks": tick,
                 "duration_seconds": duration_seconds,
@@ -1043,7 +1061,12 @@ async def _main_async(  # pylint: disable=too-many-locals
         return 1
     if report.storage_canceled_count or report.orphan_count or report.recovered_fill_count:
         _LOGGER.info(
-            "startup reconciliation complete",
+            "startup reconciliation complete (storage_canceled=%s, "
+            "storage_persistence_failures=%s, orphan_count=%s, recovered_fill_count=%s)",
+            report.storage_canceled_count,
+            report.storage_persistence_failures,
+            report.orphan_count,
+            report.recovered_fill_count,
             extra={
                 "storage_canceled": report.storage_canceled_count,
                 "storage_persistence_failures": report.storage_persistence_failures,
@@ -1081,7 +1104,8 @@ async def _main_async(  # pylint: disable=too-many-locals
         )
         notifier = SqliteNotifierAdapter(operator_storage)
         _LOGGER.info(
-            "operator interaction enabled",
+            "operator interaction enabled (operator_db=%s)",
+            config.live.operator_db,
             extra={"operator_db": config.live.operator_db},
         )
 

@@ -414,7 +414,9 @@ async def _load_price_series(
             snaps = await observe_storage.get_price_snapshots(symbol=symbol, start_time=cutoff)
         except StorageError as exc:
             _LOGGER.warning(
-                "sparkline series lookup failed; skipping",
+                "sparkline series lookup failed; skipping (symbol=%s): %s",
+                symbol,
+                exc,
                 extra={"symbol": str(symbol), "error": str(exc)},
             )
             continue
@@ -458,7 +460,11 @@ async def _load_balances(observe_storage: StoragePort | None) -> list[Balance]:
     try:
         return await observe_storage.get_latest_balance_snapshot()
     except StorageError as exc:
-        _LOGGER.warning("balance snapshot lookup failed; skipping", extra={"error": str(exc)})
+        _LOGGER.warning(
+            "balance snapshot lookup failed; skipping: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return []
 
 
@@ -627,7 +633,9 @@ async def _load_last_cap_trip(live_storage: StoragePort) -> CapTripRecord | None
         return await live_storage.get_last_cap_trip()
     except StorageError as exc:
         _LOGGER.warning(
-            "last-cap-trip lookup failed; session card omitted", extra={"error": str(exc)}
+            "last-cap-trip lookup failed; session card omitted: %s",
+            exc,
+            extra={"error": str(exc)},
         )
         return None
 
@@ -653,7 +661,9 @@ async def _load_engine_states(
         rows = await operator_storage.get_engine_states()
     except StorageError as exc:
         _LOGGER.warning(
-            "engine-state lookup failed; state badges omitted", extra={"error": str(exc)}
+            "engine-state lookup failed; state badges omitted: %s",
+            exc,
+            extra={"error": str(exc)},
         )
         return {}
     tick = tick_seconds if tick_seconds is not None else _DEFAULT_TICK_SECONDS
@@ -682,7 +692,9 @@ async def _load_reanchor_snoozes(
         snoozes = await operator_storage.get_reanchor_snoozes()
     except StorageError as exc:
         _LOGGER.warning(
-            "reanchor-snooze lookup failed; showing all banners", extra={"error": str(exc)}
+            "reanchor-snooze lookup failed; showing all banners: %s",
+            exc,
+            extra={"error": str(exc)},
         )
         return set()
     return {symbol for symbol, until in snoozes.items() if until > now}

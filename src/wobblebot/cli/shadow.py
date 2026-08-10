@@ -77,7 +77,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.grid_engine import GridEngine
@@ -115,7 +115,9 @@ async def _cancel_all_open(
             opens = await adapter.get_open_orders(symbol=symbol)
         except WobbleBotPortError as exc:
             _LOGGER.error(
-                "shutdown get_open_orders failed",
+                "shutdown get_open_orders failed (symbol=%s): %s",
+                symbol,
+                exc,
                 extra={"symbol": str(symbol), "error": str(exc)},
             )
             continue
@@ -124,13 +126,18 @@ async def _cancel_all_open(
                 await adapter.cancel_order(o)
                 cancelled += 1
                 _LOGGER.info(
-                    "shutdown cancelled (shadow)",
+                    "shutdown cancelled (shadow) (symbol=%s, exchange_id=%s)",
+                    symbol,
+                    o.exchange_id,
                     extra={"symbol": str(symbol), "exchange_id": o.exchange_id},
                 )
             except WobbleBotPortError as exc:
                 failed += 1
                 _LOGGER.error(
-                    "shutdown cancel failed",
+                    "shutdown cancel failed (symbol=%s, exchange_id=%s): %s",
+                    symbol,
+                    o.exchange_id,
+                    exc,
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": o.exchange_id,
@@ -152,7 +159,11 @@ async def _cancel_all_open(
                 )
             except StorageError as exc:
                 _LOGGER.error(
-                    "shutdown cancel persistence failed; reconciler will catch on next start",
+                    "shutdown cancel persistence failed; reconciler will catch on next start "
+                    "(symbol=%s, exchange_id=%s): %s",
+                    symbol,
+                    o.exchange_id,
+                    exc,
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": o.exchange_id,
@@ -187,7 +198,8 @@ async def _shadow_portfolio_value_usd(
         bases_seen.add(symbol.base)
         if symbol.quote != "USD":
             _LOGGER.warning(
-                "skipping non-USD-quoted symbol in shadow portfolio value",
+                "skipping non-USD-quoted symbol in shadow portfolio value (symbol=%s)",
+                symbol,
                 extra={"symbol": str(symbol)},
             )
             continue
@@ -216,7 +228,11 @@ async def _run_one_tick(
             # discipline so the operator's shadow terminal doesn't
             # flood at the 5s cadence.
             _LOGGER.debug(
-                "shadow tick complete",
+                "shadow tick complete (tick=%s, symbol=%s, action=%s, fills=%s)",
+                tick,
+                symbol,
+                result.action,
+                result.fills,
                 extra={
                     "tick": tick,
                     "symbol": str(symbol),
@@ -230,7 +246,11 @@ async def _run_one_tick(
             )
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "shadow symbol step failed; continuing other symbols",
+                "shadow symbol step failed; continuing other symbols (tick=%s, symbol=%s): %s: %s",
+                tick,
+                symbol,
+                type(exc).__name__,
+                exc,
                 extra={
                     "tick": tick,
                     "symbol": str(symbol),
@@ -246,14 +266,21 @@ async def _run_one_tick(
         current_value_usd = await _shadow_portfolio_value_usd(adapter, tuple(shadow.symbols))
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "post-tick shadow portfolio-value fetch failed; skipping loss-cap check this tick",
+            "post-tick shadow portfolio-value fetch failed; skipping loss-cap check this tick "
+            "(tick=%s): %s: %s",
+            tick,
+            type(exc).__name__,
+            exc,
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         return False
     session_pnl = current_value_usd - started_value_usd
     if session_pnl < -shadow.max_session_loss_usd:
         _LOGGER.error(
-            "shadow session loss cap exceeded; stopping",
+            "shadow session loss cap exceeded; stopping (session_pnl_usd=%s, limit=%s, tick=%s)",
+            fmt_decimal(session_pnl),
+            fmt_decimal(shadow.max_session_loss_usd),
+            tick,
             extra={
                 "session_pnl_usd": str(session_pnl),
                 "limit": str(shadow.max_session_loss_usd),
@@ -280,7 +307,12 @@ async def _run_loop(  # pylint: disable=too-many-locals
         shadow.max_runtime_minutes * 60.0 if shadow.max_runtime_minutes is not None else None
     )
     _LOGGER.info(
-        "shadow session start",
+        "shadow session start (symbols=%s, initial_balances=%s, tick_seconds=%s, "
+        "max_runtime_seconds=%s)",
+        [str(s) for s in shadow.symbols],
+        {a: str(v) for a, v in shadow.initial_balances.items()},
+        shadow.tick_seconds,
+        max_runtime_seconds,
         extra={
             "symbols": [str(s) for s in shadow.symbols],
             "initial_balances": {a: str(v) for a, v in shadow.initial_balances.items()},
@@ -301,7 +333,8 @@ async def _run_loop(  # pylint: disable=too-many-locals
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
                 _LOGGER.info(
-                    "shadow max runtime reached; stopping",
+                    "shadow max runtime reached; stopping (elapsed_seconds=%s)",
+                    round(elapsed, 1),
                     extra={"elapsed_seconds": round(elapsed, 1)},
                 )
                 break
@@ -327,7 +360,8 @@ async def _run_loop(  # pylint: disable=too-many-locals
             ended_known = True
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "shadow session_end balance fetch failed; PnL unavailable",
+                "shadow session_end balance fetch failed; PnL unavailable: %s",
+                exc,
                 extra={"error": str(exc)},
             )
             ended_usd = started_usd
@@ -337,7 +371,8 @@ async def _run_loop(  # pylint: disable=too-many-locals
             cancelled, failed = await _cancel_all_open(adapter, storage, tuple(shadow.symbols))
         except WobbleBotPortError as exc:
             _LOGGER.error(
-                "shadow session_end cancel_all_open raised; reconciler will catch",
+                "shadow session_end cancel_all_open raised; reconciler will catch: %s",
+                exc,
                 extra={"error": str(exc)},
             )
             cancelled, failed = 0, 0
@@ -345,7 +380,12 @@ async def _run_loop(  # pylint: disable=too-many-locals
         ending_value_str = str(ended_value_usd) if ended_known else "unknown"
         session_pnl_str = str(ended_value_usd - started_value_usd) if ended_known else "unknown"
         _LOGGER.info(
-            "shadow session end",
+            "shadow session end (ticks=%s, duration_seconds=%s, starting_usd_synthetic=%s, "
+            "ending_usd_synthetic=%s)",
+            tick,
+            round(time.monotonic() - started_at, 1),
+            fmt_decimal(started_usd),
+            ending_usd_str,
             extra={
                 "ticks": tick,
                 "duration_seconds": round(time.monotonic() - started_at, 1),
@@ -375,7 +415,11 @@ async def _main_async(config: WobbleBotConfig) -> int:
     try:
         kraken_config = KrakenConfig.from_env()  # default vars: KRAKEN_READER_API_KEY (read-only)
     except ValueError as exc:
-        _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing read-only credentials: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     storage = SQLiteStorageAdapter(config.shadow.db)
@@ -413,13 +457,20 @@ async def _main_async(config: WobbleBotConfig) -> int:
         )
     except WobbleBotPortError as exc:
         _LOGGER.error(
-            "startup reconciliation failed; refusing to start",
+            "startup reconciliation failed; refusing to start: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1
     if report.storage_canceled_count or report.orphan_count or report.recovered_fill_count:
         _LOGGER.info(
-            "startup reconciliation complete (shadow)",
+            "startup reconciliation complete (shadow) (storage_canceled=%s, "
+            "storage_persistence_failures=%s, orphan_count=%s, recovered_fill_count=%s)",
+            report.storage_canceled_count,
+            report.storage_persistence_failures,
+            report.orphan_count,
+            report.recovered_fill_count,
             extra={
                 "storage_canceled": report.storage_canceled_count,
                 "storage_persistence_failures": report.storage_persistence_failures,

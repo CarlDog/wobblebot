@@ -64,7 +64,15 @@ from wobblebot.domain.grid import (
     next_counter_action,
 )
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Ticker, Timestamp
+from wobblebot.domain.value_objects import (
+    Amount,
+    OrderSide,
+    Price,
+    Symbol,
+    Ticker,
+    Timestamp,
+    fmt_decimal,
+)
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
@@ -317,7 +325,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.info(
                     "%s spread back to normal (%s%%); resuming",
                     symbol,
-                    ticker.spread_percentage,
+                    fmt_decimal(ticker.spread_percentage, max_significant=4),
                     extra={
                         "symbol": str(symbol),
                         "spread_percentage": str(ticker.spread_percentage),
@@ -331,7 +339,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             _LOGGER.warning(
                 "%s spread too wide (%s%% > %s%% cap; bid %s / ask %s); skipping tick",
                 symbol,
-                ticker.spread_percentage,
+                fmt_decimal(ticker.spread_percentage, max_significant=4),
                 max_spread,
                 ticker.bid,
                 ticker.ask,
@@ -347,7 +355,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             _LOGGER.info(
                 "%s still skipping ticks; spread remains wide (%s%%, %d consecutive ticks)",
                 symbol,
-                ticker.spread_percentage,
+                fmt_decimal(ticker.spread_percentage, max_significant=4),
                 consecutive,
                 extra={
                     "symbol": str(symbol),
@@ -457,7 +465,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "cancel_open_orders: cancel of %s %s @ %s (%s) failed: %s",
                     order.symbol,
                     order.side,
-                    order.price.amount,
+                    fmt_decimal(order.price.amount),
                     order.exchange_id,
                     exc,
                     extra={
@@ -697,7 +705,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         _LOGGER.info(
             "grid initialized for %s: anchor %s, placed %d/%d%s%s",
             symbol,
-            state.reference_price,
+            fmt_decimal(state.reference_price),
             placed,
             len(levels),
             f" ({refusals} refused)" if refusals else "",
@@ -885,9 +893,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.warning(
                     "%s offside at %s (band %s - %s); parking until price returns",
                     symbol,
-                    current_price,
-                    levels[0].price if levels else "?",
-                    levels[-1].price if levels else "?",
+                    fmt_decimal(current_price),
+                    fmt_decimal(levels[0].price) if levels else "?",
+                    fmt_decimal(levels[-1].price) if levels else "?",
                     extra={
                         "symbol": str(symbol),
                         "current_price": str(current_price),
@@ -899,7 +907,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.info(
                     "%s still offside at %s; parked (%d consecutive ticks)",
                     symbol,
-                    current_price,
+                    fmt_decimal(current_price),
                     consecutive,
                     extra={
                         "symbol": str(symbol),
@@ -911,7 +919,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             _LOGGER.info(
                 "%s back onside at %s; resuming",
                 symbol,
-                current_price,
+                fmt_decimal(current_price),
                 extra={"symbol": str(symbol), "current_price": str(current_price)},
             )
 
@@ -1089,8 +1097,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "grid fill: %s %s %s @ %s",
                     symbol,
                     resolution.order.side.value.upper(),
-                    resolution.order.filled_amount,
-                    resolution.order.price.amount,
+                    fmt_decimal(resolution.order.filled_amount),
+                    fmt_decimal(resolution.order.price.amount),
                     extra={
                         "symbol": str(symbol),
                         "side": resolution.order.side.value,
@@ -1147,7 +1155,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 "%s %s @ %s refused by safety cap: %s",
                 symbol,
                 level.side.value.upper(),
-                level.price,
+                fmt_decimal(level.price),
                 decision.reason,
                 extra={
                     "symbol": str(symbol),
@@ -1180,7 +1188,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 "%s %s @ %s refused: insufficient %s (need %s, have %s)",
                 symbol,
                 level.side.value.upper(),
-                level.price,
+                fmt_decimal(level.price),
                 exc.asset,
                 exc.required,
                 exc.available,
@@ -1203,7 +1211,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 "%s %s @ %s refused by exchange: %s",
                 symbol,
                 level.side.value.upper(),
-                level.price,
+                fmt_decimal(level.price),
                 exc,
                 extra={
                     "symbol": str(symbol),

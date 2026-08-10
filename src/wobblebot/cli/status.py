@@ -41,6 +41,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import fmt_decimal
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.data_collector import DataCollector
 
@@ -55,7 +56,11 @@ async def _run(config: WobbleBotConfig) -> int:
     try:
         kraken_config = KrakenConfig.from_env()
     except ValueError as exc:
-        _LOGGER.error("missing Kraken credentials", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing Kraken credentials: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     adapter = KrakenAdapter(config=kraken_config)
@@ -70,7 +75,9 @@ async def _run(config: WobbleBotConfig) -> int:
         balances = await collector.get_balances()
     except WobbleBotPortError as exc:
         _LOGGER.error(
-            "status check failed",
+            "status check failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1
@@ -81,7 +88,7 @@ async def _run(config: WobbleBotConfig) -> int:
     _LOGGER.info(
         "%s price: %s %s (fetched at %s)",
         snapshot.symbol,
-        snapshot.price.amount,
+        fmt_decimal(snapshot.price.amount),
         snapshot.price.currency,
         snapshot.timestamp.dt.isoformat(),
         extra={
@@ -93,7 +100,9 @@ async def _run(config: WobbleBotConfig) -> int:
     )
     if not balances:
         _LOGGER.info(
-            "account balances: (empty)",
+            "account balances: (empty) (balances=%s, count=%s)",
+            {},
+            0,
             extra={"balances": {}, "count": 0},
         )
     else:

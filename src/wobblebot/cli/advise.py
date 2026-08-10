@@ -72,7 +72,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import load_prompt
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.exceptions import LLMCostCapExceeded
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorSuggestion,
@@ -399,7 +399,9 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         )
     except StorageError as exc:
         _LOGGER.error(
-            "summary build failed",
+            "summary build failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return False
@@ -408,7 +410,9 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         recommendation = await advisor.get_recommendation(summary)
     except AdvisorError as exc:
         _LOGGER.error(
-            "advisor call failed",
+            "advisor call failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return False
@@ -419,7 +423,10 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         # internally and falls back to the heuristic; this guard covers
         # the `engine: llm` cloud path, which has no fallback.
         _LOGGER.warning(
-            "advisor call skipped — LLM cost cap reached",
+            "advisor call skipped — LLM cost cap reached (cap_kind=%s, cap_value_usd=%s): %s",
+            exc.cap_kind,
+            fmt_decimal(exc.cap_value_usd),
+            exc,
             extra={
                 "error": str(exc),
                 "cap_kind": exc.cap_kind,
@@ -438,13 +445,19 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         await advise_storage.save_advisor_suggestion(suggestion)
     except StorageError as exc:
         _LOGGER.warning(
-            "suggestion persist failed",
+            "suggestion persist failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return False
 
     _LOGGER.info(
-        "advise cycle complete",
+        "advise cycle complete (symbol=%s, recommendation_id=%s, model_name=%s, role=%s)",
+        symbol,
+        recommendation.recommendation_id,
+        model_name,
+        recommendation.role,
         extra={
             "symbol": str(symbol),
             "recommendation_id": recommendation.recommendation_id,
@@ -488,7 +501,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     sweeps_run = 0  # one sweep = one tick across every symbol
     interval_seconds = interval.total_seconds()
     _LOGGER.info(
-        "advise session start",
+        "advise session start (symbols=%s, interval_seconds=%s, metrics_lookback_hours=%s, "
+        "news_lookback_hours=%s)",
+        [str(s) for s in symbols],
+        interval_seconds,
+        metrics_lookback.total_seconds() / 3600,
+        news_lookback.total_seconds() / 3600 if news_lookback else None,
         extra={
             "symbols": [str(s) for s in symbols],
             "interval_seconds": interval_seconds,
@@ -533,7 +551,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
         )
     finally:
         _LOGGER.info(
-            "advise session end",
+            "advise session end (duration_seconds=%s, sweeps_run=%s, cycles_run=%s, "
+            "cycles_succeeded=%s)",
+            round(time.monotonic() - started_at, 1),
+            sweeps_run,
+            cycles_run,
+            cycles_succeeded,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "sweeps_run": sweeps_run,
@@ -557,7 +580,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
     try:
         interval = config.schedules.get("advise")
     except KeyError as exc:
-        _LOGGER.error("missing schedule", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing schedule: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     # Open the cost-ledger storage (operator.db) first if config.llm is
@@ -585,7 +612,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
     try:
         advisor = _build_advisor(config.advisor, model_name_holder, cloud_wiring=cloud_wiring)
     except (ValueError, FileNotFoundError) as exc:
-        _LOGGER.error("advisor setup failed", extra={"error": str(exc)})
+        _LOGGER.error(
+            "advisor setup failed: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         if operator_storage is not None:
             await operator_storage.close()
         return 2

@@ -88,7 +88,11 @@ def _log_result(suggestion: AdvisorSuggestion, result: AutoApplyResult) -> None:
     """Operator-facing breakdown of a gate evaluation."""
     rec = suggestion.recommendation
     _LOGGER.info(
-        "evaluated suggestion",
+        "evaluated suggestion (recommendation_id=%s, created_at=%s, model_name=%s, role=%s)",
+        rec.recommendation_id,
+        suggestion.created_at.dt.isoformat(),
+        suggestion.model_name,
+        rec.role,
         extra={
             "recommendation_id": rec.recommendation_id,
             "created_at": suggestion.created_at.dt.isoformat(),
@@ -132,7 +136,8 @@ def _log_result(suggestion: AdvisorSuggestion, result: AutoApplyResult) -> None:
         )
     if not result.applied_keys and not result.rejected_keys:
         _LOGGER.info(
-            "suggestion carried no proposed keys to evaluate",
+            "suggestion carried no proposed keys to evaluate (recommendation_id=%s)",
+            rec.recommendation_id,
             extra={"recommendation_id": rec.recommendation_id},
         )
 
@@ -166,7 +171,9 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
         await storage.connect()
     except StorageError as exc:
         _LOGGER.error(
-            "failed to open advise db",
+            "failed to open advise db (path=%s): %s",
+            advise_db,
+            exc,
             extra={"path": advise_db, "error": str(exc)},
         )
         return 2
@@ -190,7 +197,9 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
     if suggestion is None:
         if args.recommendation_id is not None:
             _LOGGER.error(
-                "no suggestion matched recommendation-id",
+                "no suggestion matched recommendation-id (recommendation_id=%s, searched=%s)",
+                args.recommendation_id,
+                len(suggestions),
                 extra={
                     "recommendation_id": args.recommendation_id,
                     "searched": len(suggestions),
@@ -198,7 +207,9 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
             )
         else:
             _LOGGER.error(
-                "no advisor suggestions found in db for symbol",
+                "no advisor suggestions found in db for symbol (db=%s, symbol=%s)",
+                advise_db,
+                symbol,
                 extra={"db": advise_db, "symbol": str(symbol)},
             )
         return 2
@@ -217,7 +228,10 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
     if suggestion_symbol is None:
         if args.symbol is None:
             _LOGGER.error(
-                "suggestion carries no usable symbol; pass --symbol to state the target explicitly",
+                "suggestion carries no usable symbol; pass --symbol to state the target "
+                "explicitly (recommendation_id=%s, input_summary_symbol=%s)",
+                suggestion.recommendation.recommendation_id,
+                repr(raw_symbol),
                 extra={
                     "recommendation_id": suggestion.recommendation.recommendation_id,
                     "input_summary_symbol": repr(raw_symbol),
@@ -229,7 +243,11 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
     elif suggestion_symbol != symbol:
         if args.symbol is not None:
             _LOGGER.error(
-                "suggestion is for a different symbol than --symbol; refusing",
+                "suggestion is for a different symbol than --symbol; refusing "
+                "(recommendation_id=%s, suggestion_symbol=%s, requested_symbol=%s)",
+                suggestion.recommendation.recommendation_id,
+                suggestion_symbol,
+                symbol,
                 extra={
                     "recommendation_id": suggestion.recommendation.recommendation_id,
                     "suggestion_symbol": str(suggestion_symbol),
@@ -240,7 +258,9 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
         # --recommendation-id without --symbol: the suggestion's own symbol is
         # the target — not advise.symbols[0]'s guess.
         _LOGGER.info(
-            "target symbol derived from suggestion",
+            "target symbol derived from suggestion (recommendation_id=%s, symbol=%s)",
+            suggestion.recommendation.recommendation_id,
+            suggestion_symbol,
             extra={
                 "recommendation_id": suggestion.recommendation.recommendation_id,
                 "symbol": str(suggestion_symbol),
@@ -259,7 +279,10 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
 
     if not args.commit:
         _LOGGER.info(
-            "dry-run complete (no file writes; pass --commit to apply)",
+            "dry-run complete (no file writes; pass --commit to apply) (would_apply=%s, "
+            "would_skip=%s)",
+            [a.key for a in result.applied_keys],
+            [r.key for r in result.rejected_keys],
             extra={
                 "would_apply": [a.key for a in result.applied_keys],
                 "would_skip": [r.key for r in result.rejected_keys],
@@ -288,7 +311,8 @@ async def _commit_apply(
     """
     if not result.applied_keys:
         _LOGGER.warning(
-            "no keys cleared the gate; settings.yml NOT modified",
+            "no keys cleared the gate; settings.yml NOT modified (recommendation_id=%s)",
+            suggestion.recommendation.recommendation_id,
             extra={"recommendation_id": suggestion.recommendation.recommendation_id},
         )
         return 1
@@ -302,21 +326,26 @@ async def _commit_apply(
         )
     except (SettingsRewriteError, FileNotFoundError) as exc:
         _LOGGER.error(
-            "settings.yml rewrite failed; no audit row written",
+            "settings.yml rewrite failed; no audit row written (path=%s): %s",
+            settings_path,
+            exc,
             extra={"path": str(settings_path), "error": str(exc)},
         )
         return 1
     if diff:
         # Multi-line print path: log line for the operator, full diff to stdout.
         _LOGGER.info(
-            "settings.yml updated",
+            "settings.yml updated (path=%s, lines_changed=%s)",
+            settings_path,
+            diff.count("\n"),
             extra={"path": str(settings_path), "lines_changed": diff.count("\n")},
         )
         sys.stdout.write(diff)
         sys.stdout.flush()
     else:
         _LOGGER.info(
-            "settings.yml unchanged (overrides matched existing values)",
+            "settings.yml unchanged (overrides matched existing values) (path=%s)",
+            settings_path,
             extra={"path": str(settings_path)},
         )
 
@@ -337,7 +366,10 @@ async def _commit_apply(
         await storage.close()
 
     _LOGGER.info(
-        "commit complete",
+        "commit complete (recommendation_id=%s, applied_keys=%s, symbol=%s)",
+        suggestion.recommendation.recommendation_id,
+        [a.key for a in result.applied_keys],
+        result.symbol,
         extra={
             "recommendation_id": suggestion.recommendation.recommendation_id,
             "applied_keys": [a.key for a in result.applied_keys],

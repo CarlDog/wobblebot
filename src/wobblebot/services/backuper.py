@@ -139,7 +139,9 @@ def backup_database_locally(
         src_conn.close()
 
     _LOGGER.info(
-        "local backup complete",
+        "local backup complete (src=%s, dest=%s)",
+        src_path,
+        dest_path,
         extra={"src": str(src_path), "dest": str(dest_path)},
     )
     return dest_path
@@ -203,7 +205,9 @@ def prune_old_backups(
             path.unlink()
         except OSError as exc:
             _LOGGER.warning(
-                "failed to prune old backup; continuing",
+                "failed to prune old backup; continuing (path=%s): %s",
+                path,
+                exc,
                 extra={"path": str(path), "error": str(exc)},
             )
     return len(to_delete)

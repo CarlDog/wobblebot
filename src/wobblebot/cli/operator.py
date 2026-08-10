@@ -182,7 +182,9 @@ async def _forwarder_loop(
 ) -> None:
     """Background task: poll + forward + sleep, until ``stop_event`` is set."""
     _LOGGER.info(
-        "notification forwarder started",
+        "notification forwarder started (channel_id=%s, poll_seconds=%s)",
+        channel_id,
+        poll_seconds,
         extra={"channel_id": channel_id, "poll_seconds": poll_seconds},
     )
 
@@ -241,7 +243,10 @@ async def _expire_stale_pending_commands(storage: StoragePort) -> int:
             await storage.save_pending_command(updated)
             expired_count += 1
             _LOGGER.info(
-                "pending command expired",
+                "pending command expired (pending_id=%s, command_kind=%s, ttl_expires_at=%s)",
+                row.id,
+                row.command.kind,
+                row.ttl_expires_at.dt.isoformat(),
                 extra={
                     "pending_id": str(row.id),
                     "command_kind": row.command.kind,
@@ -265,7 +270,11 @@ async def _ttl_expirer_loop(
     stop_event: asyncio.Event,
 ) -> None:
     """Background task: scan + expire + sleep, until ``stop_event`` is set."""
-    _LOGGER.info("ttl expirer started", extra={"poll_seconds": poll_seconds})
+    _LOGGER.info(
+        "ttl expirer started (poll_seconds=%s)",
+        poll_seconds,
+        extra={"poll_seconds": poll_seconds},
+    )
 
     async def _one_cycle() -> None:
         await _expire_stale_pending_commands(storage)
@@ -650,7 +659,9 @@ async def _backfill_history_task(  # pylint: disable=too-many-arguments
         )
         total += count
     _LOGGER.info(
-        "history backfill complete",
+        "history backfill complete (total_inserted=%s, channels=%s)",
+        total,
+        sorted(allowed_channel_ids),
         extra={"total_inserted": total, "channels": sorted(allowed_channel_ids)},
     )
 
@@ -1514,7 +1525,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     )
 
     _LOGGER.info(
-        "operator daemon starting",
+        "operator daemon starting (outbound_channel_id=%s, allowed_user_ids=%s, "
+        "allowed_channel_ids=%s, context_window_turns=%s)",
+        operator_cfg.auth.outbound_channel_id,
+        sorted(operator_cfg.auth.allowed_user_ids),
+        sorted(operator_cfg.auth.allowed_channel_ids),
+        operator_cfg.context_window_turns,
         extra={
             "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
             "allowed_user_ids": sorted(operator_cfg.auth.allowed_user_ids),

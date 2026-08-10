@@ -222,7 +222,9 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         """
         if not self.is_allowed(message.user_id, message.channel_id):
             LOGGER.debug(
-                "dropped non-allowlisted message",
+                "dropped non-allowlisted message (user_id=%s, channel_id=%s)",
+                message.user_id,
+                message.channel_id,
                 extra={"user_id": message.user_id, "channel_id": message.channel_id},
             )
             return
@@ -231,7 +233,8 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 await handler(message)
             except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception(
-                    "message handler raised; continuing",
+                    "message handler raised; continuing (message_id=%s)",
+                    message.message_id,
                     extra={"message_id": message.message_id},
                 )
 
@@ -239,7 +242,9 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         """Dispatch a reaction event to handlers (after allowlist filter)."""
         if not self.is_allowed(event.user_id, event.channel_id):
             LOGGER.debug(
-                "dropped non-allowlisted reaction",
+                "dropped non-allowlisted reaction (user_id=%s, channel_id=%s)",
+                event.user_id,
+                event.channel_id,
                 extra={"user_id": event.user_id, "channel_id": event.channel_id},
             )
             return
@@ -248,7 +253,9 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 await handler(event)
             except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception(
-                    "reaction handler raised; continuing",
+                    "reaction handler raised; continuing (message_id=%s, action=%s)",
+                    event.message_id,
+                    event.action,
                     extra={"message_id": event.message_id, "action": event.action},
                 )
 
@@ -484,7 +491,8 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             transport._bot_user_id = str(client.user.id) if client.user else None
             transport._ready_event.set()
             LOGGER.info(
-                "discord transport connected",
+                "discord transport connected (bot_user_id=%s)",
+                transport._bot_user_id,
                 extra={"bot_user_id": transport._bot_user_id},
             )
 

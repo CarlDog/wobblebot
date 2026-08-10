@@ -239,7 +239,11 @@ class TestCrossCoinGuard:
         assert rc == 0
         derived = [r for r in caplog.records if "derived from suggestion" in r.message]
         assert derived and getattr(derived[0], "symbol", None) == "ETH/USD"
-        evaluated = [r for r in caplog.records if r.message == "evaluated suggestion"]
+        # Prefix match, not equality: the message now carries context
+        # inline (P3 logging installments). What this test is actually
+        # about is the `symbol` field — the cross-coin guard must record
+        # the COIN (ETH), not the pair.
+        evaluated = [r for r in caplog.records if r.message.startswith("evaluated suggestion")]
         assert evaluated and getattr(evaluated[0], "symbol", None) == "ETH"
 
     async def test_id_selection_refuses_explicit_symbol_mismatch(

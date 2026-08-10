@@ -61,7 +61,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.backfill import DEFAULT_RATE_LIMIT_SECONDS, backfill_range
 
@@ -81,7 +81,11 @@ async def _poll_prices(
             now = Timestamp(dt=datetime.now(UTC))
             await storage.save_price_snapshot(symbol, price, now)
             _LOGGER.debug(
-                "price snapshot saved",
+                "price snapshot saved (symbol=%s, price=%s, currency=%s, observed_at=%s)",
+                symbol,
+                fmt_decimal(price.amount),
+                price.currency,
+                now.dt.isoformat(),
                 extra={
                     "symbol": str(symbol),
                     "price": str(price.amount),
@@ -92,7 +96,10 @@ async def _poll_prices(
             persisted += 1
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "price poll failed",
+                "price poll failed (symbol=%s): %s: %s",
+                symbol,
+                type(exc).__name__,
+                exc,
                 extra={"symbol": str(symbol), "error": str(exc), "error_type": type(exc).__name__},
             )
     return persisted
@@ -106,11 +113,17 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
             _LOGGER.debug("balance poll: account empty; skipping snapshot")
             return 0
         await storage.save_balance_snapshot(balances)
-        _LOGGER.debug("balance snapshot saved", extra={"entries": len(balances)})
+        _LOGGER.debug(
+            "balance snapshot saved (entries=%s)",
+            len(balances),
+            extra={"entries": len(balances)},
+        )
         return len(balances)
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "balance poll failed",
+            "balance poll failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 0
@@ -201,7 +214,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
     price_interval_seconds = price_interval.total_seconds()
     balance_interval_seconds = balance_interval.total_seconds()
     _LOGGER.info(
-        "observe session start",
+        "observe session start (symbols=%s, price_interval_seconds=%s, "
+        "balance_interval_seconds=%s, db_path=%s)",
+        [str(s) for s in observe.symbols],
+        price_interval_seconds,
+        balance_interval_seconds,
+        observe.db,
         extra={
             "symbols": [str(s) for s in observe.symbols],
             "price_interval_seconds": price_interval_seconds,
@@ -237,7 +255,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
     finally:
         _LOGGER.info(
-            "observe session end",
+            "observe session end (duration_seconds=%s, price_snapshots_saved=%s, "
+            "balance_snapshots_saved=%s)",
+            round(time.monotonic() - started_at, 1),
+            price_polls,
+            balance_polls,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "price_snapshots_saved": price_polls,
@@ -291,7 +313,8 @@ async def _run_auto_gap_fill(  # pylint: disable=too-many-arguments,too-many-pos
 
         if latest is None:
             _LOGGER.debug(
-                "auto-gap-fill: no prior history; explicit --backfill needed",
+                "auto-gap-fill: no prior history; explicit --backfill needed (symbol=%s)",
+                symbol,
                 extra={"symbol": str(symbol)},
             )
             continue
@@ -300,7 +323,11 @@ async def _run_auto_gap_fill(  # pylint: disable=too-many-arguments,too-many-pos
         gap_minutes = gap.total_seconds() / 60.0
         if gap < threshold:
             _LOGGER.debug(
-                "auto-gap-fill: gap below threshold; skipping",
+                "auto-gap-fill: gap below threshold; skipping (symbol=%s, gap_minutes=%s, "
+                "threshold_minutes=%s)",
+                symbol,
+                round(gap_minutes, 1),
+                threshold_minutes,
                 extra={
                     "symbol": str(symbol),
                     "gap_minutes": round(gap_minutes, 1),
@@ -376,14 +403,22 @@ async def _main_async(config: WobbleBotConfig) -> int:
     try:
         price_interval = config.schedules.get("observe_prices")
     except KeyError as exc:
-        _LOGGER.error("missing schedule", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing schedule: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
     balance_interval = config.schedules.get_or_default("observe_balances", timedelta(seconds=0))
 
     try:
         kraken_config = KrakenConfig.from_env()  # default vars: read-only key
     except ValueError as exc:
-        _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing read-only credentials: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     storage = SQLiteStorageAdapter(config.observe.db)

@@ -62,6 +62,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import fmt_decimal
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.notification_events import HarvestProposalEvent
@@ -129,7 +130,12 @@ async def _run_cycle(
 
     if proposal is None:
         _LOGGER.debug(
-            "harvest tick: no proposal",
+            "harvest tick: no proposal (balance_usd=%s, min_exchange_liquidity_usd=%s, "
+            "topup_threshold_usd=%s, surplus_threshold_usd=%s)",
+            fmt_decimal(balance_usd),
+            fmt_decimal(config.harvester.min_exchange_liquidity_usd),
+            fmt_decimal(config.harvester.topup_threshold_usd),
+            fmt_decimal(config.harvester.surplus_threshold_usd),
             extra={
                 "balance_usd": str(balance_usd),
                 "min_exchange_liquidity_usd": str(config.harvester.min_exchange_liquidity_usd),
@@ -141,7 +147,12 @@ async def _run_cycle(
         return True
 
     _LOGGER.info(
-        "harvest tick: HYPOTHETICAL proposal (no money moved)",
+        "harvest tick: HYPOTHETICAL proposal (no money moved) (proposal_id=%s, direction=%s, "
+        "asset=%s, amount=%s)",
+        proposal.proposal_id,
+        proposal.direction,
+        proposal.asset,
+        fmt_decimal(proposal.amount),
         extra={
             "proposal_id": proposal.proposal_id,
             "direction": proposal.direction,
@@ -225,7 +236,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments
     ticks_succeeded = 0
     commands_run = 0
     _LOGGER.info(
-        "harvest session start",
+        "harvest session start (interval_seconds=%s, command_poll_seconds=%s, "
+        "harvester_enabled=%s, persistence_enabled=%s)",
+        interval_seconds,
+        _COMMAND_POLL_SECONDS,
+        config.harvester.enabled if config.harvester else False,
+        storage is not None,
         extra={
             "interval_seconds": interval_seconds,
             "command_poll_seconds": _COMMAND_POLL_SECONDS,
@@ -277,7 +293,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments
         )
     finally:
         _LOGGER.info(
-            "harvest session end",
+            "harvest session end (duration_seconds=%s, ticks_run=%s, ticks_succeeded=%s, "
+            "commands_processed=%s)",
+            round(time.monotonic() - started_at, 1),
+            ticks_run,
+            ticks_succeeded,
+            commands_run,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "ticks_run": ticks_run,
@@ -337,9 +358,11 @@ async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig)
     trade_key = os.environ.get(_TRADE_KEY_ENV_VAR)
     if harvest_key is not None and trade_key is not None and harvest_key == trade_key:
         _LOGGER.error(
-            "Harvester key is identical to the trade key — refusing to start "
-            "(ADR-003 financial-power-fragmentation); the Harvester key MUST be "
-            "a separate secret with Withdraw scope",
+            "Harvester key is identical to the trade key — refusing to start (ADR-003 "
+            "financial-power-fragmentation); the Harvester key MUST be a separate secret with "
+            "Withdraw scope (harvester_key_env_var=%s, trade_key_env_var=%s)",
+            config.harvester.api_key_env_var,
+            _TRADE_KEY_ENV_VAR,
             extra={
                 "harvester_key_env_var": config.harvester.api_key_env_var,
                 "trade_key_env_var": _TRADE_KEY_ENV_VAR,
@@ -348,8 +371,9 @@ async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig)
         return 3
     if trade_key is None:
         _LOGGER.info(
-            "trade key not present in this process's env — key distinctness not "
-            "byte-verified; relying on deployment-level key separation",
+            "trade key not present in this process's env — key distinctness not byte-verified; "
+            "relying on deployment-level key separation (trade_key_env_var=%s)",
+            _TRADE_KEY_ENV_VAR,
             extra={"trade_key_env_var": _TRADE_KEY_ENV_VAR},
         )
     return None
@@ -374,7 +398,11 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
         )
     except (KeyError, ValueError) as exc:
         _LOGGER.error(
-            "harvester kraken credentials missing",
+            "harvester kraken credentials missing (expected_key_var=%s, expected_secret_var=%s): "
+            "%s",
+            config.harvester.api_key_env_var,
+            config.harvester.api_secret_env_var,
+            exc,
             extra={
                 "error": str(exc),
                 "expected_key_var": config.harvester.api_key_env_var,
@@ -414,7 +442,8 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             await operator_storage.connect()
             notifier = SqliteNotifierAdapter(operator_storage)
             _LOGGER.info(
-                "operator notifications enabled",
+                "operator notifications enabled (operator_db=%s)",
+                config.harvest.operator_db,
                 extra={"operator_db": config.harvest.operator_db},
             )
         except StorageError as exc:
@@ -456,7 +485,11 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
         try:
             interval = config.schedules.get("harvest")
         except KeyError as exc:
-            _LOGGER.error("missing schedule", extra={"error": str(exc)})
+            _LOGGER.error(
+                "missing schedule: %s",
+                exc,
+                extra={"error": str(exc)},
+            )
             return 2
 
         stop_event = asyncio.Event()

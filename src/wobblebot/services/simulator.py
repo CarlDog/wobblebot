@@ -19,7 +19,7 @@ from decimal import Decimal
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.storage import StoragePort
 
 _logger = logging.getLogger(__name__)
@@ -80,7 +80,10 @@ async def run_buy_dip_sell_rebound_cycle(  # pylint: disable=too-many-arguments
     await storage.save_order(buy)
     result.orders_placed += 1
     _logger.info(
-        "placed buy",
+        "placed buy (order_id=%s, limit=%s, amount=%s)",
+        buy.id,
+        fmt_decimal(buy_price),
+        fmt_decimal(amount),
         extra={"order_id": str(buy.id), "limit": str(buy_price), "amount": str(amount)},
     )
 
@@ -92,7 +95,11 @@ async def run_buy_dip_sell_rebound_cycle(  # pylint: disable=too-many-arguments
             await storage.save_trade(trade)
             result.trades_executed += 1
             _logger.info(
-                "trade filled",
+                "trade filled (trade_id=%s, order_id=%s, side=%s, price=%s)",
+                trade.id,
+                trade.order_id,
+                trade.side,
+                fmt_decimal(trade.price.amount),
                 extra={
                     "trade_id": trade.id,
                     "order_id": trade.order_id,
@@ -113,7 +120,9 @@ async def run_buy_dip_sell_rebound_cycle(  # pylint: disable=too-many-arguments
                 await storage.save_order(sell)
                 result.orders_placed += 1
                 _logger.info(
-                    "placed sell",
+                    "placed sell (order_id=%s, limit=%s)",
+                    sell.id,
+                    fmt_decimal(sell_price),
                     extra={"order_id": str(sell.id), "limit": str(sell_price)},
                 )
 
@@ -121,7 +130,9 @@ async def run_buy_dip_sell_rebound_cycle(  # pylint: disable=too-many-arguments
     await storage.save_balance_snapshot(balances)
     result.final_balances = balances
     _logger.info(
-        "cycle complete",
+        "cycle complete (orders_placed=%s, trades_executed=%s)",
+        result.orders_placed,
+        result.trades_executed,
         extra={
             "orders_placed": result.orders_placed,
             "trades_executed": result.trades_executed,

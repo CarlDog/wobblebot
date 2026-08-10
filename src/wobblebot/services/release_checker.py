@@ -80,7 +80,10 @@ async def _fetch_latest_release_envelope(
         data = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         _LOGGER.warning(
-            "release check failed; treating as no update available",
+            "release check failed; treating as no update available (repo=%s): %s: %s",
+            repo,
+            type(exc).__name__,
+            exc,
             extra={"repo": repo, "error": str(exc), "error_type": type(exc).__name__},
         )
         return None
