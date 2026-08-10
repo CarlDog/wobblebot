@@ -83,7 +83,15 @@ A rule-1 violation has a **mechanical signature** — a static message
 paired with a non-empty `extra=` — so it is greppable rather than a
 matter of taste. That scan counted 239 before installment 2 and 165
 after; the remainder is the deliberate scope boundary above, not
-backlog rot. Re-run it before starting installment 3.
+backlog rot.
+
+Both scans live in **`tools/scan_logging.py`**:
+
+```bash
+python -m tools.scan_logging                 # rule 1 — exits 1 on any hit
+python -m tools.scan_logging --check decimal # readability review list
+python -m tools.scan_logging --check all --verbose
+```
 
 Installment 2 also added `cli/_common.fmt_decimal` (a rule-1
 corollary): storage and Kraken return full-scale Decimals, so `%s`
@@ -98,7 +106,8 @@ Installment 3 (2026-08-10) finished the sweep: every remaining module
 and every severity, including the one-shot CLIs and the web routes.
 **The rule-1 scan now reports zero.**
 
-It also added the SECOND scan the first one structurally cannot do.
+It also added the SECOND scan the first one structurally cannot do
+(`--check decimal`).
 Rule 1 finds *missing* data; it cannot find *unreadable* data — a line
 that correctly interpolates `assessment.average_cost` still printed
 `73390.78543435964243143764881`, because a `Decimal` division keeps 28
@@ -123,6 +132,11 @@ DOGE one, where a fixed 2dp would destroy the latter.
 2. `fmt_decimal` started in `cli/_common` and had to move to `domain`
    the moment `services/cost_basis` needed it — services cannot import
    cli. Put a shared display helper in `domain` from the start.
+
+**The rule-1 scan is enforced, not just documented.**
+`tests/tools/test_scan_logging.py::TestPackageIsClean` asserts the
+package reports zero, so a regression fails the suite rather than
+waiting for the next audit. Fix the log line, not the test.
 
 New code follows these rules from day one. Message-prefix pin tests
 live in `tests/services/test_grid_engine.py::TestPartialGridPlacementLogging`;

@@ -52,16 +52,19 @@ def _format_line(pending: PendingCommand) -> str:
         suffix += f" by {pending.confirming_user_id}"
     if pending.dispatched_at is not None:
         suffix += f" dispatched at {pending.dispatched_at.dt.isoformat()}"
-    return " | ".join(
-        [
-            when_short,
-            pending.status,
-            pending.command.kind,
-            f"channel={pending.channel_id}",
-            f"requester={pending.requesting_user_id}",
-            f"id={pending.id}",
-        ]
-    ) + suffix
+    return (
+        " | ".join(
+            [
+                when_short,
+                pending.status,
+                pending.command.kind,
+                f"channel={pending.channel_id}",
+                f"requester={pending.requesting_user_id}",
+                f"id={pending.id}",
+            ]
+        )
+        + suffix
+    )
 
 
 async def _run(args: argparse.Namespace) -> int:

@@ -80,7 +80,10 @@ def _discover_config_path(config_path: Path | None) -> Path:
         return _DEFAULT_CONFIG
     if _EXAMPLE_CONFIG.exists():
         _LOGGER.warning(
-            "no operator config found; falling back to example file",
+            "no operator config at %s; falling back to the example file %s — "
+            "values are template defaults, not your settings",
+            _DEFAULT_CONFIG,
+            _EXAMPLE_CONFIG,
             extra={"path": str(_EXAMPLE_CONFIG)},
         )
         return _EXAMPLE_CONFIG

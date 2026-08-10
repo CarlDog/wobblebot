@@ -86,6 +86,9 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **The logging audit is now enforced, not just documented.** The scan that
+  drove it ships as `tools/scan_logging.py`, and a test asserts the package
+  stays at zero violations — so log quality can'''t quietly drift back.
 - **Money figures in logs are readable.** An average-cost line printed
   `73390.78543435964243143764881`; it now reads `73390.78543`, and a loss
   percentage reads `8.74%` instead of 28 digits. Applied across the engine,

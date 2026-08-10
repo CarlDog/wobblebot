@@ -166,9 +166,7 @@ def write_summary(
         "|---|---|---|---|---|---|",
     ]
     for cfg, elapsed, score, max_score, errors in rows:
-        score_cell = (
-            f"{score}/{max_score}" if score is not None and max_score is not None else "—"
-        )
+        score_cell = f"{score}/{max_score}" if score is not None and max_score is not None else "—"
         err_cell = str(errors) if errors is not None else "—"
         config_cell = " ".join(cfg.args) or "(baseline)"
         lines.append(
@@ -196,9 +194,7 @@ def main() -> int:
     print("SUMMARY", flush=True)
     print("=" * 80, flush=True)
     for cfg, elapsed, score, max_score, errors in rows:
-        score_str = (
-            f"{score}/{max_score}" if score is not None and max_score is not None else "—"
-        )
+        score_str = f"{score}/{max_score}" if score is not None and max_score is not None else "—"
         err_str = f"{errors} errors" if errors is not None else "errors?"
         print(f"  {cfg.label}: {score_str}, {err_str}, {elapsed:.0f}s", flush=True)
     return 0
