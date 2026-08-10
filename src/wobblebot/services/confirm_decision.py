@@ -25,38 +25,14 @@ itself instead of silently doing nothing (the reaction path's behavior).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.ports.operator import ConfirmDecision, ConfirmOutcome
 from wobblebot.ports.storage import StoragePort
-
-ConfirmDecision = Literal["approve", "reject"]
-
-ConfirmResult = Literal[
-    "approved",
-    "rejected",
-    "expired",
-    "already_decided",
-    "not_found",
-    "error",
-]
-
-
-@dataclass(frozen=True)
-class ConfirmOutcome:
-    """What happened to the row, plus a line the operator can read."""
-
-    result: ConfirmResult
-    message: str
-
-    @property
-    def decided(self) -> bool:
-        """True when this call is what moved the row to approved/rejected."""
-        return self.result in ("approved", "rejected")
 
 
 async def apply_confirm_decision(  # pylint: disable=too-many-return-statements
@@ -93,13 +69,13 @@ async def apply_confirm_decision(  # pylint: disable=too-many-return-statements
     try:
         pending = await storage.get_pending_command(pending_id)
     except StorageError as exc:
-        return ConfirmOutcome("error", f"Could not read the command: {exc}")
+        return ConfirmOutcome(result="error", message=f"Could not read the command: {exc}")
     if pending is None:
-        return ConfirmOutcome("not_found", "That command is no longer on file.")
+        return ConfirmOutcome(result="not_found", message="That command is no longer on file.")
     if pending.status != "awaiting_confirmation":
         return ConfirmOutcome(
-            "already_decided",
-            f"Already {pending.status} — no change.",
+            result="already_decided",
+            message=f"Already {pending.status} — no change.",
         )
 
     if pending.ttl_expires_at.dt <= current.dt:
@@ -107,10 +83,10 @@ async def apply_confirm_decision(  # pylint: disable=too-many-return-statements
         try:
             await storage.save_pending_command(expired)
         except StorageError as exc:
-            return ConfirmOutcome("error", f"Could not expire the command: {exc}")
+            return ConfirmOutcome(result="error", message=f"Could not expire the command: {exc}")
         return ConfirmOutcome(
-            "expired",
-            "The confirmation window closed before this landed. Nothing ran — re-issue it.",
+            result="expired",
+            message="The confirmation window closed before this landed. Nothing ran — re-issue it.",
         )
 
     status: Literal["approved", "rejected"] = "approved" if decision == "approve" else "rejected"
@@ -124,19 +100,16 @@ async def apply_confirm_decision(  # pylint: disable=too-many-return-statements
     try:
         await storage.save_pending_command(updated)
     except StorageError as exc:
-        return ConfirmOutcome("error", f"Could not record the decision: {exc}")
+        return ConfirmOutcome(result="error", message=f"Could not record the decision: {exc}")
 
     if status == "approved":
         return ConfirmOutcome(
-            "approved",
-            f"Approved `{pending.command.kind}` — queued for the next daemon poll.",
+            result="approved",
+            message=f"Approved `{pending.command.kind}` — queued for the next daemon poll.",
         )
-    return ConfirmOutcome("rejected", f"Rejected `{pending.command.kind}` — nothing ran.")
+    return ConfirmOutcome(
+        result="rejected", message=f"Rejected `{pending.command.kind}` — nothing ran."
+    )
 
 
-__all__ = (
-    "ConfirmDecision",
-    "ConfirmOutcome",
-    "ConfirmResult",
-    "apply_confirm_decision",
-)
+__all__ = ("apply_confirm_decision",)
