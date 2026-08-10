@@ -1124,6 +1124,60 @@ the detail; the full backlog index is
    `quant` / `risk` / `news` / `arbitrator` / **`gremlin`** — and only quant has
    ever run in production.
 
+   **Post-P3 — news battery + Atlas Cloud provider** ✅ **2026-08-10**
+   (operator-driven). Third role battery plus a multi-model gateway for
+   evaluation.
+
+   **`tools/probe_news.py`** — 12 hand-labelled news windows graded against
+   `news.md`'s own rubric (one lever, `spacing_percentage`; WIDEN or HOLD only;
+   nothing substantive → low confidence + no recommendations; `order_size_usd`
+   and level counts are out-of-lane on EVERY fixture). Deliberately imbalanced
+   **7 hold / 5 widen** so constant-WIDEN caps at 5/12 and constant-HOLD at
+   7/12 — neither degenerate strategy can look competent. Labelled fixtures
+   rather than live headlines because live news has no answer key without
+   waiting for the outcome, which is ADR-035's ledger, not a probe.
+
+   **⚠️ RUBRIC BUG, caught before it was reported as a result.** The first
+   draft graded any `spacing <= current` as TIGHTEN. But a model that restates
+   the CURRENT spacing is expressing a HOLD — and "never tighten" is the single
+   most dangerous news-role failure. The bug scored `qwen3.6:35b-a3b` **5/12**
+   and made it look like a degenerate constant-widen model; corrected, the same
+   run scores **10/12** — a genuinely discriminating reasoner that ignored
+   clickbait, trivia volume, an other-chain exploit and a routine non-event,
+   and widened on all five material events. Its only two errors (widening on
+   bullish news and on a stale resolved incident) are conservative; it never
+   narrowed. **A grader that calls the right answer the worst failure is worse
+   than no grader.** Fixed, and pinned by `tests/tools/test_probe_news_rubric.py`
+   with the bug's origin in the docstring. Fourth wrong-first-read of the
+   session and the first where the fault was the instrument, not a model.
+
+   **Atlas Cloud as a first-class probe provider.** `--provider atlas` on all
+   three batteries, reusing `OpenAIAdvisorAdapter` with a `base_url` override —
+   Atlas is OpenAI-compatible, so no adapter and no dependency were added.
+   Modelled as a named provider rather than a bare `--base-url` flag so the
+   endpoint and key env var can never be mismatched. Verified end-to-end:
+   catalogue 200, authenticated chat 200. **465 models (129 Text)** including
+   `anthropic/claude-opus-5`, `google/gemini-3-flash-preview`, `openai/gpt-5.2`
+   — which resolves the operator's observation that the recorded sweep in
+   `docs/reference/advisor-llm-models.md` tested only superseded Anthropic
+   (4-6/4-7/4-8) and May-vintage Gemini.
+
+   **Debug note worth keeping:** the first Atlas calls returned **403 on an
+   UNAUTHENTICATED endpoint**, which exonerated the key immediately — a public
+   path cannot fail on bad auth. Cause was the WAF rejecting `Python-urllib`;
+   `httpx` (what the adapters actually use) passes on its default User-Agent,
+   so no header plumbing was needed. Model IDs are namespaced
+   (`anthropic/claude-opus-5`), and a wrong id returns `400 "not found"`, not 403.
+
+   **⚠️ Cost-gate caveat, recorded in `.env.example`:** `services/llm_pricing.py`
+   has no entries for Atlas-hosted models, so ADR-014's gate falls back to its
+   heuristic — Atlas spend figures are APPROXIMATE until real per-model prices
+   are recorded. Probes write to an isolated `data/probe_llm_cost.db`, never the
+   operator ledger. Nothing in any daemon reads `ATLASCLOUD_API_KEY`; setting it
+   changes no runtime behaviour.
+
+   Test count 3041 → 3047.
+
    **P3 close audit** ✅ **2026-08-10.** Green: schema-drift 19/19 clean;
    `tools/scan_logging.py --check rule1` exit 0; `domain/` imports zero
    adapters; pylint 10.00 exit 0; mypy strict clean; 3026 tests (2973 at P3
