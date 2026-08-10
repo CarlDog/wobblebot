@@ -31,7 +31,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import notify
+from wobblebot.cli._common import fmt_decimal, notify
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
@@ -92,7 +92,9 @@ async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
         balance = await adapter.get_balance("USD")
     except ExchangeError as exc:
         _LOGGER.warning(
-            "kraken balance read failed",
+            "kraken balance read failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return None
@@ -178,7 +180,9 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     proposal = next((p for p in proposals if p.proposal_id == proposal_id), None)
     if proposal is None:
         _LOGGER.error(
-            "proposal not found in harvest db",
+            "proposal %s not found in harvest db (searched %d)",
+            proposal_id,
+            len(proposals),
             extra={"proposal_id": proposal_id, "searched": len(proposals)},
         )
         return ExecuteOutcome(False, f"Refused: proposal {proposal_id} not found in harvest db.")
@@ -186,7 +190,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     # 2a. Echo validation — the approval must describe THIS proposal.
     if expect_amount is not None and expect_amount != proposal.amount:
         _LOGGER.error(
-            "approved amount does not match the stored proposal; refusing",
+            "refusing %s: approved $%s but the stored proposal is $%s",
+            proposal_id,
+            fmt_decimal(expect_amount),
+            fmt_decimal(proposal.amount),
             extra={
                 "proposal_id": proposal_id,
                 "approved_amount": str(expect_amount),
@@ -214,7 +221,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     )
     if already_submitted is not None:
         _LOGGER.error(
-            "proposal already executed; refusing to double-withdraw",
+            "refusing %s: already executed as %s (status %s) — would double-withdraw",
+            proposal_id,
+            already_submitted.transaction_id,
+            already_submitted.status,
             extra={
                 "proposal_id": proposal_id,
                 "prior_transaction_id": already_submitted.transaction_id,
@@ -238,9 +248,12 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     # direction.
     if proposal.direction != "exchange_to_bank":
         _LOGGER.error(
-            "deposit proposals cannot be executed via the API; "
-            "manually push funds to Kraken using the deposit instructions "
-            "from Kraken Pro → Funding → Deposit",
+            "refusing %s (%s $%s %s): deposits cannot be executed via the API — "
+            "push funds from your bank using Kraken Pro -> Funding -> Deposit",
+            proposal_id,
+            proposal.direction,
+            fmt_decimal(proposal.amount),
+            proposal.asset,
             extra={
                 "proposal_id": proposal_id,
                 "direction": proposal.direction,
@@ -260,7 +273,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
     if age > max_age:
         _LOGGER.error(
-            "proposal is stale; refusing — generate a fresh one before --execute",
+            "refusing %s: %.2fh old exceeds the %dh limit — generate a fresh proposal",
+            proposal_id,
+            round(age.total_seconds() / 3600, 2),
+            config.harvester.proposal_max_age_hours,
             extra={
                 "proposal_id": proposal_id,
                 "age_hours": round(age.total_seconds() / 3600, 2),
@@ -277,8 +293,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     destination = config.harvester.withdrawal_destinations.get(proposal.asset)
     if not destination:
         _LOGGER.error(
-            "asset has no destination label in HarvesterConfig.withdrawal_destinations; "
-            "operator must add a Kraken Pro destination label first",
+            "refusing: no withdrawal destination configured for %s (configured: %s) — "
+            "add a Kraken Pro destination label to harvester.withdrawal_destinations",
+            proposal.asset,
+            sorted(config.harvester.withdrawal_destinations),
             extra={
                 "asset": proposal.asset,
                 "configured_assets": sorted(config.harvester.withdrawal_destinations),
@@ -296,7 +314,11 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     # now resolves the asset elsewhere, the approval is stale.
     if expect_destination is not None and expect_destination != destination:
         _LOGGER.error(
-            "approved destination does not match the configured one; refusing",
+            "refusing %s: approved destination %r but %s now resolves to %r",
+            proposal_id,
+            expect_destination,
+            proposal.asset,
+            destination,
             extra={
                 "proposal_id": proposal_id,
                 "approved_destination": expect_destination,
@@ -319,7 +341,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
         )
     if current_balance < proposal.amount:
         _LOGGER.error(
-            "current exchange balance below proposed withdrawal amount; refusing",
+            "refusing %s: exchange balance $%s is below the proposed $%s",
+            proposal_id,
+            fmt_decimal(current_balance),
+            fmt_decimal(proposal.amount),
             extra={
                 "current_balance_usd": str(current_balance),
                 "proposal_amount_usd": str(proposal.amount),
@@ -335,7 +360,11 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
     if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
         _LOGGER.error(
-            "executing would push today's total over max_withdrawal_per_day_usd; refusing",
+            "refusing %s: $%s would push today's withdrawals ($%s) past the $%s daily cap",
+            proposal_id,
+            fmt_decimal(proposal.amount),
+            fmt_decimal(today_total),
+            fmt_decimal(config.harvester.max_withdrawal_per_day_usd),
             extra={
                 "today_total_usd": str(today_total),
                 "proposal_amount_usd": str(proposal.amount),
@@ -367,7 +396,12 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
         )
     except ExchangeError as exc:
         _LOGGER.error(
-            "kraken /Withdraw rejected the request",
+            "kraken /Withdraw REJECTED %s ($%s %s): %s: %s — no money moved",
+            proposal.proposal_id,
+            fmt_decimal(proposal.amount),
+            proposal.asset,
+            type(exc).__name__,
+            exc,
             extra={
                 "proposal_id": proposal.proposal_id,
                 "error": str(exc),
@@ -391,7 +425,9 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             )
         except StorageError as persist_exc:
             _LOGGER.error(
-                "failed to persist failure audit row",
+                "failed to persist the failure audit row for %s: %s",
+                proposal.proposal_id,
+                persist_exc,
                 extra={"error": str(persist_exc)},
             )
         # Stage 5.5: surface the failure to the operator's Discord.
@@ -432,8 +468,11 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
         # refid is in the log so the operator can reconcile manually
         # from Kraken Pro.
         _LOGGER.error(
-            "WITHDRAWAL SUBMITTED but audit row persistence failed — "
-            "reconcile manually from Kraken Pro using the refid below",
+            "WITHDRAWAL SUBMITTED (refid %s, proposal %s) but the audit row failed to "
+            "persist: %s — reconcile manually from Kraken Pro",
+            refid,
+            proposal.proposal_id,
+            exc,
             extra={
                 "refid": refid,
                 "proposal_id": proposal.proposal_id,

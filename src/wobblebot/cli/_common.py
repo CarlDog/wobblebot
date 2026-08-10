@@ -39,6 +39,7 @@ import signal
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn, Protocol, TypeVar
 
@@ -141,6 +142,32 @@ def parse_symbol_csv(raw: str) -> list[str]:
 def identity(value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
+
+
+def fmt_decimal(value: Decimal) -> str:
+    """Render a ``Decimal`` the way an operator reads it, not as stored.
+
+    Storage and Kraken hand back full-scale values, so a plain ``%s``
+    prints ``342.18000000`` for a $342.18 withdrawal and — worse —
+    ``1E+2`` for a round $100, because ``Decimal`` keeps exponent form.
+    Money lines are exactly where a number must be scannable at a
+    glance, and E-notation in a withdrawal log is a genuine misread
+    risk.
+
+    Trailing zeros are stripped WITHOUT forcing a fixed scale, so this
+    is safe for both USD (``342.18``) and asset amounts (``0.00008428``)
+    — quantizing to 2dp would render a real BTC quantity as ``0.00``.
+
+    Display only. Never use this for anything that feeds arithmetic,
+    persistence, or an exchange call — the value is unchanged, only
+    its rendering.
+    """
+    normalized = value.normalize()
+    # normalize() produces exponent form for integral values (100 ->
+    # 1E+2); re-quantizing to exponent 0 restores plain digits.
+    if normalized.as_tuple().exponent > 0:  # type: ignore[operator]
+        normalized = normalized.quantize(Decimal(1))
+    return f"{normalized:f}"
 
 
 def parse_date_arg(raw: str) -> datetime:
@@ -339,7 +366,9 @@ async def notify(  # pylint: disable=too-many-arguments
         )
     except WobbleBotPortError as exc:
         _NOTIFY_LOGGER.warning(
-            "notification emit failed; continuing",
+            "notification emit failed for %r: %s — continuing",
+            title,
+            exc,
             extra={"title": title, "error": str(exc)},
         )
 
@@ -459,14 +488,20 @@ async def partition_or_exit(
         known, unknown = await adapter.partition_known_symbols(symbols)
     except WobbleBotPortError as exc:
         logger.error(
-            "Kraken AssetPairs fetch failed at startup",
+            "Kraken AssetPairs fetch failed at startup: %s: %s — "
+            "cannot validate the configured symbols",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc)},
         )
         await safe_shutdown(cleanups, logger=logger)
         return 2
     if unknown:
         logger.warning(
-            "Kraken does not list these symbols; per-tick polls will fail",
+            "Kraken does not list %d configured symbol(s): %s — per-tick polls "
+            "for them will fail",
+            len(unknown),
+            ", ".join(str(s) for s in unknown),
             extra={"unknown": [str(s) for s in unknown]},
         )
     if not known:
@@ -603,7 +638,10 @@ async def safe_shutdown(
                 await cleanup()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 log.warning(
-                    "shutdown phase raised; continuing",
+                    "shutdown phase %r raised %s: %s — continuing",
+                    name,
+                    type(exc).__name__,
+                    exc,
                     extra={"phase": name, "error": str(exc)},
                 )
         current_phase[0] = "done"
@@ -612,7 +650,9 @@ async def safe_shutdown(
         await asyncio.wait_for(_run_all(), timeout=timeout_seconds)
     except asyncio.TimeoutError:
         log.warning(
-            "shutdown hung beyond timeout; forcing exit",
+            "shutdown hung in phase %r beyond %.1fs; forcing exit",
+            current_phase[0],
+            timeout_seconds,
             extra={"phase": current_phase[0], "timeout_seconds": timeout_seconds},
         )
         # Flush stdio so the WARNING actually reaches the operator's

@@ -67,7 +67,33 @@ had real diagnostic cost.
 
 Installment 1 (2026-08-09) enriched the engine path — `grid_engine`,
 `reconciler`, `cost_basis` — the tail the operator actually watches
-during live trading. Remaining modules (adapters, other services,
-cli, web) get the same pass in later installments; new code follows
-these rules from day one. Message-prefix pin tests live in
-`tests/services/test_grid_engine.py::TestPartialGridPlacementLogging`.
+during live trading.
+
+Installment 2 (2026-08-10) took the **always-on daemons and the money
+path**, at the severities an operator acts on (WARNING / ERROR /
+EXCEPTION): `cli/harvest_execute` (every withdrawal refusal now names
+the proposal and the numbers), `cli/harvest`, `cli/live`,
+`cli/operator`, and `cli/_common`'s shared lifecycle. Scope was chosen
+by asking "if this fires at 3am, can the operator act on the line
+alone?" — which is why the one-shot CLIs (`preflight`, `recalibrate`,
+`apply`, `shadow`) and the web routes wait for installment 3, along
+with the INFO/DEBUG tier everywhere.
+
+A rule-1 violation has a **mechanical signature** — a static message
+paired with a non-empty `extra=` — so it is greppable rather than a
+matter of taste. That scan counted 239 before installment 2 and 165
+after; the remainder is the deliberate scope boundary above, not
+backlog rot. Re-run it before starting installment 3.
+
+Installment 2 also added `cli/_common.fmt_decimal` (a rule-1
+corollary): storage and Kraken return full-scale Decimals, so `%s`
+printed `342.18000000` for a $342.18 withdrawal and — worse — `1E+2`
+for a round $100. Money lines are exactly where a number must be
+scannable at a glance, and E-notation in a withdrawal log is a real
+misread risk. It strips trailing zeros WITHOUT forcing a scale, so it
+stays honest for asset amounts (a 2dp quantize would render a live BTC
+quantity as `0.00`).
+
+New code follows these rules from day one. Message-prefix pin tests
+live in `tests/services/test_grid_engine.py::TestPartialGridPlacementLogging`;
+`fmt_decimal` is pinned by `tests/cli/test_common_fmt_decimal.py`.

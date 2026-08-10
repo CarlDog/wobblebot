@@ -134,7 +134,11 @@ async def _forward_pending_notifications(
     try:
         rows = await storage.get_notifications(forwarded=False)
     except StorageError as exc:
-        _LOGGER.warning("forwarder: get_notifications failed", extra={"error": str(exc)})
+        _LOGGER.warning(
+            "forwarder: get_notifications failed: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 0
     forwarded = 0
     # Rows arrive newest-first (port contract); post oldest-first so the
@@ -154,7 +158,11 @@ async def _forward_pending_notifications(
             forwarded += 1
         except (DiscordTransportError, StorageError) as exc:
             _LOGGER.warning(
-                "forwarder: per-row forward failed; will retry next poll",
+                "forwarder: per-row forward failed; will retry next poll (notification_id=%s, "
+                "level=%s): %s",
+                row.id,
+                row.notification.level,
+                exc,
                 extra={
                     "notification_id": row.id,
                     "level": row.notification.level,
@@ -217,7 +225,11 @@ async def _expire_stale_pending_commands(storage: StoragePort) -> int:
     try:
         rows = await storage.get_pending_commands(status="awaiting_confirmation")
     except StorageError as exc:
-        _LOGGER.warning("ttl_expirer: get_pending_commands failed", extra={"error": str(exc)})
+        _LOGGER.warning(
+            "ttl_expirer: get_pending_commands failed: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 0
     now = datetime.now(UTC)
     expired_count = 0
@@ -238,7 +250,9 @@ async def _expire_stale_pending_commands(storage: StoragePort) -> int:
             )
         except StorageError as exc:
             _LOGGER.warning(
-                "ttl_expirer: per-row update failed",
+                "ttl_expirer: per-row update failed (pending_id=%s): %s",
+                row.id,
+                exc,
                 extra={"pending_id": str(row.id), "error": str(exc)},
             )
     return expired_count
@@ -549,7 +563,9 @@ async def _backfill_history_for_channel(
         history = await transport.fetch_channel_history(channel_id, limit=limit)
     except DiscordTransportError as exc:
         _LOGGER.warning(
-            "history backfill: fetch_channel_history failed",
+            "history backfill: fetch_channel_history failed (channel_id=%s): %s",
+            channel_id,
+            exc,
             extra={"channel_id": channel_id, "error": str(exc)},
         )
         return 0
@@ -560,7 +576,10 @@ async def _backfill_history_for_channel(
             recent = await storage.get_conversation_turns(channel_id, user_id, limit=1)
         except StorageError as exc:
             _LOGGER.warning(
-                "history backfill: get_conversation_turns failed",
+                "history backfill: get_conversation_turns failed (channel_id=%s, user_id=%s): %s",
+                channel_id,
+                user_id,
+                exc,
                 extra={"channel_id": channel_id, "user_id": user_id, "error": str(exc)},
             )
             continue
@@ -584,7 +603,9 @@ async def _backfill_history_for_channel(
                 inserted += 1
             except StorageError as exc:
                 _LOGGER.warning(
-                    "history backfill: save_conversation_turn failed",
+                    "history backfill: save_conversation_turn failed (turn_id=%s): %s",
+                    turn.id,
+                    exc,
                     extra={"turn_id": str(turn.id), "error": str(exc)},
                 )
     return inserted
@@ -682,7 +703,9 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         await operator_storage.save_conversation_turn(operator_turn)
     except StorageError as exc:
         _LOGGER.error(
-            "failed to persist inbound operator turn; aborting parse",
+            "failed to persist inbound operator turn; aborting parse (channel_id=%s): %s",
+            message.channel_id,
+            exc,
             extra={"channel_id": message.channel_id, "error": str(exc)},
         )
         return
@@ -698,7 +721,9 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         )
     except StorageError as exc:
         _LOGGER.warning(
-            "failed to read recent turns; proceeding without history",
+            "failed to read recent turns; proceeding without history (channel_id=%s): %s",
+            message.channel_id,
+            exc,
             extra={"channel_id": message.channel_id, "error": str(exc)},
         )
         recent = []
@@ -741,7 +766,9 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         await operator_storage.save_conversation_turn(parsed_turn)
     except StorageError as exc:
         _LOGGER.warning(
-            "failed to upsert operator turn with parsed intent",
+            "failed to upsert operator turn with parsed intent (turn_id=%s): %s",
+            operator_turn.id,
+            exc,
             extra={"turn_id": str(operator_turn.id), "error": str(exc)},
         )
 
@@ -818,7 +845,11 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
                 outbound_channel_id=outbound_channel_id,
             )
         case _:
-            _LOGGER.error("unknown intent variant", extra={"intent_kind": type(intent).__name__})
+            _LOGGER.error(
+                "unknown intent variant (intent_kind=%s)",
+                type(intent).__name__,
+                extra={"intent_kind": type(intent).__name__},
+            )
 
 
 async def _handle_command_intent(  # pylint: disable=too-many-arguments
@@ -848,7 +879,9 @@ async def _handle_command_intent(  # pylint: disable=too-many-arguments
         await operator_storage.save_pending_command(pending)
     except StorageError as exc:
         _LOGGER.error(
-            "failed to persist pending command; abandoning",
+            "failed to persist pending command; abandoning (command_kind=%s): %s",
+            intent.command.kind,
+            exc,
             extra={"command_kind": intent.command.kind, "error": str(exc)},
         )
         await _safe_send_message(
@@ -865,7 +898,9 @@ async def _handle_command_intent(  # pylint: disable=too-many-arguments
         )
     except DiscordTransportError as exc:
         _LOGGER.error(
-            "failed to post confirmation embed",
+            "failed to post confirmation embed (pending_id=%s): %s",
+            pending.id,
+            exc,
             extra={"pending_id": str(pending.id), "error": str(exc)},
         )
         return
@@ -911,7 +946,9 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
         )
     except OperatorError as exc:
         _LOGGER.error(
-            "query dispatch failed",
+            "query dispatch failed (query_kind=%s): %s",
+            intent.query.kind,
+            exc,
             extra={"query_kind": intent.query.kind, "error": str(exc)},
         )
         await _safe_send_message(
@@ -926,7 +963,11 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
     try:
         await transport.send_embed(outbound_channel_id, **embed_kwargs)
     except DiscordTransportError as exc:
-        _LOGGER.error("failed to post query result", extra={"error": str(exc)})
+        _LOGGER.error(
+            "failed to post query result: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
 
     assistant_reply = ConversationTurn(
         id=uuid4(),
@@ -997,7 +1038,11 @@ async def _safe_send_message(transport: DiscordTransport, channel_id: str, conte
     try:
         await transport.send_message(channel_id, content)
     except DiscordTransportError as exc:
-        _LOGGER.error("send_message failed", extra={"error": str(exc)})
+        _LOGGER.error(
+            "send_message failed: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
 
 
 async def _safe_add_reaction(
@@ -1008,7 +1053,10 @@ async def _safe_add_reaction(
         await transport.add_reaction(channel_id, message_id, emoji)
     except DiscordTransportError as exc:
         _LOGGER.warning(
-            "add_reaction failed",
+            "add_reaction failed (channel_id=%s, message_id=%s): %s",
+            channel_id,
+            message_id,
+            exc,
             extra={"channel_id": channel_id, "message_id": message_id, "error": str(exc)},
         )
 
@@ -1019,7 +1067,9 @@ async def _safe_save_turn(storage: StoragePort, turn: ConversationTurn) -> None:
         await storage.save_conversation_turn(turn)
     except StorageError as exc:
         _LOGGER.error(
-            "failed to save conversation turn",
+            "failed to save conversation turn (turn_id=%s): %s",
+            turn.id,
+            exc,
             extra={"turn_id": str(turn.id), "error": str(exc)},
         )
 
@@ -1141,7 +1191,11 @@ def _build_assistant(  # pylint: disable=too-many-return-statements
     # "ollama", "anthropic", "openai", "google"] for Stage 6.4 (every
     # Phase 6 provider closed); widening it without adding the matching
     # branch would surface here at runtime.
-    _LOGGER.error("unknown assistant provider", extra={"provider": asst_cfg.provider})
+    _LOGGER.error(
+        "unknown assistant provider (provider=%s)",
+        asst_cfg.provider,
+        extra={"provider": asst_cfg.provider},
+    )
     return None
 
 
@@ -1192,7 +1246,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
 
     if operator_cfg.auth.outbound_channel_id not in operator_cfg.auth.allowed_channel_ids:
         _LOGGER.error(
-            "operator.auth.outbound_channel_id must be in allowed_channel_ids",
+            "operator.auth.outbound_channel_id must be in allowed_channel_ids "
+            "(outbound_channel_id=%s, allowed_channel_ids=%s)",
+            operator_cfg.auth.outbound_channel_id,
+            sorted(operator_cfg.auth.allowed_channel_ids),
             extra={
                 "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
                 "allowed_channel_ids": sorted(operator_cfg.auth.allowed_channel_ids),
@@ -1207,7 +1264,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         await operator_storage.connect()
     except StorageError as exc:
         _LOGGER.error(
-            "failed to open operator db",
+            "failed to open operator db (path=%s): %s",
+            operator_cfg.operator_db,
+            exc,
             extra={"path": operator_cfg.operator_db, "error": str(exc)},
         )
         return 2
@@ -1220,7 +1279,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             await live_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open live db; queries needing it will return empty",
+                "failed to open live db; queries needing it will return empty (path=%s): %s",
+                operator_cfg.live_db,
+                exc,
                 extra={"path": operator_cfg.live_db, "error": str(exc)},
             )
             live_storage = None
@@ -1237,7 +1298,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             await observe_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open observe db; status balance will report 0",
+                "failed to open observe db; status balance will report 0 (path=%s): %s",
+                operator_cfg.observe_db,
+                exc,
                 extra={"path": operator_cfg.observe_db, "error": str(exc)},
             )
             observe_storage = None
@@ -1254,7 +1317,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             await advise_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open advise db; recent_suggestions queries will be empty",
+                "failed to open advise db; recent_suggestions queries will be empty (path=%s): %s",
+                operator_cfg.advise_db,
+                exc,
                 extra={"path": operator_cfg.advise_db, "error": str(exc)},
             )
             advise_storage = None
@@ -1266,7 +1331,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             await news_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open news db; recent_news queries will be empty",
+                "failed to open news db; recent_news queries will be empty (path=%s): %s",
+                operator_cfg.news_db,
+                exc,
                 extra={"path": operator_cfg.news_db, "error": str(exc)},
             )
             news_storage = None
@@ -1278,7 +1345,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             await harvest_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open harvest db; harvester queries will be empty",
+                "failed to open harvest db; harvester queries will be empty (path=%s): %s",
+                operator_cfg.harvest_db,
+                exc,
                 extra={"path": operator_cfg.harvest_db, "error": str(exc)},
             )
             harvest_storage = None
@@ -1288,7 +1357,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
     except (FileNotFoundError, ValueError) as exc:
         _LOGGER.error(
-            "failed to load operator prompt",
+            "failed to load operator prompt (path=%s): %s",
+            operator_cfg.assistant.prompt_file,
+            exc,
             extra={"path": operator_cfg.assistant.prompt_file, "error": str(exc)},
         )
         await operator_storage.close()
@@ -1461,7 +1532,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         await stop_event.wait()
         await _close_transport_with_cap(transport, gateway_task)
     except DiscordTransportError as exc:
-        _LOGGER.error("discord transport failed; exiting", extra={"error": str(exc)})
+        _LOGGER.error(
+            "discord transport failed; exiting: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         exit_code = 1
     finally:
         stop_event.set()

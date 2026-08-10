@@ -114,7 +114,10 @@ async def _run_cycle(
             today_total = await compute_today_total_withdrawn_usd(storage, asset="USD")
         except StorageError as exc:
             _LOGGER.warning(
-                "harvest tick: today-total fetch failed; treating as 0",
+                "harvest tick: today-total fetch failed (%s: %s); treating as $0 — "
+                "the day-cap gate runs on an optimistic number this tick",
+                type(exc).__name__,
+                exc,
                 extra={"error": str(exc), "error_type": type(exc).__name__},
             )
 
@@ -183,7 +186,10 @@ async def _run_cycle(
             # worse than killing the loop. Operator will see the
             # error and can investigate.
             _LOGGER.warning(
-                "transfer proposal persistence failed",
+                "transfer proposal %s failed to persist (%s: %s)",
+                proposal.proposal_id,
+                type(exc).__name__,
+                exc,
                 extra={
                     "proposal_id": proposal.proposal_id,
                     "error": str(exc),
@@ -313,14 +319,16 @@ async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig)
         can_withdraw: bool | None = await adapter.has_withdraw_scope()
     except ExchangeError as exc:
         _LOGGER.warning(
-            "could not verify Harvester key withdraw scope (transient); continuing",
+            "could not verify Harvester key withdraw scope (transient): %s — continuing",
+            exc,
             extra={"error": str(exc)},
         )
         can_withdraw = None
     if can_withdraw is False:
         _LOGGER.error(
-            "Harvester key lacks Kraken Withdraw scope — refusing to start "
-            "(ADR-003); mint a Harvester key with the Withdraw Funds permission",
+            "Harvester key in %s lacks Kraken Withdraw scope — refusing to start "
+            "(ADR-003); mint a key with the Withdraw Funds permission",
+            config.harvester.api_key_env_var,
             extra={"key_env_var": config.harvester.api_key_env_var},
         )
         return 3
@@ -387,7 +395,9 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             await storage.connect()
         except StorageError as exc:
             _LOGGER.error(
-                "failed to open harvest db",
+                "failed to open harvest db at %s: %s",
+                config.harvest.db,
+                exc,
                 extra={"path": config.harvest.db, "error": str(exc)},
             )
             storage = None
@@ -409,7 +419,9 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             )
         except StorageError as exc:
             _LOGGER.error(
-                "failed to open operator db; notifications disabled",
+                "failed to open operator db at %s: %s — notifications disabled",
+                config.harvest.operator_db,
+                exc,
                 extra={"path": config.harvest.operator_db, "error": str(exc)},
             )
             operator_storage = None
