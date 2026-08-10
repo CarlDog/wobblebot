@@ -880,6 +880,34 @@ the detail; the full backlog index is
    composite for a raster capture). Real-money cost $0.00.
    Test count 2973 → 2997.
 
+   **Slice 20 — Today's PnL: realization-day vs earning-day** ✅ **2026-08-10**:
+   built to the design note's recommended **option 2** (annotate per cycle), NOT
+   option 1 (re-bucket the headline). `RecentCycle` gains `pairing_method`
+   (`engine_counter` | `fallback`, set by whichever heuristic actually fired in
+   the matcher loop), a `hold_duration` property, and `is_long_hold` against a
+   24h `LONG_HOLD_THRESHOLD`. Recent Cycles renders two **independent** tags by
+   the timestamp: **"held 3d 0h"** (this row's PnL is mostly multi-day drift,
+   not grid spread) and **"inferred"** (no same-size counter existed, so which
+   BUY it closed is an inference — pre-engine inventory, manual fills, or a
+   counter canceled by a cap trip / re-anchor). Independence is pinned: a real
+   counter pair that merely took days to fill is long-hold but NOT inferred.
+   **Zero change to the money math** — a test asserts `net_pnl` and
+   `today_realized_pnl` are identical with the annotation in place; this slice
+   is presentation only. Reused the existing `humanize_duration` Jinja filter
+   instead of adding a near-twin. Threshold is a display heuristic, deliberately
+   not a correctness boundary — nothing branches on it but the tag.
+   **Option 1 deliberately NOT promoted.** The design note gates it on "if the
+   headline keeps producing confusion," which is an operator preference call,
+   and the discriminator this slice adds is exactly what it would need
+   (`today_realized_pnl` takes a `pairing_filter`). Evidence captured for
+   whoever makes that call: in a seeded preview reproducing the 2026-05-26 shape
+   next to three normal cycles, the headline reads **+$0.5691 "today's PnL"**
+   when the grid earned ~$0.22 today and $0.3460 was three days of drift. The
+   annotation now says so on the row; the headline still doesn't.
+   Verified in a browser — the outlier carries both tags, the slow-but-real
+   pair carries only "held 2d 0h", and the three normal cycles stay unadorned.
+   Real-money cost $0.00. Test count 2997 → 3006.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
