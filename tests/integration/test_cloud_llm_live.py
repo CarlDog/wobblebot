@@ -83,9 +83,34 @@ def _summary() -> PerformanceSummary:
     )
 
 
+# Output caps. These are NOT "small enough to be cheap" — they are "big
+# enough for a valid answer", which is a different question and the one
+# that actually matters.
+#
+# quant.md requires `rationale` FIRST (up to 4 sentences) then
+# `recommendations`, so a complete response runs ~125 completion tokens.
+# The original 100 predates that prompt: the prompt grew, the cap didn't,
+# and by 2026-08-10 all three providers were returning
+# finish_reason="length" mid-rationale. Raising the cap costs nothing on
+# its own — billing is per token PRODUCED, and a non-thinking model still
+# stops at ~125.
+_MAX_TOKENS = 1024
+
+# Gemini 2.5+ runs thinking by default and thinking tokens are charged
+# against the SAME budget, so the answer only gets what reasoning leaves.
+# Measured 2026-08-10 on gemini-2.5-flash: at a 1024 cap thinking took
+# 980 and the answer was truncated at 40; at 4096 thinking took 1487 and
+# the answer completed. The budget is dynamic — it expands to fill what
+# it is given — so this needs real headroom, not a tuned-to-the-edge
+# number. Costs ~1.5k extra output tokens per run (fractions of a cent).
+_MAX_TOKENS_THINKING = 4096
+
+
 def _common_kwargs(
     storage: SQLiteStorageAdapter,
     tracker: SessionCostTracker,
+    *,
+    max_tokens: int = _MAX_TOKENS,
 ) -> dict[str, object]:
     return {
         "prompt": _quant_prompt(),
@@ -98,7 +123,7 @@ def _common_kwargs(
             enforce=True,
         ),
         "retry_config": LLMRetryConfig(max_retries=2, initial_backoff_seconds=1.0),
-        "max_tokens": 100,
+        "max_tokens": max_tokens,
     }
 
 
@@ -170,7 +195,8 @@ async def test_google_live(storage: SQLiteStorageAdapter) -> None:
     adapter = GoogleAdvisorAdapter(
         model="gemini-2.5-flash",
         api_key=os.environ["GOOGLE_API_KEY"],
-        **_common_kwargs(storage, tracker),  # type: ignore[arg-type]
+        # Thinking model — see _MAX_TOKENS_THINKING.
+        **_common_kwargs(storage, tracker, max_tokens=_MAX_TOKENS_THINKING),  # type: ignore[arg-type]
     )
     try:
         await adapter.get_recommendation(_summary())

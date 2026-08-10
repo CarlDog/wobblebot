@@ -86,6 +86,10 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Clearer error when a model reply is cut off.** A truncated JSON response now
+  says so — and points at the output-token cap — instead of reporting the same
+  "no parseable JSON" message used when a model ignores the schema entirely.
+  The two need opposite fixes.
 - **A decided Discord confirmation now looks decided.** Approving or rejecting
   rewrites the card itself — green "Approved", grey "Rejected", amber "Not
   applied" when the decision arrived too late to take effect — instead of

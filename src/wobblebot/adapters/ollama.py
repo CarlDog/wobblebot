@@ -122,11 +122,35 @@ def extract_last_json_object(text: str) -> dict[str, Any]:
         else:
             i += 1
     if not candidates:
-        raise OllamaJsonExtractError(
-            f"Thinking-mode model returned no parseable JSON object "
-            f"in {len(text)} chars of output"
-        )
+        raise OllamaJsonExtractError(_no_json_message(text))
     return candidates[-1]
+
+
+def _no_json_message(text: str) -> str:
+    """Explain WHY no object parsed — truncation reads very differently.
+
+    An opening ``{`` with nothing that closes it is the signature of a
+    response cut off at the output-token cap, not of a model that
+    ignored the schema. Those two failures need opposite responses
+    (raise the cap vs. fix the prompt), and the old message — "no
+    parseable JSON object in N chars" — described both identically.
+
+    Cost a real diagnosis on 2026-08-10: three live cloud tests failed
+    this way and read as provider drift; the actual cause was an output
+    cap the prompt had outgrown, and for Gemini 2.5 a thinking budget
+    that consumed 980 of 1024 tokens before any answer was emitted.
+    """
+    opener = text.find("{")
+    if opener == -1:
+        return (
+            f"Model returned no JSON object at all in {len(text)} chars of output "
+            f"(no '{{' present) — the response ignored the schema."
+        )
+    return (
+        f"Model returned an UNTERMINATED JSON object in {len(text)} chars of output "
+        f"— the response looks truncated. Raise the output-token cap; on "
+        f"thinking-capable models the cap must cover reasoning AND the answer."
+    )
 
 
 class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attributes
