@@ -671,6 +671,24 @@ the detail; the full backlog index is
    later installments — per-module commits as planned. Zero behavior
    change. Test count 2864 (log-text only).
 
+   **Slice 10 — LLM health on /health + cold-start parse-timeout fix** ✅
+   **2026-08-09** (the LLM subsystem pair): (a) new `services/llm_health.py`
+   — `LLMHealthChecker` mirroring the Kraken probe (TTL cache on app.state,
+   lock-serialized) probing only what's configured via each provider's
+   cheapest NON-BILLABLE endpoint (Ollama `/api/tags`; Anthropic/OpenAI
+   models-list; Google via the `x-goog-api-key` HEADER — keys never ride
+   URLs); empty-string env keys count as unset (the MCP-host lesson);
+   /health gains an "LLM Endpoints" card and an unhealthy endpoint pulls
+   the overall dot to YELLOW, never RED (LLMs are advisory infrastructure
+   per ADR-002); 401/403 says "key rejected (rotated?)". (b) Finding 3
+   CLOSED: `_post_and_extract` raises a `_OllamaReadTimeoutRetry` marker on
+   `httpx.ReadTimeout` and `_request_with_retry` grants it the same
+   one-retry treatment as empty-content — the live-verified cold-start case
+   (server finishes full prompt eval just after the client gives up; the
+   retry rides the warm KV cache, ~26s) becomes a slow success instead of
+   "Sorry, I couldn't process that"; a second timeout surfaces as a real
+   outage. Test count 2864 → 2874.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
