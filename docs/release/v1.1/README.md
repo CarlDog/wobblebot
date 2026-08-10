@@ -507,14 +507,27 @@ re-anchor command) — **written** in `decisions.md` (2026-06-05). See the P2 cr
 
 ## P4 — Advisor-feedback cluster (data-gated, 30–90d post-tag)
 
-**Goal:** once enough applied-recommendation data exists to compute meaningful outcomes, build
-the advisor feedback loop and the consumers it gates. **Schedulable only when the clock
-matures**; until then it sits parked. Auto-action consumers remain firewalled behind their own
-ADRs.
+**Goal:** build the advisor feedback loop and the consumers it gates. Auto-action consumers
+remain firewalled behind their own ADRs.
+
+> **Gate changed 2026-08-10 — see ADR-035.** This cluster used to read "schedulable only when
+> the applied-rec clock matures." That clock was **never running**: `applied_suggestions` was
+> measured at **0 rows, ever**, `cli/apply` is a manual one-shot with no service in the stack,
+> and the `/advisor` page has no Apply button (deferred by ADR-034's scope note). Scoring is
+> now **counterfactual** — replay the proposed config and the config-in-force through the
+> ADR-028 auditor from the same seed, and score the sign of the difference. The unit is
+> **rank and hit-rate, never dollars** (the auditor is directional, not exact).
+>
+> **The keystone is therefore no longer data-gated** — 2586 suggestions spanning 2026-05-27 →
+> 2026-08-10 are already scoreable. Two constraints carry forward: the corpus is
+> `heuristic` 2390 / `quant` 196 with no other roles (production has only ever run the ADR-022
+> cascade, never MoE), and those two are the router's branches rather than competitors — the
+> LLM only sees ticks the guards declined, so a naive side-by-side hit-rate would be a
+> confident wrong answer. A real per-expert panel needs MoE switched on first.
 
 | Slice | Effort | Value | Notes |
 |---|---|---|---|
-| **Advisor outcome tracking** *(keystone)* | XL | high | `recommendation_outcomes` table + `advisor_evaluator` + per-model/per-role scoreboard. Needs 30–90d of applied-rec data **and an operator "success" definition**. |
+| **Advisor outcome tracking** *(keystone)* | XL | high | `recommendation_outcomes` table + `advisor_evaluator` + scoreboard. **No longer data-gated (ADR-035):** scoring is counterfactual via the ADR-028 replay, the corpus already exists, and the success definition is settled — **rank + hit-rate, never dollars**. Ships with per-cycle tracing (one migration). Scope note: two roles only until MoE runs; never print a naive heuristic-vs-quant ranking (router bias). |
 | **Chaos Gremlin advisor** *(loose-reasoning, scored-not-applied)* | M | med-high | Standalone observe-and-score voice: same inputs, loose logic; own `gremlin` role in `_BLOCKED_ROLES`, **not** arbitrator-fed (avoids the `role="aggregated"` news-laundering hole). Emits a falsifiable directional call → cleanest first customer for the outcome ledger. **Role buildable in v1.1 with MoE-on for the 1.1 soak; scoreboard rides the keystone.** Detail in `adaptive-grid.md`. |
 | Per-cycle LLM call tracing | S | low-med | `trace_id` on `llm_calls` + "by cycle" `/cost` toggle. **Shares the outcome-tracking migration — ship together.** |
 | Auditor — rec-scoring half | M | high | Score past advisor recs vs realized outcomes. Needs the outcome ledger + the P2 config-replay half. |
