@@ -547,3 +547,101 @@ class TestCommandWatch:
         resp = client.get(f"/commands/{uuid4()}/watch")
         assert resp.status_code == 200
         assert "Command not found" in resp.text
+
+
+# --------------------------------------------------------------------- #
+# Modal flow (P3 modal layer — htmx progressive enhancement)             #
+# --------------------------------------------------------------------- #
+
+
+class TestModalFlow:
+    _HX = {"HX-Request": "true"}
+
+    def test_htmx_create_returns_modal_confirm_not_redirect(self, client: TestClient) -> None:
+        login_as(client)
+        form = client.get("/commands/pause")
+        token = csrf_from(form.text)
+        resp = client.post(
+            "/commands/pause",
+            data={"symbol": "BTC/USD", "csrf_token": token},
+            headers=self._HX,
+        )
+        assert resp.status_code == 200  # partial, not a 303
+        assert "modal-card" in resp.text
+        assert "/confirm" in resp.text  # approve/reject hx-post target
+        assert "data-modal-close" in resp.text
+
+    def test_htmx_create_covers_every_verb(self, client: TestClient) -> None:
+        """Pylint caught an undefined `prefs` on a path no test hit —
+        every verb's htmx branch gets exercised now."""
+        login_as(client)
+        token = csrf_from(client.get("/commands/pause").text)
+        for verb in ("pause", "resume", "reanchor"):
+            resp = client.post(
+                f"/commands/{verb}",
+                data={"symbol": "BTC/USD", "csrf_token": token},
+                headers=self._HX,
+            )
+            assert resp.status_code == 200, verb
+            assert "modal-card" in resp.text, verb
+        stop = client.post("/commands/stop", data={"csrf_token": token}, headers=self._HX)
+        assert stop.status_code == 200
+        assert "modal-card" in stop.text
+
+    def test_htmx_approve_returns_modal_watch_with_ctx(self, client: TestClient) -> None:
+        login_as(client)
+        form = client.get("/commands/pause")
+        token = csrf_from(form.text)
+        create = client.post(
+            "/commands/pause",
+            data={"symbol": "BTC/USD", "csrf_token": token},
+            headers=self._HX,
+        )
+        pid = re.search(r"/commands/([0-9a-f-]+)/confirm", create.text).group(1)  # type: ignore[union-attr]
+        resp = client.post(
+            f"/commands/{pid}/confirm",
+            data={"decision": "approve", "csrf_token": token},
+            headers=self._HX,
+        )
+        assert resp.status_code == 200
+        assert "modal-card" in resp.text
+        assert "waiting for cli/live" in resp.text
+        assert f"/commands/{pid}/watch?ctx=modal" in resp.text  # ctx survives the poll
+
+    @pytest.mark.asyncio
+    async def test_modal_watch_terminal_refreshes_the_status_card(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from wobblebot.domain.value_objects import Symbol, Timestamp
+        from wobblebot.ports.operator import CommandResult, PauseCommand, PendingCommand
+
+        now = Timestamp(dt=datetime.now(UTC))
+        pending = PendingCommand(
+            id=uuid4(),
+            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
+            status="dispatched",
+            channel_id="web",
+            requesting_user_id=TEST_USERNAME,
+            confirming_user_id=TEST_USERNAME,
+            confirmed_at=now,
+            dispatched_at=now,
+            result=CommandResult(
+                success=True, command_kind="pause", message="paused BTC/USD", executed_at=now
+            ),
+            ttl_expires_at=Timestamp(dt=now.dt + timedelta(minutes=10)),
+            created_at=now,
+        )
+        await storage.save_pending_command(pending)
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            modal = client.get(f"/commands/{pending.id}/watch?ctx=modal")
+            assert 'hx-target="#status-wrap"' in modal.text  # immediate dashboard refresh
+            page = client.get(f"/commands/{pending.id}/watch")
+            assert 'hx-target="#status-wrap"' not in page.text  # page ctx stays clean

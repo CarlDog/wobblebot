@@ -1,0 +1,37 @@
+{# Modal confirm card (P3 modal layer, operator amendment): the same
+   decision the full confirm page offers, presented in place over the
+   dashboard. Approve/Reject hx-post back into the modal, which then
+   hosts the slice-12 row-watch to the actual outcome. The no-JS path
+   never reaches this partial — non-htmx POSTs keep the full-page
+   redirect flow. #}
+<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-head">
+    <span id="modal-title" class="modal-title">Confirm command</span>
+    <button type="button" class="modal-close" data-modal-close aria-label="Close">&times;</button>
+  </div>
+  <dl class="kv">
+    <dt>Command</dt>
+    <dd>{{ pending.command.kind }}</dd>
+    {% if pending.command.kind in ("pause", "resume", "reanchor") %}
+      <dt>Symbol</dt>
+      <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
+    {% endif %}
+    <dt>Expires</dt>
+    <dd>{{ pending.ttl_expires_at.dt | tz_format(operator_tz, "%H:%M:%S %Z") }}</dd>
+  </dl>
+  <p class="muted modal-note">
+    Approve hands this to cli/live's next tick (ADR-013 firewall);
+    Reject discards it — nothing reaches the engine.
+  </p>
+  <form hx-post="/commands/{{ pending.id }}/confirm"
+        hx-target="#modal"
+        hx-swap="innerHTML"
+        class="command">
+    {{ csrf_input(request) }}
+    <div class="form-actions">
+      <button type="submit" name="decision" value="approve" class="btn btn-ok">Approve</button>
+      <button type="submit" name="decision" value="reject" class="btn btn-fail">Reject</button>
+      <button type="button" class="btn btn-secondary" data-modal-close>Cancel</button>
+    </div>
+  </form>
+</div>

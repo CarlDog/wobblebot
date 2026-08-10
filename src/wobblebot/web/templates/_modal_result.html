@@ -1,0 +1,14 @@
+{# Modal result shell (P3 modal layer): hosts the slice-12 row-watch
+   inside the modal chrome after a decision. The watch partial swaps
+   ITSELF (outerHTML on #command-watch) every 2s until terminal, so
+   this shell — title + close affordance — persists around it. #}
+<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-head">
+    <span id="modal-title" class="modal-title">Command {{ pending.status }}</span>
+    <button type="button" class="modal-close" data-modal-close aria-label="Close">&times;</button>
+  </div>
+  {% include "_command_watch.html" %}
+  <div class="form-actions">
+    <button type="button" class="btn btn-secondary" data-modal-close>Close</button>
+  </div>
+</div>
