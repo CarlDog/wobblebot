@@ -471,7 +471,7 @@ class TestExtractLastJsonObject:
         # port-specific error type.
         from wobblebot.adapters.ollama import OllamaJsonExtractError
 
-        with pytest.raises(OllamaJsonExtractError, match="no parseable JSON object"):
+        with pytest.raises(OllamaJsonExtractError, match="no JSON object at all"):
             extract_last_json_object("I am unable to comply at this time.")
 
     def test_invalid_json_braces_are_skipped(self) -> None:
@@ -483,8 +483,38 @@ class TestExtractLastJsonObject:
         # Only object-typed JSON counts as a candidate.
         from wobblebot.adapters.ollama import OllamaJsonExtractError
 
-        with pytest.raises(OllamaJsonExtractError, match="no parseable JSON object"):
+        with pytest.raises(OllamaJsonExtractError, match="no JSON object at all"):
             extract_last_json_object("[1, 2, 3]")
+
+    def test_truncated_json_says_so(self) -> None:
+        """An unterminated object must NOT read like "model ignored the schema".
+
+        These two failures need opposite fixes — raise the token cap vs.
+        fix the prompt — and the old message described both the same
+        way. That ambiguity cost a real diagnosis on 2026-08-10, when
+        three live cloud tests looked like provider drift and were
+        actually hitting an output cap the prompt had outgrown.
+        """
+        from wobblebot.adapters.ollama import OllamaJsonExtractError
+
+        truncated = '{"role": "quant", "rationale": "The market shows high flat'
+        with pytest.raises(OllamaJsonExtractError, match="UNTERMINATED"):
+            extract_last_json_object(truncated)
+
+    def test_truncation_message_points_at_the_token_cap(self) -> None:
+        from wobblebot.adapters.ollama import OllamaJsonExtractError
+
+        with pytest.raises(OllamaJsonExtractError, match="output-token cap"):
+            extract_last_json_object('{"partial": ')
+
+    def test_no_brace_message_does_not_blame_truncation(self) -> None:
+        """A schema-ignoring reply must not send you chasing the cap."""
+        from wobblebot.adapters.ollama import OllamaJsonExtractError
+
+        with pytest.raises(OllamaJsonExtractError) as excinfo:
+            extract_last_json_object("I am unable to comply at this time.")
+        assert "UNTERMINATED" not in str(excinfo.value)
+        assert "ignored the schema" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
@@ -543,7 +573,7 @@ class TestThinkingModelGetRecommendation:
 
         adapter = self._build_thinking_adapter(httpx.MockTransport(handler))
         try:
-            with pytest.raises(AdvisorError, match="no parseable JSON object"):
+            with pytest.raises(AdvisorError, match="no JSON object at all"):
                 await adapter.get_recommendation(_make_summary())
         finally:
             await adapter.aclose()

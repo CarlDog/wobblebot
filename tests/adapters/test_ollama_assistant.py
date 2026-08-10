@@ -707,7 +707,7 @@ class TestErrorPaths:
 
         adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:7b")
         try:
-            with pytest.raises(AssistantError, match="no parseable JSON object"):
+            with pytest.raises(AssistantError, match="no JSON object at all"):
                 await adapter.parse_intent(_context())
         finally:
             await adapter.aclose()
