@@ -6,12 +6,32 @@ multiple per-provider expert adapters; this one is the simplest case
 and serves as the baseline.
 
 **Wire format.** The adapter POSTs to Ollama's ``/api/generate``
-endpoint with ``format: "json"`` so the response body is a JSON
-object string. The LLM is expected to emit the
-``advisor_recommendation_v1`` schema declared in the prompt file's
+endpoint with a **JSON Schema** in ``format`` (see
+``_RESPONSE_JSON_SCHEMA``), so the server constrains generation to the
+``advisor_recommendation_v1`` shape declared in the prompt file's
 frontmatter (see ``config/prompts/quant.md``): ``{ role,
 recommendations, rationale, confidence }``. ``recommendation_id``
 and ``timestamp`` are populated by this adapter, not the LLM.
+
+Previously this sent the bare string ``format: "json"``, which
+guarantees the body *parses* but says nothing about its *shape* — and
+that gap was the failure mode, not a theoretical one. A 2026-08-10 MoE
+run had two of four models return perfectly valid JSON with invented
+keys (``{bollinger_middle, recommend}`` from a quant expert;
+``{"**Recommendation", "Rationale"}`` — markdown headings as keys —
+from the arbitrator), each surfacing as a post-hoc
+``missing required field 'confidence'``. Ollama has supported
+schema-constrained generation since 0.5; passing the real schema moves
+the contract from something we validate after the fact to something
+the server cannot violate. (Per the standing rule: prefer the
+upstream's own validation over a local copy of it.)
+
+The schema is deliberately built from the **well-supported** JSON
+Schema subset — ``type`` / ``properties`` / ``required`` / ``enum``
+only. Ollama converts the schema to a GBNF grammar via llama.cpp,
+whose converter handles a subset of the spec; keywords like
+``minLength`` are omitted here and left to Pydantic on the parse side,
+so a grammar-conversion failure can't take out the whole call path.
 
 **Error wrapping.** Transport, HTTP status, JSON-parse, and
 Pydantic-validation failures are wrapped as ``AdvisorError`` with
@@ -27,7 +47,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 from uuid import uuid4
 
 import httpx
@@ -38,12 +58,43 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
+    ConfidenceLevel,
     PerformanceSummary,
 )
 from wobblebot.ports.exceptions import AdvisorError
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
+
+# The wire contract, as a JSON Schema Ollama can enforce during
+# generation. This is deliberately NOT ``AdvisorRecommendation.
+# model_json_schema()``: that model also carries ``recommendation_id``,
+# ``timestamp``, ``expert_opinions`` and ``news_materially_drove``,
+# which this adapter assigns and the LLM must never supply. What the
+# model owes us is the strict subset below.
+#
+# ``required`` mirrors what the parser actually cannot recover from:
+# ``confidence`` (KeyError) and ``rationale`` (``min_length=1`` on the
+# domain model, so an omission fails validation anyway).
+# ``recommendations`` is required as a KEY but may be ``{}`` — that is
+# how a genuine "hold" is expressed, and forcing the key stops a model
+# from signalling hold by silently omitting it (the probe battery
+# scores an omitted spacing as a MISS for the same reason).
+# ``role`` stays optional: the adapter defaults it to its own role, and
+# a model echoing the wrong role shouldn't fail the call.
+#
+# The confidence enum is derived from ``ConfidenceLevel`` rather than
+# retyped, so the grammar and the Pydantic literal cannot drift apart.
+_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "role": {"type": "string"},
+        "recommendations": {"type": "object"},
+        "rationale": {"type": "string"},
+        "confidence": {"type": "string", "enum": list(get_args(ConfidenceLevel))},
+    },
+    "required": ["recommendations", "rationale", "confidence"],
+}
 
 # Substrings (matched case-insensitively against the model tag) that
 # identify "thinking" models — those that emit chain-of-thought
@@ -240,16 +291,22 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
                 "num_predict": self._max_tokens,
             },
         }
-        # Non-thinking models honor Ollama's `format: "json"` constraint,
-        # which forces the response body to be a parseable JSON value.
-        # Thinking models (R1, o1-style) emit a reasoning preamble first,
-        # so we drop the constraint and extract the trailing JSON from
-        # free text instead — see ``extract_last_json_object``. The
+        # Non-thinking models honor Ollama's `format` constraint, which
+        # here is the full JSON Schema — so the server won't emit a body
+        # that violates the wire contract in the first place. Thinking
+        # models (R1, o1-style) emit a reasoning preamble first, so we
+        # drop the constraint and extract the trailing JSON from free
+        # text instead — see ``extract_last_json_object``. The
         # 2026-05-25 diagnostic showed newer reasoning models (phi4-
-        # reasoning) actually emit clean JSON under format=json, so the
-        # probe ``--force-json`` flag bypasses this heuristic.
+        # reasoning) actually emit clean JSON under a format constraint,
+        # so the probe ``--force-json`` flag bypasses this heuristic.
+        #
+        # The gate is unchanged from when this sent the bare string
+        # "json" — schema enforcement applies exactly where the weaker
+        # constraint already did, so the only behavioural delta is that
+        # the constrained path is now constrained to the RIGHT shape.
         if self._force_json or not thinking_mode:
-            payload["format"] = "json"
+            payload["format"] = _RESPONSE_JSON_SCHEMA
 
         try:
             response = await self._client.post(f"{self._base_url}/api/generate", json=payload)

@@ -1029,6 +1029,47 @@ the detail; the full backlog index is
    rewrite and `cli/apply --daemon` was explicitly dropped, so unblocking it
    needs an ADR, not code.
 
+   **Post-P3 — Ollama schema-constrained generation** ✅ **2026-08-10** (not a
+   P3 slice; fell out of the ADR-035 groundwork). `OllamaAdapter` sent the bare
+   string `format: "json"`, which guarantees the body *parses* and says nothing
+   about its *shape*. That gap was live, not theoretical: a MoE panel run had
+   two of four models return valid JSON with invented keys —
+   `{bollinger_middle, recommend}` from the quant expert,
+   `{"**Recommendation", "Rationale"}` (markdown headings as keys) from the
+   arbitrator — each surfacing only as a post-hoc
+   `missing required field 'confidence'`, and the second killing the dispatch.
+   Ollama (0.32.6 locally) has supported schema-constrained generation since
+   0.5, so `format` now carries the real JSON Schema and the server cannot emit
+   a violating body. Per the standing rule: prefer the upstream's own
+   validation over a local copy of it. The confidence enum is **derived from
+   `ConfidenceLevel`**, never retyped, so grammar and Pydantic literal cannot
+   drift; the schema sticks to the `type`/`properties`/`required`/`enum` subset
+   llama.cpp's GBNF converter handles, leaving `minLength` to Pydantic so a
+   conversion failure can't take out the call path. The thinking-model gate is
+   unchanged — enforcement applies exactly where the weaker constraint already
+   did. Test count 3026 → 3032.
+
+   **⚠️ Recorded honestly: the fix trades a LOUD failure for a QUIET one.** The
+   re-run completed instead of erroring, but `phi4:14b-q8_0` (quant *and*
+   arbitrator) then produced schema-*valid* token salad —
+   `"ration}d_ema_data"`, `"ema_stochart_ata"` — with `confidence: "high"`,
+   which now flows into the aggregate as though it were a real opinion. A
+   grammar can force shape; it cannot force meaning. `granite4.1:30b-q5_K_M`
+   (risk) in the same run returned a genuinely in-role answer citing exposure,
+   drawdown and cap headroom — so the panel *can* do this. Two caveats before
+   anyone judges a model on this: the input had **null TA fields** (local
+   observe.db 51.5h stale) while the prompt carries TA vocabulary, which is the
+   likely cause of the TA-flavoured garbage; and `qwen3.6:35b-a3b-q8_0` (news)
+   now **500s** under schema constraint where it succeeded under
+   `format: "json"` — a per-model regression, probably grammar conversion.
+   Follow-ups NOT taken here: a plausibility gate on the parse side (the real
+   fix for well-formed nonsense), and re-running against fresh NAS data before
+   drawing any model conclusion. Constraining `recommendations` to the four
+   auto-apply keys was **considered and rejected** — it needs a forbidden
+   adapter→`services/auto_apply` import, and it would muzzle the advisor from
+   ever proposing anything outside what auto-apply consumes (e.g. ADR-029's
+   `counter_target_mode`).
+
    **P3 close audit** ✅ **2026-08-10.** Green: schema-drift 19/19 clean;
    `tools/scan_logging.py --check rule1` exit 0; `domain/` imports zero
    adapters; pylint 10.00 exit 0; mypy strict clean; 3026 tests (2973 at P3
