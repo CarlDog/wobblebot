@@ -31,11 +31,19 @@
     </p>
   </div>
 {% else %}
+  {# Collapse older suggestions (P3 design review): every row is a full
+     stacked card with a nested per-expert table, so a busy cli/advise
+     turned this page into a wall. Native <details> — no JS, which the
+     CSP (script-src 'self') would otherwise make awkward — with the
+     newest few open so the page still ANSWERS on arrival. The header
+     stays visible when collapsed: symbol, time, model, confidence and
+     the below-floor tag are exactly what you scan for. #}
   {% for row in snapshot.rows %}
     {% set s = row.suggestion %}
     {% set rec = s.recommendation %}
-    <div class="card{% if row.below_floor %} below-floor{% endif %}">
-      <div class="card-header">
+    <details class="card advisor-card{% if row.below_floor %} below-floor{% endif %}"
+             {% if loop.index <= 3 %}open{% endif %}>
+      <summary class="card-header">
         <div class="card-title">
           {{ s.input_summary.get("symbol", "?") }} —
           <span class="muted">{{ rec.timestamp.dt | tz_format(operator_tz, "%Y-%m-%d %H:%M %Z") }}</span>
@@ -52,7 +60,7 @@
                 title="Proposed {{ row.proposed_spacing }}% is tighter than the {{ row.current_spacing }}% the advisor saw — the auto-apply floor won't apply it.">below floor</span>
           {% endif %}
         </div>
-      </div>
+      </summary>
       {% if rec.recommendations %}
         <dl class="kv">
           {% for k, v in rec.recommendations.items() %}
@@ -101,7 +109,7 @@
           </tbody>
         </table>
       {% endif %}
-    </div>
+    </details>
   {% endfor %}
 {% endif %}
 {% endblock %}

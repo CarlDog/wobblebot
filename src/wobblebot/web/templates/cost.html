@@ -11,7 +11,10 @@
    from the initial page load. #}
 <div hx-get="/cost/card"
      hx-trigger="every 15s"
-     hx-swap="outerHTML">
+     {# transition:true to match the dashboard — without it the 15s swap
+        is a hard cut, which reads as a page flicker rather than a
+        refresh. Flagged in the whole-UI design review. #}
+     hx-swap="outerHTML transition:true">
   {% include "_cost_card.html" %}
 </div>
 

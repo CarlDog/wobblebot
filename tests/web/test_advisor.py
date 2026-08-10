@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -281,3 +282,51 @@ class TestAdvisorRoute:
             assert "BTC/USD" in resp.text
             assert "ETH/USD" in resp.text
             assert "DOGE/USD" in resp.text
+
+
+class TestAdvisorCollapse:
+    """Older suggestions collapse to their header (P3 slice 23).
+
+    Each row is a full stacked card with a nested per-expert table, so
+    a busy cli/advise turned this page into a wall. Native <details>,
+    no JS — the CSP is script-src 'self'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_newest_three_are_open_the_rest_collapsed(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        for i in range(5):
+            await advise_storage.save_advisor_suggestion(
+                _make_suggestion(symbol=f"SYM{i}/USD", role="single")
+            )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            body = client.get("/advisor").text
+        assert body.count('<details class="card advisor-card') == 5
+        # Exactly the newest three carry the `open` attribute; the rest
+        # render collapsed.
+        opens = re.findall(r'<details class="card advisor-card[^>]*?\bopen\s*>', body)
+        assert len(opens) == 3
+
+    @pytest.mark.asyncio
+    async def test_collapsed_header_still_carries_what_you_scan_for(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """A closed card must still answer symbol / when / confidence —
+        collapsing must not hide the fields you triage on."""
+        for i in range(5):
+            await advise_storage.save_advisor_suggestion(
+                _make_suggestion(symbol=f"SYM{i}/USD", role="single")
+            )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            body = client.get("/advisor").text
+        # Every symbol renders, including the ones past the open cutoff.
+        for i in range(5):
+            assert f"SYM{i}/USD" in body
+        assert '<summary class="card-header">' in body

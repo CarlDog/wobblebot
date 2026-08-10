@@ -11,20 +11,10 @@
     </span>
     <button type="button" class="modal-close" data-modal-close aria-label="Close">&times;</button>
   </div>
-  {# Operator-facing label. The raw `kind` is an internal discriminator
-     (snake_case, sometimes wordy); a money decision shouldn't be read
-     off developer vocabulary. Falls back to the kind for any variant
-     not named here, so a new command still renders something. #}
-  {% set kind_labels = {
-       "pause": "Pause trading",
-       "resume": "Resume trading",
-       "reanchor": "Re-anchor grid",
-       "stop": "Stop the engine",
-       "pause_all": "Pause every symbol",
-       "resume_all": "Resume every symbol",
-       "cancel_open_orders": "Cancel open orders",
-       "execute_proposal": "Withdraw to bank",
-     } %}
+  {# Operator-facing labels come from the shared `command_label` global
+     (web/app.py) — the full-page confirm renders the same decision and
+     used to name it differently (raw `stop` there, "Stop the engine"
+     here). One vocabulary, both surfaces. #}
   <dl class="kv">
     {% if pending.command.kind == "execute_proposal" %}
       {# Money-out (ADR-034): the operator approves an AMOUNT and a
@@ -43,7 +33,7 @@
       <dd class="modal-proposal-id">{{ pending.command.proposal_id }}</dd>
     {% else %}
       <dt>Action</dt>
-      <dd>{{ kind_labels.get(pending.command.kind, pending.command.kind) }}</dd>
+      <dd>{{ command_label(pending.command.kind) }}</dd>
       {% if pending.command.kind in ("pause", "resume", "reanchor") %}
         <dt>Symbol</dt>
         <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
@@ -57,6 +47,21 @@
       This moves real money off the exchange. Approve hands it to
       cli/harvest, which re-checks every withdrawal gate before calling
       Kraken; Reject discards it — nothing moves.
+    </p>
+  {% elif is_high_consequence(pending.command.kind) %}
+    {# Fleet-wide halts and order destruction were being confirmed with
+       the same chrome as a routine single-symbol pause (design review).
+       Not as loud as the money-out warning above it — nothing here is
+       irreversible — but it should not read as routine either. #}
+    <p class="modal-warn modal-warn-consequence">
+      This affects <strong>every symbol</strong>, not just one.
+      {% if pending.command.kind == "cancel_open_orders" %}
+        Open orders are cancelled on the exchange; the grid re-lays out
+        on a later tick.
+      {% else %}
+        Trading stops until you resume it.
+      {% endif %}
+      Reject discards it — nothing reaches the engine.
     </p>
   {% else %}
     <p class="muted modal-note">

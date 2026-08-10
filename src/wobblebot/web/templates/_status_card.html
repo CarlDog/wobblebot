@@ -376,7 +376,13 @@
               {% else %}
                 {% set net_usd = t.cost - t.fee %}
               {% endif %}
-              <tr>
+              {# Fill flash: highlight a row that appeared since the last
+                 15s swap, then let it settle. Gated on the row's real
+                 AGE (slice 21's trade_ages) rather than "is it the top
+                 row" — otherwise the newest fill would re-flash every
+                 poll forever and the signal would mean nothing. The
+                 window is one poll interval plus slack. #}
+              <tr{% if snapshot.trade_ages.get(t.id, 99999) < 20 %} class="fill-fresh"{% endif %}>
                 <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
                 <td class="num muted">{{ snapshot.trade_ages.get(t.id) | humanize_duration }}</td>
                 <td class="center">{{ t.symbol.base }}/{{ t.symbol.quote }}</td>

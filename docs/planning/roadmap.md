@@ -987,6 +987,48 @@ the detail; the full backlog index is
    public (`load_reanchor_*`) at the module boundary. From here every gate is
    run unpiped with its own exit code echoed.
 
+   **Slice 23 — design-review leaves** ✅ **2026-08-10**: the five remaining
+   items from the 2026-06-03 whole-UI review. (1) **Fill flash** on the 15s
+   swap, gated on the fill's real AGE via slice 21's `trade_ages` rather than
+   "is it the top row" — the naive version re-flashes the newest fill every
+   poll forever, at which point the highlight stops meaning *this just
+   happened*; `prefers-reduced-motion` degrades to a static tint so the
+   information survives. (2) **`/cost` gains `transition:true`** to match the
+   dashboard; its swap was a hard cut that reads as a flicker. (3) **Advisor
+   collapse** — cards become native `<details>` (no JS; the CSP is
+   `script-src 'self'`) with the newest three open, so the page still ANSWERS
+   on arrival while a busy `cli/advise` stops producing a wall. The collapsed
+   `<summary>` keeps symbol / time / model / confidence / below-floor: exactly
+   the fields you triage on. (4) **High-consequence confirm weight** —
+   `stop` / `pause_all` / `cancel_open_orders` were being confirmed with a
+   routine single-symbol pause's chrome on BOTH the modal and the no-JS full
+   page; they now carry an amber-ruled consequence line, deliberately quieter
+   than the money-out warning because nothing here is irreversible.
+   (5) **Shared command vocabulary** — a `command_label` Jinja global replaces
+   the modal's local dict, because the full-page confirm rendered the same
+   decision and printed the raw `stop` discriminator where the modal said
+   "Stop the engine". One vocabulary, both surfaces, pinned by a test.
+   **Deliberately NOT done — typography/brand elevation (Tier 3).** Numeric
+   columns already carry `tabular-nums`; the remaining half was re-tinting
+   `--color-link` to the login teal `#4dd0e1`, which fails contrast against
+   the light-mode white surface. Shipping a contrast regression for aesthetics
+   is the wrong trade — the brand teal stays on the dark chrome where it
+   reads, and that's recorded rather than silently skipped.
+   Verified in a browser: 5 advisor cards, newest 3 open, collapsed summaries
+   still carrying their triage fields; the `stop` confirm leading with the
+   amber consequence line and naming the command "Stop the engine (stop)".
+   Real-money cost $0.00. Test count 3021 → 3026.
+
+   **P3 COMPLETE (buildable scope) — slices 1–23 shipped 2026-08-08 →
+   2026-08-10.** Three items remain and are **gated, not skipped**:
+   the **anomaly detector** needs ~30 days of baseline (the heartbeat /
+   `engine_state` clock starts 2026-08-08, so it matures ~2026-09-07);
+   **disk-space awareness** bundles onto that daemon AND is gated behind the
+   data-retention policy; and the advisor's **Apply / Approve-Reject** is
+   blocked by ADR-034's scope note — no daemon can own a `settings.yml`
+   rewrite and `cli/apply --daemon` was explicitly dropped, so unblocking it
+   needs an ADR, not code.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

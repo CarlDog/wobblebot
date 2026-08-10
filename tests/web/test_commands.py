@@ -645,3 +645,28 @@ class TestModalFlow:
             assert 'hx-target="#status-wrap"' in modal.text  # immediate dashboard refresh
             page = client.get(f"/commands/{pending.id}/watch")
             assert 'hx-target="#status-wrap"' not in page.text  # page ctx stays clean
+
+
+class TestCommandVocabularyAndConsequence:
+    """Shared labels + high-consequence weight (P3 slice 23).
+
+    The modal and the full-page confirm render the SAME decision; until
+    the shared `command_label` global existed, one said "Stop the
+    engine" and the other printed the raw `stop` discriminator.
+    """
+
+    def test_label_and_consequence_helpers(self) -> None:
+        from wobblebot.web.app import _command_label, _is_high_consequence
+
+        assert _command_label("stop") == "Stop the engine"
+        assert _command_label("pause") == "Pause trading"
+        # An unregistered kind still renders something readable.
+        assert _command_label("brand_new_kind") == "brand_new_kind"
+        assert _is_high_consequence("stop") is True
+        assert _is_high_consequence("pause_all") is True
+        assert _is_high_consequence("cancel_open_orders") is True
+        # Single-symbol actions stay routine.
+        assert _is_high_consequence("pause") is False
+        assert _is_high_consequence("reanchor") is False
+        # Money-out has its own louder treatment, not this one.
+        assert _is_high_consequence("execute_proposal") is False
