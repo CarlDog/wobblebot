@@ -24,11 +24,8 @@ import pytest_asyncio
 
 from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.discord_transport import (
-    CONFIRM_EMOJI,
-    REJECT_EMOJI,
     DiscordTransport,
     InboundMessage,
-    ReactionEvent,
 )
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -37,7 +34,6 @@ from wobblebot.cli.operator import (
     _compose_engine_state_snapshot,
     _forward_pending_notifications,
     _handle_inbound_message,
-    _handle_reaction,
     _summarize_command,
 )
 from wobblebot.domain.value_objects import Symbol, Timestamp
@@ -225,7 +221,6 @@ class TestHandleInboundMessage:
             command=PauseCommand(symbol=Symbol(base="BTC", quote="USD"))
         )
         transport = _mock_transport()
-        pending_map: dict[str, UUID] = {}
         await _handle_inbound_message(
             _inbound(content="pause BTC"),
             operator_storage=storage,
@@ -238,7 +233,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map=pending_map,
             assistant_model_name="test-model",
         )
 
@@ -246,11 +240,13 @@ class TestHandleInboundMessage:
         pendings = await storage.get_pending_commands()
         assert len(pendings) == 1
         assert pendings[0].status == "awaiting_confirmation"
-        # Confirmation embed posted
+        # Confirmation embed posted, carrying the row id as ref_id.
+        # That correspondence is load-bearing: ref_id becomes each
+        # button's custom_id, which is how a click resolves back to this
+        # row — including after a daemon restart (P3 buttons slice).
         transport.send_confirmation.assert_awaited_once()
-        # In-memory map populated
-        assert "confirm-msg-id" in pending_map
-        assert pending_map["confirm-msg-id"] == pendings[0].id
+        _, confirm_kwargs = transport.send_confirmation.await_args
+        assert confirm_kwargs["ref_id"] == str(pendings[0].id)
         # Operator turn + assistant turn persisted
         turns = await storage.get_conversation_turns("C-1", "U-1")
         roles = [t.role for t in turns]
@@ -309,7 +305,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
 
@@ -339,7 +334,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
         # Query result posted as embed
@@ -363,7 +357,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
         transport.send_message.assert_awaited_once_with("100", "you're welcome")
@@ -383,7 +376,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
         transport.send_message.assert_awaited_once()
@@ -407,7 +399,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
         transport.add_reaction.assert_awaited_once_with("C-9", "msg-abc", ACK_EMOJI)
@@ -431,7 +422,6 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="test-model",
         )
         transport.add_reaction.assert_awaited_once_with("C-7", "msg-xyz", WARN_EMOJI)
@@ -453,215 +443,11 @@ class TestHandleInboundMessage:
             outbound_channel_id="100",
             context_window_turns=10,
             confirm_ttl_seconds=300,
-            pending_message_map={},
             assistant_model_name="claude-sonnet-4-6",
         )
         transport.send_embed.assert_awaited_once()
         _, kwargs = transport.send_embed.await_args
         assert "claude-sonnet-4-6" in kwargs["footer"]
-
-
-# --------------------------------------------------------------------- #
-# _handle_reaction — confirm / reject transitions                       #
-# --------------------------------------------------------------------- #
-
-
-class TestHandleReaction:
-    async def test_confirm_transitions_to_approved(self, storage: SQLiteStorageAdapter) -> None:
-        # Seed an awaiting_confirmation row + the in-memory map
-        from wobblebot.ports.operator import PendingCommand
-
-        pending_id = uuid4()
-        pending = PendingCommand(
-            id=pending_id,
-            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
-            status="awaiting_confirmation",
-            channel_id="C-1",
-            requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
-            created_at=Timestamp(dt=datetime.now(UTC)),
-        )
-        await storage.save_pending_command(pending)
-        pending_map: dict[str, UUID] = {"msg-1": pending_id}
-
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-2",  # different operator confirms
-            emoji=CONFIRM_EMOJI,
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
-        fetched = await storage.get_pending_command(pending_id)
-        assert fetched is not None
-        assert fetched.status == "approved"
-        assert fetched.confirming_user_id == "U-2"
-
-    async def test_reject_transitions_to_rejected(self, storage: SQLiteStorageAdapter) -> None:
-        from wobblebot.ports.operator import PendingCommand
-
-        pending_id = uuid4()
-        pending = PendingCommand(
-            id=pending_id,
-            command=StopCommand(),
-            status="awaiting_confirmation",
-            channel_id="C-1",
-            requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
-            created_at=Timestamp(dt=datetime.now(UTC)),
-        )
-        await storage.save_pending_command(pending)
-        pending_map: dict[str, UUID] = {"msg-1": pending_id}
-
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-2",
-            emoji=REJECT_EMOJI,
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
-        fetched = await storage.get_pending_command(pending_id)
-        assert fetched is not None
-        assert fetched.status == "rejected"
-
-    async def test_expired_reaction_transitions_to_expired_not_approved(
-        self, storage: SQLiteStorageAdapter
-    ) -> None:
-        """Fleet-review #19 finding 6, Discord-side follow-up: a reaction
-        arriving after ttl_expires_at (landed between _ttl_expirer_loop
-        sweeps) must not approve/reject — it transitions to `expired`
-        instead, same as the web route's fix."""
-        from wobblebot.ports.operator import PendingCommand
-
-        pending_id = uuid4()
-        pending = PendingCommand(
-            id=pending_id,
-            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
-            status="awaiting_confirmation",
-            channel_id="C-1",
-            requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC) - timedelta(minutes=1)),
-            created_at=Timestamp(dt=datetime.now(UTC)),
-        )
-        await storage.save_pending_command(pending)
-        pending_map: dict[str, UUID] = {"msg-1": pending_id}
-
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-2",
-            emoji=CONFIRM_EMOJI,
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
-        fetched = await storage.get_pending_command(pending_id)
-        assert fetched is not None
-        assert fetched.status == "expired"
-        assert fetched.confirming_user_id is None
-        assert fetched.confirmed_at is None
-
-    async def test_unknown_message_id_ignored(self, storage: SQLiteStorageAdapter) -> None:
-        # Empty map; reaction does not crash
-        event = ReactionEvent(
-            message_id="unknown",
-            channel_id="C-1",
-            user_id="U-2",
-            emoji=CONFIRM_EMOJI,
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map={})
-        # No exception is the assertion
-
-    async def test_double_reaction_does_not_overwrite(self, storage: SQLiteStorageAdapter) -> None:
-        from wobblebot.ports.operator import PendingCommand
-
-        pending_id = uuid4()
-        pending = PendingCommand(
-            id=pending_id,
-            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
-            status="approved",  # already approved
-            channel_id="C-1",
-            requesting_user_id="U-1",
-            confirming_user_id="U-2",
-            confirmed_at=Timestamp(dt=datetime.now(UTC)),
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC)),
-            created_at=Timestamp(dt=datetime.now(UTC)),
-        )
-        await storage.save_pending_command(pending)
-        pending_map: dict[str, UUID] = {"msg-1": pending_id}
-
-        # A REJECT after an APPROVE must not flip the status.
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-3",
-            emoji=REJECT_EMOJI,
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
-        fetched = await storage.get_pending_command(pending_id)
-        assert fetched is not None
-        assert fetched.status == "approved"  # unchanged
-
-    async def test_remove_action_ignored(self, storage: SQLiteStorageAdapter) -> None:
-        # We only care about reaction add — remove events are no-ops
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-2",
-            emoji=CONFIRM_EMOJI,
-            action="remove",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(
-            event, operator_storage=storage, pending_message_map={"msg-1": uuid4()}
-        )
-        # No exception
-
-    async def test_other_emoji_leaves_pending_untouched(
-        self, storage: SQLiteStorageAdapter
-    ) -> None:
-        """v1.1 test-hardening (test-honesty audit, P7): the 'other
-        emoji; ignore' else-branch was uncovered. A reaction with
-        neither CONFIRM_EMOJI nor REJECT_EMOJI on a real,
-        still-pending row must be a genuine no-op -- not fall through
-        to approve or reject."""
-        from wobblebot.ports.operator import PendingCommand
-
-        pending_id = uuid4()
-        pending = PendingCommand(
-            id=pending_id,
-            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
-            status="awaiting_confirmation",
-            channel_id="C-1",
-            requesting_user_id="U-1",
-            ttl_expires_at=Timestamp(dt=datetime.now(UTC) + timedelta(minutes=10)),
-            created_at=Timestamp(dt=datetime.now(UTC)),
-        )
-        await storage.save_pending_command(pending)
-        pending_map: dict[str, UUID] = {"msg-1": pending_id}
-
-        event = ReactionEvent(
-            message_id="msg-1",
-            channel_id="C-1",
-            user_id="U-2",
-            emoji="\U0001f440",  # 👀 -- neither confirm nor reject
-            action="add",
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-        )
-        await _handle_reaction(event, operator_storage=storage, pending_message_map=pending_map)
-
-        fetched = await storage.get_pending_command(pending_id)
-        assert fetched is not None
-        assert fetched.status == "awaiting_confirmation"
-        assert fetched.confirming_user_id is None
-        assert fetched.confirmed_at is None
 
 
 # --------------------------------------------------------------------- #

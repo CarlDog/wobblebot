@@ -48,6 +48,13 @@ from typing import Any, Literal
 import discord
 from pydantic import BaseModel, Field
 
+from wobblebot.adapters.discord_confirm_view import (
+    CONTEXT_ATTR,
+    ConfirmButton,
+    ConfirmContext,
+    ConfirmDecisionHandler,
+    build_confirm_view,
+)
 from wobblebot.domain.value_objects import Timestamp
 
 LOGGER = logging.getLogger(__name__)
@@ -160,6 +167,8 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         self._message_handlers: list[MessageHandler] = []
         self._reaction_handlers: list[ReactionHandler] = []
         self._bot_user_id: str | None = None
+        # Set via set_confirm_handler once cli/operator has storage.
+        self._confirm_handler: ConfirmDecisionHandler | None = None
         # Set in ``on_ready``; cli/operator's backfill task awaits this
         # before invoking ``fetch_channel_history`` so the Gateway has
         # finished its IDENTIFY + READY handshake.
@@ -332,6 +341,33 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             ) from exc
         return messages
 
+    def set_confirm_handler(self, handler: ConfirmDecisionHandler) -> None:
+        """Wire the callback the Approve/Reject buttons invoke (ADR-013).
+
+        Kept separate from construction because the handler needs the
+        daemon's storage, which doesn't exist yet at transport-build
+        time. Until this is called the buttons refuse every click — a
+        deliberate fail-closed, not an oversight.
+        """
+        self._confirm_handler = handler
+        self._install_confirm_context()
+
+    def _install_confirm_context(self) -> None:
+        """Attach the button wiring to the live client, if both exist."""
+        if self._client is None or self._confirm_handler is None:
+            return
+        setattr(
+            self._client,
+            CONTEXT_ATTR,
+            ConfirmContext(transport=self, handler=self._confirm_handler),
+        )
+        # Registering the dynamic item is what makes a click work after a
+        # restart: the library matches the component's custom_id against
+        # the template and rebuilds the handler from it.
+        add_dynamic = getattr(self._client, "add_dynamic_items", None)
+        if add_dynamic is not None:
+            add_dynamic(ConfirmButton)
+
     async def send_confirmation(
         self,
         channel_id: str,
@@ -339,12 +375,16 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         summary: str,
         ref_id: str,
     ) -> str:
-        """Post a confirmation embed with ✅ / ❌ reactions.
+        """Post a confirmation embed with Approve / Reject buttons.
 
-        The caller correlates the eventual reaction event back to its
-        originating pending-command row via ``ref_id`` (rendered in the
-        embed footer) AND via the returned ``message_id`` (the operator
-        service stores the mapping table). Either is a valid join key.
+        ``ref_id`` is the pending-command row id. It rides in each
+        button's ``custom_id`` (which is how a click resolves back to its
+        row, even across a daemon restart) and is also rendered in the
+        footer so the operator can correlate it by eye.
+
+        Superseded the ✅/❌ reaction flow in P3: reactions needed an
+        in-memory message→row map that every restart emptied, so an
+        outstanding confirmation silently stopped working.
         """
         channel = await self._resolve_text_channel(channel_id)
         embed = discord.Embed(
@@ -352,11 +392,9 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             description=summary,
             color=COLOR_PENDING,
         )
-        embed.set_footer(text=f"id: {ref_id}  •  react ✅ to approve, ❌ to reject")
+        embed.set_footer(text=f"id: {ref_id}")
         try:
-            message = await channel.send(embed=embed)
-            await message.add_reaction(CONFIRM_EMOJI)
-            await message.add_reaction(REJECT_EMOJI)
+            message = await channel.send(embed=embed, view=build_confirm_view(ref_id))
         except discord.DiscordException as exc:
             raise DiscordTransportError(
                 f"Failed to send confirmation to channel {channel_id}: {exc}"
@@ -405,6 +443,9 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         """
         self._client = client
         self._bind_events(client)
+        # Either order works: whichever of attach_client /
+        # set_confirm_handler lands second completes the wiring.
+        self._install_confirm_context()
 
     # ---- internals ------------------------------------------------ #
 

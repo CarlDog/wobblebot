@@ -755,7 +755,30 @@ the detail; the full backlog index is
    gate that refuses when the approved amount/destination no longer matches the stored
    proposal. The page warns honestly when the harvest daemon's heartbeat is stale. Dormant
    in production by design (harvest container stopped). Apply + Acknowledge deferred with
-   reasons recorded in the ADR. Test count 2886 → 2921.
+   reasons recorded in the ADR. Test count 2886 → 2922.
+
+   **Slice 15 — Discord confirmations become buttons** ✅ **2026-08-10**: the
+   ✅/❌ reaction flow is replaced by Approve / Reject **buttons**, built to the
+   2026-06-03 blueprint's load-bearing part (`interaction_check` → the
+   allowlist) with one deliberate deviation: they are `discord.ui.DynamicItem`
+   buttons rather than a per-message `_ConfirmView`, so the pending-command id
+   rides in the component's `custom_id` and **a click still works after a daemon
+   restart**. That matters here specifically — the container restarts on every
+   deploy, and the old flow resolved a reaction through an in-memory
+   `pending_message_map` that each restart emptied (silently orphaning every
+   outstanding confirmation, and leaking — deep-scan F7c disappears with the
+   map). `interaction_check` defers to the transport's own `is_allowed` rather
+   than re-implementing the allowlist, and fails CLOSED when the daemon never
+   wired a handler. Transition rules moved to `services/confirm_decision.py`
+   (TTL-beats-click, idempotency, never-dispatches) so the button path and any
+   future confirming surface share one implementation; its tests migrated with
+   it. Requires `discord.py>=2.4` (floor bumped). **Live Discord verification is
+   the operator's step — this ships unit-tested only.** Also repaired
+   `tests/integration/test_phase5_operator_e2e.py`, which had rotted into a
+   collection error (a port method added after the stub was written, plus three
+   signature drifts) and — being deselected from the default run — went
+   unnoticed by CI; it now runs green and covers the button path end to end.
+   Test count 2922 → 2940 unit, plus 5 integration tests back from the dead.
 
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth

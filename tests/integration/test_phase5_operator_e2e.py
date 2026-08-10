@@ -16,7 +16,7 @@ The flow exercised:
   3. The handler persists a PendingCommand in awaiting_confirmation
      status and posts a confirm embed (stubbed transport records
      the call + returns a message id).
-  4. Operator reacts ✅. cli/operator's _handle_reaction transitions
+  4. Operator clicks Approve. The button handler transitions
      the row to approved with the confirming user id.
   5. cli/live's _process_pending_commands sees the approved row,
      dispatches it via OperatorService → engine.pause_symbol → row
@@ -44,10 +44,8 @@ import pytest_asyncio
 
 from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.discord_transport import (
-    CONFIRM_EMOJI,
     DiscordTransport,
     InboundMessage,
-    ReactionEvent,
 )
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
@@ -56,7 +54,6 @@ from wobblebot.cli.live import _process_pending_commands
 from wobblebot.cli.operator import (
     _forward_pending_notifications,
     _handle_inbound_message,
-    _handle_reaction,
 )
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.assistant import (
@@ -72,6 +69,7 @@ from wobblebot.ports.operator import (
     PauseCommand,
     StatusQuery,
 )
+from wobblebot.services.confirm_decision import apply_confirm_decision
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.operator_service import OperatorService
 
@@ -93,6 +91,19 @@ class _ScriptedAssistant(AssistantPort):
         if not self._intents:
             raise AssertionError("scripted assistant exhausted")
         return self._intents.pop(0)
+
+    async def summarize(
+        self, system_prompt: str, user_content: str, *, max_tokens: int = 2048
+    ) -> str:
+        """Not exercised here — this file tests the command/confirm path.
+
+        Present because ``AssistantPort`` is abstract: the method was
+        added to the port after this stub was written, and because the
+        whole file carries the ``integration`` marker (deselected from
+        the default run) nothing caught the resulting collection error.
+        """
+        del system_prompt, user_content, max_tokens
+        raise NotImplementedError("summarize is not part of this e2e path")
 
 
 def _mock_transport() -> Any:
@@ -143,7 +154,6 @@ async def test_full_pause_round_trip(storage: SQLiteStorageAdapter) -> None:
         grid_config=grid_config(),
     )
     transport = _mock_transport()
-    pending_map: dict[str, UUID] = {}
     assistant = _ScriptedAssistant([IntentCommand(command=PauseCommand(symbol=BTC_USD))])
 
     # ---- Step 1-3: operator sends "pause BTC" → confirm embed posted ----
@@ -151,37 +161,40 @@ async def test_full_pause_round_trip(storage: SQLiteStorageAdapter) -> None:
         _inbound("pause BTC"),
         operator_storage=storage,
         live_storage=storage,  # one DB for the integration test
+        observe_storage=None,
+        active_symbols=(BTC_USD,),
         assistant=assistant,
         operator_service=operator_service,
         transport=transport,
         outbound_channel_id="100",
         context_window_turns=10,
         confirm_ttl_seconds=300,
-        pending_message_map=pending_map,
+        assistant_model_name="test-model",
     )
     transport.send_confirmation.assert_awaited_once()
     awaiting = await storage.get_pending_commands(status="awaiting_confirmation")
     assert len(awaiting) == 1
     pending_id = awaiting[0].id
-    assert pending_map["confirm-msg-1"] == pending_id
+    # The confirm embed carries the row id, which is what the Approve
+    # button's custom_id is built from (P3 buttons-over-reactions).
+    _, confirm_kwargs = transport.send_confirmation.await_args
+    assert confirm_kwargs["ref_id"] == str(pending_id)
 
-    # ---- Step 4: operator reacts ✅ → row transitions to approved ----
-    confirm_event = ReactionEvent(
-        message_id="confirm-msg-1",
-        channel_id="C-1",
+    # ---- Step 4: operator clicks Approve → row transitions to approved ----
+    outcome = await apply_confirm_decision(
+        storage=storage,
+        pending_id=pending_id,
+        decision="approve",
         user_id="U-1",
-        emoji=CONFIRM_EMOJI,
-        action="add",
-        timestamp=Timestamp(dt=datetime.now(UTC)),
     )
-    await _handle_reaction(confirm_event, operator_storage=storage, pending_message_map=pending_map)
+    assert outcome.result == "approved"
     approved = await storage.get_pending_commands(status="approved")
     assert len(approved) == 1
     assert approved[0].confirming_user_id == "U-1"
     assert approved[0].id == pending_id
 
     # ---- Step 5: cli/live's poll dispatches the approved command ----
-    processed = await _process_pending_commands(operator_service, storage)
+    processed = await _process_pending_commands(operator_service, storage, None)
     assert processed == 1
 
     # ---- Step 6: engine actually paused ----
@@ -202,7 +215,7 @@ async def test_full_pause_round_trip(storage: SQLiteStorageAdapter) -> None:
 
 
 async def test_reject_flow_does_not_dispatch(storage: SQLiteStorageAdapter) -> None:
-    """❌ reaction marks rejected; cli/live's poll skips it."""
+    """Reject marks the row rejected; cli/live's poll skips it."""
     exchange = MockExchangeAdapter(
         starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
         starting_prices={BTC_USD: Decimal("50000")},
@@ -214,36 +227,37 @@ async def test_reject_flow_does_not_dispatch(storage: SQLiteStorageAdapter) -> N
         active_symbols=(BTC_USD,),
     )
     transport = _mock_transport()
-    pending_map: dict[str, UUID] = {}
     assistant = _ScriptedAssistant([IntentCommand(command=PauseCommand(symbol=BTC_USD))])
 
     await _handle_inbound_message(
         _inbound("pause BTC"),
         operator_storage=storage,
         live_storage=storage,
+        observe_storage=None,
+        active_symbols=(BTC_USD,),
         assistant=assistant,
         operator_service=operator_service,
         transport=transport,
         outbound_channel_id="100",
         context_window_turns=10,
         confirm_ttl_seconds=300,
-        pending_message_map=pending_map,
+        assistant_model_name="test-model",
     )
 
-    from wobblebot.adapters.discord_transport import REJECT_EMOJI
+    awaiting = await storage.get_pending_commands(status="awaiting_confirmation")
+    assert len(awaiting) == 1
+    pending_id = awaiting[0].id
 
-    reject_event = ReactionEvent(
-        message_id="confirm-msg-1",
-        channel_id="C-1",
+    outcome = await apply_confirm_decision(
+        storage=storage,
+        pending_id=pending_id,
+        decision="reject",
         user_id="U-1",
-        emoji=REJECT_EMOJI,
-        action="add",
-        timestamp=Timestamp(dt=datetime.now(UTC)),
     )
-    await _handle_reaction(reject_event, operator_storage=storage, pending_message_map=pending_map)
+    assert outcome.result == "rejected"
 
     # cli/live's poll sees no approved rows; engine never pauses
-    processed = await _process_pending_commands(operator_service, storage)
+    processed = await _process_pending_commands(operator_service, storage, None)
     assert processed == 0
     assert engine.is_paused(BTC_USD) is False
     rejected = await storage.get_pending_commands(status="rejected")
@@ -274,25 +288,29 @@ async def test_multi_turn_conversation_records_history(
         _inbound("status?"),
         operator_storage=storage,
         live_storage=None,
+        observe_storage=None,
+        active_symbols=(BTC_USD,),
         assistant=assistant,
         operator_service=operator_service,
         transport=transport,
         outbound_channel_id="100",
         context_window_turns=10,
         confirm_ttl_seconds=300,
-        pending_message_map={},
+        assistant_model_name="test-model",
     )
     await _handle_inbound_message(
         _inbound("thanks"),
         operator_storage=storage,
         live_storage=None,
+        observe_storage=None,
+        active_symbols=(BTC_USD,),
         assistant=assistant,
         operator_service=operator_service,
         transport=transport,
         outbound_channel_id="100",
         context_window_turns=10,
         confirm_ttl_seconds=300,
-        pending_message_map={},
+        assistant_model_name="test-model",
     )
 
     turns = await storage.get_conversation_turns("C-1", "U-1")
@@ -361,7 +379,6 @@ async def test_ttl_expiry_skipped_by_dispatch(storage: SQLiteStorageAdapter) -> 
     engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(engine=engine, storage=storage, active_symbols=(BTC_USD,))
     transport = _mock_transport()
-    pending_map: dict[str, UUID] = {}
     assistant = _ScriptedAssistant([IntentCommand(command=PauseCommand(symbol=BTC_USD))])
 
     # Operator issues a command but never reacts
@@ -369,13 +386,15 @@ async def test_ttl_expiry_skipped_by_dispatch(storage: SQLiteStorageAdapter) -> 
         _inbound("pause BTC"),
         operator_storage=storage,
         live_storage=storage,
+        observe_storage=None,
+        active_symbols=(BTC_USD,),
         assistant=assistant,
         operator_service=operator_service,
         transport=transport,
         outbound_channel_id="100",
         context_window_turns=10,
         confirm_ttl_seconds=300,
-        pending_message_map=pending_map,
+        assistant_model_name="test-model",
     )
 
     # Force the row's TTL to be in the past
@@ -390,6 +409,6 @@ async def test_ttl_expiry_skipped_by_dispatch(storage: SQLiteStorageAdapter) -> 
     assert expired_count == 1
 
     # cli/live's poll skips expired rows (only sees 'approved')
-    processed = await _process_pending_commands(operator_service, storage)
+    processed = await _process_pending_commands(operator_service, storage, None)
     assert processed == 0
     assert engine.is_paused(BTC_USD) is False
