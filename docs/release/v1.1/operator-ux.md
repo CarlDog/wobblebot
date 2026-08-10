@@ -970,7 +970,23 @@ correct data, so the operator isn't flying blind.
 posture changes once (predictable for operators) rather than across
 three separate commits that each shift the embed format slightly.
 
-### Discord status_report tally section: compact table instead of stacked fields
+### Discord status_report tally section: compact table instead of stacked fields — ✅ SHIPPED 2026-08-10 (P3 slice 18)
+
+> **Shipped to option 1 (`inline=True`), as recommended below.** `send_embed`'s
+> `fields` now accepts `(name, value)` or `(name, value, inline)`; only the
+> status_report renderer opts in. Deliberately NOT a shared field type — the
+> renderer services import only from `ports`, and introducing one in the adapter
+> would force a services→adapters import for a cosmetic change. Options 2 and 3
+> stay rejected for the reasons given below (monospace inconsistency; loss of
+> labelled scanning).
+>
+> **Observed while implementing, NOT done:** `session_start`'s four counters
+> (portfolio value / free USD / loss cap / tick+runtime) have the identical
+> shape and would benefit identically. Left alone because the operator flagged
+> the status_report stack specifically, and restyling every notification card is
+> design drift rather than the requested fix. `harvest_proposal` should STAY
+> stacked either way — its proposal id and balance transition are too long for a
+> third-width column.
 
 **What:** the status_report embed renders its 8+ tallies (Balance,
 Today's PnL, Open orders, Fills, News, Suggestions, Harvester

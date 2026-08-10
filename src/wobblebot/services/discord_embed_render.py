@@ -373,7 +373,13 @@ def _render_status_report(result: StatusReportResult) -> dict[str, Any]:
     # Discord caps embed description at 4096 chars. Truncate generously
     # so the narrative is never silently cut off mid-sentence by Discord.
     narrative = _truncate(result.narrative, 4000)
-    fields = [(tally.label, tally.value) for tally in result.tallies]
+    # inline=True: eight tallies stacked at full width produced ~16
+    # vertical lines that buried the narrative on mobile (operator-flagged
+    # 2026-05-24). Discord packs inline fields three per row, so the same
+    # eight become three rows. Every tally is a short label + a short
+    # value — a count, a dollar figure, a band name — which is exactly
+    # what a third-width column holds comfortably.
+    fields = [(tally.label, tally.value, True) for tally in result.tallies]
     since_iso = result.since.dt.isoformat(timespec="minutes")
     return {
         "title": f"Status report — last {result.lookback_hours}h",

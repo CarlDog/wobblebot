@@ -41,7 +41,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -279,14 +279,29 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         title: str,
         description: str,
         color: int = COLOR_INFO,
-        fields: list[tuple[str, str]] | None = None,
+        fields: Sequence[tuple[str, str] | tuple[str, str, bool]] | None = None,
         footer: str | None = None,
     ) -> str:
-        """Send a rich embed. Returns the new message's id."""
+        """Send a rich embed. Returns the new message's id.
+
+        A field is ``(name, value)`` or ``(name, value, inline)``.
+        Omitted ``inline`` means ``False`` — Discord then stacks the
+        field on its own row (label line, value line), which is right
+        for prose-ish values and wrong for a row of short counters.
+        ``inline=True`` lets Discord pack up to three per row, which is
+        how the status_report's eight tallies fit in three rows instead
+        of sixteen (P3; the stack dominated the narrative on mobile).
+
+        Kept as plain tuples rather than a shared field type: the
+        renderer services build these dicts and import only from
+        ``ports``, so introducing a type here would force a
+        services→adapters import for pure cosmetics.
+        """
         channel = await self._resolve_text_channel(channel_id)
         embed = discord.Embed(title=title, description=description, color=color)
-        for name, value in fields or []:
-            embed.add_field(name=name, value=value, inline=False)
+        for field in fields or []:
+            name, value, *rest = field
+            embed.add_field(name=name, value=value, inline=bool(rest[0]) if rest else False)
         if footer:
             embed.set_footer(text=footer)
         try:

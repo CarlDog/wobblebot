@@ -382,6 +382,57 @@ class TestOutbound:
         channel.send.assert_awaited_once_with(content="hello")
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_two_tuple_field_defaults_to_stacked(self) -> None:
+        """Back-compat: every existing renderer emits 2-tuples.
+
+        inline=False is the right default — a prose-ish value needs the
+        full row width.
+        """
+        t = _transport()
+        channel = _mock_channel()
+        t.attach_client(_mock_client(channel))
+
+        await t.send_embed("100", title="T", description="d", fields=[("name", "value")])
+
+        embed = channel.send.call_args[1]["embed"]
+        assert embed.fields[0].inline is False
+
+    @pytest.mark.asyncio
+    async def test_three_tuple_field_honors_inline(self) -> None:
+        """The status_report tallies opt in so Discord packs them 3/row."""
+        t = _transport()
+        channel = _mock_channel()
+        t.attach_client(_mock_client(channel))
+
+        await t.send_embed(
+            "100",
+            title="T",
+            description="d",
+            fields=[("Balance", "$89.92", True), ("Narrative note", "long text", False)],
+        )
+
+        embed = channel.send.call_args[1]["embed"]
+        assert [f.inline for f in embed.fields] == [True, False]
+
+    @pytest.mark.asyncio
+    async def test_mixed_field_shapes_in_one_embed(self) -> None:
+        """Renderers may mix: a stacked header plus inline counters."""
+        t = _transport()
+        channel = _mock_channel()
+        t.attach_client(_mock_client(channel))
+
+        await t.send_embed(
+            "100",
+            title="T",
+            description="d",
+            fields=[("Summary", "stacked"), ("Count", "5", True)],
+        )
+
+        embed = channel.send.call_args[1]["embed"]
+        assert [f.inline for f in embed.fields] == [False, True]
+
+    @pytest.mark.asyncio
     async def test_send_embed_builds_correct_payload(self) -> None:
         t = _transport()
         channel = _mock_channel(message_id=42)

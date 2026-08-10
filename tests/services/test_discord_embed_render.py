@@ -442,8 +442,11 @@ class TestRenderStatusReport:
 
         assert "4h" in out["title"]
         assert "Quiet four hours" in out["description"]
-        assert ("Balance", "$89.92") in out["fields"]
-        assert ("Open orders", "5") in out["fields"]
+        # Tallies carry inline=True so Discord packs them three-per-row
+        # instead of stacking eight full-width fields over the narrative.
+        assert ("Balance", "$89.92", True) in out["fields"]
+        assert ("Open orders", "5", True) in out["fields"]
+        assert all(field[2] is True for field in out["fields"])
         assert "since" in out["footer"]
 
     def test_long_narrative_is_truncated_under_discord_cap(self) -> None:

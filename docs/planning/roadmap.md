@@ -825,6 +825,23 @@ the detail; the full backlog index is
    FORWARDER task, not the message handler, so a stalled LLM parse cannot make
    the daemon look dead on /health. Zero behavior change. Test count 2961.
 
+   **Slice 18 — status_report tally compactness** ✅ **2026-08-10**: the
+   status_report embed stacked its eight tallies at full width — ~16 vertical
+   lines that buried the narrative the operator actually asked for (flagged
+   2026-05-24 after a probe battery). Built to the blueprint's option 1:
+   `DiscordTransport.send_embed` fields now accept an optional third element
+   (`(name, value, inline)`), and the status_report renderer emits
+   `inline=True`, so Discord packs the tallies three-per-row — three rows
+   instead of sixteen lines. Every tally is a short label + short value (a
+   count, a dollar figure, a band name), which is what a third-width column
+   holds comfortably. Kept as PLAIN TUPLES rather than a shared field type:
+   the renderer services import only from `ports`, so a type defined in the
+   adapter would have forced a services→adapters import for a cosmetic change
+   — the third such layering call this session, and the first one gotten right
+   without a later move. 2-tuples still mean `inline=False`, so all 25 existing
+   field-builders are untouched (pinned by a back-compat test, plus a mixed-shape
+   test). Test count 2961 → 2973.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
