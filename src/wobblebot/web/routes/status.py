@@ -15,6 +15,19 @@ visible to the operator rather than silently hiding the section.
 Per ADR-016 routes consume the existing ports; no engine state +
 no money mutations here. Mutations live in
 ``wobblebot.web.routes.commands`` (Stage 7.2.C).
+
+**Re-anchor banners annotate, they never suppress.** Both viability
+stats (``recent_range_spacings``, ``atr_spacings_per_hour``) can say
+"a re-anchored grid probably wouldn't cycle here" — and neither one
+hides or downgrades a banner when it does. Two reasons. First,
+"re-anchoring isn't worth it" and "the current grid is fine" are
+different states: a misplaced ladder in a dead market is still
+capital sitting idle, and the right response may be *pause this
+symbol*, not *leave it drifted and say nothing*. Second, per the
+advisor philosophy (ADR-002, transparent guardrail), a heuristic that
+silently withholds information the operator would have acted on is
+exactly the failure mode this project designs against. Show the
+number; let the operator weigh it.
 """
 
 from __future__ import annotations
@@ -39,6 +52,7 @@ from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
+from wobblebot.services.ta_metrics import compute_atr
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_cool_down_minutes,
@@ -82,6 +96,12 @@ _SPARK_W = 100.0
 _SPARK_H = 24.0
 _SPARK_PAD = 2.0
 _SPARK_LOOKBACK_MINUTES = 120  # 2h of price snapshots
+# Re-anchor viability annotation (P3 slice 22). Hourly bars because
+# that's the interval cli/observe's top-up maintains; 14 days gives
+# Wilder ATR(14) a comfortable window (336 bars) while staying recent
+# enough to describe the market the operator is deciding about.
+_VIABILITY_INTERVAL_MINUTES = 60
+_VIABILITY_LOOKBACK_DAYS = 14
 
 TrendDirection = Literal["up", "down", "flat"]
 ReanchorSeverity = Literal["mild", "moderate", "strong"]
@@ -134,6 +154,16 @@ class ReanchorRecommendation:  # pylint: disable=too-many-instance-attributes
     # Deliberately a FACT, not a probability claim — the operator does
     # the weighting. None when the price series is too thin.
     recent_range_spacings: float | None = None
+    # Longer-window companion to the 2h stat (P3 slice 22, the full
+    # viability item): Wilder ATR(14) over stored HOURLY bars, divided
+    # by grid spacing. "0.3x" = in a typical hour price travels a third
+    # of a spacing, so a fill takes ~3 hours on average even from a
+    # perfectly-placed ladder. The 2h stat can be a quiet-window fluke;
+    # this one is ~2 weeks of behavior. Also a FACT, never a suppressor
+    # — a low value NEVER hides or downgrades a banner (see the module
+    # note on why "not worth re-anchoring" and "fine as-is" are
+    # different states). None when stored bars are too thin.
+    atr_spacings_per_hour: float | None = None
 
 
 @dataclass(frozen=True)
@@ -680,7 +710,13 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     price_series = await _load_price_series(observe_storage, set(all_symbols))
     snoozed = await _load_reanchor_snoozes(operator_storage, now=now)
     reanchor_recs = await _load_reanchor_recommendations(
-        live_storage, list(open_orders), prices, order_ages, snoozed, price_series
+        live_storage,
+        list(open_orders),
+        prices,
+        order_ages,
+        snoozed,
+        price_series,
+        observe_storage,
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
@@ -806,6 +842,51 @@ async def _load_reanchor_snoozes(
     return {symbol for symbol, until in snoozes.items() if until > now}
 
 
+async def _load_atr_spacings(
+    observe_storage: StoragePort | None,
+    symbol: Symbol,
+    spacing: Decimal,
+) -> float | None:
+    """Wilder ATR(14) over stored hourly bars, in units of grid spacing.
+
+    Answers the question drift+age can't: *would a correctly-placed
+    grid here actually cycle?* A value near or above 1 means a typical
+    hour moves price a full spacing, so a fresh ladder should fill; a
+    value well under 1 means it would sit idle — the 2026-08-09
+    observation where an operator-executed BTC re-anchor produced
+    correctly-positioned orders that nothing touched.
+
+    Hourly bars, not daily: they're what `cli/observe`'s top-up
+    actually maintains, and ATR doesn't rescale across intervals by
+    any honest constant. Expressing it per-hour keeps the number
+    literal — "a third of a spacing an hour" needs no conversion to
+    act on.
+
+    Degrades to ``None`` (banner renders "—") on an unwired
+    observe.db, a thin bar window, or a storage failure. This is an
+    annotation; it must never be able to break the banner it annotates.
+    """
+    if observe_storage is None or spacing <= 0:
+        return None
+    start = datetime.now(UTC) - timedelta(days=_VIABILITY_LOOKBACK_DAYS)
+    try:
+        bars = await observe_storage.get_ohlc_bars(
+            symbol, _VIABILITY_INTERVAL_MINUTES, start_time=start
+        )
+    except StorageError as exc:
+        _LOGGER.warning(
+            "viability ATR lookup failed for %s; banner renders without it: %s",
+            symbol,
+            exc,
+            extra={"symbol": str(symbol), "error": str(exc)},
+        )
+        return None
+    atr = compute_atr(bars)
+    if atr is None:
+        return None
+    return float(Decimal(str(atr)) / spacing)
+
+
 async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     # too-many-arguments: the loader consumes the snapshot's already-
     # fetched slices (orders, prices, ages, snoozes, series) rather
@@ -816,6 +897,7 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too
     order_ages: dict[str, int],
     snoozed: set[Symbol],
     price_series: dict[Symbol, list[Decimal]],
+    observe_storage: StoragePort | None = None,
 ) -> tuple[ReanchorRecommendation, ...]:
     """Per-symbol re-anchor recommendations from drift + age heuristic.
 
@@ -867,6 +949,11 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too
         projected_fee = open_notional * KRAKEN_TAKER_FEE_RATE * Decimal(2)
         series = price_series.get(symbol)
         recent_range = float((max(series) - min(series)) / spacing) if series else None
+        # Fetched AFTER the severity gate on purpose: the dashboard
+        # polls every 15s, and banners are usually 0-2 symbols out of
+        # six. Hoisting this above the gate would turn a rare, bounded
+        # read into six queries a poll, forever.
+        atr_spacings = await _load_atr_spacings(observe_storage, symbol, spacing)
         recommendations.append(
             ReanchorRecommendation(
                 symbol=symbol,
@@ -877,6 +964,7 @@ async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too
                 anchor_price=state.reference_price,
                 projected_fee_usd=projected_fee,
                 recent_range_spacings=recent_range,
+                atr_spacings_per_hour=atr_spacings,
             )
         )
     return tuple(recommendations)

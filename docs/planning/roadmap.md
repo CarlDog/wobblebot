@@ -938,6 +938,40 @@ the detail; the full backlog index is
    which is why looking at the page is a gate and not a courtesy.
    Real-money cost $0.00. Test count 3006 → 3015.
 
+   **Slice 22 — re-anchor viability weighting (the full item)** ✅
+   **2026-08-10**: drift + age answer "is this grid misplaced?"; they cannot
+   answer "is re-anchoring worth it here, now?" — the 2026-08-09 case where an
+   operator-executed BTC re-anchor produced correctly-positioned orders that
+   nothing touched. The v0 stat (2h range vs spacing) shipped same-day; this is
+   the deferred full item. Wilder **ATR(14) over 14 days of stored hourly bars,
+   divided by grid spacing**: "0.15×" = a typical hour moves price a seventh of
+   a spacing, so even a perfect ladder waits ~7 hours per fill. Reuses
+   `services/ta_metrics.compute_atr` — the screener's own primitive — rather
+   than a second implementation. **Hourly, not daily:** hourly is the interval
+   `cli/observe`'s top-up maintains, and ATR does not rescale across intervals
+   by any honest constant, so a per-hour figure stays literal.
+   **Merged into ONE stat cell with the v0 number** (`activity: 2h · ATR/hr`)
+   instead of becoming a seventh banner stat. They answer the same question at
+   two horizons and only mean something beside each other: a quiet 2h inside a
+   lively fortnight is noise; a quiet 2h inside a dead fortnight is the idle
+   ladder. (Prompted by not being able to obtain a rendered layout measurement
+   for a 7-stat row — the right answer turned out to be fewer cells, not a
+   width check.)
+   **The design note's three open questions, answered:** window = 14d hourly;
+   a poor-viability STRONG-drift banner still renders loud — a drifted ladder
+   in a dead market is idle capital and the right response may be *pause*, not
+   silence (pinned by `test_poor_viability_never_suppresses_the_banner`); and
+   annotation-only-never-suppression is now a stated rule in the `status.py`
+   module docstring with its ADR-002 rationale, not just a slice intention.
+   Cost discipline: fetched only AFTER the severity gate, so the 15s poll pays
+   one bounded read for the 0–2 banner symbols rather than six reads a poll
+   forever. Degrades to "—" on unwired observe.db / thin bars / storage failure
+   — an annotation must never break what it annotates.
+   Verified against a seeded strong-drift + dead-market instance: the banner
+   renders `strong` with `0.0× · 0.15×`, i.e. "badly misplaced AND not worth
+   re-anchoring" — exactly the state the operator needs to see to choose pause.
+   Real-money cost $0.00. Test count 3015 → 3021.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

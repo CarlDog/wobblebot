@@ -1960,6 +1960,14 @@ table.data th {
   border-style: dashed;
 }
 
+/* Separator inside the banner's two-horizon activity stat (P3 slice
+   22). Quieter than the numbers it divides so the pair still reads as
+   one value, not two crammed cells. */
+.reanchor-stat-sep {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 /* Per-symbol held inventory (P3 slice 21). Sits in the symbol header
    next to the price — the two-sided framing: what you hold, beside
    what it's worth right now. Quiet weight; the price stays the loud
