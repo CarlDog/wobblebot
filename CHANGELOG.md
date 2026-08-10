@@ -86,6 +86,16 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Dashboard polish.** A fill that arrives between refreshes flashes once so
+  you catch it, then settles. The advisor page collapses older suggestions to
+  their headers — symbol, time, model and confidence stay visible — so a busy
+  advisor no longer buries the page. The `/cost` page refreshes smoothly
+  instead of hard-cutting.
+- **Stopping everything no longer looks like pausing one symbol.** Confirming
+  `stop`, `pause all`, or `cancel open orders` now carries a warning that it
+  affects every symbol. Both confirm screens also name the action the same
+  way — one of them used to show the internal code (`stop`) where the other
+  said "Stop the engine".
 - **Re-anchor banners now say whether re-anchoring would actually help.** The
   banner already told you a grid was misplaced; it now also shows how much the
   market is moving relative to your grid spacing, over two windows — the last

@@ -1960,6 +1960,60 @@ table.data th {
   border-style: dashed;
 }
 
+/* ---- Design-review leaves (P3 slice 23) ------------------------------
+
+   Fill flash: a row that appeared since the last 15s swap lights up
+   once and settles. Gated in the template on the fill's real AGE, not
+   "is it the top row" — otherwise the newest fill re-flashes on every
+   poll and the signal stops meaning anything. `prefers-reduced-motion`
+   drops the animation to a static tint; the information survives. */
+@keyframes fill-flash {
+  from {
+    background: var(--tag-info-bg);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.fill-fresh td {
+  animation: fill-flash 2.5s ease-out 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill-fresh td {
+    animation: none;
+    background: var(--tag-info-bg);
+  }
+}
+
+/* Advisor cards collapse to their header. <summary> gets the card
+   header's own layout back (browsers impose their own display) plus a
+   pointer, so an open and a closed card read as the same object. */
+.advisor-card > summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.advisor-card > summary::marker {
+  color: var(--text-muted);
+}
+
+.advisor-card:not([open]) > summary {
+  margin-bottom: 0;
+}
+
+/* High-consequence confirm (stop / pause-all / cancel-open-orders).
+   Deliberately quieter than the money-out warning it sits beside in
+   the same stylesheet: nothing here is irreversible, but none of it is
+   routine either, and it was previously getting a single-symbol
+   pause's chrome. */
+.modal-warn-consequence {
+  border-left: 3px solid var(--color-warn);
+  padding-left: 10px;
+  color: var(--text-primary);
+}
+
 /* Separator inside the banner's two-horizon activity stat (P3 slice
    22). Quieter than the numbers it divides so the pair still reads as
    one value, not two crammed cells. */

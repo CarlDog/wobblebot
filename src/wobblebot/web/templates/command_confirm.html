@@ -8,6 +8,20 @@
 {% block content %}
 <h1>Confirm Command</h1>
 <div class="card">
+  {% if is_high_consequence(pending.command.kind) %}
+    {# The no-JS path reaches the same decisions the modal does, and was
+       giving a fleet-wide halt exactly the same chrome as a routine
+       single-symbol pause (design review). #}
+    <p class="modal-warn modal-warn-consequence">
+      This affects <strong>every symbol</strong>, not just one.
+      {% if pending.command.kind == "cancel_open_orders" %}
+        Open orders are cancelled on the exchange; the grid re-lays out
+        on a later tick.
+      {% else %}
+        Trading stops until you resume it.
+      {% endif %}
+    </p>
+  {% endif %}
   <p class="muted">
     Review the pending command before approving. Approve transitions
     the row to <code>approved</code>; cli/live picks it up on the
@@ -15,8 +29,12 @@
     <code>rejected</code>; nothing reaches the engine.
   </p>
   <dl class="kv">
+    {# Same operator vocabulary the modal uses (the shared
+       `command_label` global) — this page used to print the raw
+       discriminator, so "Stop the engine" in one flow was "stop" in
+       the other. #}
     <dt>Command</dt>
-    <dd>{{ pending.command.kind }}</dd>
+    <dd>{{ command_label(pending.command.kind) }} <span class="muted">(<code>{{ pending.command.kind }}</code>)</span></dd>
     {% if pending.command.kind in ("pause", "resume", "reanchor") %}
       <dt>Symbol</dt>
       <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>

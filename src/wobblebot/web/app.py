@@ -127,6 +127,45 @@ def _humanize_duration(seconds: float | None) -> str:
     return f"{d}d {h}h"
 
 
+# Operator-facing names for the command kinds. The raw ``kind`` is an
+# internal discriminator (snake_case, sometimes wordy) and a consequential
+# decision shouldn't be read off developer vocabulary. A Jinja global
+# rather than a per-template ``{% set %}``: the modal and the full-page
+# confirm show the SAME decision, and until this existed one said
+# "Stop the engine" while the other said "stop".
+_COMMAND_LABELS = {
+    "pause": "Pause trading",
+    "resume": "Resume trading",
+    "reanchor": "Re-anchor grid",
+    "stop": "Stop the engine",
+    "pause_all": "Pause every symbol",
+    "resume_all": "Resume every symbol",
+    "cancel_open_orders": "Cancel open orders",
+    "execute_proposal": "Withdraw to bank",
+}
+
+# Commands whose confirm screen gets extra visual weight. These either
+# halt trading fleet-wide or destroy working state, and the design
+# review flagged that they were being confirmed with exactly the same
+# chrome as a routine single-symbol pause. ``execute_proposal`` is
+# absent on purpose — money-out has its own louder treatment.
+_HIGH_CONSEQUENCE_KINDS = frozenset({"stop", "pause_all", "cancel_open_orders"})
+
+
+def _command_label(kind: str) -> str:
+    """Operator-facing name for a command kind; falls back to the kind.
+
+    The fallback matters: a newly-registered command still renders
+    something readable instead of an empty cell.
+    """
+    return _COMMAND_LABELS.get(kind, kind)
+
+
+def _is_high_consequence(kind: str) -> bool:
+    """True when this command's confirm screen should carry a warning."""
+    return kind in _HIGH_CONSEQUENCE_KINDS
+
+
 def _csrf_input(request: Request) -> Markup:
     """Jinja2 global that emits the hidden CSRF input for any form.
 
@@ -287,6 +326,10 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # Compact duration formatter for "X ago" displays — turns
     # 40883s into "11h 21m" instead of the raw second count.
     templates.env.filters["humanize_duration"] = _humanize_duration
+    # Shared command vocabulary — the modal and the full-page confirm
+    # render the same decision and must not name it differently.
+    templates.env.globals["command_label"] = _command_label
+    templates.env.globals["is_high_consequence"] = _is_high_consequence
     app.state.templates = templates
     app.state.config = config
     app.state.operator_storage = operator_storage

@@ -1460,3 +1460,34 @@ class TestReanchorViabilityStat:
             body = client.get("/dashboard").text
         assert "activity: 2h · ATR/hr" in body
         assert "reanchor-stat-sep" in body
+
+
+class TestFillFlash:
+    """A newly-arrived fill lights up once, then settles (P3 slice 23)."""
+
+    @pytest.mark.asyncio
+    async def test_fresh_fill_is_flagged(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_trade(_make_trade(side="buy"))  # 10s old
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "fill-fresh" in body
+
+    @pytest.mark.asyncio
+    async def test_settled_fill_is_not_flagged(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Load-bearing: the flag is gated on AGE, not on being the top
+        row. Otherwise the newest fill re-flashes every 15s poll forever
+        and the highlight stops meaning "this just happened"."""
+        old = _make_trade(side="buy").model_copy(
+            update={"executed_at": Timestamp(dt=datetime.now(UTC) - timedelta(minutes=5))}
+        )
+        await live_storage.save_trade(old)
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "Recent Fills (Last 1)" in body  # the row DID render
+        assert "fill-fresh" not in body
