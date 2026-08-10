@@ -468,3 +468,82 @@ class TestReanchorAndSnooze:
         login_as(client)
         resp = client.post("/commands/snooze-reanchor", data={"symbol": "BTC/USD"})
         assert resp.status_code == 403
+
+
+# --------------------------------------------------------------------- #
+# Row-watch (P3 wait-for-completion)                                     #
+# --------------------------------------------------------------------- #
+
+
+class TestCommandWatch:
+    def _approve_a_pause(self, client: TestClient) -> str:
+        form = client.get("/commands/pause")
+        token = csrf_from(form.text)
+        resp = client.post("/commands/pause", data={"symbol": "BTC/USD", "csrf_token": token})
+        pid = _PENDING_ID_RE.search(resp.headers["location"]).group(1)  # type: ignore[union-attr]
+        confirm_page = client.get(f"/commands/{pid}/confirm")
+        client.post(
+            f"/commands/{pid}/confirm",
+            data={"decision": "approve", "csrf_token": csrf_from(confirm_page.text)},
+        )
+        return pid
+
+    def test_result_page_embeds_the_watcher_on_approve(self, client: TestClient) -> None:
+        """The ✅ no longer dead-ends at 'approved' — the result page
+        carries the self-polling watch block."""
+        login_as(client)
+        pid = self._approve_a_pause(client)
+        # Re-render the result page via the watch partial's own URL.
+        resp = client.get(f"/commands/{pid}/watch")
+        assert resp.status_code == 200
+        assert "waiting for cli/live" in resp.text
+        assert f"/commands/{pid}/watch" in resp.text  # self-polling
+        assert 'hx-trigger="every 2s"' in resp.text
+
+    @pytest.mark.asyncio
+    async def test_dispatched_row_renders_terminal_result_and_stops_polling(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from wobblebot.domain.value_objects import Symbol, Timestamp
+        from wobblebot.ports.operator import CommandResult, PauseCommand, PendingCommand
+
+        now = Timestamp(dt=datetime.now(UTC))
+        pending = PendingCommand(
+            id=uuid4(),
+            command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")),
+            status="dispatched",
+            channel_id="web",
+            requesting_user_id=TEST_USERNAME,
+            confirming_user_id=TEST_USERNAME,
+            confirmed_at=now,
+            dispatched_at=now,
+            result=CommandResult(
+                success=True,
+                command_kind="pause",
+                message="paused BTC/USD",
+                executed_at=now,
+            ),
+            ttl_expires_at=Timestamp(dt=now.dt + timedelta(minutes=10)),
+            created_at=now,
+        )
+        await storage.save_pending_command(pending)
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get(f"/commands/{pending.id}/watch")
+            assert resp.status_code == 200
+            assert "paused BTC/USD" in resp.text
+            assert "executed" in resp.text
+            assert 'hx-trigger="every 2s"' not in resp.text  # polling stops
+
+    def test_unknown_id_renders_not_found_partial(self, client: TestClient) -> None:
+        login_as(client)
+        resp = client.get(f"/commands/{uuid4()}/watch")
+        assert resp.status_code == 200
+        assert "Command not found" in resp.text

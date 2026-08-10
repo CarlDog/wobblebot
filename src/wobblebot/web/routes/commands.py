@@ -339,6 +339,41 @@ async def snooze_reanchor_submit(
 # --------------------------------------------------------------------- #
 
 
+@router.get("/{pending_id}/watch", response_class=HTMLResponse)
+async def watch_partial(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    request: Request,
+    pending_id: UUID,
+    user: User = Depends(require_user),
+    storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> Response:
+    """Row-watch partial (P3 wait-for-completion).
+
+    Polled by the result page (htmx, ~2s) until the row reaches a
+    terminal state, then renders the actual ``CommandResult``. Pure
+    read — the watcher NEVER executes; cli/live's approved-poll stays
+    the only path from row to engine (ADR-002/ADR-013). Elapsed time
+    since approval feeds the honest slow-pickup warning.
+    """
+    del user
+    pending = await storage.get_pending_command(pending_id)
+    if pending is None:
+        return HTMLResponse('<div id="command-watch"><p class="muted">Command not found.</p></div>')
+    elapsed: float | None = None
+    if pending.confirmed_at is not None:
+        elapsed = (datetime.now(UTC) - pending.confirmed_at.dt).total_seconds()
+    return templates.TemplateResponse(
+        request,
+        "_command_watch.html",
+        {
+            "pending": pending,
+            "elapsed_seconds": elapsed,
+            "operator_tz": prefs.timezone,
+        },
+    )
+
+
 @router.get("/{pending_id}/confirm", response_class=HTMLResponse)
 async def confirm_form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,

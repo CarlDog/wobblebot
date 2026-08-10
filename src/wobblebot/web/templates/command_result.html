@@ -23,15 +23,13 @@
       rejected.
     </p>
   {% else %}
-    <p class="muted">
-      {% if pending.status == "approved" %}
-        Approved. cli/live picks up <code>approved</code> rows on its
-        next tick (per the ADR-013 firewall in cli/live's poll
-        layer).
-      {% elif pending.status == "rejected" %}
-        Rejected. Nothing reaches the engine.
-      {% endif %}
-    </p>
+    {% if pending.status == "approved" %}
+      {# P3 wait-for-completion: watch the row to its actual outcome
+         instead of stopping at "approved". #}
+      {% include "_command_watch.html" %}
+    {% elif pending.status == "rejected" %}
+      <p class="muted">Rejected. Nothing reaches the engine.</p>
+    {% endif %}
   {% endif %}
   <dl class="kv">
     <dt>Status</dt>
