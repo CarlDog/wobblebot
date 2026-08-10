@@ -6,30 +6,48 @@
    redirect flow. #}
 <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
   <div class="modal-head">
-    <span id="modal-title" class="modal-title">Confirm command</span>
+    <span id="modal-title" class="modal-title">
+      {% if pending.command.kind == "execute_proposal" %}Confirm withdrawal{% else %}Confirm command{% endif %}
+    </span>
     <button type="button" class="modal-close" data-modal-close aria-label="Close">&times;</button>
   </div>
+  {# Operator-facing label. The raw `kind` is an internal discriminator
+     (snake_case, sometimes wordy); a money decision shouldn't be read
+     off developer vocabulary. Falls back to the kind for any variant
+     not named here, so a new command still renders something. #}
+  {% set kind_labels = {
+       "pause": "Pause trading",
+       "resume": "Resume trading",
+       "reanchor": "Re-anchor grid",
+       "stop": "Stop the engine",
+       "pause_all": "Pause every symbol",
+       "resume_all": "Resume every symbol",
+       "cancel_open_orders": "Cancel open orders",
+       "execute_proposal": "Withdraw to bank",
+     } %}
   <dl class="kv">
-    <dt>Command</dt>
-    <dd>{{ pending.command.kind }}</dd>
-    {% if pending.command.kind in ("pause", "resume", "reanchor") %}
-      <dt>Symbol</dt>
-      <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
-    {% endif %}
     {% if pending.command.kind == "execute_proposal" %}
       {# Money-out (ADR-034): the operator approves an AMOUNT and a
          DESTINATION, not an opaque id — cli/harvest re-validates both
-         against the stored proposal and refuses on mismatch. #}
+         against the stored proposal and refuses on mismatch. Amount
+         leads: it is the fact the decision actually turns on. #}
       <dt>Amount</dt>
       <dd class="modal-amount">${{ pending.command.amount_usd }}</dd>
       <dt>Destination</dt>
       <dd>{{ pending.command.destination }}</dd>
       {% if proposal is defined and proposal is not none %}
-        <dt>Rationale</dt>
+        <dt>Why</dt>
         <dd class="modal-rationale">{{ proposal.rationale }}</dd>
       {% endif %}
       <dt>Proposal</dt>
       <dd class="modal-proposal-id">{{ pending.command.proposal_id }}</dd>
+    {% else %}
+      <dt>Action</dt>
+      <dd>{{ kind_labels.get(pending.command.kind, pending.command.kind) }}</dd>
+      {% if pending.command.kind in ("pause", "resume", "reanchor") %}
+        <dt>Symbol</dt>
+        <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
+      {% endif %}
     {% endif %}
     <dt>Expires</dt>
     <dd>{{ pending.ttl_expires_at.dt | tz_format(operator_tz, "%H:%M:%S %Z") }}</dd>

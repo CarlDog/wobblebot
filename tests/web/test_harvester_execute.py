@@ -336,3 +336,30 @@ class TestExecuteSubmit:
             )
             assert resp.status_code in (302, 303, 403)
         assert await operator_storage.get_pending_commands(kinds=("execute_proposal",)) == []
+
+
+@pytest.mark.asyncio
+class TestModalWording:
+    """The modal speaks operator English, not discriminator names."""
+
+    async def test_money_modal_avoids_the_raw_kind(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        harvest_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """`execute_proposal` is an internal name; a withdrawal decision
+        must not be read off it."""
+        await harvest_storage.save_transfer_proposal(_proposal(proposal_id="prop-words"))
+        with _client(operator_storage, harvest_storage) as client:
+            login_as(client)
+            page = client.get("/harvester")
+            token = csrf_from(page.text)
+            resp = client.post(
+                "/commands/execute-proposal",
+                data={"proposal_id": "prop-words", "csrf_token": token},
+                headers={"HX-Request": "true"},
+            )
+            assert "Confirm withdrawal" in resp.text
+            # The id still appears (audit), but the KIND string must not
+            # be presented as the action label.
+            assert "<dd>execute_proposal</dd>" not in resp.text
