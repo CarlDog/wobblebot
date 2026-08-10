@@ -1029,6 +1029,23 @@ the detail; the full backlog index is
    rewrite and `cli/apply --daemon` was explicitly dropped, so unblocking it
    needs an ADR, not code.
 
+   **P3 close audit** ✅ **2026-08-10.** Green: schema-drift 19/19 clean;
+   `tools/scan_logging.py --check rule1` exit 0; `domain/` imports zero
+   adapters; pylint 10.00 exit 0; mypy strict clean; 3026 tests (2973 at P3
+   slice 18 → 3026, no deletions). Entry points unchanged at 21, so the
+   deprived-env baseline stands. **Two findings, both queued rather than
+   fixed in the audit pass:**
+   1. **Three files carry a bare `# pylint: disable=too-many-lines` with no
+      rationale** — `cli/operator.py` (1625), `services/grid_engine.py` (1307),
+      `cli/live.py` (1248). The suppression may well be right (each is one
+      cohesive concern), but an undocumented suppression is indistinguishable
+      from a junk drawer, and the phase-end rule asks for the judgement to be
+      written down. Queue: add a one-line justification, or split.
+   2. **`services/operator_service.py` is 993 lines — 7 from the hard gate.**
+      Worth naming because that exact near-miss bit this session: `status.py`
+      crossed the gate mid-slice and only CI caught it. The next feature to
+      touch that file will trip it.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
