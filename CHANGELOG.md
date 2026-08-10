@@ -86,6 +86,9 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Status reports are readable on mobile.** The eight tallies at the bottom of a
+  Discord status report packed into three rows instead of sixteen stacked lines,
+  so the narrative you asked for is no longer buried under the counters.
 - **The logging audit is now enforced, not just documented.** The scan that
   drove it ships as `tools/scan_logging.py`, and a test asserts the package
   stays at zero violations — so log quality can'''t quietly drift back.
