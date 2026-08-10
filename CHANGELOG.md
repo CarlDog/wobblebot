@@ -86,6 +86,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Slice 12 — web actions wait for completion.** Approving a command in the
+  web UI now follows it to the actual outcome: the result page watches the
+  row until cli/live executes it and shows the real result ("executed —
+  paused BTC/USD"), warns honestly when pickup is slow (with a pointer to
+  /health), and never executes anything itself — the firewall's poll remains
+  the only path to the engine.
 - **Slice 11 — layout starvation back-off.** A grid layout that places zero
   orders (funds reserved elsewhere + sells cost-basis-deferred) now enters a
   starved state: one warning with the full breakdown, then a retry every ~5

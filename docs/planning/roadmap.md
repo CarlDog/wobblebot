@@ -704,6 +704,20 @@ the detail; the full backlog index is
    fires, funded-retry recovers, partial-never-starves, and the
    reanchor path. Test count 2874 → 2879.
 
+   **Slice 12 — web wait-for-completion (row-watch core)** ✅ **2026-08-09**
+   (the operator-filed item's first layer; the modal-card presentation is
+   the follow-up layer): the post-approve result page no longer dead-ends
+   at "approved" — a new `_command_watch.html` partial polls
+   `GET /commands/{id}/watch` (htmx, 2s) until the row reaches a TERMINAL
+   state, then shows the actual `CommandResult` ("executed — paused
+   BTC/USD" / FAILED / expired). **Watching only, never executing** —
+   cli/live's approved-poll remains the sole row→engine path
+   (ADR-002/ADR-013). Honest slow-pickup warning past 30s ("is the live
+   daemon running? Check /health") instead of an infinite spinner; the
+   no-JS fallback simply stays on the waiting block until a manual
+   refresh. Pinned by 3 tests (self-polling markup, terminal result stops
+   polling, unknown-id partial). Test count 2879 → 2882.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
