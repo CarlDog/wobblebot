@@ -684,7 +684,14 @@ reconciler edge case worth tracing before fixing the partial-
 grid messaging, since both affect the operator's restart
 experience.
 
-### Zero-order layout starvation: back-off / re-park instead of per-tick retry
+### Zero-order layout starvation: back-off / re-park instead of per-tick retry — ✅ SHIPPED 2026-08-09 (P3 slice 11)
+
+> Shipped to this design with the tick-based back-off variant: starved
+> state on placed == 0, one WARNING with the counts, retry every 60
+> ticks (about 5 min) with the standard heartbeat, any placement
+> clears. All three layout sites participate, including
+> `request_reanchor` — the original incident's 0/6 now backs off
+> immediately.
 
 **What:** when a layout places **zero** of its target orders, the
 symbol ends the tick onside with no open orders — so the engine's

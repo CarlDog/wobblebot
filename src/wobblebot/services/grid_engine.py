@@ -81,6 +81,18 @@ _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 # every 5s for ~7h straight. 240 ticks ≈ 20 min at the default 5s cadence.
 _OFFSIDE_SUMMARY_EVERY_TICKS = 240
 
+# P3 starvation back-off (the 2026-08-09 re-anchor e2e finding): when a
+# layout places ZERO orders (BUYs refused for reserved quote balance +
+# SELLs cost-basis-deferred), the no-orders self-heal used to re-attempt
+# the full layout EVERY tick, silently and forever. Once starved, retry
+# only this often — 60 ticks ≈ 5 min at the default 5s cadence, measured
+# in the writer's cadence like every other tick constant. Conditions
+# that unstarve a symbol (quote balance freed, price back above cost
+# basis) change on market timescales; a 5-minute probe is prompt enough
+# while cutting the busy-wait ~60x. A PARTIAL layout (placed >= 1) never
+# counts as starved — its standing orders make the no-orders check moot.
+_STARVED_RETRY_EVERY_TICKS = 60
+
 # v1.1 backlog "boot-time stale-anchor WARN": an anchor persisted this
 # long ago has ridden through enough market time that its reference
 # price may no longer reflect a sensible regime -- a WARNING (not just
@@ -205,6 +217,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # ADR-025: same transition + heartbeat pattern for consecutive
         # wide-spread-skip ticks.
         self._wide_spread_ticks: dict[Symbol, int] = {}
+        # P3 starvation back-off: ticks since a layout placed 0 orders.
+        # Absent = not starved. Same transition + heartbeat pattern.
+        self._starved_ticks: dict[Symbol, int] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -541,6 +556,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             levels_below=state.levels_below,
         )
         placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
+        # A 0/N reanchor layout (the original 2026-08-09 incident) enters
+        # the starved back-off immediately — no next-tick busy loop.
+        self._note_layout_outcome(symbol, placed, refusals, sells_deferred, len(levels))
         message = (
             f"re-anchored {symbol}: {old_anchor} -> {current_price}; "
             f"cancelled {cancelled}, placed {placed}/{len(levels)}"
@@ -588,6 +606,71 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 refusals += 1
         return (placed, refusals, sells_deferred)
 
+    def _starved_should_attempt(self, symbol: Symbol) -> bool:
+        """Gate a no-orders re-layout attempt through the back-off.
+
+        Not starved: always attempt. Starved: count the tick and allow
+        an attempt only every ``_STARVED_RETRY_EVERY_TICKS``, with the
+        standard periodic heartbeat in between — never a retry (or a
+        log line) every tick.
+        """
+        ticks = self._starved_ticks.get(symbol)
+        if ticks is None:
+            return True
+        ticks += 1
+        self._starved_ticks[symbol] = ticks
+        if ticks % _STARVED_RETRY_EVERY_TICKS == 0:
+            return True
+        if ticks % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
+            _LOGGER.info(
+                "%s still starved (no orders placeable); parked %d ticks, retrying every %d",
+                symbol,
+                ticks,
+                _STARVED_RETRY_EVERY_TICKS,
+                extra={"symbol": str(symbol), "consecutive_starved_ticks": ticks},
+            )
+        return False
+
+    def _note_layout_outcome(
+        self, symbol: Symbol, placed: int, refusals: int, sells_deferred: int, target: int
+    ) -> None:
+        """Enter/clear the starved state from a layout's outcome.
+
+        Zero placed out of a non-empty target = starved: ONE WARNING
+        with the refusal/deferral breakdown (the operator learns once,
+        and the command-result echo / logs carry the same counts), then
+        the back-off in :meth:`_starved_should_attempt` owns the
+        cadence. Any placement clears the state — standing orders make
+        the no-orders self-heal moot.
+        """
+        if placed > 0 or target == 0:
+            if self._starved_ticks.pop(symbol, None) is not None:
+                _LOGGER.info(
+                    "%s recovered from starvation: placed %d/%d",
+                    symbol,
+                    placed,
+                    target,
+                    extra={"symbol": str(symbol), "levels_placed": placed, "target_levels": target},
+                )
+            return
+        if symbol not in self._starved_ticks:
+            self._starved_ticks[symbol] = 1
+            _LOGGER.warning(
+                "%s layout starved: placed 0/%d (%d refused, %d sells deferred); "
+                "backing off — retrying every %d ticks instead of every tick",
+                symbol,
+                target,
+                refusals,
+                sells_deferred,
+                _STARVED_RETRY_EVERY_TICKS,
+                extra={
+                    "symbol": str(symbol),
+                    "target_levels": target,
+                    "refusals": refusals,
+                    "sells_deferred": sells_deferred,
+                },
+            )
+
     async def _initialize(
         self,
         symbol: Symbol,
@@ -610,6 +693,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             levels_below=state.levels_below,
         )
         placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
+        self._note_layout_outcome(symbol, placed, refusals, sells_deferred, len(levels))
         _LOGGER.info(
             "grid initialized for %s: anchor %s, placed %d/%d%s%s",
             symbol,
@@ -717,7 +801,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # fills doesn't trigger spurious re-layouts on the way to
             # placing counters.
             remaining_open = await self._storage.get_open_orders(symbol=symbol)
-            if not remaining_open:
+            if remaining_open:
+                # Orders exist again by any path — starvation (if any) is over.
+                self._starved_ticks.pop(symbol, None)
+            if not remaining_open and self._starved_should_attempt(symbol):
                 anchor_age = datetime.now(UTC) - state.created_at.dt
                 drift_percentage = (
                     abs(current_price - state.reference_price) / state.reference_price
@@ -753,6 +840,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 placed += relayout_placed
                 refusals += relayout_refusals
                 sells_deferred += relayout_deferred
+                self._note_layout_outcome(
+                    symbol, relayout_placed, relayout_refusals, relayout_deferred, len(levels)
+                )
                 # v1.1 backlog "partial-grid placement WARN -> INFO": the
                 # placed-vs-target summary an operator should look at,
                 # now that per-level insufficient-balance refusals log

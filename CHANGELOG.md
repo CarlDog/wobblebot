@@ -86,6 +86,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Slice 11 — layout starvation back-off.** A grid layout that places zero
+  orders (funds reserved elsewhere + sells cost-basis-deferred) now enters a
+  starved state: one warning with the full breakdown, then a retry every ~5
+  minutes instead of the silent every-tick busy loop the 2026-08-09 re-anchor
+  test uncovered. Any successful placement clears it. Closes the last finding
+  from that live test.
 - **Slice 10 — LLM health on /health + cold-start parse fix.** The /health
   page gains an "LLM Endpoints" card probing whatever is configured — Ollama
   and any cloud provider with a key — via free endpoints on a 60s cache; a

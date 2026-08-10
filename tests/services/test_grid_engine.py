@@ -1650,3 +1650,89 @@ class TestSpreadGuard:
         second = await engine.step(BTC_USD)
         assert second.action == "initialized"
         assert second.placed == 6
+
+
+# ---------------------------------------------------------------------------
+# Starvation back-off (P3 — the 2026-08-09 re-anchor e2e finding)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestStarvationBackoff:
+    """A layout that places 0/N enters a back-off instead of the old
+    every-tick silent retry loop; any placement clears it."""
+
+    def _broke_exchange(self) -> MockExchangeAdapter:
+        # No USD (BUYs refused) and no BTC (SELLs refused): 0/6 placeable.
+        return MockExchangeAdapter(
+            starting_balances={"USD": Decimal("0"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+
+    async def test_zero_placement_warns_once_and_backs_off(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = GridEngine(self._broke_exchange(), storage, _grid_config(), _safety_config())
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            first = await engine.step(BTC_USD)  # initialize -> 0/6
+            second = await engine.step(BTC_USD)  # would have re-attempted pre-fix
+            third = await engine.step(BTC_USD)
+        assert first.refusals == 6
+        # Back-off: no placement attempts on the following ticks.
+        assert second.refusals == 0
+        assert third.refusals == 0
+        starved_warns = [
+            r for r in caplog.records if "layout starved: placed 0/6" in r.getMessage()
+        ]
+        assert len(starved_warns) == 1  # transition WARN once, not per tick
+
+    async def test_retry_fires_on_the_retry_tick(self, storage: SQLiteStorageAdapter) -> None:
+        from wobblebot.services.grid_engine import _STARVED_RETRY_EVERY_TICKS
+
+        engine = GridEngine(self._broke_exchange(), storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # starve
+        # Fast-forward to one tick before the retry boundary.
+        engine._starved_ticks[BTC_USD] = _STARVED_RETRY_EVERY_TICKS - 1
+        result = await engine.step(BTC_USD)
+        assert result.refusals == 6  # the retry attempted (and re-failed)
+
+    async def test_funded_retry_recovers_and_clears(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from wobblebot.services.grid_engine import _STARVED_RETRY_EVERY_TICKS
+
+        exchange = self._broke_exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # starve
+        exchange._balances["USD"] = Decimal("100")  # funds free up
+        engine._starved_ticks[BTC_USD] = _STARVED_RETRY_EVERY_TICKS - 1
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+        assert result.placed == 3  # the 3 BUYs now fit
+        assert BTC_USD not in engine._starved_ticks
+        assert any("recovered from starvation" in r.getMessage() for r in caplog.records)
+
+    async def test_partial_placement_never_starves(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        result = await engine.step(BTC_USD)
+        assert result.placed == 3  # BUYs fit, SELLs refused
+        assert BTC_USD not in engine._starved_ticks
+
+    async def test_zero_placement_reanchor_enters_backoff(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The original incident: a re-anchor placing 0/6 must not hand
+        the next tick a busy loop."""
+        engine = GridEngine(self._broke_exchange(), storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize starved state exists
+        engine._starved_ticks.pop(BTC_USD, None)  # isolate the reanchor path
+        ok, message = await engine.request_reanchor(BTC_USD)
+        assert ok is True
+        assert "placed 0/6" in message
+        assert engine._starved_ticks.get(BTC_USD) == 1
+        follow_up = await engine.step(BTC_USD)
+        assert follow_up.refusals == 0  # backed off, no attempt
