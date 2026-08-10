@@ -86,6 +86,15 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Notifications can be marked read, and the bell agrees across devices.** The
+  unread dot used to live in your browser, so clearing it on the desktop left
+  your phone still dotted — and simply opening the notifications page counted
+  as reading everything. Read state is now stored server-side: each row gets an
+  **Acknowledge** button, the page gets **Mark all read**, unread rows are
+  visibly distinct, and the bell reflects a real count. Notifications also
+  link to the page that explains them — fills and cap trips to the dashboard,
+  proposals and withdrawals to the Harvester page. Marking something read is a
+  local UI action; it never enters the command queue that daemons act on.
 - **Status reports and session-start cards are readable on mobile.** The eight
   tallies at the bottom of a Discord status report pack into three rows instead
   of sixteen stacked lines, so the narrative you asked for is no longer buried

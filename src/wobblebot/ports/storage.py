@@ -815,6 +815,62 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
                 existing).
         """
 
+    @abstractmethod
+    async def count_unread_notifications(self) -> int:
+        """Return how many notifications the operator hasn't acknowledged.
+
+        Drives the web UI's bell badge (``read_at IS NULL``). Server-
+        side so the badge agrees across devices — the v1.0 badge
+        compared timestamps against browser localStorage, so clearing
+        it on the desktop left the phone still dotted.
+
+        Raises:
+            StorageError: If the count fails.
+        """
+
+    @abstractmethod
+    async def mark_notifications_read(
+        self, notification_ids: Sequence[int], read_at: Timestamp
+    ) -> int:
+        """Acknowledge specific notification rows; returns rows updated.
+
+        Idempotent by design: already-read rows are left alone (the
+        UPDATE is scoped to ``read_at IS NULL``), so the first
+        acknowledgement's timestamp is the one that sticks and a
+        double-click doesn't rewrite history. An empty ``notification_ids``
+        is a no-op returning 0 — deliberately NOT "all", so a caller
+        that computes an empty selection can't accidentally clear the
+        whole table.
+
+        Args:
+            notification_ids: Row ids to acknowledge.
+            read_at: Acknowledgement timestamp.
+
+        Returns:
+            Number of rows that transitioned unread -> read.
+
+        Raises:
+            StorageError: If the update fails.
+        """
+
+    @abstractmethod
+    async def mark_all_notifications_read(self, read_at: Timestamp) -> int:
+        """Acknowledge every unread notification; returns rows updated.
+
+        The "Mark all read" action. Separate from
+        ``mark_notifications_read`` rather than an ``ids=None``
+        overload so clearing the table is always an explicit call.
+
+        Args:
+            read_at: Acknowledgement timestamp.
+
+        Returns:
+            Number of rows that transitioned unread -> read.
+
+        Raises:
+            StorageError: If the update fails.
+        """
+
     # Conversation turn operations (Stage 5.6 — operator daemon)
     @abstractmethod
     async def save_conversation_turn(self, turn: ConversationTurn) -> None:

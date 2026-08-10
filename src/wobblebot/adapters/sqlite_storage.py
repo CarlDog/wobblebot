@@ -125,6 +125,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await _migrate_llm_calls_cache_token_columns(self._conn)
             await _migrate_price_snapshots_unique(self._conn)
             await _migrate_transfer_results_unique_proposal_id(self._conn)
+            await _migrate_notifications_read_at(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -1167,6 +1168,57 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if rowcount == 0:
             raise StorageError(f"Notification {notification_id} not found")
 
+    async def count_unread_notifications(self) -> int:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL"
+            ) as cursor:
+                row = await cursor.fetchone()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to count unread notifications: {exc}") from exc
+        return int(row[0]) if row else 0
+
+    async def mark_notifications_read(
+        self, notification_ids: Sequence[int], read_at: Timestamp
+    ) -> int:
+        if not notification_ids:
+            return 0
+        conn = self._require_conn()
+        placeholders = ",".join("?" for _ in notification_ids)
+        params: list[object] = [read_at.dt.isoformat()]
+        params.extend(int(row_id) for row_id in notification_ids)
+        try:
+            cursor = await conn.execute(
+                # read_at IS NULL keeps this idempotent: re-acknowledging
+                # preserves the first timestamp instead of rewriting it.
+                f"UPDATE notifications SET read_at = ? "
+                f"WHERE id IN ({placeholders}) AND read_at IS NULL",
+                params,
+            )
+            await conn.commit()
+            rowcount = cursor.rowcount
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to mark notifications read: {exc}") from exc
+        return int(rowcount)
+
+    async def mark_all_notifications_read(self, read_at: Timestamp) -> int:
+        conn = self._require_conn()
+        try:
+            cursor = await conn.execute(
+                "UPDATE notifications SET read_at = ? WHERE read_at IS NULL",
+                (read_at.dt.isoformat(),),
+            )
+            await conn.commit()
+            rowcount = cursor.rowcount
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to mark all notifications read: {exc}") from exc
+        return int(rowcount)
+
     # ----- conversation turns (Stage 5.6 — operator daemon) -----
 
     async def save_conversation_turn(self, turn: ConversationTurn) -> None:
@@ -1795,6 +1847,30 @@ async def _migrate_llm_calls_cache_token_columns(conn: aiosqlite.Connection) -> 
     )
     await _add_column_if_missing(
         conn, "llm_calls", "tokens_cache_write", "INTEGER NOT NULL DEFAULT 0"
+    )
+
+
+async def _migrate_notifications_read_at(conn: aiosqlite.Connection) -> None:
+    """Add ``read_at`` + the unread partial index (P3 slice 19).
+
+    SCHEMA declares the column for fresh DBs, so the ALTER no-ops
+    there; operator DBs written before this slice need it. Existing
+    rows land on NULL = unread, which is the honest reading — nobody
+    had a way to acknowledge them.
+
+    The index lives here rather than in SCHEMA because SCHEMA runs
+    (executescript) BEFORE any migration, so indexing ``read_at``
+    there would raise "no such column" against a pre-slice DB. It is
+    PARTIAL (``WHERE read_at IS NULL``) because the only query that
+    needs it is the bell badge's unread count, polled every 30s per
+    open tab forever: a partial index holds only the unread rows, so
+    the count stays an index-only scan that shrinks as the operator
+    acknowledges instead of growing with the table.
+    """
+    await _add_column_if_missing(conn, "notifications", "read_at", "TEXT")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
+        "ON notifications(read_at) WHERE read_at IS NULL"
     )
 
 

@@ -210,7 +210,7 @@ def get_login_rate_limit(request: Request) -> LoginRateLimit:
 
 # script-src is 'self' only, no 'unsafe-inline' -- every template
 # script lives under /static/*.js (moved there for this fix; see
-# nav.js / theme-init.js / notifications-seen.js). style-src allows
+# nav.js / theme-init.js). style-src allows
 # 'unsafe-inline' because several templates use inline `style="..."`
 # (a data-driven bar-chart height on the cost page, fixed <col> width
 # hints) -- moving those to CSS custom properties is a larger refactor

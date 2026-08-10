@@ -259,6 +259,17 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def count_unread_notifications(self) -> int:
+        raise NotImplementedError
+
+    async def mark_notifications_read(  # type: ignore[no-untyped-def]
+        self, notification_ids, read_at
+    ):
+        raise NotImplementedError
+
+    async def mark_all_notifications_read(self, read_at):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def save_conversation_turn(self, turn):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

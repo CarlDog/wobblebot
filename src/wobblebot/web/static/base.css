@@ -1960,6 +1960,51 @@ table.data th {
   border-style: dashed;
 }
 
+/* ---- Notifications read-state (P3 slice 19) --------------------------
+   Unread rows earn a left accent bar and full-strength text; read rows
+   recede. The whole point of server-side read-state is that "what still
+   needs me" is visible at a glance, so the distinction has to be
+   legible without reading a single word. */
+.notif-unread td {
+  background: var(--surface-hover);
+}
+
+.notif-unread td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-link);
+}
+
+.notif-unread td:not(.muted) {
+  font-weight: 600;
+}
+
+/* Keep the action column from stretching the table; the button only
+   exists on unread rows, so the cell is usually empty. */
+.notif-action {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+/* Quiet ghost button for low-stakes row actions (Acknowledge, Mark all
+   read). Same visual language as .reanchor-snooze but sized for a table
+   row rather than a banner — deliberately a separate rule: sharing one
+   would mean re-tuning the banner's padding/weight for a cell. */
+.btn-quiet {
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.btn-quiet:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
 /* ---- Responsive (narrow / mobile) ------------------------------------
    Minimal pass so the dashboard is usable on a phone: wide data tables
    scroll inside their card instead of blowing out the viewport, the

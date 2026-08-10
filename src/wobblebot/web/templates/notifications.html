@@ -1,6 +1,9 @@
-{# Notifications list (Stage 8.4.E soak Day 4).
+{# Notifications list (Stage 8.4.E soak Day 4; read-state P3 slice 19).
    Reads the notifications table that cli/live + cli/harvest write to.
-   v1.0 ships read-only; mark-as-read + deep-linking are v1.1. #}
+   Unread rows carry an accent bar + an Acknowledge button; the header
+   carries the count and a Mark-all-read action. Acknowledging is
+   deliberately explicit — visiting this page no longer counts as
+   reading everything (the v1.0 localStorage behavior). #}
 {% extends "layout.html" %}
 
 {% block title %}Notifications — WobbleBot{% endblock %}
@@ -10,7 +13,18 @@
 
 <div class="card">
   <div class="card-header">
-    <div class="card-title">Recent (Last {{ snapshot.notifications|length }})</div>
+    <div class="card-title">
+      Recent (Last {{ snapshot.notifications|length }})
+      {% if snapshot.unread %}
+        <span class="tag warn">{{ snapshot.unread }} unread</span>
+      {% endif %}
+    </div>
+    {% if snapshot.unread %}
+      <form method="post" action="/notifications/read-all" class="notif-readall">
+        {{ csrf_input(request) }}
+        <button type="submit" class="btn-quiet">Mark all read</button>
+      </form>
+    {% endif %}
   </div>
   {% if snapshot.error %}
     <p class="error">{{ snapshot.error }}</p>
@@ -28,30 +42,39 @@
           <th>level</th>
           <th>title</th>
           <th>message</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for n in snapshot.notifications %}
-          <tr>
-            <td>{{ n.created_at.dt | tz_format(operator_tz) }}</td>
+          <tr class="{% if not n.row.read_at %}notif-unread{% endif %}">
+            <td>{{ n.row.created_at.dt | tz_format(operator_tz) }}</td>
             <td>
               <span class="tag
-                {% if n.notification.level == 'info' %}info
-                {% elif n.notification.level == 'warning' %}warn
-                {% else %}fail{% endif %}">{{ n.notification.level }}</span>
+                {% if n.row.notification.level == 'info' %}info
+                {% elif n.row.notification.level == 'warning' %}warn
+                {% else %}fail{% endif %}">{{ n.row.notification.level }}</span>
             </td>
-            <td>{{ n.notification.title }}</td>
-            <td class="muted">{{ n.notification.message }}</td>
+            <td>
+              {% if n.link %}
+                <a href="{{ n.link }}">{{ n.row.notification.title }}</a>
+              {% else %}
+                {{ n.row.notification.title }}
+              {% endif %}
+            </td>
+            <td class="muted">{{ n.row.notification.message }}</td>
+            <td class="notif-action">
+              {% if not n.row.read_at %}
+                <form method="post" action="/notifications/{{ n.row.id }}/read">
+                  {{ csrf_input(request) }}
+                  <button type="submit" class="btn-quiet">Acknowledge</button>
+                </form>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   {% endif %}
 </div>
-
-{# Visiting this page = "operator has seen the latest notifications."
-   Stamp localStorage so the bell-badge clears on next poll. The bell's
-   own JS (nav.js) reads this value. External file (not inline) per
-   the v1.1 CSP fix — script-src is 'self' only. #}
-<script src="/static/notifications-seen.js"></script>
 {% endblock %}
