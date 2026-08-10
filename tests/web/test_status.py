@@ -1008,7 +1008,10 @@ class TestReanchorBannerSnoozeAndFee:
                 resp = client.get("/dashboard")
                 assert resp.status_code == 200
                 assert "reanchor-banner" in resp.text
-                assert "Projected cost" in resp.text
+                # Case-insensitive: this asserts the fee line is PRESENT,
+                # not how it's cased — label styling is a design call and
+                # shouldn't break a behavioral test.
+                assert "projected cost" in resp.text.lower()
                 assert 'action="/commands/reanchor"' in resp.text
                 assert 'action="/commands/snooze-reanchor"' in resp.text
         finally:
