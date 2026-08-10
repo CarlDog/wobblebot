@@ -323,7 +323,10 @@ _CLOUD_KEY_ENV = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "google": "GOOGLE_API_KEY",
+    "atlas": "ATLASCLOUD_API_KEY",
 }
+# OpenAI-compatible gateway; see the same note in probe_advisor.py.
+_ATLAS_BASE_URL = "https://api.atlascloud.ai"
 
 
 async def _build_llm(args: argparse.Namespace) -> tuple[Any, Any]:
@@ -382,9 +385,11 @@ async def _build_llm(args: argparse.Namespace) -> tuple[Any, Any]:
         "max_tokens": args.max_tokens,
         "timeout_seconds": args.timeout_seconds,
     }
-    if args.provider == "openai":
+    if args.provider in ("openai", "atlas"):
         from wobblebot.adapters.openai import OpenAIAdvisorAdapter
 
+        if args.provider == "atlas":
+            return OpenAIAdvisorAdapter(base_url=_ATLAS_BASE_URL, **common), storage
         return (
             OpenAIAdvisorAdapter(
                 organization=os.environ.get("OPENAI_ORGANIZATION") or None, **common
@@ -455,7 +460,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=None, help="Arbitrator model; omit for baselines only.")
     parser.add_argument(
-        "--provider", default="ollama", choices=("ollama", "openai", "anthropic", "google")
+        "--provider",
+        default="ollama",
+        choices=("ollama", "openai", "anthropic", "google", "atlas"),
     )
     parser.add_argument("--session-cap", type=float, default=2.0)
     parser.add_argument("--daily-cap", type=float, default=5.0)

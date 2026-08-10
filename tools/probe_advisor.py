@@ -595,7 +595,15 @@ _CLOUD_KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "google": "GOOGLE_API_KEY",
+    "atlas": "ATLASCLOUD_API_KEY",
 }
+# Atlas Cloud is an OpenAI-COMPATIBLE gateway (~400 models behind one key),
+# so it reuses OpenAIAdvisorAdapter with a base_url override rather than
+# needing an adapter of its own. Modelled as a first-class provider instead
+# of a bare --base-url flag so the endpoint and the key env var can never be
+# mismatched. The adapter appends "/v1/chat/completions", which is exactly
+# Atlas's documented LLM surface.
+_ATLAS_BASE_URL = "https://api.atlascloud.ai"
 _CLOUD_COST_DB = "data/probe_llm_cost.db"
 
 
@@ -647,6 +655,15 @@ def _build_cloud_advisor(  # pylint: disable=too-many-arguments,too-many-positio
     if provider == "openai":
         return OpenAIAdvisorAdapter(
             organization=os.environ.get("OPENAI_ORGANIZATION") or None,
+            **common,  # type: ignore[arg-type]
+        )
+    if provider == "atlas":
+        # No organization header, and NOTE: llm_pricing has no entries for
+        # Atlas-hosted models, so the cost gate falls back to its heuristic
+        # — spend figures from an Atlas sweep are approximate until real
+        # prices are recorded.
+        return OpenAIAdvisorAdapter(
+            base_url=_ATLAS_BASE_URL,
             **common,  # type: ignore[arg-type]
         )
     if provider == "google":
@@ -861,7 +878,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--provider",
-        choices=("ollama", "anthropic", "openai", "google"),
+        choices=("ollama", "anthropic", "openai", "google", "atlas"),
         default="ollama",
         help=(
             "Where to run the model. 'ollama' (default) uses --base-url; the "
