@@ -263,9 +263,7 @@ def main() -> int:
     print(f"Battery: {len(BATTERY)} messages per model")
     print(f"Timeout: {args.timeout_seconds}s per call")
 
-    asyncio.run(
-        sweep_async(models, Path(args.prompt_file), args.base_url, args.timeout_seconds)
-    )
+    asyncio.run(sweep_async(models, Path(args.prompt_file), args.base_url, args.timeout_seconds))
     return 0
 
 

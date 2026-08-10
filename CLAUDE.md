@@ -42,7 +42,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Twenty surfaces (sixteen `cli/` + four `tools/`). One-line index; full behavior in each
+Twenty-one surfaces (sixteen `cli/` + five `tools/`). One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
@@ -65,6 +65,7 @@ module's `--help` and the roadmap stage that shipped it.
 - `tools/run_cloud_check.py` — one-shot cloud-LLM smoke test (`--provider`/`--role`/`--model`/`--dry-run`).
 - `tools/import_kraken_history.py` — stream the local OHLCVT dump into `ohlc_bars`/`price_snapshots` (P2 slice 2; the only deep-history path).
 - `tools/auditor.py` — replay `settings.yml` through the real `GridEngine` over stored bars (ADR-028; directional, not exact).
+- `tools/scan_logging.py` — audit log calls against `docs/implementation/logging-conventions.md`. `--check rule1` (default) exits 1 on data stranded in `extra=` and is enforced by a test; `--check decimal` lists money values interpolated without `fmt_decimal` (a review list — the heuristic trips on ints and float durations).
 
 ### Operator handoff: from dry-run to live trading
 

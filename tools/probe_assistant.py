@@ -149,8 +149,10 @@ async def main_async(  # pylint: disable=too-many-locals,too-many-arguments,too-
         )
         return 2
 
-    prompt_path = Path(prompt_file_override) if prompt_file_override else Path(
-        operator_cfg.assistant.prompt_file
+    prompt_path = (
+        Path(prompt_file_override)
+        if prompt_file_override
+        else Path(operator_cfg.assistant.prompt_file)
     )
     prompt = load_prompt(prompt_path)
     model = model_override or operator_cfg.assistant.model
