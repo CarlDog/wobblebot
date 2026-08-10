@@ -732,7 +732,13 @@ the detail; the full backlog index is
    `static/modal.js` (script-src 'self', no inline). Includes a
    pylint-caught lesson: an untested per-verb htmx branch shipped an
    undefined variable — now every verb's modal path is exercised by an
-   all-verbs test. Test count 2882 → 2886.
+   all-verbs test. Test count 2882 → 2886. *Follow-up (operator-caught,
+   same day):* closing the modal mid-watch (Close/Cancel/Escape before the
+   terminal state) killed the poll with the modal and left the dashboard
+   stale until its next natural refresh — `closeModal()` now fires a
+   status-card refresh on every close (guarded on `#status-wrap` + htmx
+   presence; a duplicate refresh after an in-card terminal update is
+   harmless).
 
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth

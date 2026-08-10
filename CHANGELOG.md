@@ -90,8 +90,10 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   through interim pages: pause/resume, banner Re-anchor, and Emergency Stop
   open a card over the dashboard — confirm in place, watch the execution in
   the same card, and the status card refreshes the moment it completes.
-  Progressive enhancement: without JavaScript every full-page flow still
-  works exactly as before.
+  Closing the card at any point (Close, Cancel, Escape, backdrop) also
+  refreshes the status card, so an early close never leaves the dashboard
+  showing pre-action state. Progressive enhancement: without JavaScript
+  every full-page flow still works exactly as before.
 - **Slice 12 — web actions wait for completion.** Approving a command in the
   web UI now follows it to the actual outcome: the result page watches the
   row until cli/live executes it and shows the real result ("executed —
