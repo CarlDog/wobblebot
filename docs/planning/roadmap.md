@@ -972,6 +972,21 @@ the detail; the full backlog index is
    re-anchoring" — exactly the state the operator needs to see to choose pause.
    Real-money cost $0.00. Test count 3015 → 3021.
 
+   **Same-slice fix — `status.py` split at the 1000-line gate.** The
+   viability code pushed `web/routes/status.py` to 1085 lines; pylint kept
+   scoring 10.00 and exited **16**. My local check missed it because I piped
+   pylint through `tail` and read `tail`'s exit code — the exact mistake the
+   standing note warns about, repeated. **CI caught it and the merge chain
+   correctly refused to merge.** Extracted `web/routes/status_reanchor.py`
+   (298 lines): the banner DTO, severity tiering, snooze + recommendation
+   loaders, and the viability reader — one cohesive question (*should the
+   operator re-anchor, and is it worth it?*) with its own thresholds and
+   storage reads, and nothing else on the status page depends on its
+   internals. `status.py` drops to 838. The annotate-never-suppress rule
+   moved with it, so it lives next to the code it constrains. Loaders became
+   public (`load_reanchor_*`) at the module boundary. From here every gate is
+   run unpiped with its own exit code echoed.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

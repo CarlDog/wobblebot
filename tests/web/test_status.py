@@ -895,10 +895,10 @@ class TestReanchorBannerSnoozeAndFee:
     ) -> None:
         """$30 open notional -> $0.24 projected: 0.40% taker on the
         cancelled ladder plus the same again for the re-laid one."""
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
@@ -914,10 +914,10 @@ class TestReanchorBannerSnoozeAndFee:
     async def test_snoozed_symbol_suppresses_banner(
         self, live_storage: SQLiteStorageAdapter
     ) -> None:
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
@@ -930,11 +930,11 @@ class TestReanchorBannerSnoozeAndFee:
     async def test_recent_range_stat_in_spacings(self, live_storage: SQLiteStorageAdapter) -> None:
         """The activity stat: a 600-wide 2h range at 300 spacing = 2.0x.
         A fact from the sparkline series, not a probability claim."""
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
         sym = Symbol(base="BTC", quote="USD")
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {sym: Decimal("30600")},
@@ -950,7 +950,7 @@ class TestReanchorBannerSnoozeAndFee:
     ) -> None:
         """Round-trips through the real adapter: an unexpired snooze
         suppresses, an expired one is ignored on read."""
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
         await operator_storage.save_reanchor_snooze(
@@ -959,18 +959,18 @@ class TestReanchorBannerSnoozeAndFee:
         await operator_storage.save_reanchor_snooze(
             Symbol(base="ETH", quote="USD"), now - timedelta(minutes=1)
         )
-        active = await _load_reanchor_snoozes(operator_storage, now=now)
+        active = await load_reanchor_snoozes(operator_storage, now=now)
         assert active == {Symbol(base="BTC", quote="USD")}
 
     async def test_resnooze_upserts_expiry(self, operator_storage: SQLiteStorageAdapter) -> None:
         """One row per symbol: a second snooze replaces the first."""
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
         sym = Symbol(base="BTC", quote="USD")
         await operator_storage.save_reanchor_snooze(sym, now - timedelta(minutes=1))
         await operator_storage.save_reanchor_snooze(sym, now + timedelta(hours=24))
-        assert await _load_reanchor_snoozes(operator_storage, now=now) == {sym}
+        assert await load_reanchor_snoozes(operator_storage, now=now) == {sym}
         snoozes = await operator_storage.get_reanchor_snoozes()
         assert len(snoozes) == 1
 
@@ -980,10 +980,10 @@ class TestReanchorBannerSnoozeAndFee:
         """Unwired operator.db or a storage failure shows every banner
         — the failure mode is a reappearing banner, never a hidden one."""
         from wobblebot.ports.exceptions import StorageError
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
-        assert await _load_reanchor_snoozes(None, now=now) == set()
+        assert await load_reanchor_snoozes(None, now=now) == set()
 
         class _Broken(SQLiteStorageAdapter):
             async def get_reanchor_snoozes(self):  # type: ignore[no-untyped-def]
@@ -992,7 +992,7 @@ class TestReanchorBannerSnoozeAndFee:
         broken = _Broken(":memory:")
         await broken.connect()
         try:
-            assert await _load_reanchor_snoozes(broken, now=now) == set()
+            assert await load_reanchor_snoozes(broken, now=now) == set()
         finally:
             await broken.close()
 
@@ -1376,10 +1376,10 @@ class TestReanchorViabilityStat:
         live_storage: SQLiteStorageAdapter,
         observe_storage: SQLiteStorageAdapter | None,
     ):  # type: ignore[no-untyped-def]
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
-        return await _load_reanchor_recommendations(
+        return await load_reanchor_recommendations(
             live_storage,
             [order],
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
