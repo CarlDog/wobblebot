@@ -134,7 +134,10 @@ async def save_settings(
         await storage.update_user_preferences(new_prefs)
     except StorageError as exc:
         _LOGGER.warning(
-            "failed to persist user preferences",
+            "failed to persist user preferences (user_id=%s): %s: %s",
+            user.id,
+            type(exc).__name__,
+            exc,
             extra={
                 "error": str(exc),
                 "error_type": type(exc).__name__,

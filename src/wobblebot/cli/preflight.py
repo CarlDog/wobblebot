@@ -54,6 +54,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.config.safety import SafetyConfig
+from wobblebot.domain.value_objects import fmt_decimal
 from wobblebot.ports.exceptions import WobbleBotPortError
 from wobblebot.services.grid_engine import GridEngine, StepResult
 
@@ -78,13 +79,18 @@ def _check_step_result(result: StepResult, expected_layout: int) -> int | None:
     """Validate one StepResult. Returns an error exit code or None."""
     if result.action != "initialized":
         _LOGGER.error(
-            "expected first-tick initialization; got something else",
+            "expected first-tick initialization; got something else (action=%s)",
+            result.action,
             extra={"action": result.action},
         )
         return 1
     if result.refusals:
         _LOGGER.error(
-            "engine refused some placements via the safety cap layer",
+            "engine refused some placements via the safety cap layer (placed=%s, refusals=%s, "
+            "expected=%s)",
+            result.placed,
+            result.refusals,
+            expected_layout,
             extra={
                 "placed": result.placed,
                 "refusals": result.refusals,
@@ -94,7 +100,9 @@ def _check_step_result(result: StepResult, expected_layout: int) -> int | None:
         return 1
     if result.placed != expected_layout:
         _LOGGER.error(
-            "placed count does not match expected layout",
+            "placed count does not match expected layout (placed=%s, expected=%s)",
+            result.placed,
+            expected_layout,
             extra={"placed": result.placed, "expected": expected_layout},
         )
         return 1
@@ -116,16 +124,20 @@ async def _audit_trade_key_scope(adapter: KrakenAdapter) -> int | None:
         can_withdraw = await adapter.has_withdraw_scope()
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "could not verify trade-key withdraw scope; continuing to validate run",
+            "could not verify trade-key withdraw scope; continuing to validate run: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return None
     if can_withdraw:
         _LOGGER.error(
-            "ADR-003 VIOLATION: the trade key (KRAKEN_TRADER_API_KEY) has WITHDRAWAL "
-            "permission. The trading key must NOT be able to withdraw funds — only the "
-            "separate Harvester key may. Turn off 'Withdraw Funds' for this key in "
-            "Kraken Pro -> Settings -> API, or mint a withdrawal-disabled trade key.",
+            "ADR-003 VIOLATION: the trade key (KRAKEN_TRADER_API_KEY) has WITHDRAWAL permission. "
+            "The trading key must NOT be able to withdraw funds — only the separate Harvester key "
+            "may. Turn off 'Withdraw Funds' for this key in Kraken Pro -> Settings -> API, or "
+            "mint a withdrawal-disabled trade key. (key_var=%s, exit_code=%s)",
+            "KRAKEN_TRADER_API_KEY",
+            3,
             extra={"key_var": "KRAKEN_TRADER_API_KEY", "exit_code": 3},
         )
         return 3
@@ -147,7 +159,9 @@ async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
         )
     except ValueError as exc:
         _LOGGER.error(
-            "missing trade credentials",
+            "missing trade credentials (expected=%s): %s",
+            "KRAKEN_TRADER_API_KEY/KRAKEN_TRADER_API_SECRET",
+            exc,
             extra={"error": str(exc), "expected": "KRAKEN_TRADER_API_KEY/KRAKEN_TRADER_API_SECRET"},
         )
         return 2
@@ -171,7 +185,12 @@ async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
 
         ref_price = (await adapter.get_current_price(config.preflight.symbol)).amount
         _LOGGER.info(
-            "validate run starting",
+            "validate run starting (symbol=%s, reference_price_live=%s, spacing_percentage=%s, "
+            "levels_above=%s)",
+            config.preflight.symbol,
+            fmt_decimal(ref_price),
+            fmt_decimal(grid_config.default.spacing_percentage),
+            grid_config.default.levels_above,
             extra={
                 "symbol": str(config.preflight.symbol),
                 "reference_price_live": str(ref_price),
@@ -197,13 +216,20 @@ async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
         ]
         if non_dryrun:
             _LOGGER.error(
-                "dry-run produced non-DRYRUN exchange_ids — adapter not in dry_run mode?",
+                "dry-run produced non-DRYRUN exchange_ids — adapter not in dry_run mode? "
+                "(non_dryrun_ids=%s)",
+                non_dryrun,
                 extra={"non_dryrun_ids": non_dryrun},
             )
             return 1
 
         _LOGGER.info(
-            "validate run completed successfully",
+            "validate run completed successfully (symbol=%s, validated=%s, expected=%s, "
+            "all_dry_run=%s)",
+            config.preflight.symbol,
+            result.placed,
+            layout_count,
+            True,
             extra={
                 "symbol": str(config.preflight.symbol),
                 "validated": result.placed,
@@ -215,7 +241,9 @@ async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
 
     except WobbleBotPortError as exc:
         _LOGGER.error(
-            "validate run failed against live Kraken",
+            "validate run failed against live Kraken: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1

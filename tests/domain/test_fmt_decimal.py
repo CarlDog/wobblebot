@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from wobblebot.cli._common import fmt_decimal
+from wobblebot.domain.value_objects import fmt_decimal
 
 pytestmark = pytest.mark.unit
 

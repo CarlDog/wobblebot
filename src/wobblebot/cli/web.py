@@ -131,7 +131,10 @@ async def _open_storage(path: str) -> SQLiteStorageAdapter | None:
             parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             _LOGGER.error(
-                "failed to create parent dir for db",
+                "failed to create parent dir for db (path=%s, parent=%s): %s",
+                path,
+                parent,
+                exc,
                 extra={"path": path, "parent": str(parent), "error": str(exc)},
             )
             return None
@@ -140,7 +143,9 @@ async def _open_storage(path: str) -> SQLiteStorageAdapter | None:
         await adapter.connect()
     except StorageError as exc:
         _LOGGER.error(
-            "failed to open sqlite db",
+            "failed to open sqlite db (path=%s): %s",
+            path,
+            exc,
             extra={"path": path, "error": str(exc)},
         )
         return None
@@ -177,15 +182,10 @@ async def _open_optional_dbs(
         adapter = await _open_storage(p)
         if adapter is None:
             _LOGGER.warning(
-                "optional db failed to open; the dashboard will "
-                "gracefully degrade cards that need it",
-                # "name" collides with the reserved LogRecord.name attribute
-                # (the logger's own name) -- passing it via extra raises
-                # KeyError inside logging internals and crashes the whole
-                # process instead of gracefully degrading (2026-08-05 outage:
-                # a cross-process migration race left advise.db transiently
-                # unopenable, and this crash turned that into a full dashboard
-                # outage instead of one missing card).
+                "optional db failed to open; the dashboard will gracefully degrade cards that "
+                "need it (db_name=%s, path=%s)",
+                name,
+                p,
                 extra={"db_name": name, "path": p},
             )
         out[name] = adapter
@@ -311,7 +311,11 @@ async def _release_check_loop(
         app.state.release_check_result = result
         if result.update_available:
             _LOGGER.info(
-                "newer wobblebot release available",
+                "newer wobblebot release available (current_version=%s, latest_version=%s, "
+                "release_url=%s)",
+                result.current_version,
+                result.latest_version,
+                result.release_url,
                 extra={
                     "current_version": result.current_version,
                     "latest_version": result.latest_version,
@@ -367,7 +371,10 @@ async def _serve_async(config: WobbleBotConfig) -> int:
     # noticed Terminal 7 was silent and HAD to curl the login page to
     # verify the daemon was actually up.
     _LOGGER.info(
-        "cli/web listening",
+        "cli/web listening (bind_host=%s, bind_port=%s, url=%s)",
+        config.web.bind_host,
+        config.web.bind_port,
+        f"http://{config.web.bind_host}:{config.web.bind_port}",
         extra={
             "bind_host": config.web.bind_host,
             "bind_port": config.web.bind_port,
@@ -382,8 +389,9 @@ async def _serve_async(config: WobbleBotConfig) -> int:
     # exposure isn't accidental.
     if config.web.bind_host not in ("127.0.0.1", "localhost", "::1"):
         _LOGGER.warning(
-            "cli/web bound to non-loopback address; HTTPS reverse proxy "
-            "strongly recommended (see docs/deploy/reverse-proxy.md)",
+            "cli/web bound to non-loopback address; HTTPS reverse proxy strongly recommended (see "
+            "docs/deploy/reverse-proxy.md) (bind_host=%s)",
+            config.web.bind_host,
             extra={"bind_host": config.web.bind_host},
         )
     try:
@@ -495,7 +503,9 @@ async def _create_user_async(  # pylint: disable=too-many-return-statements
             return 2
         user = await storage.create_user(username, password_hash)
         _LOGGER.info(
-            "created operator account",
+            "created operator account (username=%s, user_id=%s)",
+            user.username,
+            user.id,
             extra={"username": user.username, "user_id": user.id},
         )
     except StorageError as exc:

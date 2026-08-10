@@ -107,7 +107,10 @@ async def _poll_source(
         items = await source.fetch()
     except NewsError as exc:
         _LOGGER.warning(
-            "news fetch failed",
+            "news fetch failed (source_id=%s): %s: %s",
+            source.source_id,
+            type(exc).__name__,
+            exc,
             extra={
                 "source_id": source.source_id,
                 "error": str(exc),
@@ -130,7 +133,9 @@ async def _poll_source(
             # save-everything (storage exact dedup still catches
             # same-source reposts).
             _LOGGER.warning(
-                "dedup window fetch failed; falling back to save-all",
+                "dedup window fetch failed; falling back to save-all (source_id=%s): %s",
+                source.source_id,
+                exc,
                 extra={"source_id": source.source_id, "error": str(exc)},
             )
             recent = []
@@ -143,7 +148,12 @@ async def _poll_source(
             if match is not None:
                 deduped += 1
                 _LOGGER.debug(
-                    "news item deduped",
+                    "news item deduped (source_id=%s, headline=%s, matched_source=%s, "
+                    "matched_headline=%s)",
+                    source.source_id,
+                    item.headline[:80],
+                    match.matched_source,
+                    match.matched_headline[:80],
                     extra={
                         "source_id": source.source_id,
                         "headline": item.headline[:80],
@@ -158,7 +168,10 @@ async def _poll_source(
             saved += 1
         except StorageError as exc:
             _LOGGER.warning(
-                "news item save failed",
+                "news item save failed (source_id=%s, headline=%s): %s",
+                source.source_id,
+                item.headline[:80],
+                exc,
                 extra={
                     "source_id": source.source_id,
                     "headline": item.headline[:80],
@@ -166,7 +179,11 @@ async def _poll_source(
                 },
             )
     _LOGGER.debug(
-        "news poll complete",
+        "news poll complete (source_id=%s, fetched=%s, saved=%s, deduped=%s)",
+        source.source_id,
+        len(items),
+        saved,
+        deduped,
         extra={
             "source_id": source.source_id,
             "fetched": len(items),
@@ -191,7 +208,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
     total_deduped = 0
     interval_seconds = interval.total_seconds()
     _LOGGER.info(
-        "news session start",
+        "news session start (sources=%s, interval_seconds=%s, db_path=%s, dedup_window_hours=%s)",
+        [s.source_id for s in sources],
+        interval_seconds,
+        news.db,
+        news.dedup.window_hours,
         extra={
             "sources": [s.source_id for s in sources],
             "interval_seconds": interval_seconds,
@@ -223,7 +244,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
     finally:
         _LOGGER.info(
-            "news session end",
+            "news session end (duration_seconds=%s, total_fetched=%s, total_saved=%s, "
+            "total_deduped=%s)",
+            round(time.monotonic() - started_at, 1),
+            total_fetched,
+            total_saved,
+            total_deduped,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "total_fetched": total_fetched,
@@ -281,13 +307,21 @@ async def _main_async(config: WobbleBotConfig) -> int:
     try:
         interval = config.schedules.get("news")
     except KeyError as exc:
-        _LOGGER.error("missing schedule", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing schedule: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     try:
         sources = _build_sources(config.news)
     except RuntimeError as exc:
-        _LOGGER.error("news setup failed", extra={"error": str(exc)})
+        _LOGGER.error(
+            "news setup failed: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     if not sources:

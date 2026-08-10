@@ -9,13 +9,47 @@ deferring SELLs doesn't flood the log every tick.
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from wobblebot.domain.cost_basis import CostBasis, SellAssessment, assess_sell, replay_average_cost
-from wobblebot.domain.value_objects import Symbol
+from wobblebot.domain.value_objects import Symbol, fmt_decimal
 from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.services.cost_basis")
+
+# Loss percentages come out of a Decimal division carrying 28
+# significant digits. Two decimal places is the precision an operator
+# acts on; the tail is division noise, so quantize for DISPLAY before
+# formatting (fmt_decimal deliberately does not impose a scale — see
+# its docstring).
+_PCT_DISPLAY = Decimal("0.01")
+
+
+def _fmt_money(value: Decimal | None) -> str:
+    """Display a possibly-absent Decimal; never prints a bare "None".
+
+    SellAssessment.average_cost is optional (no basis recorded yet),
+    and the previous message interpolated it raw — so an unknown basis
+    rendered as the literal None, which reads like a bug rather
+    than a state.
+    """
+    # max_significant: average cost is a Decimal division, so it has
+    # no trailing zeros to strip — capping significant digits is the
+    # only thing that makes it readable.
+    return "unknown" if value is None else fmt_decimal(value, max_significant=10)
+
+
+def _fmt_pct(value: Decimal | None) -> str:
+    """Display a percentage at 2dp — the precision an operator acts on.
+
+    A Decimal division carries 28 significant digits; the tail is noise.
+    Quantize BEFORE formatting because fmt_decimal deliberately imposes
+    no scale of its own.
+    """
+    if value is None:
+        return "unknown"
+    return fmt_decimal(value.quantize(_PCT_DISPLAY, rounding=ROUND_HALF_UP))
+
 
 # Effectively "all history" for one symbol's trade ledger — matches the
 # established convention for a full-history read (web/routes/status.py's
@@ -82,7 +116,9 @@ class SellGuard:
             if symbol not in self._warned_unknown_basis:
                 self._warned_unknown_basis.add(symbol)
                 _LOGGER.warning(
-                    "sell guard: no tracked cost basis for symbol; allowing SELL unguarded",
+                    "sell guard: no tracked cost basis for symbol; allowing SELL unguarded "
+                    "(symbol=%s)",
+                    symbol,
                     extra={"symbol": str(symbol)},
                 )
         else:
@@ -95,9 +131,9 @@ class SellGuard:
                 _LOGGER.warning(
                     "sell guard: deferring %s SELL @ %s below avg cost %s (%s%% loss)",
                     symbol,
-                    proposed_price,
-                    assessment.average_cost,
-                    assessment.loss_percentage,
+                    fmt_decimal(proposed_price),
+                    _fmt_money(assessment.average_cost),
+                    _fmt_pct(assessment.loss_percentage),
                     extra={
                         "symbol": str(symbol),
                         "proposed_price": str(proposed_price),
@@ -109,7 +145,7 @@ class SellGuard:
                 _LOGGER.info(
                     "sell guard: still deferring %s SELLs below avg cost %s (%d consecutive)",
                     symbol,
-                    assessment.average_cost,
+                    _fmt_money(assessment.average_cost),
                     consecutive,
                     extra={
                         "symbol": str(symbol),

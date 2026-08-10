@@ -94,6 +94,36 @@ misread risk. It strips trailing zeros WITHOUT forcing a scale, so it
 stays honest for asset amounts (a 2dp quantize would render a live BTC
 quantity as `0.00`).
 
+Installment 3 (2026-08-10) finished the sweep: every remaining module
+and every severity, including the one-shot CLIs and the web routes.
+**The rule-1 scan now reports zero.**
+
+It also added the SECOND scan the first one structurally cannot do.
+Rule 1 finds *missing* data; it cannot find *unreadable* data — a line
+that correctly interpolates `assessment.average_cost` still printed
+`73390.78543435964243143764881`, because a `Decimal` division keeps 28
+significant digits. That was live in production on 2026-08-10 and the
+rule-1 scan was blind to it by construction. The Decimal scan flags a
+money-ish expression interpolated without a formatter; it is a review
+list, not a gate (ints and `.total_seconds()` floats trip it).
+
+`fmt_decimal` gained `max_significant` for exactly that case: a
+division result has no trailing zeros to strip, so capping significant
+digits is the only thing that helps. Capping *significant digits*
+rather than decimal places keeps one setting usable across magnitudes
+— 10 digits gives `73390.78543` for a BTC price and `0.0694757` for a
+DOGE one, where a fixed 2dp would destroy the latter.
+
+**Two lessons from the mechanical passes**, worth honoring next time:
+
+1. A transformer that appends *every* `extra=` field produces 8–11
+   `key=%s` pairs — a wall of text, which is just a different way of
+   being unreadable. In-message context is capped at 4 fields; the rest
+   stay in `extra=`, which is what `extra=` is for.
+2. `fmt_decimal` started in `cli/_common` and had to move to `domain`
+   the moment `services/cost_basis` needed it — services cannot import
+   cli. Put a shared display helper in `domain` from the start.
+
 New code follows these rules from day one. Message-prefix pin tests
 live in `tests/services/test_grid_engine.py::TestPartialGridPlacementLogging`;
-`fmt_decimal` is pinned by `tests/cli/test_common_fmt_decimal.py`.
+`fmt_decimal` is pinned by `tests/domain/test_fmt_decimal.py`.

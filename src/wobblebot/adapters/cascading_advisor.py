@@ -59,7 +59,9 @@ class CascadingAdvisorAdapter(AdvisorPort):
         verdict = self._heuristic.evaluate(summary)
         if verdict.clear_match:
             _LOGGER.info(
-                "cascade: heuristic resolved (clear match)",
+                "cascade: heuristic resolved (clear match) (reason=%s, direction=%s)",
+                verdict.reason,
+                verdict.direction,
                 extra={"reason": verdict.reason, "direction": verdict.direction},
             )
             return verdict.recommendation
@@ -72,7 +74,12 @@ class CascadingAdvisorAdapter(AdvisorPort):
             # best guess (free, deterministic) and log so the operator
             # still sees the LLM was skipped.
             _LOGGER.warning(
-                "cascade: LLM escalation failed; using heuristic fallback",
+                "cascade: LLM escalation failed; using heuristic fallback (reason=%s, "
+                "fallback_direction=%s): %s: %s",
+                verdict.reason,
+                verdict.direction,
+                type(exc).__name__,
+                exc,
                 extra={
                     "error": str(exc),
                     "error_type": type(exc).__name__,
@@ -83,7 +90,9 @@ class CascadingAdvisorAdapter(AdvisorPort):
             return verdict.recommendation
 
         _LOGGER.info(
-            "cascade: escalated to LLM",
+            "cascade: escalated to LLM (heuristic_reason=%s, heuristic_direction=%s)",
+            verdict.reason,
+            verdict.direction,
             extra={"heuristic_reason": verdict.reason, "heuristic_direction": verdict.direction},
         )
         return recommendation

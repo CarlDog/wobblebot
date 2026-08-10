@@ -5,11 +5,63 @@ concepts without identity. They enforce domain invariants at creation time.
 """
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import ClassVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def fmt_decimal(value: Decimal, *, max_significant: int | None = None) -> str:
+    """Render a ``Decimal`` the way an operator reads it, not as stored.
+
+    Lives in ``domain`` because BOTH ``services`` and ``cli`` need it and
+    domain is the only layer both may import (it started in
+    ``cli/_common`` and had to move the moment ``services/cost_basis``
+    wanted it — see the P3 logging installments).
+
+    Two failure modes it fixes, both observed in production logs:
+
+    - **Storage scale.** Storage and Kraken return full-scale values, so
+      ``%s`` prints ``342.18000000`` for a $342.18 withdrawal.
+    - **Division tails.** A ``Decimal / Decimal`` keeps 28 significant
+      digits, so an average-cost line rendered
+      ``73390.78543435964243143764881`` and a loss percentage
+      ``8.742335416342072886749045064``. Unreadable in a WARNING an
+      operator is meant to scan.
+
+    Also normalizes exponent form: a round ``Decimal("100")`` prints
+    ``1E+2`` under ``%s``, and E-notation in a money line is a genuine
+    misread risk.
+
+    Trailing zeros are stripped WITHOUT forcing a fixed scale, so this
+    stays honest for asset amounts — quantizing to 2dp would render a
+    live BTC quantity as ``0.00``. Callers that want a fixed precision
+    (a loss percentage, say) should quantize FIRST and pass the result.
+
+    ``max_significant`` caps SIGNIFICANT DIGITS, which is the only thing
+    that helps a division result: ``73390.78543435964243143764881`` has
+    no trailing zeros to strip, so stripping alone leaves it unreadable.
+    Capping by significant digits rather than decimal places keeps the
+    same setting usable across magnitudes — 10 digits gives
+    ``73390.78543`` for a BTC price and ``0.0694757`` for a DOGE one,
+    where a fixed 2dp would destroy the latter.
+
+    Display only. Never feed the output back into arithmetic,
+    persistence, or an exchange call.
+    """
+    if max_significant is not None and value != 0:
+        # adjusted() is the exponent of the leading digit, so this
+        # exponent keeps exactly `max_significant` digits.
+        exponent = value.adjusted() - max_significant + 1
+        if exponent < 0:
+            value = value.quantize(Decimal(1).scaleb(exponent), rounding=ROUND_HALF_UP)
+    normalized = value.normalize()
+    # normalize() produces exponent form for integral values (100 ->
+    # 1E+2); re-quantizing to exponent 0 restores plain digits.
+    if normalized.as_tuple().exponent > 0:  # type: ignore[operator]
+        normalized = normalized.quantize(Decimal(1))
+    return f"{normalized:f}"
 
 
 class Symbol(BaseModel):

@@ -264,12 +264,18 @@ async def backfill_main(  # pylint: disable=too-many-locals,too-many-branches,to
             return 2
         until = parse_date_arg(until_raw) if until_raw is not None else datetime.now(UTC)
     except ValueError as exc:
-        _LOGGER.error("invalid date argument", extra={"error": str(exc)})
+        _LOGGER.error(
+            "invalid date argument: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     if since is not None and since >= until:
         _LOGGER.error(
-            "--since must be strictly before --until",
+            "--since must be strictly before --until (since=%s, until=%s)",
+            since.isoformat(),
+            until.isoformat(),
             extra={"since": since.isoformat(), "until": until.isoformat()},
         )
         return 2
@@ -277,7 +283,11 @@ async def backfill_main(  # pylint: disable=too-many-locals,too-many-branches,to
     try:
         kraken_config = KrakenConfig.from_env()
     except ValueError as exc:
-        _LOGGER.error("missing read-only credentials", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing read-only credentials: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     storage = SQLiteStorageAdapter(config.observe.db)

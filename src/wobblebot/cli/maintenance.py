@@ -95,7 +95,8 @@ def _vacuum_all(target_dbs: list[Path]) -> int:
     for db_path in target_dbs:
         if not db_path.exists():
             _LOGGER.warning(
-                "vacuum target missing; skipping",
+                "vacuum target missing; skipping (db_path=%s)",
+                db_path,
                 extra={"db_path": str(db_path)},
             )
             continue
@@ -120,7 +121,8 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     source_path = Path(maintenance.prune_source_db)
     if not source_path.exists():
         _LOGGER.warning(
-            "prune_source_db does not exist; skipping",
+            "prune_source_db does not exist; skipping (db_path=%s)",
+            source_path,
             extra={"db_path": str(source_path)},
         )
         return 0
@@ -133,7 +135,9 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
         await storage.connect()
     except StorageError as exc:
         _LOGGER.warning(
-            "prune: failed to open source db",
+            "prune: failed to open source db (db_path=%s): %s",
+            source_path,
+            exc,
             extra={"db_path": str(source_path), "error": str(exc)},
         )
         return 0
@@ -146,7 +150,9 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
         )
     except (StorageError, FileExistsError, OSError) as exc:
         _LOGGER.warning(
-            "prune cycle failed; will retry next interval",
+            "prune cycle failed; will retry next interval: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         deleted = 0
@@ -164,7 +170,8 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
         src = Path(db_str)
         if not src.exists():
             _LOGGER.warning(
-                "backup target missing; skipping",
+                "backup target missing; skipping (db_path=%s)",
+                src,
                 extra={"db_path": str(src)},
             )
             continue
@@ -187,12 +194,16 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
             )
             if removed:
                 _LOGGER.info(
-                    "pruned old backups",
+                    "pruned old backups (db_stem=%s, removed_count=%s)",
+                    src.stem,
+                    removed,
                     extra={"db_stem": src.stem, "removed_count": removed},
                 )
         except OSError as exc:
             _LOGGER.warning(
-                "backup retention prune failed; continuing",
+                "backup retention prune failed; continuing (db_stem=%s): %s",
+                src.stem,
+                exc,
                 extra={"db_stem": src.stem, "error": str(exc)},
             )
     return success
@@ -214,7 +225,9 @@ async def _verify_all(maintenance: MaintenanceConfig, notifier: NotifierPort | N
         latest = find_latest_backup(backup_dir, db_stem=db_stem)
         if latest is None:
             _LOGGER.debug(
-                "no backup found to verify yet; skipping",
+                "no backup found to verify yet; skipping (db_stem=%s, backup_dir=%s)",
+                db_stem,
+                backup_dir,
                 extra={"db_stem": db_stem, "backup_dir": str(backup_dir)},
             )
             continue
@@ -222,7 +235,10 @@ async def _verify_all(maintenance: MaintenanceConfig, notifier: NotifierPort | N
         if result.ok:
             verified += 1
             _LOGGER.info(
-                "backup verification passed",
+                "backup verification passed (db_stem=%s, backup_path=%s, table_count=%s)",
+                db_stem,
+                latest,
+                result.table_count,
                 extra={
                     "db_stem": db_stem,
                     "backup_path": str(latest),
@@ -231,7 +247,11 @@ async def _verify_all(maintenance: MaintenanceConfig, notifier: NotifierPort | N
             )
             continue
         _LOGGER.error(
-            "BACKUP VERIFICATION FAILED — restoration smoke test could not read this backup",
+            "BACKUP VERIFICATION FAILED — restoration smoke test could not read this backup "
+            "(db_stem=%s, backup_path=%s): %s",
+            db_stem,
+            latest,
+            result.error,
             extra={
                 "db_stem": db_stem,
                 "backup_path": str(latest),
@@ -309,8 +329,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             await operator_storage.connect()
         except StorageError as exc:
             _LOGGER.warning(
-                "failed to open operator.db for heartbeat; "
-                "/health will show cli/maintenance as UNKNOWN",
+                "failed to open operator.db for heartbeat; /health will show cli/maintenance as "
+                "UNKNOWN (path=%s): %s",
+                maintenance.operator_db,
+                exc,
                 extra={"path": maintenance.operator_db, "error": str(exc)},
             )
             operator_storage = None
@@ -322,7 +344,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
     _LOGGER.info(
-        "maintenance session start",
+        "maintenance session start (target_db_count=%s, vacuum_interval_seconds=%s, "
+        "prune_interval_seconds=%s, backup_interval_seconds=%s)",
+        len(target_dbs),
+        vacuum_interval.total_seconds(),
+        prune_interval.total_seconds(),
+        backup_interval.total_seconds(),
         extra={
             "target_db_count": len(target_dbs),
             "vacuum_interval_seconds": vacuum_interval.total_seconds(),
@@ -356,11 +383,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         # gives operators a sense of expected duration for future
         # cycles on the same hardware.
         cycle_started = time.monotonic()
-        _LOGGER.info("vacuum cycle starting", extra={"db_count": len(target_dbs)})
+        _LOGGER.info(
+            "vacuum cycle starting (db_count=%s)",
+            len(target_dbs),
+            extra={"db_count": len(target_dbs)},
+        )
         ok = _vacuum_all(target_dbs)
         vacuum_runs += ok
         _LOGGER.info(
-            "vacuum cycle complete",
+            "vacuum cycle complete (db_count=%s, succeeded=%s, elapsed_seconds=%s)",
+            len(target_dbs),
+            ok,
+            round(time.monotonic() - cycle_started, 2),
             extra={
                 "db_count": len(target_dbs),
                 "succeeded": ok,
@@ -373,7 +407,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         await emit_heartbeat(operator_storage, "cli/maintenance")
         cycle_started = time.monotonic()
         _LOGGER.info(
-            "prune cycle starting",
+            "prune cycle starting (source_db=%s, older_than_days=%s)",
+            maintenance.prune_source_db,
+            maintenance.prune_price_snapshots_older_than_days,
             extra={
                 "source_db": maintenance.prune_source_db,
                 "older_than_days": maintenance.prune_price_snapshots_older_than_days,
@@ -382,7 +418,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         deleted = await _prune_one_cycle(maintenance)
         prune_total_deleted += deleted
         _LOGGER.info(
-            "prune cycle complete",
+            "prune cycle complete (rows_deleted=%s, elapsed_seconds=%s)",
+            deleted,
+            round(time.monotonic() - cycle_started, 2),
             extra={
                 "rows_deleted": deleted,
                 "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
@@ -393,11 +431,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         nonlocal backup_runs
         await emit_heartbeat(operator_storage, "cli/maintenance")
         cycle_started = time.monotonic()
-        _LOGGER.info("backup cycle starting", extra={"db_count": len(maintenance.target_dbs)})
+        _LOGGER.info(
+            "backup cycle starting (db_count=%s)",
+            len(maintenance.target_dbs),
+            extra={"db_count": len(maintenance.target_dbs)},
+        )
         ok = _backup_all(maintenance)
         backup_runs += ok
         _LOGGER.info(
-            "backup cycle complete",
+            "backup cycle complete (db_count=%s, succeeded=%s, elapsed_seconds=%s)",
+            len(maintenance.target_dbs),
+            ok,
+            round(time.monotonic() - cycle_started, 2),
             extra={
                 "db_count": len(maintenance.target_dbs),
                 "succeeded": ok,
@@ -409,11 +454,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         nonlocal verify_runs
         await emit_heartbeat(operator_storage, "cli/maintenance")
         cycle_started = time.monotonic()
-        _LOGGER.info("verify cycle starting", extra={"db_count": len(maintenance.target_dbs)})
+        _LOGGER.info(
+            "verify cycle starting (db_count=%s)",
+            len(maintenance.target_dbs),
+            extra={"db_count": len(maintenance.target_dbs)},
+        )
         ok = await _verify_all(maintenance, notifier)
         verify_runs += ok
         _LOGGER.info(
-            "verify cycle complete",
+            "verify cycle complete (db_count=%s, verified=%s, elapsed_seconds=%s)",
+            len(maintenance.target_dbs),
+            ok,
+            round(time.monotonic() - cycle_started, 2),
             extra={
                 "db_count": len(maintenance.target_dbs),
                 "verified": ok,
@@ -451,7 +503,12 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 logger=_LOGGER,
             )
         _LOGGER.info(
-            "maintenance session end",
+            "maintenance session end (duration_seconds=%s, vacuum_runs=%s, "
+            "prune_rows_deleted_total=%s, backup_runs=%s)",
+            round(time.monotonic() - started_at, 1),
+            vacuum_runs,
+            prune_total_deleted,
+            backup_runs,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "vacuum_runs": vacuum_runs,

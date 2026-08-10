@@ -86,6 +86,13 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Money figures in logs are readable.** An average-cost line printed
+  `73390.78543435964243143764881`; it now reads `73390.78543`, and a loss
+  percentage reads `8.74%` instead of 28 digits. Applied across the engine,
+  reconciler and daemon logs.
+- **The logging sweep is complete.** Every module and severity now names its
+  entity in the message itself, so the log tail is readable without a JSON
+  viewer.
 - **Daemon and withdrawal logs now say what happened, not just that it did.**
   Warnings and errors from the live, operator, and harvest daemons carry the
   symbol, order, proposal id and the actual numbers in the message itself, so

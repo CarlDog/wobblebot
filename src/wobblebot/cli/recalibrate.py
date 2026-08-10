@@ -54,6 +54,7 @@ from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import fmt_decimal
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services.calibrator import RecalibrationProposal, recalibrate
 from wobblebot.services.settings_rewriter import (
@@ -71,7 +72,8 @@ async def _read_kraken_usd_balance() -> Decimal | None:
         kraken_config = KrakenConfig.from_env()
     except ValueError as exc:
         _LOGGER.error(
-            "missing Kraken read-only credentials",
+            "missing Kraken read-only credentials: %s",
+            exc,
             extra={"error": str(exc)},
         )
         return None
@@ -80,7 +82,9 @@ async def _read_kraken_usd_balance() -> Decimal | None:
         balance = await adapter.get_balance("USD")
     except ExchangeError as exc:
         _LOGGER.error(
-            "Kraken balance read failed",
+            "Kraken balance read failed: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return None
@@ -143,7 +147,8 @@ async def _run(
     if current_balance_override is not None:
         current_balance = current_balance_override
         _LOGGER.info(
-            "using operator-supplied current balance",
+            "using operator-supplied current balance (current_balance_usd=%s)",
+            fmt_decimal(current_balance),
             extra={"current_balance_usd": str(current_balance)},
         )
     else:
@@ -152,16 +157,17 @@ async def _run(
             return 1
         if balance <= Decimal("0"):
             _LOGGER.error(
-                "current Kraken USD balance is zero or negative — cannot "
-                "compute a meaningful scale factor. Pass --current-balance "
-                "explicitly if you want to recalibrate from a hypothetical "
-                "baseline.",
+                "current Kraken USD balance is zero or negative — cannot compute a meaningful "
+                "scale factor. Pass --current-balance explicitly if you want to recalibrate from "
+                "a hypothetical baseline. (balance_usd=%s)",
+                fmt_decimal(balance),
                 extra={"balance_usd": str(balance)},
             )
             return 1
         current_balance = balance
         _LOGGER.info(
-            "current Kraken USD balance",
+            "current Kraken USD balance (current_balance_usd=%s)",
+            fmt_decimal(current_balance),
             extra={"current_balance_usd": str(current_balance)},
         )
 
@@ -172,7 +178,11 @@ async def _run(
             current_config=config,
         )
     except ValueError as exc:
-        _LOGGER.error("recalibrate refused", extra={"error": str(exc)})
+        _LOGGER.error(
+            "recalibrate refused: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     _print_proposal(proposal)
@@ -191,16 +201,28 @@ async def _run(
             overrides=_proposal_to_overrides(proposal),
         )
     except SettingsRewriteError as exc:
-        _LOGGER.error("rewrite refused", extra={"error": str(exc)})
+        _LOGGER.error(
+            "rewrite refused: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
     except FileNotFoundError as exc:
-        _LOGGER.error("settings file not found", extra={"path": str(exc)})
+        _LOGGER.error(
+            "settings file not found (path=%s)",
+            exc,
+            extra={"path": str(exc)},
+        )
         return 2
 
     if not diff:
         _LOGGER.info("no on-disk changes — file was already in target shape")
         return 0
-    _LOGGER.info("settings.yml rewritten", extra={"path": str(config_path)})
+    _LOGGER.info(
+        "settings.yml rewritten (path=%s)",
+        config_path,
+        extra={"path": str(config_path)},
+    )
     # Stream the diff to stdout so operator can pipe / inspect / paste
     # into a commit message. Logger goes to stderr.
     sys.stdout.write(diff)

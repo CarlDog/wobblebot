@@ -75,7 +75,11 @@ def vacuum_database(db_path: Path) -> None:
         raise StorageError(f"VACUUM failed on {db_path}: {exc}") from exc
     finally:
         conn.close()
-    _LOGGER.info("VACUUM complete", extra={"db_path": str(db_path)})
+    _LOGGER.info(
+        "VACUUM complete (db_path=%s)",
+        db_path,
+        extra={"db_path": str(db_path)},
+    )
 
 
 # --------------------------------------------------------------------- #
@@ -124,7 +128,9 @@ def archive_price_snapshots_to_csv(snapshots: list[PriceSnapshot], dest_path: Pa
                 )
             )
     _LOGGER.info(
-        "archive write complete",
+        "archive write complete (dest_path=%s, row_count=%s)",
+        dest_path,
+        len(snapshots),
         extra={"dest_path": str(dest_path), "row_count": len(snapshots)},
     )
     return len(snapshots)
@@ -174,7 +180,8 @@ async def prune_price_snapshots(
     eligible = await storage.get_price_snapshots(end_time=older_than)
     if not eligible:
         _LOGGER.info(
-            "no price snapshots eligible for archive",
+            "no price snapshots eligible for archive (older_than=%s)",
+            older_than.astimezone(UTC).isoformat(),
             extra={"older_than": older_than.astimezone(UTC).isoformat()},
         )
         return 0
@@ -182,7 +189,11 @@ async def prune_price_snapshots(
     archive_price_snapshots_to_csv(eligible, dest)
     deleted = await storage.delete_price_snapshots(before=older_than)
     _LOGGER.info(
-        "price_snapshots prune+archive complete",
+        "price_snapshots prune+archive complete (archived_path=%s, rows_archived=%s, "
+        "rows_deleted=%s)",
+        dest,
+        len(eligible),
+        deleted,
         extra={
             "archived_path": str(dest),
             "rows_archived": len(eligible),

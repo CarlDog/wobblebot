@@ -74,7 +74,11 @@ async def _run(config: WobbleBotConfig) -> int:
         await storage.close()
 
     _LOGGER.info(
-        "simulation summary",
+        "simulation summary (db_path=%s, orders_placed=%s, trades_executed=%s, final_balances=%s)",
+        config.sandbox.db,
+        result.orders_placed,
+        result.trades_executed,
+        {b.asset: str(b.total) for b in result.final_balances},
         extra={
             "db_path": config.sandbox.db,
             "orders_placed": result.orders_placed,

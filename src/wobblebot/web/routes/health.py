@@ -185,7 +185,9 @@ async def health_overall_json(
         # warning here is a real, non-transient bug to investigate. The
         # /health page itself, not this cosmetic badge, is the source of truth.
         _LOGGER.warning(
-            "health overall.json probe failed; reporting green",
+            "health overall.json probe failed; reporting green: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return JSONResponse({"overall": "green"})

@@ -31,9 +31,9 @@ from decimal import Decimal
 from uuid import uuid4
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import fmt_decimal, notify
+from wobblebot.cli._common import notify
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.domain.value_objects import Timestamp
+from wobblebot.domain.value_objects import Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferResult
@@ -380,7 +380,12 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
 
     # 8. Execute via Kraken /Withdraw
     _LOGGER.info(
-        "executing withdrawal via Kraken /Withdraw",
+        "executing withdrawal via Kraken /Withdraw (proposal_id=%s, asset=%s, amount=%s, "
+        "destination=%s)",
+        proposal.proposal_id,
+        proposal.asset,
+        fmt_decimal(proposal.amount),
+        destination,
         extra={
             "proposal_id": proposal.proposal_id,
             "asset": proposal.asset,
@@ -490,7 +495,12 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
         )
 
     _LOGGER.info(
-        "WITHDRAWAL SUBMITTED — money moved",
+        "WITHDRAWAL SUBMITTED — money moved (proposal_id=%s, transaction_id=%s, asset=%s, "
+        "amount=%s)",
+        proposal.proposal_id,
+        refid,
+        proposal.asset,
+        fmt_decimal(proposal.amount),
         extra={
             "proposal_id": proposal.proposal_id,
             "transaction_id": refid,

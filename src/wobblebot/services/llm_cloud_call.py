@@ -190,7 +190,12 @@ async def _persist_best_effort(
         await storage.save_llm_call(record)
     except StorageError as exc:
         _LOGGER.warning(
-            "failed to persist failure record; original error will still raise",
+            "failed to persist failure record; original error will still raise (model=%s, "
+            "provider=%s, error_kind=%s, storage_error=%s)",
+            record.model,
+            record.provider,
+            record.error_kind,
+            exc,
             extra={
                 "model": record.model,
                 "provider": record.provider,

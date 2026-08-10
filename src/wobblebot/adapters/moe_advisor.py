@@ -207,7 +207,12 @@ class MoEAdvisorAdapter(AdvisorPort):
             opinion = await entry.advisor.get_recommendation(summary)
         except AdvisorError as exc:
             _LOGGER.warning(
-                "MoE expert failed; proceeding with remaining experts",
+                "MoE expert failed; proceeding with remaining experts (expert_name=%s, "
+                "expert_role=%s): %s: %s",
+                entry.name,
+                entry.role,
+                type(exc).__name__,
+                exc,
                 extra={
                     "expert_name": entry.name,
                     "expert_role": entry.role,

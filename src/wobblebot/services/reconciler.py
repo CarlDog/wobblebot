@@ -59,7 +59,7 @@ from typing import Protocol
 from uuid import UUID
 
 from wobblebot.domain.models import Order, Trade
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 
@@ -372,7 +372,7 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
                     stale.symbol,
                     stale.side.value.upper(),
                     stale.exchange_id,
-                    resolution.order.filled_amount,
+                    fmt_decimal(resolution.order.filled_amount),
                     extra={
                         "exchange_id": stale.exchange_id,
                         "symbol": str(stale.symbol),
@@ -391,7 +391,7 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
                     "reconciler: storage-only %s %s @ %s (%s) marked canceled",
                     stale.symbol,
                     stale.side.value.upper(),
-                    stale.price.amount,
+                    fmt_decimal(stale.price.amount),
                     stale.exchange_id,
                     extra={
                         "exchange_id": stale.exchange_id,
@@ -403,7 +403,11 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
         except StorageError as exc:
             failures += 1
             _LOGGER.error(
-                "reconciler: failed to persist terminal-order transition; row stays open",
+                "reconciler: failed to persist terminal-order transition; row stays open "
+                "(exchange_id=%s, symbol=%s): %s",
+                stale.exchange_id,
+                stale.symbol,
+                exc,
                 extra={
                     "exchange_id": stale.exchange_id,
                     "symbol": str(stale.symbol),
@@ -418,7 +422,12 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
         summary = _summarize_orphan(orphan)
         summaries.append(summary)
         _LOGGER.error(
-            "reconciler: exchange-only orphan order detected; engine will NOT adopt",
+            "reconciler: exchange-only orphan order detected; engine will NOT adopt "
+            "(exchange_id=%s, symbol=%s, side=%s, price=%s)",
+            orphan.exchange_id,
+            orphan.symbol,
+            orphan.side.value,
+            fmt_decimal(orphan.price.amount),
             extra={
                 "exchange_id": orphan.exchange_id,
                 "symbol": str(orphan.symbol),

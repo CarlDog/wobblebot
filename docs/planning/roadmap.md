@@ -802,6 +802,29 @@ the detail; the full backlog index is
    incl. a round-trip property). Zero behavior change. Test count 2948 → 2961.
    **Deferred to installment 3:** the Ollama hang-audit's loop-blocking half.
 
+   **Slice 17 — logging installment 3 (sweep complete) + Ollama loop audit**
+   ✅ **2026-08-10**: finished the module sweep — every remaining file, every
+   severity, including the one-shot CLIs and web routes. **The rule-1 scan now
+   reports ZERO** (239 → 165 → 0 across the three installments). Two findings
+   worth more than the line count. First, the mechanical transformer produced
+   8–11 `key=%s` dumps on summary lines, which is a different way of being
+   unreadable — in-message context is now capped at 4 fields, the rest staying
+   in `extra=`. Second, and the reason installment 3 exists at all: reading the
+   LIVE log after installment 2 shipped showed
+   `below avg cost 73390.78543435964243143764881` — a line that PASSES the
+   rule-1 scan (it does interpolate its data) while being unreadable, because a
+   `Decimal` division keeps 28 significant digits. **The rule-1 scan is blind to
+   that class by construction**, so a second Decimal-readability scan now
+   complements it, and `fmt_decimal` gained `max_significant` (capping
+   significant digits, not decimal places, so one setting works for a $73k BTC
+   price and a $0.069 DOGE one). `fmt_decimal` also moved `cli/_common` →
+   `domain` — services cannot import cli, and cost_basis needed it. Finally the
+   **Ollama hang-audit's loop-blocking half closed CLEAN**: no `time.sleep`
+   anywhere in `src/`, async clients with bounded timeouts, MoE experts under
+   `gather`, and — the reassuring one — cli/operator's heartbeat rides the
+   FORWARDER task, not the message handler, so a stalled LLM parse cannot make
+   the daemon look dead on /health. Zero behavior change. Test count 2961.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
