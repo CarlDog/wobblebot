@@ -1850,6 +1850,54 @@ table.data th {
   font-size: 12px;
 }
 
+/* Money-out confirm (ADR-034). The one modal that gets real emphasis:
+   an amount large enough to read at a glance and a warning line with a
+   left rule. Deliberately NOT a red wash — "a recommendation is not an
+   alarm" still holds, but this IS the alarm-adjacent case, so the
+   accent carries it rather than the background. */
+.modal-amount {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.modal-proposal-id,
+.modal-rationale {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.modal-proposal-id {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  word-break: break-all;
+}
+
+.modal-warn {
+  font-size: 12px;
+  color: var(--text-primary);
+  border-left: 3px solid var(--color-fail);
+  padding: 6px 0 6px 10px;
+  margin: 12px 0 0;
+}
+
+/* Harvester Execute button + its dormancy note. */
+.btn-execute {
+  background: var(--color-fail);
+  white-space: nowrap;
+}
+
+.row-action {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dormant-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
+
 /* Row-watch spinner (P3 wait-for-completion): a small pulsing dot on
    the "waiting for cli/live" line. Subtle by design — waiting is the
    normal state for up to one tick. */

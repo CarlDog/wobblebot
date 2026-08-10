@@ -16,13 +16,36 @@
       <dt>Symbol</dt>
       <dd>{{ pending.command.symbol.base }}/{{ pending.command.symbol.quote }}</dd>
     {% endif %}
+    {% if pending.command.kind == "execute_proposal" %}
+      {# Money-out (ADR-034): the operator approves an AMOUNT and a
+         DESTINATION, not an opaque id — cli/harvest re-validates both
+         against the stored proposal and refuses on mismatch. #}
+      <dt>Amount</dt>
+      <dd class="modal-amount">${{ pending.command.amount_usd }}</dd>
+      <dt>Destination</dt>
+      <dd>{{ pending.command.destination }}</dd>
+      {% if proposal is defined and proposal is not none %}
+        <dt>Rationale</dt>
+        <dd class="modal-rationale">{{ proposal.rationale }}</dd>
+      {% endif %}
+      <dt>Proposal</dt>
+      <dd class="modal-proposal-id">{{ pending.command.proposal_id }}</dd>
+    {% endif %}
     <dt>Expires</dt>
     <dd>{{ pending.ttl_expires_at.dt | tz_format(operator_tz, "%H:%M:%S %Z") }}</dd>
   </dl>
-  <p class="muted modal-note">
-    Approve hands this to cli/live's next tick (ADR-013 firewall);
-    Reject discards it — nothing reaches the engine.
-  </p>
+  {% if pending.command.kind == "execute_proposal" %}
+    <p class="modal-warn">
+      This moves real money off the exchange. Approve hands it to
+      cli/harvest, which re-checks every withdrawal gate before calling
+      Kraken; Reject discards it — nothing moves.
+    </p>
+  {% else %}
+    <p class="muted modal-note">
+      Approve hands this to cli/live's next tick (ADR-013 firewall);
+      Reject discards it — nothing reaches the engine.
+    </p>
+  {% endif %}
   <form hx-post="/commands/{{ pending.id }}/confirm"
         hx-target="#modal"
         hx-swap="innerHTML"

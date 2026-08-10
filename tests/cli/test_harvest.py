@@ -16,11 +16,10 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.harvest import (
     _TRADE_KEY_ENV_VAR,
     _classify_band,
-    _execute_command,
-    _read_usd_balance,
     _run_cycle,
     _verify_harvester_key,
 )
+from wobblebot.cli.harvest_execute import _execute_command, _read_usd_balance
 from wobblebot.config.cli import HarvestConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig

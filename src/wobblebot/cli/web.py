@@ -275,6 +275,12 @@ async def _bootstrap_app(
         # ADR-030 freshness guard — same live: section, same no-drift
         # rationale: the guard must measure in the writer's cadence.
         live_tick_seconds=config.live.tick_seconds if config.live else None,
+        # ADR-034 Execute button — read off the same harvester: section
+        # cli/harvest uses, so the label the operator approves is the
+        # label the daemon will resolve.
+        withdrawal_destinations=(
+            config.harvester.withdrawal_destinations if config.harvester else None
+        ),
     )
     return app, opened, kraken_http
 

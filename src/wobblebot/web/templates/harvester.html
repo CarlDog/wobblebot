@@ -21,6 +21,17 @@
     <div class="card-header">
       <div class="card-title">Transfer Proposals ({{ snapshot.proposals|length }})</div>
     </div>
+    {% if snapshot.executable_ids and not snapshot.daemon_awake %}
+      {# Honest dormancy (ADR-034): the button queues a row either way,
+         but an operator deserves to know an approval will sit unclaimed
+         until the daemon is running. #}
+      <p class="dormant-note">
+        <span class="tag warn">daemon down</span>
+        cli/harvest isn't reporting a heartbeat — an approved execution
+        stays queued (and expires at its 10-minute TTL) until it runs.
+        Check <a href="/health">/health</a>.
+      </p>
+    {% endif %}
     {% if snapshot.proposals %}
       <table class="data compact">
         <thead>
@@ -32,6 +43,7 @@
             <th class="num">current</th>
             <th class="num">target</th>
             <th>rationale</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -48,6 +60,25 @@
               <td class="num">${{ "%.2f"|format(p.current_exchange_balance) }}</td>
               <td class="num">${{ "%.2f"|format(p.target_exchange_balance) }}</td>
               <td class="muted">{{ p.rationale }}</td>
+              <td class="row-action">
+                {% if p.proposal_id in snapshot.executable_ids %}
+                  {# Queues an ExecuteProposalCommand for approval; the
+                     web never withdraws (ADR-003). method/action kept so
+                     the no-JS path still reaches the confirm page. #}
+                  <form method="post" action="/commands/execute-proposal"
+                        hx-post="/commands/execute-proposal"
+                        hx-target="#modal"
+                        hx-swap="innerHTML"
+                        class="inline-form">
+                    {{ csrf_input(request) }}
+                    <input type="hidden" name="proposal_id" value="{{ p.proposal_id }}">
+                    <button type="submit" class="btn btn-execute"
+                            title="Queue this withdrawal for your approval">
+                      Execute…
+                    </button>
+                  </form>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>

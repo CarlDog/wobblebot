@@ -34,10 +34,8 @@ import logging
 import os
 import sys
 import time
-from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
@@ -54,45 +52,23 @@ from wobblebot.cli._common import (
     run_with_clean_exit,
     safe_shutdown,
 )
+from wobblebot.cli.harvest_execute import (
+    _COMMAND_POLL_SECONDS,
+    _execute_command,
+    _process_pending_commands,
+    _read_usd_balance,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
-from wobblebot.ports.harvester import TransferResult
-from wobblebot.ports.notification_events import (
-    HarvestProposalEvent,
-    WithdrawalFailedEvent,
-    WithdrawalSubmittedEvent,
-)
+from wobblebot.ports.notification_events import HarvestProposalEvent
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.harvester import compute_today_total_withdrawn_usd, propose_transfer
 
 _LOGGER = logging.getLogger("wobblebot.cli.harvest")
-
-
-async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
-    """Read the operator's current Kraken USD balance.
-
-    Returns ``None`` on transport / parse failure (logged); the
-    daemon's outer loop treats this as a recoverable miss and tries
-    again next tick. A real balance read of ``Decimal('0')`` (operator
-    has no USD) returns ``0``, not ``None`` — the deficit branch in
-    the decision logic handles it correctly.
-    """
-    try:
-        balance = await adapter.get_balance("USD")
-    except ExchangeError as exc:
-        _LOGGER.warning(
-            "kraken balance read failed",
-            extra={"error": str(exc), "error_type": type(exc).__name__},
-        )
-        return None
-    if balance is None:
-        return Decimal("0")
-    return balance.total
 
 
 async def _run_cycle(
@@ -241,10 +217,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments
     started_at = time.monotonic()
     ticks_run = 0
     ticks_succeeded = 0
+    commands_run = 0
     _LOGGER.info(
         "harvest session start",
         extra={
             "interval_seconds": interval_seconds,
+            "command_poll_seconds": _COMMAND_POLL_SECONDS,
             "harvester_enabled": config.harvester.enabled if config.harvester else False,
             "persistence_enabled": storage is not None,
         },
@@ -262,11 +240,34 @@ async def _run_loop(  # pylint: disable=too-many-arguments
         if ok:
             ticks_succeeded += 1
 
+    async def _one_command_cycle() -> None:
+        nonlocal commands_run
+        commands_run += await _process_pending_commands(
+            adapter=adapter,
+            storage=storage,
+            operator_storage=operator_storage,
+            config=config,
+            notifier=notifier,
+        )
+
     try:
-        await run_poll_loop(
-            _one_cycle,
-            interval_seconds=interval_seconds,
-            stop_event=stop_event,
+        # Two independent cadences (ADR-034): the proposal cycle runs on
+        # the operator's configured schedule (hours), while approved
+        # commands poll every few seconds because a human is watching a
+        # modal spinner and the approval TTL is 10 minutes. Separate
+        # loops rather than one fast loop — re-proposing every 15s would
+        # spam Kraken and the proposal table for no benefit.
+        await asyncio.gather(
+            run_poll_loop(
+                _one_cycle,
+                interval_seconds=interval_seconds,
+                stop_event=stop_event,
+            ),
+            run_poll_loop(
+                _one_command_cycle,
+                interval_seconds=_COMMAND_POLL_SECONDS,
+                stop_event=stop_event,
+            ),
         )
     finally:
         _LOGGER.info(
@@ -275,299 +276,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "ticks_run": ticks_run,
                 "ticks_succeeded": ticks_succeeded,
+                "commands_processed": commands_run,
             },
         )
-    return 0
-
-
-async def _execute_command(  # pylint: disable=too-many-return-statements,too-many-locals,too-many-branches,too-many-arguments
-    *,
-    adapter: ExchangePort,
-    storage: SQLiteStorageAdapter,
-    config: WobbleBotConfig,
-    proposal_id: str,
-    notifier: NotifierPort | None = None,
-) -> int:
-    """Operator-approved execution of a persisted TransferProposal.
-
-    Mirrors the cli/apply --commit pattern: explicit per-call flag,
-    multiple defense-in-depth checks, persists the outcome to a
-    forensic table regardless of success/failure.
-
-    Defense layers (any failure aborts with exit 1; no money moved
-    unless every gate passes and we reach the ``adapter.withdraw()``
-    call at step 8):
-    1. ``HarvesterConfig.enabled`` must be True (operator-side opt-in
-       beyond the per-call flag).
-    2. Proposal must exist in the harvest db.
-    2b. No prior ``pending``/``completed`` TransferResult may exist for
-       the proposal (idempotency guard — a repeat ``--execute`` must
-       not double-withdraw; a prior ``failed`` row may be retried).
-    3. Proposal direction must be ``exchange_to_bank``. Deposits
-       (``bank_to_exchange``) cannot be executed through Kraken's API
-       — they're operator-pushed from the bank side using Kraken's
-       deposit instructions. The harvester surfaces deposit proposals
-       only as a signal that the operator should manually fund.
-    4. Proposal must not be stale (≤ ``proposal_max_age_hours``).
-    5. Destination label must resolve in
-       ``HarvesterConfig.withdrawal_destinations[proposal.asset]``.
-    6. Current exchange balance must cover the proposed amount.
-    7. Day-cap must still have headroom — ``today_total_withdrawn_usd
-       + proposal.amount ≤ max_withdrawal_per_day_usd``.
-
-    After all checks pass, calls ``adapter.withdraw()`` and persists
-    a TransferResult (``status="pending"`` on success; ``status="failed"``
-    if Kraken returns an error after we cleared all our gates).
-    """
-    assert config.harvester is not None  # caller-enforced
-
-    # 1. HarvesterConfig.enabled gate
-    if not config.harvester.enabled:
-        _LOGGER.error(
-            "harvester.enabled=False — refusing execution. Flip the flag in "
-            "settings.yml to opt in to live withdrawals."
-        )
-        return 1
-
-    # 2. Proposal lookup
-    proposals = await storage.get_transfer_proposals(limit=1000)
-    proposal = next((p for p in proposals if p.proposal_id == proposal_id), None)
-    if proposal is None:
-        _LOGGER.error(
-            "proposal not found in harvest db",
-            extra={"proposal_id": proposal_id, "searched": len(proposals)},
-        )
-        return 1
-
-    # 2b. Idempotency guard (issue #12): refuse a repeat withdrawal for a
-    # proposal that was already submitted. Every gate below re-passes on a
-    # second --execute (balance + day-cap still have headroom once the first
-    # wire clears), so a duplicate ``--execute <id>`` would double-submit to
-    # Kraken /Withdraw. A prior ``failed`` row does NOT block — Kraken rejected
-    # it, no money moved, so a retry is legitimate; a ``pending``/``completed``
-    # row means funds are already in flight, so we refuse. Withdrawals are rare,
-    # so scope by asset and filter in Python rather than widen the storage port.
-    prior_results = await storage.get_transfer_results(asset=proposal.asset)
-    already_submitted = next(
-        (r for r in prior_results if r.proposal_id == proposal_id and r.status != "failed"),
-        None,
-    )
-    if already_submitted is not None:
-        _LOGGER.error(
-            "proposal already executed; refusing to double-withdraw",
-            extra={
-                "proposal_id": proposal_id,
-                "prior_transaction_id": already_submitted.transaction_id,
-                "prior_status": already_submitted.status,
-            },
-        )
-        return 1
-
-    # 3. Direction gate (caught during the Stage 4.5 integration audit).
-    # Kraken's /0/private/Withdraw is exchange→bank only. Deposits are
-    # operator-pushed from the bank side using Kraken's deposit
-    # instructions (account number + routing number visible in Kraken
-    # Pro). There's no API path for "initiate ACH from bank to Kraken"
-    # — refusing here prevents calling /Withdraw with the wrong
-    # semantics and accidentally moving money in the opposite
-    # direction.
-    if proposal.direction != "exchange_to_bank":
-        _LOGGER.error(
-            "deposit proposals cannot be executed via the API; "
-            "manually push funds to Kraken using the deposit instructions "
-            "from Kraken Pro → Funding → Deposit",
-            extra={
-                "proposal_id": proposal_id,
-                "direction": proposal.direction,
-                "amount": str(proposal.amount),
-                "asset": proposal.asset,
-            },
-        )
-        return 1
-
-    # 4. Staleness check
-    now = datetime.now(UTC)
-    age = now - proposal.created_at.dt
-    max_age = timedelta(hours=config.harvester.proposal_max_age_hours)
-    if age > max_age:
-        _LOGGER.error(
-            "proposal is stale; refusing — generate a fresh one before --execute",
-            extra={
-                "proposal_id": proposal_id,
-                "age_hours": round(age.total_seconds() / 3600, 2),
-                "max_age_hours": config.harvester.proposal_max_age_hours,
-            },
-        )
-        return 1
-
-    # 5. Destination label resolution
-    destination = config.harvester.withdrawal_destinations.get(proposal.asset)
-    if not destination:
-        _LOGGER.error(
-            "asset has no destination label in HarvesterConfig.withdrawal_destinations; "
-            "operator must add a Kraken Pro destination label first",
-            extra={
-                "asset": proposal.asset,
-                "configured_assets": sorted(config.harvester.withdrawal_destinations),
-            },
-        )
-        return 1
-
-    # 6. Current balance check. Step 3 already guaranteed
-    # direction == "exchange_to_bank", so this fires unconditionally.
-    current_balance = await _read_usd_balance(adapter)
-    if current_balance is None:
-        _LOGGER.error("could not read current balance; refusing execution")
-        return 1
-    if current_balance < proposal.amount:
-        _LOGGER.error(
-            "current exchange balance below proposed withdrawal amount; refusing",
-            extra={
-                "current_balance_usd": str(current_balance),
-                "proposal_amount_usd": str(proposal.amount),
-            },
-        )
-        return 1
-
-    # 7. Day-cap fresh check
-    today_total = await compute_today_total_withdrawn_usd(storage, asset=proposal.asset)
-    if today_total + proposal.amount > config.harvester.max_withdrawal_per_day_usd:
-        _LOGGER.error(
-            "executing would push today's total over max_withdrawal_per_day_usd; refusing",
-            extra={
-                "today_total_usd": str(today_total),
-                "proposal_amount_usd": str(proposal.amount),
-                "max_withdrawal_per_day_usd": str(config.harvester.max_withdrawal_per_day_usd),
-            },
-        )
-        return 1
-
-    # 8. Execute via Kraken /Withdraw
-    _LOGGER.info(
-        "executing withdrawal via Kraken /Withdraw",
-        extra={
-            "proposal_id": proposal.proposal_id,
-            "asset": proposal.asset,
-            "amount": str(proposal.amount),
-            "destination": destination,
-        },
-    )
-    try:
-        refid = await adapter.withdraw(
-            asset=proposal.asset,
-            amount=proposal.amount,
-            destination=destination,
-        )
-    except ExchangeError as exc:
-        _LOGGER.error(
-            "kraken /Withdraw rejected the request",
-            extra={
-                "proposal_id": proposal.proposal_id,
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-            },
-        )
-        # Persist a failed TransferResult so the audit trail records
-        # the attempt. transaction_id is synthetic (no Kraken refid
-        # was issued); prefix lets show_transfers distinguish.
-        try:
-            await storage.save_transfer_result(
-                TransferResult(
-                    proposal_id=proposal.proposal_id,
-                    transaction_id=f"failed-{uuid4()}",
-                    status="failed",
-                    executed_amount=proposal.amount,
-                    direction=proposal.direction,
-                    asset=proposal.asset,
-                    timestamp=Timestamp(dt=datetime.now(UTC)),
-                ),
-            )
-        except StorageError as persist_exc:
-            _LOGGER.error(
-                "failed to persist failure audit row",
-                extra={"error": str(persist_exc)},
-            )
-        # Stage 5.5: surface the failure to the operator's Discord.
-        await notify(
-            notifier,
-            level="error",
-            title=f"Withdrawal failed: {proposal.amount} {proposal.asset}",
-            message=(
-                f"Kraken /Withdraw rejected proposal {proposal.proposal_id}: {exc}. "
-                "No money moved."
-            ),
-            event=WithdrawalFailedEvent(
-                proposal_id=proposal.proposal_id,
-                asset=proposal.asset,
-                amount=proposal.amount,
-                destination=destination,
-                error=str(exc),
-                error_type=type(exc).__name__,
-            ),
-        )
-        return 1
-
-    # 9. Persist success
-    result = TransferResult(
-        proposal_id=proposal.proposal_id,
-        transaction_id=refid,
-        status="pending",  # Kraken hasn't settled the wire/ACH yet
-        executed_amount=proposal.amount,
-        direction=proposal.direction,
-        asset=proposal.asset,
-        timestamp=Timestamp(dt=datetime.now(UTC)),
-    )
-    try:
-        await storage.save_transfer_result(result)
-    except StorageError as exc:
-        # The withdrawal SUBMITTED at Kraken but our audit row didn't
-        # persist. This is a bad state — flag it loudly. The Kraken
-        # refid is in the log so the operator can reconcile manually
-        # from Kraken Pro.
-        _LOGGER.error(
-            "WITHDRAWAL SUBMITTED but audit row persistence failed — "
-            "reconcile manually from Kraken Pro using the refid below",
-            extra={
-                "refid": refid,
-                "proposal_id": proposal.proposal_id,
-                "error": str(exc),
-            },
-        )
-        return 1
-
-    _LOGGER.info(
-        "WITHDRAWAL SUBMITTED — money moved",
-        extra={
-            "proposal_id": proposal.proposal_id,
-            "transaction_id": refid,
-            "asset": proposal.asset,
-            "amount": str(proposal.amount),
-            "destination": destination,
-            "status": "pending",
-        },
-    )
-    # Stage 5.5: surface the successful withdrawal to the operator's
-    # Discord. Level "warning" not "info" because money moved — this is
-    # the highest-value event the harvester emits and the operator
-    # wants it surfaced loudly.
-    await notify(
-        notifier,
-        level="warning",
-        title=f"Withdrawal submitted: {proposal.amount} {proposal.asset}",
-        message=(
-            f"Kraken /Withdraw accepted proposal {proposal.proposal_id}. "
-            f"refid={refid}, destination={destination}, status=pending. "
-            "Money has left the exchange."
-        ),
-        event=WithdrawalSubmittedEvent(
-            proposal_id=proposal.proposal_id,
-            transaction_id=refid,
-            asset=proposal.asset,
-            amount=proposal.amount,
-            destination=destination,
-            status="pending",
-        ),
-    )
     return 0
 
 

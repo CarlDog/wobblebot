@@ -24,9 +24,11 @@ from wobblebot.cli.live import _process_pending_commands
 from wobblebot.config.cli import LiveConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.operator import (
+    ExecuteProposalCommand,
     PauseCommand,
     PendingCommand,
     PendingCommandStatus,
+    QueueableCommand,
     ReanchorCommand,
     StopCommand,
 )
@@ -46,7 +48,7 @@ def _ts(offset_seconds: int = 0) -> Timestamp:
 def _pending(
     *,
     status: PendingCommandStatus = "approved",
-    command: PauseCommand | StopCommand | ReanchorCommand | None = None,
+    command: QueueableCommand | None = None,
     created_offset_seconds: int = 0,
 ) -> PendingCommand:
     return PendingCommand(
@@ -282,3 +284,62 @@ async def test_dispatch_echo_none_notifier_is_silent_noop(
     processed = await _process_pending_commands(svc, storage, None)
     assert processed == 1
     assert await storage.get_notifications() == []
+
+
+# --------------------------------------------------------------------- #
+# ADR-034 — cli/live must not claim the Harvester's rows                #
+# --------------------------------------------------------------------- #
+
+
+async def test_execute_proposal_rows_are_left_for_harvest(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """The kind-scoped SELECT keeps money-out rows out of this loop.
+
+    An unfiltered poll would hand the row to OperatorService (which has
+    no dispatcher for it) and mark the operator's approved withdrawal
+    ``failed`` — using a key that cannot withdraw at all (ADR-003).
+    """
+    svc, _engine = _operator_service(storage)
+    row = _pending(
+        command=ExecuteProposalCommand(
+            proposal_id="p-1",
+            amount_usd=Decimal("100"),
+            destination="bank-label",
+        )
+    )
+    await storage.save_pending_command(row)
+
+    processed = await _process_pending_commands(svc, storage, None)
+
+    assert processed == 0
+    # Still claimable by cli/harvest on its next poll.
+    untouched = await storage.get_pending_command(row.id)
+    assert untouched is not None
+    assert untouched.status == "approved"
+    assert untouched.result is None
+
+
+async def test_engine_commands_still_dispatch_alongside(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """Scoping must not cost cli/live its own rows."""
+    svc, _engine = _operator_service(storage)
+    await storage.save_pending_command(
+        _pending(
+            command=ExecuteProposalCommand(
+                proposal_id="p-1",
+                amount_usd=Decimal("100"),
+                destination="bank-label",
+            )
+        )
+    )
+    pause = _pending(command=PauseCommand(symbol=BTC_USD))
+    await storage.save_pending_command(pause)
+
+    processed = await _process_pending_commands(svc, storage, None)
+
+    assert processed == 1
+    dispatched = await storage.get_pending_command(pause.id)
+    assert dispatched is not None
+    assert dispatched.status == "dispatched"

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -1050,13 +1051,27 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         self,
         status: PendingCommandStatus | None = None,
         limit: int | None = None,
+        kinds: Sequence[str] | None = None,
     ) -> list[PendingCommand]:
         conn = self._require_conn()
+        # An empty ``kinds`` means "no kind is allowed" — short-circuit
+        # rather than building ``IN ()``, which is a SQLite syntax error
+        # and would otherwise turn a caller's empty allowlist into a
+        # crash instead of an empty result.
+        if kinds is not None and not kinds:
+            return []
         sql = "SELECT * FROM pending_commands"
         params: list[object] = []
+        clauses: list[str] = []
         if status is not None:
-            sql += " WHERE status = ?"
+            clauses.append("status = ?")
             params.append(status)
+        if kinds is not None:
+            placeholders = ", ".join("?" for _ in kinds)
+            clauses.append(f"command_kind IN ({placeholders})")
+            params.extend(kinds)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at ASC"
         if limit is not None:
             sql += " LIMIT ?"

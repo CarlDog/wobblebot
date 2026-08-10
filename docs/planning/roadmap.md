@@ -740,6 +740,23 @@ the detail; the full backlog index is
    presence; a duplicate refresh after an in-card terminal update is
    harmless).
 
+   **Slice 14 — Execute a proposal from the web (ADR-034)** ✅ **2026-08-09**: the
+   Harvester page grows an **Execute** button on actionable proposals, running the
+   slice-13 modal flow over a new `ExecuteProposalCommand` — confirm the **amount and
+   destination** (not an opaque id), approve, then watch `cli/harvest` execute it.
+   Deliberately NOT in the LLM-emittable `OperatorCommand` union: it joins a separate
+   `QueueableCommand`, so ADR-002 holds structurally — a crafted assistant payload naming
+   `execute_proposal` fails validation. `get_pending_commands` gains a `kinds` allowlist and
+   `cli/live`'s poll is scoped to the engine kinds (closing the latent bug where it would
+   have claimed a withdrawal row and marked the operator's transfer `failed`);
+   `cli/harvest` gains a 15s command poll beside its hours-long proposal cycle. The seven
+   defense layers moved to `cli/harvest_execute.py` and return a structured `ExecuteOutcome`
+   so `--execute` and the queued path share ONE implementation — plus a new echo-validation
+   gate that refuses when the approved amount/destination no longer matches the stored
+   proposal. The page warns honestly when the harvest daemon's heartbeat is stale. Dormant
+   in production by design (harvest container stopped). Apply + Acknowledge deferred with
+   reasons recorded in the ADR. Test count 2886 → 2921.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

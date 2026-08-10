@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,10 +14,11 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.operator import (
     CommandResult,
-    OperatorCommand,
+    ExecuteProposalCommand,
     PauseCommand,
     PendingCommand,
     PendingCommandStatus,
+    QueueableCommand,
     ReanchorCommand,
     StopCommand,
 )
@@ -38,7 +40,7 @@ def _ts(offset_seconds: int = 0) -> Timestamp:
 
 def _pending(
     *,
-    command: OperatorCommand | None = None,
+    command: QueueableCommand | None = None,
     status: PendingCommandStatus = "awaiting_confirmation",
     pending_id: UUID | None = None,
     channel_id: str = "C-1",
@@ -240,3 +242,83 @@ async def test_status_check_rejects_unknown_value(
             ),
         )
         await conn.commit()
+
+
+# --------------------------------------------------------------------- #
+# Kind-scoped polling (ADR-034)                                         #
+# --------------------------------------------------------------------- #
+
+
+async def test_kinds_filter_scopes_the_poll(storage: SQLiteStorageAdapter) -> None:
+    """Two daemons share the table; each sees only its own kinds."""
+    pause = _pending(command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")))
+    execute = _pending(
+        command=ExecuteProposalCommand(
+            proposal_id="p-1",
+            amount_usd=Decimal("100"),
+            destination="bank-label",
+        )
+    )
+    await storage.save_pending_command(pause)
+    await storage.save_pending_command(execute)
+
+    engine_view = await storage.get_pending_commands(kinds=("pause", "resume", "stop"))
+    harvest_view = await storage.get_pending_commands(kinds=("execute_proposal",))
+
+    assert [r.id for r in engine_view] == [pause.id]
+    assert [r.id for r in harvest_view] == [execute.id]
+
+
+async def test_kinds_combines_with_status(storage: SQLiteStorageAdapter) -> None:
+    approved = _pending(
+        command=ExecuteProposalCommand(
+            proposal_id="p-approved",
+            amount_usd=Decimal("100"),
+            destination="bank-label",
+        ),
+        status="approved",
+    )
+    waiting = _pending(
+        command=ExecuteProposalCommand(
+            proposal_id="p-waiting",
+            amount_usd=Decimal("100"),
+            destination="bank-label",
+        ),
+        status="awaiting_confirmation",
+    )
+    await storage.save_pending_command(approved)
+    await storage.save_pending_command(waiting)
+
+    rows = await storage.get_pending_commands(status="approved", kinds=("execute_proposal",))
+
+    assert [r.id for r in rows] == [approved.id]
+
+
+async def test_empty_kinds_matches_nothing(storage: SQLiteStorageAdapter) -> None:
+    """An empty allowlist means 'nothing', never 'everything'.
+
+    The dangerous misreading: treating empty as unfiltered would hand a
+    caller every row precisely when it asked for none.
+    """
+    await storage.save_pending_command(_pending())
+
+    assert await storage.get_pending_commands(kinds=()) == []
+
+
+async def test_execute_proposal_round_trips(storage: SQLiteStorageAdapter) -> None:
+    """The queue-only command survives the JSON round-trip intact."""
+    command = ExecuteProposalCommand(
+        proposal_id="p-round-trip",
+        amount_usd=Decimal("123.45"),
+        destination="my-bank",
+    )
+    row = _pending(command=command)
+    await storage.save_pending_command(row)
+
+    loaded = await storage.get_pending_command(row.id)
+
+    assert loaded is not None
+    assert isinstance(loaded.command, ExecuteProposalCommand)
+    assert loaded.command.proposal_id == "p-round-trip"
+    assert loaded.command.amount_usd == Decimal("123.45")
+    assert loaded.command.destination == "my-bank"

@@ -115,6 +115,13 @@
   <main class="content">
     {% block content %}{% endblock %}
   </main>
+  {# Modal container (P3 modal layer): empty = hidden (CSS). Command
+     confirm/watch flows swap their cards in here via htmx; modal.js
+     owns the close affordances. Lives in the LAYOUT, not per-page, so
+     any page that wires an action button (dashboard, harvester, …) has
+     a target — an hx-target that doesn't exist fails silently, which
+     is exactly the bug this placement prevents. #}
+  <div id="modal"></div>
   {# Footer — two centered lines. Line 1: version + license link
      + copyright (the meta facts). Line 2: repo link (the primary
      callable). Both same muted weight; line spacing breathes a

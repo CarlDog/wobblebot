@@ -6,6 +6,11 @@
    every 2s while non-terminal; the full-page flow works without
    JS (this block simply stays on "waiting" until a manual
    refresh). #}
+{# Which daemon owns this kind decides who the operator should go
+   looking for when it's slow (ADR-034): cli/harvest polls
+   execute_proposal, cli/live polls everything else. Naming the wrong
+   daemon in a stall message sends the operator to the wrong container. #}
+{% set watch_daemon = "cli/harvest" if pending.command.kind == "execute_proposal" else "cli/live" %}
 {% if pending.status in ("awaiting_confirmation", "approved") %}
   <div id="command-watch"
        hx-get="/commands/{{ pending.id }}/watch{% if watch_ctx is defined and watch_ctx == 'modal' %}?ctx=modal{% endif %}"
@@ -13,11 +18,11 @@
        hx-swap="outerHTML">
     <p class="muted">
       <span class="watch-spinner" aria-hidden="true"></span>
-      Approved — waiting for cli/live to pick this up on its next tick…
+      Approved — waiting for {{ watch_daemon }} to pick this up on its next poll…
       {% if elapsed_seconds is defined and elapsed_seconds is not none and elapsed_seconds > 30 %}
         <br><span class="tag warn">slow</span>
-        cli/live hasn't picked this up after
-        {{ elapsed_seconds | humanize_duration }} — is the live daemon
+        {{ watch_daemon }} hasn't picked this up after
+        {{ elapsed_seconds | humanize_duration }} — is that daemon
         running? Check <a href="/health">/health</a>. The command stays
         queued and executes when the daemon returns (or expires at its
         TTL if it was never approved).
@@ -36,7 +41,7 @@
     {% elif pending.status == "failed" %}
       <p>
         <span class="tag fail">FAILED</span>
-        {% if pending.result %}{{ pending.result.message }}{% else %}Dispatch failed — see cli/live logs.{% endif %}
+        {% if pending.result %}{{ pending.result.message }}{% else %}Dispatch failed — see {{ watch_daemon }} logs.{% endif %}
       </p>
     {% elif pending.status == "expired" %}
       <p class="muted">

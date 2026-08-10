@@ -33,6 +33,7 @@ existing callsites that do
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -180,17 +181,80 @@ class StopCommand(BaseModel):
         frozen = True
 
 
-OperatorCommand = Annotated[
+_EngineCommandUnion = (
     PauseCommand
     | ResumeCommand
     | PauseAllCommand
     | ResumeAllCommand
     | CancelOpenOrdersCommand
     | ReanchorCommand
-    | StopCommand,
+    | StopCommand
+)
+"""Bare union of the engine-directed commands. Not for annotation use —
+:data:`OperatorCommand` is the discriminated form callers want. Exists so
+:data:`QueueableCommand` can extend the same member list without
+duplicating it (one place to add a new engine command)."""
+
+
+OperatorCommand = Annotated[_EngineCommandUnion, Field(discriminator="kind")]
+"""Discriminated union over all v1 state-mutating operator commands.
+
+**This is exactly what the Discord assistant is allowed to emit** — it is
+the payload type of :class:`IntentCommand`. Commands that must never be
+reachable from an LLM parse (see :class:`ExecuteProposalCommand`) stay out
+of this union deliberately; they join :data:`QueueableCommand` instead.
+"""
+
+
+# --------------------------------------------------------------------- #
+# Queue-only commands — persistable, but NOT LLM-emittable              #
+# --------------------------------------------------------------------- #
+
+
+class ExecuteProposalCommand(BaseModel):
+    """Execute a persisted ``TransferProposal`` — the money-out command (ADR-034).
+
+    **Deliberately absent from :data:`OperatorCommand`.** That union is
+    the assistant's output schema, so a command listed there is a command
+    a language model can emit from parsed chat text. Moving real money is
+    not something an LLM parse should be able to originate under any
+    prompt, so this variant is reachable only from :data:`QueueableCommand`
+    — persistable in ``pending_commands`` and creatable by the web UI,
+    structurally unreachable from ``OperatorIntent``. ADR-002's "LLM is
+    advisory only" is enforced here by the type system rather than by a
+    runtime check.
+
+    Dispatch is ``cli/harvest``'s alone (ADR-003 — the Harvester is the
+    sole module with transfer authority). ``cli/live`` filters its poll to
+    the engine kinds and never sees these rows.
+
+    ``amount_usd`` and ``destination`` are **echoes**, not inputs: the
+    authoritative values live on the proposal. ``cli/harvest`` re-reads the
+    proposal and refuses on mismatch, so an approval always describes the
+    transfer that actually executes — the "confirm on a human-readable
+    name, not just an opaque id" rule applied to a money path.
+    """
+
+    kind: Literal["execute_proposal"] = "execute_proposal"
+    proposal_id: str = Field(min_length=1)
+    amount_usd: Decimal = Field(gt=0)
+    destination: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+
+QueueableCommand = Annotated[
+    _EngineCommandUnion | ExecuteProposalCommand,
     Field(discriminator="kind"),
 ]
-"""Discriminated union over all v1 state-mutating operator commands."""
+"""Everything a ``PendingCommand`` row may carry.
+
+A superset of :data:`OperatorCommand`: every engine command plus the
+queue-only :class:`ExecuteProposalCommand`. Use this for persistence and
+for the web UI's command-creation surface; use :data:`OperatorCommand`
+wherever the value comes from (or goes to) the LLM assistant.
+"""
 
 
 # --------------------------------------------------------------------- #
@@ -416,6 +480,8 @@ OperatorIntent = Annotated[
 
 __all__ = (
     "CancelOpenOrdersCommand",
+    "ExecuteProposalCommand",
+    "QueueableCommand",
     "ReanchorCommand",
     "GridConfigQuery",
     "HarvesterStatusQuery",

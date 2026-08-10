@@ -32,15 +32,17 @@ from wobblebot.ports.notification_events import NotificationEvent
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import (
     CommandResult,
-    OperatorCommand,
     OperatorIntent,
     PendingCommand,
+    QueueableCommand,
 )
 
 # Module-level TypeAdapter — Pydantic discriminator resolution is the
-# only way to materialize the right OperatorCommand variant from a
-# serialized dict. Cheap to construct once.
-_COMMAND_ADAPTER: TypeAdapter[OperatorCommand] = TypeAdapter(OperatorCommand)
+# only way to materialize the right command variant from a serialized
+# dict. Cheap to construct once. Resolves over QueueableCommand (not
+# OperatorCommand) so persisted ``execute_proposal`` rows round-trip —
+# the table holds a superset of what the LLM can emit (ADR-034).
+_COMMAND_ADAPTER: TypeAdapter[QueueableCommand] = TypeAdapter(QueueableCommand)
 _INTENT_ADAPTER: TypeAdapter[OperatorIntent] = TypeAdapter(OperatorIntent)
 _EVENT_ADAPTER: TypeAdapter[NotificationEvent] = TypeAdapter(NotificationEvent)
 
