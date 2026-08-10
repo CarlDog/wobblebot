@@ -53,6 +53,7 @@ from wobblebot.services.kraken_health import (
     KrakenHealthResult,
     KrakenSystemStatus,
 )
+from wobblebot.services.llm_health import LLMEndpointHealth, LLMHealthChecker
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_config,
@@ -80,11 +81,15 @@ class HealthSnapshot:
     daemons: tuple[DaemonHealth, ...]
     overall: OverallStatus
     last_refreshed_at: datetime
+    # LLM endpoint probes (P3): empty when no checker is wired (tests,
+    # deployments with no LLM config) — the template omits the section.
+    llm: tuple[LLMEndpointHealth, ...] = ()
 
 
 def compute_overall_status(
     kraken: KrakenHealthResult | None,
     daemons: tuple[DaemonHealth, ...],
+    llm: tuple[LLMEndpointHealth, ...] = (),
 ) -> OverallStatus:
     """Roll up Kraken + per-daemon states into one traffic light.
 
@@ -111,6 +116,11 @@ def compute_overall_status(
         if d.status is not DaemonStatus.FRESH:
             has_yellow = True
             break
+    # LLM endpoints are advisory infrastructure (ADR-002) — an outage
+    # degrades the advisor/operator surfaces, never trading itself, so
+    # it contributes YELLOW at most.
+    if any(not e.ok for e in llm):
+        has_yellow = True
     return OverallStatus.YELLOW if has_yellow else OverallStatus.GREEN
 
 
@@ -128,6 +138,8 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
     """
     probe: KrakenHealthProbe | None = getattr(request.app.state, "kraken_health_probe", None)
     kraken_result = await probe.get() if probe is not None else None
+    llm_checker: LLMHealthChecker | None = getattr(request.app.state, "llm_health_checker", None)
+    llm = await llm_checker.get() if llm_checker is not None else ()
     thresholds: DaemonHealthThresholds | None = getattr(
         request.app.state, "daemon_health_thresholds", None
     )
@@ -140,8 +152,9 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
     return HealthSnapshot(
         kraken=kraken_result,
         daemons=tuple(daemons),
-        overall=compute_overall_status(kraken_result, tuple(daemons)),
+        overall=compute_overall_status(kraken_result, tuple(daemons), llm),
         last_refreshed_at=datetime.now(UTC),
+        llm=llm,
     )
 
 

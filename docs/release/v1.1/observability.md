@@ -530,7 +530,12 @@ realized PnL to verify the strategy is still net-positive. Or
 when scaling capital, since the answer shifts non-linearly
 (earnings scale with capital, infra cost stays roughly flat).
 
-### LLM health check on the /health page
+### LLM health check on the /health page — ✅ SHIPPED 2026-08-09 (P3 slice 10)
+
+> Shipped to this plan: `services/llm_health.py` (TTL-cached, Kraken-probe
+> pattern), non-billable probes, configured-endpoints-only, "LLM Endpoints"
+> card on /health, YELLOW-only contribution to the overall dot. Google
+> authenticates via the `x-goog-api-key` header — keys never ride URLs.
 
 **What:** add an "LLM" section to the `/health` web page that
 shows the status of every configured LLM endpoint. For Ollama,

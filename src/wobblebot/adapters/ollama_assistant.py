@@ -56,6 +56,20 @@ from wobblebot.services.llm_cloud_call import INTENT_ADAPTER
 _LOGGER = logging.getLogger(__name__)
 
 
+class _OllamaReadTimeoutRetry(Exception):
+    """Marker raised when the chat POST hits ``httpx.ReadTimeout``.
+
+    Caught by ``_request_with_retry`` for a single same-payload retry.
+    Verified live 2026-08-09: the FIRST parse after a daemon restart
+    pays full prompt eval (~4k tokens on the CPU-only NAS) and can
+    outlive the client timeout while the server FINISHES the work —
+    Ollama's keep-alive was bumped at the exact second the client gave
+    up, and the identical retry parsed in ~26s against the now-warm
+    KV cache. One retry converts that cold-start miss into a slow
+    success; a second timeout is a real outage and surfaces.
+    """
+
+
 class _OllamaEmptyContentRetry(Exception):
     """Marker raised by the envelope extractor when Ollama returns an
     empty ``message.content`` and no ``thinking`` field.
@@ -315,21 +329,35 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
     async def _request_with_retry(
         self, payload: dict[str, Any], *, thinking_mode: bool
     ) -> dict[str, Any]:
-        """POST + extract the inner dict, retrying once on empty content."""
+        """POST + extract, retrying once on empty content OR read timeout.
+
+        Both markers earn exactly one same-payload retry; a marker on
+        the retry surfaces as the plain ``AssistantError`` shape so
+        callers never see the marker types.
+        """
         try:
             return await self._post_and_extract(payload, thinking_mode=thinking_mode)
         except _OllamaEmptyContentRetry as exc:
+            first_exc: Exception = exc
             _LOGGER.warning(
                 "Ollama returned empty content for model %r; retrying once",
                 self._model,
             )
-            try:
-                return await self._post_and_extract(payload, thinking_mode=thinking_mode)
-            except _OllamaEmptyContentRetry as retry_exc:
-                # Both attempts empty -- surface as the original
-                # AssistantError shape so callers don't need to know
-                # about the marker.
-                raise AssistantError(str(retry_exc)) from exc
+        except _OllamaReadTimeoutRetry as exc:
+            first_exc = exc
+            _LOGGER.warning(
+                "Ollama chat timed out for model %r; retrying once "
+                "(cold-cache first parse can outlive the client timeout "
+                "while the server finishes -- the retry hits the warm cache)",
+                self._model,
+            )
+        try:
+            return await self._post_and_extract(payload, thinking_mode=thinking_mode)
+        except (_OllamaEmptyContentRetry, _OllamaReadTimeoutRetry) as retry_exc:
+            # Both attempts failed -- surface as the original
+            # AssistantError shape so callers don't need to know
+            # about the markers.
+            raise AssistantError(str(retry_exc)) from first_exc
 
     async def _post_and_extract(
         self, payload: dict[str, Any], *, thinking_mode: bool
@@ -339,6 +367,13 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
             response.raise_for_status()
             envelope: dict[str, Any] = response.json()
+        except httpx.ReadTimeout as exc:
+            # Retryable (see the marker docstring): the server likely
+            # FINISHED the work just after we gave up; the retry rides
+            # the warm KV cache.
+            raise _OllamaReadTimeoutRetry(
+                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             # Include the exception type: a bare ReadTimeout/ConnectTimeout
             # often has an empty str(), leaving an uninformative
@@ -378,6 +413,13 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
             response.raise_for_status()
             envelope: dict[str, Any] = response.json()
+        except httpx.ReadTimeout as exc:
+            # Retryable (see the marker docstring): the server likely
+            # FINISHED the work just after we gave up; the retry rides
+            # the warm KV cache.
+            raise _OllamaReadTimeoutRetry(
+                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise AssistantError(f"Ollama summarize request failed: {exc}") from exc
 

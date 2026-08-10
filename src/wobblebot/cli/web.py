@@ -62,6 +62,7 @@ from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.daemon_health import derive_thresholds_from_config
 from wobblebot.services.kraken_health import KrakenHealthProbe
+from wobblebot.services.llm_health import LLMHealthChecker, build_llm_endpoints
 from wobblebot.services.release_checker import check_for_update
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
@@ -228,6 +229,25 @@ async def _bootstrap_app(
     kraken_http = httpx.AsyncClient(timeout=10.0)
     kraken_probe = KrakenHealthProbe(kraken_http)
 
+    # P3: LLM endpoint health for /health. Probes only what's actually
+    # configured — Ollama's base URL (env wins, matching how the advise/
+    # operator adapters resolve it; falls back to the assistant config)
+    # plus each cloud provider whose key is present. Empty-string env
+    # values count as unset. Shares the kraken_http client + the same
+    # TTL-cache posture.
+    llm_checker = LLMHealthChecker(
+        kraken_http,
+        build_llm_endpoints(
+            ollama_base_url=(
+                os.environ.get("OLLAMA_BASE_URL")
+                or (config.operator.assistant.base_url if config.operator else None)
+            ),
+            anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
+            openai_key=os.environ.get("OPENAI_API_KEY"),
+            google_key=os.environ.get("GOOGLE_API_KEY"),
+        ),
+    )
+
     # Derive per-daemon staleness thresholds from the full operator
     # config so an operator who tunes ANY interval — schedules.*,
     # live.tick_seconds, operator.forwarder_poll_seconds — gets a
@@ -247,6 +267,7 @@ async def _bootstrap_app(
         observe_storage=optionals["observe"],
         news_storage=optionals["news"],
         kraken_health_probe=kraken_probe,
+        llm_health_checker=llm_checker,
         daemon_health_thresholds=daemon_thresholds,
         # v1.1 session card — read straight off the same live: section
         # cli/live itself uses, so the two processes can't drift.

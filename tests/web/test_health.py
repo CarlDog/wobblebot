@@ -238,3 +238,48 @@ class TestHealthzLiveness:
         resp = client_no_probe.get("/healthz")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+class TestLLMHealthSection:
+    def test_llm_section_renders_and_contributes_yellow(self, storage) -> None:  # type: ignore[no-untyped-def]
+        """A wired checker's results render as the LLM Endpoints card and
+        an unhealthy endpoint pulls the overall dot to yellow (never red
+        — LLMs are advisory infrastructure per ADR-002)."""
+        import httpx
+        from fastapi.testclient import TestClient
+
+        from tests.web._helpers import login_as
+        from wobblebot.config.cli import WebConfig
+        from wobblebot.services.llm_health import LLMEndpoint, LLMHealthChecker
+        from wobblebot.web.app import create_app
+        from wobblebot.web.auth import hash_password  # noqa: F401  (fixture parity)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "11434" in str(request.url):
+                raise httpx.ConnectError("refused", request=request)
+            return httpx.Response(200)
+
+        client_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        checker = LLMHealthChecker(
+            client_http,
+            [
+                LLMEndpoint(name="Ollama", url="http://nas:11434/api/tags"),
+                LLMEndpoint(name="OpenAI", url="https://api.openai.com/v1/models"),
+            ],
+        )
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10),
+            operator_storage=storage,
+            session_secret="x" * 64,
+            llm_health_checker=checker,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get("/health")
+            assert resp.status_code == 200
+            assert "LLM Endpoints" in resp.text
+            assert "Ollama" in resp.text
+            assert "ConnectError" in resp.text
+            assert "OpenAI" in resp.text
+            overall = client.get("/health/overall.json")
+            assert overall.json()["overall"] == "yellow"
