@@ -689,6 +689,21 @@ the detail; the full backlog index is
    "Sorry, I couldn't process that"; a second timeout surfaces as a real
    outage. Test count 2864 → 2874.
 
+   **Slice 11 — zero-order layout starvation back-off** ✅ **2026-08-09**
+   (closes the LAST re-anchor e2e finding; built to the engine.md design):
+   a layout that places 0/N enters a **starved** state — ONE WARNING with
+   the refusal/deferral breakdown, then the no-orders self-heal retries
+   only every `_STARVED_RETRY_EVERY_TICKS` (60, about 5 min at the 5s
+   cadence, measured in the writer's cadence) with the standard
+   transition + heartbeat logging, instead of the old silent every-tick
+   busy loop. Any placement (including a partial) clears the state with
+   an INFO; orders appearing by any path quietly clear it. All three
+   layout sites participate — initialize, the auto-re-layout branch, and
+   `request_reanchor` (the original incident: a 0/6 re-anchor now backs
+   off immediately). Pinned by 5 tests incl. warn-once, retry-tick
+   fires, funded-retry recovers, partial-never-starves, and the
+   reanchor path. Test count 2874 → 2879.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

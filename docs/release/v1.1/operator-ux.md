@@ -556,6 +556,15 @@ than an infinite spinner. On completion, refresh/redirect so the
 dashboard reflects the new state. Snooze is already synchronous
 (UI-local) and needs nothing.
 
+**Amendment (operator, 2026-08-09):** the interim full-page
+navigations (form page → confirm page → result page) should become a
+**modal card over the dashboard** — click an action, the confirm
+details appear in place, approval starts the row-watch in the same
+card, and the dashboard refreshes underneath on completion. Pure
+presentation: the POSTs and the pending_commands flow are unchanged
+(the confirm/result templates can serve as partials for the modal
+body). The full-page routes stay as the no-JS fallback.
+
 **Trigger:** operator-filed 2026-08-09 during the banner-polish
 session; queue with the web per-entity action buttons slice (same
 surface, same row-watching machinery).
