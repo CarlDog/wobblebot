@@ -20,8 +20,13 @@ rule); this section is a pointer, not a changelog.
   full advisor-architecture replacement warrant the major bump; see `CHANGELOG.md`).
   **P1 is COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2, merged
   2026-08-01). **P2 (data-infrastructure spine) is COMPLETE** (2026-08-07 → 2026-08-08,
-  slices 1–6; slice 6 = ADR-029 counter-order target). **P3 (ops/UX) is IN PROGRESS**
-  (started 2026-08-08; slice 1 = stale-heartbeat Discord push alert). P4
+  slices 1–6; slice 6 = ADR-029 counter-order target). **P3 (ops/UX) is COMPLETE
+  for its buildable scope** (2026-08-08 → 2026-08-10, slices 1–23; ADR-030,
+  ADR-031, ADR-034). **Three P3 items are gated, not skipped** — the anomaly
+  detector needs ~30d of baseline (matures ~2026-09-07), disk-space awareness
+  bundles onto it *and* waits on the data-retention policy, and the advisor's
+  Apply / Approve-Reject is blocked by ADR-034's scope note (no daemon can own a
+  `settings.yml` rewrite; unblocking it needs an ADR, not code). P4
   (advisor-feedback, data-gated) remains unstarted. Phase 9 (Kraken Securities equities)
   follows, not immediately after this merge.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
