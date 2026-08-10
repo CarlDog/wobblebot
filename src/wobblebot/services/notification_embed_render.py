@@ -118,11 +118,17 @@ def _render_session_start(event: SessionStartEvent) -> dict[str, Any]:
         "title": f"▶ Live session started — {len(event.symbols)} symbol(s)",
         "description": ", ".join(event.symbols),
         "color": COLOR_INFO,
+        # inline=True for the same reason the status_report tallies use
+        # it: four short counters stacked at full width is eight lines of
+        # label/value that push the symbol list off a phone screen.
+        # Discord packs these three-per-row instead. Every value here is
+        # a formatted dollar figure or a short "5s / unlimited" — all
+        # comfortable in a third-width column.
         "fields": [
-            ("Portfolio value", f"${event.starting_value_usd:,.2f}"),
-            ("Free USD", f"${event.starting_usd:,.2f}"),
-            ("Loss cap", f"${event.max_session_loss_usd:,.2f}"),
-            ("Tick / runtime", f"{event.tick_seconds:g}s / {runtime}"),
+            ("Portfolio value", f"${event.starting_value_usd:,.2f}", True),
+            ("Free USD", f"${event.starting_usd:,.2f}", True),
+            ("Loss cap", f"${event.max_session_loss_usd:,.2f}", True),
+            ("Tick / runtime", f"{event.tick_seconds:g}s / {runtime}", True),
         ],
     }
 

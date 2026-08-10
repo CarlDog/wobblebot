@@ -980,13 +980,23 @@ three separate commits that each shift the embed format slightly.
 > stay rejected for the reasons given below (monospace inconsistency; loss of
 > labelled scanning).
 >
-> **Observed while implementing, NOT done:** `session_start`'s four counters
-> (portfolio value / free USD / loss cap / tick+runtime) have the identical
-> shape and would benefit identically. Left alone because the operator flagged
-> the status_report stack specifically, and restyling every notification card is
-> design drift rather than the requested fix. `harvest_proposal` should STAY
-> stacked either way — its proposal id and balance transition are too long for a
-> third-width column.
+> **`session_start` followed, on operator request (same day).** Its four
+> counters (portfolio value / free USD / loss cap / tick+runtime) had the
+> identical shape — four short values stacked as eight lines above the symbol
+> list — so they now ride `inline=True` too. Surfaced as an observation rather
+> than done unasked; the operator called it in.
+>
+> **Still deliberately stacked, and should stay that way:**
+> `harvest_proposal` (its proposal id and `$X → $Y` balance transition are too
+> long for a third-width column — inline would make that card worse), and the
+> single-field cards (`fill`'s tick, `withdrawal_*`'s destination), where
+> packing gains nothing. `session_end` is the one genuine judgement call left:
+> two of its three values are short but `Value` renders `$X → $Y`. Left alone
+> pending a look at a real one.
+>
+> **The rule that fell out of this:** inline suits a ROW OF COUNTERS — short,
+> homogeneous, scannable side by side. It does not suit a value that is a
+> sentence, an id, or a transition.
 
 **What:** the status_report embed renders its 8+ tallies (Balance,
 Today's PnL, Open orders, Fills, News, Suggestions, Harvester

@@ -840,7 +840,13 @@ the detail; the full backlog index is
    — the third such layering call this session, and the first one gotten right
    without a later move. 2-tuples still mean `inline=False`, so all 25 existing
    field-builders are untouched (pinned by a back-compat test, plus a mixed-shape
-   test). Test count 2961 → 2973.
+   test). **Follow-up the same day, operator-requested:** `session_start`'s four
+   counters got the identical treatment — the observation was surfaced rather
+   than acted on unasked, and the operator called it in. `harvest_proposal` stays
+   stacked deliberately (a proposal id and a `$X → $Y` transition are too long for
+   a narrow column), which is the rule that fell out: inline suits a ROW OF
+   COUNTERS, not a value that is a sentence, an id, or a transition.
+   Test count 2961 → 2973.
 
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
