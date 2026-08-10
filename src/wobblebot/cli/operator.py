@@ -86,6 +86,8 @@ from wobblebot.ports.exceptions import (
 )
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.ports.operator import (
+    ConfirmDecision,
+    ConfirmOutcome,
     IntentCommand,
     IntentConversational,
     IntentQuery,
@@ -94,7 +96,7 @@ from wobblebot.ports.operator import (
     PendingCommand,
 )
 from wobblebot.ports.storage import StoragePort
-from wobblebot.services.confirm_decision import ConfirmDecision, apply_confirm_decision
+from wobblebot.services.confirm_decision import apply_confirm_decision
 from wobblebot.services.daemon_health import (
     DaemonHealth,
     DaemonHealthThresholds,
@@ -1354,7 +1356,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         pending_id: UUID,
         decision: ConfirmDecision,
         user_id: str,
-    ) -> str:
+    ) -> ConfirmOutcome:
         outcome = await apply_confirm_decision(
             storage=operator_storage,
             pending_id=pending_id,
@@ -1373,7 +1375,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
                 "confirming_user_id": user_id,
             },
         )
-        return outcome.message
+        return outcome
 
     transport.set_confirm_handler(_on_confirm_decision)
 

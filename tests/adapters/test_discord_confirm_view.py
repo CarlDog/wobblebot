@@ -15,6 +15,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from wobblebot.adapters.discord_confirm_view import (
+    COLOR_APPROVED,
+    COLOR_REJECTED,
+    COLOR_STALE,
     CONTEXT_ATTR,
     CUSTOM_ID_TEMPLATE,
     ConfirmButton,
@@ -22,6 +25,7 @@ from wobblebot.adapters.discord_confirm_view import (
     build_confirm_view,
 )
 from wobblebot.adapters.discord_transport import DiscordTransport, DiscordTransportConfig
+from wobblebot.ports.operator import ConfirmOutcome
 
 pytestmark = pytest.mark.unit
 
@@ -47,7 +51,7 @@ def _interaction(
 ) -> MagicMock:
     """A stand-in for ``discord.Interaction`` with the fields we read."""
     interaction = MagicMock()
-    interaction.user = SimpleNamespace(id=user_id)
+    interaction.user = SimpleNamespace(id=user_id, display_name=f"op-{user_id}")
     interaction.channel_id = channel_id
     interaction.client = SimpleNamespace()
     if context is not None:
@@ -152,7 +156,9 @@ class TestInteractionCheck:
 class TestCallback:
     async def test_approve_calls_handler_with_parsed_id(self) -> None:
         pending_id = uuid4()
-        handler = AsyncMock(return_value="Approved `pause`.")
+        handler = AsyncMock(
+            return_value=ConfirmOutcome(result="approved", message="Approved `pause`.")
+        )
         button = ConfirmButton("approve", str(pending_id))
         interaction = _interaction(context=_context(_transport(), handler))
 
@@ -164,7 +170,7 @@ class TestCallback:
         assert kwargs["user_id"] == "42"
 
     async def test_reject_passes_its_own_decision(self) -> None:
-        handler = AsyncMock(return_value="Rejected.")
+        handler = AsyncMock(return_value=ConfirmOutcome(result="rejected", message="Rejected."))
         button = ConfirmButton("reject", str(uuid4()))
 
         await button.callback(_interaction(context=_context(_transport(), handler)))
@@ -174,15 +180,19 @@ class TestCallback:
 
     async def test_result_replaces_the_message_and_drops_the_buttons(self) -> None:
         """A decided row must not offer a second click."""
-        handler = AsyncMock(return_value="Approved `pause` — queued.")
+        handler = AsyncMock(
+            return_value=ConfirmOutcome(result="approved", message="Approved `pause` — queued.")
+        )
         button = ConfirmButton("approve", str(uuid4()))
         interaction = _interaction(context=_context(_transport(), handler))
 
         await button.callback(interaction)
 
         _, kwargs = interaction.response.edit_message.await_args
-        assert kwargs["content"] == "Approved `pause` — queued."
         assert kwargs["view"] is None
+        embed = kwargs["embed"]
+        assert embed.title == "Approved"
+        assert embed.description == "Approved `pause` — queued."
 
     async def test_template_shaped_non_uuid_never_reaches_the_handler(self) -> None:
         """The template is a SHAPE check, not a UUID check.
@@ -243,3 +253,78 @@ class TestPendingIdIsAUuid:
         pending_id = uuid4()
         button = ConfirmButton("approve", str(pending_id))
         assert UUID(button.pending_id) == pending_id
+
+
+@pytest.mark.asyncio
+class TestDecidedCard:
+    """The confirm card must not keep looking pending after a decision.
+
+    Operator-caught on the first live click (2026-08-10): the message
+    text updated but the original "Confirm command" embed stayed put, so
+    a rejected request still read as awaiting an answer.
+    """
+
+    async def _decide(self, outcome: ConfirmOutcome, *, decision: str = "approve") -> MagicMock:
+        button = ConfirmButton(decision, str(uuid4()))  # type: ignore[arg-type]
+        handler = AsyncMock(return_value=outcome)
+        interaction = _interaction(context=_context(_transport(), handler))
+        # Give the interaction an original embed to carry forward.
+        interaction.message = SimpleNamespace(
+            embeds=[SimpleNamespace(description="`pause` on ADA/USD")]
+        )
+        await button.callback(interaction)
+        return interaction
+
+    async def test_approved_card_is_green_and_titled(self) -> None:
+        interaction = await self._decide(
+            ConfirmOutcome(result="approved", message="Approved `pause` — queued.")
+        )
+        _, kwargs = interaction.response.edit_message.await_args
+        embed = kwargs["embed"]
+        assert embed.title == "Approved"
+        assert embed.color.value == COLOR_APPROVED
+        # The stale "Confirm command" card is gone, not stacked beneath.
+        assert kwargs["content"] is None
+        assert kwargs["view"] is None
+
+    async def test_rejected_card_is_neutral(self) -> None:
+        interaction = await self._decide(
+            ConfirmOutcome(result="rejected", message="Rejected `pause` — nothing ran."),
+            decision="reject",
+        )
+        embed = interaction.response.edit_message.await_args[1]["embed"]
+        assert embed.title == "Rejected"
+        assert embed.color.value == COLOR_REJECTED
+
+    async def test_undecided_outcome_reads_as_not_applied(self) -> None:
+        """Colour tracks APPLIED, not which button was pressed.
+
+        An approve that arrived after the TTL is not a success, and must
+        not wear the success colour.
+        """
+        interaction = await self._decide(
+            ConfirmOutcome(result="expired", message="The confirmation window closed.")
+        )
+        embed = interaction.response.edit_message.await_args[1]["embed"]
+        assert embed.title == "Not applied"
+        assert embed.color.value == COLOR_STALE
+
+    async def test_card_carries_the_original_request_forward(self) -> None:
+        interaction = await self._decide(
+            ConfirmOutcome(result="approved", message="Approved `pause` — queued.")
+        )
+        embed = interaction.response.edit_message.await_args[1]["embed"]
+        assert [f.value for f in embed.fields] == ["`pause` on ADA/USD"]
+
+    async def test_missing_original_embed_is_tolerated(self) -> None:
+        """Best-effort: no original description means no Request field."""
+        button = ConfirmButton("approve", str(uuid4()))
+        handler = AsyncMock(return_value=ConfirmOutcome(result="approved", message="Approved."))
+        interaction = _interaction(context=_context(_transport(), handler))
+        interaction.message = SimpleNamespace(embeds=[])
+
+        await button.callback(interaction)
+
+        embed = interaction.response.edit_message.await_args[1]["embed"]
+        assert embed.fields == []
+        assert embed.title == "Approved"

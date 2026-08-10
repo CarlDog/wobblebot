@@ -319,8 +319,59 @@ class CommandResult(BaseModel):
         frozen = True
 
 
+# --------------------------------------------------------------------- #
+# Confirmation decisions (P3 buttons-over-reactions)                    #
+# --------------------------------------------------------------------- #
+
+
+ConfirmDecision = Literal["approve", "reject"]
+"""What an operator clicked on a pending confirmation."""
+
+
+ConfirmResult = Literal[
+    "approved",
+    "rejected",
+    "expired",
+    "already_decided",
+    "not_found",
+    "error",
+]
+"""What actually became of the row — a decision is not always applied."""
+
+
+class ConfirmOutcome(BaseModel):
+    """Result of applying an operator's approve/reject decision.
+
+    Lives in ``ports`` rather than beside the service that produces it
+    because it is a *contract* between layers: ``services`` fills it in,
+    and the Discord adapter renders it (title, color, text). An adapter
+    importing it from ``services`` would invert the dependency rule.
+
+    ``message`` is operator-facing — the Discord confirmation edits
+    itself to show exactly this string.
+    """
+
+    result: ConfirmResult
+    message: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+    @property
+    def decided(self) -> bool:
+        """True when THIS call is what moved the row to approved/rejected.
+
+        False for every refusal (expired, already decided, missing,
+        storage error) — the distinction the UI colors on.
+        """
+        return self.result in ("approved", "rejected")
+
+
 __all__ = (
     "CommandResult",
+    "ConfirmDecision",
+    "ConfirmOutcome",
+    "ConfirmResult",
     "FillEntry",
     "GridConfigResult",
     "HarvesterStatusResult",

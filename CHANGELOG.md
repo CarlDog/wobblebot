@@ -86,6 +86,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **A decided Discord confirmation now looks decided.** Approving or rejecting
+  rewrites the card itself — green "Approved", grey "Rejected", amber "Not
+  applied" when the decision arrived too late to take effect — instead of
+  leaving the original "Confirm command" card sitting underneath looking like
+  it was still waiting for an answer. The original request is carried forward
+  on the card so the message still records what was decided.
 - **Discord confirmations are buttons now.** Approving a command in Discord is a
   click on Approve or Reject instead of a ✅/❌ reaction, and the buttons keep
   working after the bot restarts — previously a restart silently orphaned any

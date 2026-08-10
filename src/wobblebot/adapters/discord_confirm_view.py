@@ -32,12 +32,20 @@ from uuid import UUID
 
 import discord
 
-from wobblebot.services.confirm_decision import ConfirmDecision
+from wobblebot.ports.operator import ConfirmDecision, ConfirmOutcome
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from wobblebot.adapters.discord_transport import DiscordTransport
 
 LOGGER = logging.getLogger(__name__)
+
+# Decided-card colors. Defined here rather than imported from
+# discord_transport to avoid a circular import (that module imports this
+# one). Green/red mirror the button styles; amber marks a decision that
+# did NOT take effect.
+COLOR_APPROVED = 0x2ECC71
+COLOR_REJECTED = 0x95A5A6
+COLOR_STALE = 0xF39C12
 
 # The client attribute the buttons read their wiring from. Namespaced
 # because it hangs off a third-party ``discord.Client`` instance.
@@ -62,8 +70,8 @@ class ConfirmDecisionHandler(Protocol):
         pending_id: UUID,
         decision: ConfirmDecision,
         user_id: str,
-    ) -> str:
-        """Apply the decision; return an operator-facing line."""
+    ) -> ConfirmOutcome:
+        """Apply the decision; return what actually happened to the row."""
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,21 @@ class ConfirmContext:
 
     transport: DiscordTransport
     handler: ConfirmDecisionHandler
+
+
+def _original_summary(interaction: discord.Interaction) -> str | None:
+    """Pull the confirm embed's description off the message being edited.
+
+    Best-effort: the message is right there in the interaction, so the
+    decided card can restate the request without the daemon having to
+    re-read the row. Returns ``None`` when there is nothing to carry.
+    """
+    message = getattr(interaction, "message", None)
+    embeds = getattr(message, "embeds", None) or []
+    if not embeds:
+        return None
+    description = getattr(embeds[0], "description", None)
+    return description if isinstance(description, str) and description else None
 
 
 def _context_of(interaction: discord.Interaction) -> ConfirmContext | None:
@@ -155,14 +178,53 @@ class ConfirmButton(
             LOGGER.error("confirm button carried a non-uuid id: %s", self.pending_id)
             await self._refuse(interaction, "That confirmation's id is unreadable.")
             return
-        message = await context.handler(
+        outcome = await context.handler(
             pending_id=pending_uuid,
             decision=self.decision,
             user_id=str(interaction.user.id),
         )
-        # Drop the buttons: the decision is made, and a second click on a
-        # terminal row would only ever produce "already decided".
-        await interaction.response.edit_message(content=message, view=None)
+        # Rewrite the CARD, not just the text above it. Leaving the
+        # original "Confirm command" embed in place made a decided
+        # request keep looking pending (operator-caught on the first live
+        # click, 2026-08-10). Dropping the buttons at the same time: the
+        # decision is made, and a second click could only ever say
+        # "already decided".
+        await interaction.response.edit_message(
+            content=None,
+            embed=self._outcome_embed(interaction, outcome),
+            view=None,
+        )
+
+    def _outcome_embed(
+        self, interaction: discord.Interaction, outcome: ConfirmOutcome
+    ) -> discord.Embed:
+        """Render the decided state, keeping the original request visible.
+
+        Colour tracks whether the decision was APPLIED, not which button
+        was pressed: a reject that took effect is a success (grey), while
+        an approve that arrived after the TTL is not (amber) — the
+        operator needs to see that difference at a glance.
+        """
+        if not outcome.decided:
+            title, color = "Not applied", COLOR_STALE
+        elif outcome.result == "approved":
+            title, color = "Approved", COLOR_APPROVED
+        else:
+            title, color = "Rejected", COLOR_REJECTED
+        embed = discord.Embed(title=title, description=outcome.message, color=color)
+        # Carry the original request forward so the message still records
+        # WHAT was decided, not just the verdict.
+        summary = _original_summary(interaction)
+        if summary:
+            embed.add_field(name="Request", value=summary, inline=False)
+        # display_name isn't guaranteed on every user object discord.py
+        # hands back (cached vs fetched); the id always is. A missing
+        # attribute must not raise here — that would leave the operator
+        # staring at "This interaction failed" after a decision that
+        # already took effect.
+        decider = getattr(interaction.user, "display_name", None) or interaction.user.id
+        embed.set_footer(text=f"id: {self.pending_id}  •  by {decider}")
+        return embed
 
     @staticmethod
     async def _refuse(interaction: discord.Interaction, message: str) -> None:
