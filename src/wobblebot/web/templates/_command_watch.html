@@ -8,7 +8,7 @@
    refresh). #}
 {% if pending.status in ("awaiting_confirmation", "approved") %}
   <div id="command-watch"
-       hx-get="/commands/{{ pending.id }}/watch"
+       hx-get="/commands/{{ pending.id }}/watch{% if watch_ctx is defined and watch_ctx == 'modal' %}?ctx=modal{% endif %}"
        hx-trigger="every 2s"
        hx-swap="outerHTML">
     <p class="muted">
@@ -46,9 +46,16 @@
     {% elif pending.status == "rejected" %}
       <p class="muted">Rejected. Nothing reaches the engine.</p>
     {% endif %}
-    {# The future modal context adds an immediate status-card refresh
-       here; the standalone result page has no #status-wrap to update,
-       and rendering a dangling hx-target would just log console
-       errors (professional-webui rule: no console noise). #}
+    {% if watch_ctx is defined and watch_ctx == 'modal' %}
+      {# Modal context: the dashboard is right underneath — refresh its
+         status card immediately so the outcome shows without waiting
+         for the 15s poll. Standalone result pages skip this (no
+         #status-wrap to target; dangling targets log console errors,
+         and the professional-webui rule says no console noise). #}
+      <div hx-get="/status/card"
+           hx-target="#status-wrap"
+           hx-swap="outerHTML"
+           hx-trigger="load"></div>
+    {% endif %}
   </div>
 {% endif %}

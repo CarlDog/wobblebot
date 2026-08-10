@@ -79,6 +79,15 @@ _SNOOZE_HOURS = 24
 # --------------------------------------------------------------------- #
 
 
+def _is_htmx(request: Request) -> bool:
+    """True when the request came from htmx (the modal flow).
+
+    Non-htmx (no-JS) requests keep the original full-page redirect
+    flow — the modal is pure progressive enhancement.
+    """
+    return request.headers.get("HX-Request") == "true"
+
+
 def _parse_symbol(raw: str) -> Symbol:
     """Validate ``BTC/USD``-style symbol input from a form."""
     return Symbol.from_string(raw.strip())
@@ -193,6 +202,7 @@ async def pause_submit(
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
+    prefs: UserPreferences = Depends(get_user_preferences),
 ) -> Response:
     try:
         parsed = _parse_symbol(symbol)
@@ -216,6 +226,12 @@ async def pause_submit(
         user=user,
         storage=storage,
     )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_confirm.html",
+            {"pending": pending, "operator_tz": prefs.timezone},
+        )
     return _redirect_to_confirm(pending.id)
 
 
@@ -227,6 +243,7 @@ async def resume_submit(
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
+    prefs: UserPreferences = Depends(get_user_preferences),
 ) -> Response:
     try:
         parsed = _parse_symbol(symbol)
@@ -250,21 +267,35 @@ async def resume_submit(
         user=user,
         storage=storage,
     )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_confirm.html",
+            {"pending": pending, "operator_tz": prefs.timezone},
+        )
     return _redirect_to_confirm(pending.id)
 
 
 @router.post("/stop")
 async def stop_submit(
-    _request: Request,
+    request: Request,
     _csrf: None = Depends(require_csrf_token),
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
+    prefs: UserPreferences = Depends(get_user_preferences),
+    templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     pending = await _create_pending(
         command=StopCommand(),
         user=user,
         storage=storage,
     )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_confirm.html",
+            {"pending": pending, "operator_tz": prefs.timezone},
+        )
     return _redirect_to_confirm(pending.id)
 
 
@@ -276,6 +307,7 @@ async def reanchor_submit(
     user: User = Depends(require_user),
     storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
+    prefs: UserPreferences = Depends(get_user_preferences),
 ) -> Response:
     """Banner "Re-anchor" button (ADR-031, P3 banner slice).
 
@@ -307,6 +339,12 @@ async def reanchor_submit(
         user=user,
         storage=storage,
     )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_confirm.html",
+            {"pending": pending, "operator_tz": prefs.timezone},
+        )
     return _redirect_to_confirm(pending.id)
 
 
@@ -370,6 +408,7 @@ async def watch_partial(  # pylint: disable=too-many-arguments,too-many-position
             "pending": pending,
             "elapsed_seconds": elapsed,
             "operator_tz": prefs.timezone,
+            "watch_ctx": request.query_params.get("ctx", "page"),
         },
     )
 
@@ -403,7 +442,11 @@ async def confirm_form(  # pylint: disable=too-many-arguments,too-many-positiona
 
 
 @router.post("/{pending_id}/confirm")
-async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-return-statements
+    # too-many-return-statements: a state dispatcher over row states
+    # (missing/already/expired/approved/rejected) x two presentation
+    # modes (full page vs htmx modal) — each return IS one terminal
+    # state; collapsing them would obscure the state machine.
     request: Request,
     pending_id: UUID,
     _csrf: None = Depends(require_csrf_token),
@@ -424,6 +467,12 @@ async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positio
     # Idempotency: ignore if not in awaiting_confirmation. The original
     # operator may have approved/rejected via Discord in parallel.
     if pending.status != "awaiting_confirmation":
+        if _is_htmx(request):
+            return templates.TemplateResponse(
+                request,
+                "_modal_result.html",
+                {"pending": pending, "operator_tz": prefs.timezone, "watch_ctx": "modal"},
+            )
         return templates.TemplateResponse(
             request,
             "command_result.html",
@@ -460,6 +509,12 @@ async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positio
                 },
                 status_code=500,
             )
+        if _is_htmx(request):
+            return templates.TemplateResponse(
+                request,
+                "_modal_result.html",
+                {"pending": expired, "operator_tz": prefs.timezone, "watch_ctx": "modal"},
+            )
         return templates.TemplateResponse(
             request,
             "command_result.html",
@@ -493,6 +548,12 @@ async def confirm_submit(  # pylint: disable=too-many-arguments,too-many-positio
                 "operator_tz": prefs.timezone,
             },
             status_code=500,
+        )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_result.html",
+            {"pending": updated, "operator_tz": prefs.timezone, "watch_ctx": "modal"},
         )
     return templates.TemplateResponse(
         request,

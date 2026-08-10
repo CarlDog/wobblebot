@@ -59,7 +59,8 @@
             <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
             <button type="submit" class="reanchor-snooze">Snooze 24h</button>
           </form>
-          <form method="post" action="/commands/reanchor">
+          <form method="post" action="/commands/reanchor"
+              hx-post="/commands/reanchor" hx-target="#modal" hx-swap="innerHTML">
             {{ csrf_input(request) }}
             <input type="hidden" name="symbol" value="{{ rec.symbol.base }}/{{ rec.symbol.quote }}">
             <button type="submit" class="reanchor-act">Re-anchor {{ rec.symbol.base }}/{{ rec.symbol.quote }}</button>
@@ -231,7 +232,8 @@
                  a badge, never a button — the lever against offside is
                  re-anchor. Both POSTs still cross pending_commands. #}
               {% if is_paused %}
-                <form method="post" action="/commands/resume" class="inline-form">
+                <form method="post" action="/commands/resume" class="inline-form"
+                      hx-post="/commands/resume" hx-target="#modal" hx-swap="innerHTML">
                   {{ csrf_input(request) }}
                   <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
                   <button type="submit" class="icon-btn"
@@ -243,7 +245,8 @@
                   </button>
                 </form>
               {% else %}
-                <form method="post" action="/commands/pause" class="inline-form">
+                <form method="post" action="/commands/pause" class="inline-form"
+                      hx-post="/commands/pause" hx-target="#modal" hx-swap="innerHTML">
                   {{ csrf_input(request) }}
                   <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
                   <button type="submit" class="icon-btn"
