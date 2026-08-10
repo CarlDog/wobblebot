@@ -1112,3 +1112,64 @@ class TestStateAwareButtons:
             assert 'action="/commands/pause"' in resp.text
             assert 'action="/commands/resume"' not in resp.text
             assert "symbol-paused" not in resp.text
+
+
+class TestCycleAnnotations:
+    """Recent Cycles flags realization-day vs earning-day (P3 slice 20)."""
+
+    def _long_hold_fallback_pair(self) -> tuple[Trade, Trade]:
+        """The 2026-05-26 soak shape: 3-day hold, sizes don't match."""
+        sell_at = datetime.now(UTC) - timedelta(minutes=1)
+        buy_at = sell_at - timedelta(days=3)
+        buy = Trade(
+            id="TXID-old-buy",
+            order_id="OID-old-buy",
+            symbol=Symbol(base="BTC", quote="USD"),
+            side="buy",  # type: ignore[arg-type]
+            price=Price(amount=Decimal("74568.30"), currency="USD"),
+            amount=Amount(value=Decimal("0.00013410"), asset="BTC"),
+            fee=Decimal("0.025"),
+            cost=Decimal("10.00"),
+            executed_at=Timestamp(dt=buy_at),
+        )
+        sell = Trade(
+            id="TXID-late-sell",
+            order_id="OID-late-sell",
+            symbol=Symbol(base="BTC", quote="USD"),
+            side="sell",  # type: ignore[arg-type]
+            price=Price(amount=Decimal("77643.30"), currency="USD"),
+            amount=Amount(value=Decimal("0.00012879"), asset="BTC"),
+            fee=Decimal("0.025"),
+            cost=Decimal("10.00"),
+            executed_at=Timestamp(dt=sell_at),
+        )
+        return buy, sell
+
+    @pytest.mark.asyncio
+    async def test_long_hold_fallback_cycle_is_annotated(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        for trade in self._long_hold_fallback_pair():
+            await live_storage.save_trade(trade)
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "Recent Cycles" in body
+        assert "cycle-flag" in body
+        assert "held 3d 0h" in body
+        assert ">inferred<" in body
+
+    @pytest.mark.asyncio
+    async def test_normal_cycle_carries_no_flags(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """A same-day, same-size cycle must stay visually quiet."""
+        for trade in _make_cycle_trades():
+            await live_storage.save_trade(trade)
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        # Assert the table actually rendered first — otherwise an empty
+        # body would satisfy the negative assertion for free.
+        assert "Recent Cycles (Last 1)" in body
+        assert "cycle-flag" not in body

@@ -43,12 +43,23 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wobblebot.domain.models import Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
+
+PairingMethod = Literal["engine_counter", "fallback"]
+
+# Display threshold for "this cycle held inventory across days, so its
+# PnL is mostly price drift rather than today's grid spread." A grid
+# cycle that behaves normally closes in hours; 24h is comfortably past
+# any normal round-trip without flagging a merely-slow one. A DISPLAY
+# heuristic, deliberately not a correctness boundary — nothing branches
+# on it except the annotation.
+LONG_HOLD_THRESHOLD = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -79,6 +90,37 @@ class RecentCycle:  # pylint: disable=too-many-instance-attributes
     but possible (e.g., a cap-trip-and-restart interrupted the
     counter-placement and the operator manually closed at a loss).
     """
+    pairing_method: PairingMethod = "engine_counter"
+    """Which heuristic produced this pair.
+
+    ``engine_counter`` — the amount-equality match fired, so this is
+    the counter-order the engine actually placed (ADR-006 decision 2
+    sizes every counter to its trigger's filled amount, which makes
+    the amount a near-unique key).
+
+    ``fallback`` — no amount match existed and the matcher paired the
+    oldest cheaper BUY instead. The cash flow is still real, but the
+    ATTRIBUTION is inferred: this fires for pre-engine inventory,
+    manual operator fills, and BUYs whose engine-placed counter was
+    canceled by a cap trip or re-anchor. A fallback cycle can bundle
+    days of price drift into one "today" number — the 2026-05-26 soak
+    case where a +$0.3460 cycle sat among +$0.0508-ish neighbours.
+    """
+
+    @property
+    def hold_duration(self) -> timedelta:
+        """Wall-clock time the inventory was held (BUY fill → SELL fill)."""
+        return self.sell_executed_at.dt - self.buy_executed_at.dt
+
+    @property
+    def is_long_hold(self) -> bool:
+        """True when the cycle held inventory past ``LONG_HOLD_THRESHOLD``.
+
+        The signal the operator actually needs: this row's PnL is
+        mostly multi-day drift, not grid spread, so don't read it as
+        "the grid earned that today."
+        """
+        return self.hold_duration >= LONG_HOLD_THRESHOLD
 
 
 def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
@@ -128,6 +170,7 @@ def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
         # amount (catches pre-engine SELLs and manual fills).
         buys = pending_buys.get(trade.symbol, [])
         matched_buy: Trade | None = None
+        pairing: PairingMethod = "engine_counter"
         for candidate in buys:
             if (
                 candidate.amount.value == trade.amount.value
@@ -136,6 +179,7 @@ def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
                 matched_buy = candidate
                 break
         if matched_buy is None:
+            pairing = "fallback"
             for candidate in buys:
                 if candidate.price.amount < trade.price.amount:
                     matched_buy = candidate
@@ -167,6 +211,7 @@ def match_cycles(trades: Sequence[Trade]) -> list[RecentCycle]:
                 buy_fee=matched_buy.fee,
                 sell_fee=trade.fee,
                 net_pnl=net_pnl,
+                pairing_method=pairing,
             )
         )
 
@@ -220,4 +265,10 @@ def today_realized_pnl(
     return total
 
 
-__all__ = ("RecentCycle", "match_cycles", "today_realized_pnl")
+__all__ = (
+    "LONG_HOLD_THRESHOLD",
+    "PairingMethod",
+    "RecentCycle",
+    "match_cycles",
+    "today_realized_pnl",
+)

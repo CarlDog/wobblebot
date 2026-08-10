@@ -357,7 +357,15 @@
          cycle PnL. Each row = one cycle whose SELL has fired. In-
          flight cycles (BUY without matching SELL yet) appear in
          Recent Fills above but not here. Cycles ordered newest-
-         first by SELL execution time. #}
+         first by SELL execution time.
+
+         The "held Nd" / "inferred" tags answer the question the
+         headline can't: a cycle that sat on inventory for days
+         realizes mostly PRICE DRIFT, not grid spread, so its PnL
+         landing in "today" is a realization-date artifact. The
+         2026-05-26 soak case was a single +$0.3460 row among
+         +$0.0508-ish neighbours — arithmetically correct, and
+         completely misleading without this context. #}
       <h2 class="card-subtitle">Recent Cycles (Last {{ snapshot.recent_cycles|length }})</h2>
       {% if snapshot.recent_cycles %}
         <table class="data compact">
@@ -382,7 +390,17 @@
           <tbody>
             {% for c in snapshot.recent_cycles %}
               <tr>
-                <td>{{ c.sell_executed_at.dt | tz_format(operator_tz) }}</td>
+                <td>
+                  {{ c.sell_executed_at.dt | tz_format(operator_tz) }}
+                  {% if c.is_long_hold %}
+                    <span class="cycle-flag"
+                          title="Held {{ c.hold_duration.total_seconds() | humanize_duration }} between the BUY and the SELL. Most of this cycle's PnL is multi-day price drift, not grid spread — it lands in today's total because that's when it was realized.">held {{ c.hold_duration.total_seconds() | humanize_duration }}</span>
+                  {% endif %}
+                  {% if c.pairing_method == 'fallback' %}
+                    <span class="cycle-flag"
+                          title="Inferred pair: no counter-order of matching size was available, so the matcher paired the oldest cheaper BUY. The cash flow is real; which BUY it closed is an inference. Typical causes are pre-engine inventory, manual fills, or a counter canceled by a cap trip or re-anchor.">inferred</span>
+                  {% endif %}
+                </td>
                 <td class="center">{{ c.symbol.base }}/{{ c.symbol.quote }}</td>
                 <td class="num">${{ "%.2f"|format(c.buy_price.amount) }}</td>
                 <td class="num">${{ "%.2f"|format(c.sell_price.amount) }}</td>

@@ -10,6 +10,7 @@ import pytest
 from wobblebot.domain.models import Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.services.cycle_matcher import (
+    LONG_HOLD_THRESHOLD,
     RecentCycle,
     match_cycles,
     today_realized_pnl,
@@ -333,3 +334,142 @@ class TestTodayRealizedPnl:
         # Both fire today UTC, so a bogus tz that falls back to UTC
         # still sees them as today.
         assert today_realized_pnl(cycles, now=now, tz_name="Not/A_Real_Zone") == Decimal("0.10")
+
+
+class TestPairingMethodAndHoldDuration:
+    """The realization-day / earning-day discriminator (P3 slice 20).
+
+    Reproduces the 2026-05-26 soak case: a SELL matched by FALLBACK to
+    a BUY three days older produced a single +$0.3460 cycle sitting
+    among +$0.0508-ish neighbours. The number was arithmetically
+    correct; without the annotation it read as "the grid earned that
+    today" when it was mostly three days of upward drift.
+    """
+
+    def test_amount_match_is_engine_counter(self) -> None:
+        buy_at = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)
+        cycles = match_cycles(
+            [
+                _trade(side="buy", price="77000", amount="0.000129", when=buy_at),
+                _trade(
+                    side="sell",
+                    price="77800",
+                    amount="0.000129",
+                    when=buy_at + timedelta(minutes=30),
+                ),
+            ]
+        )
+        assert [c.pairing_method for c in cycles] == ["engine_counter"]
+        assert cycles[0].is_long_hold is False
+
+    def test_size_mismatch_falls_back_and_says_so(self) -> None:
+        """No same-size BUY available -> the pairing is an inference."""
+        buy_at = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+        cycles = match_cycles(
+            [
+                _trade(side="buy", price="74568.30", amount="0.00013410", when=buy_at),
+                _trade(
+                    side="sell",
+                    price="77643.30",
+                    amount="0.00012879",
+                    when=buy_at + timedelta(days=3),
+                ),
+            ]
+        )
+        assert len(cycles) == 1
+        assert cycles[0].pairing_method == "fallback"
+
+    def test_three_day_hold_is_flagged_long(self) -> None:
+        buy_at = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+        cycles = match_cycles(
+            [
+                _trade(side="buy", price="74568.30", amount="0.00013410", when=buy_at),
+                _trade(
+                    side="sell",
+                    price="77643.30",
+                    amount="0.00012879",
+                    when=buy_at + timedelta(days=3),
+                ),
+            ]
+        )
+        assert cycles[0].hold_duration == timedelta(days=3)
+        assert cycles[0].is_long_hold is True
+
+    def test_threshold_boundary_is_inclusive(self) -> None:
+        """Exactly 24h counts as a long hold; a minute under does not."""
+        buy_at = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+
+        def _hold(delta: timedelta) -> RecentCycle:
+            return match_cycles(
+                [
+                    _trade(side="buy", price="77000", when=buy_at),
+                    _trade(side="sell", price="77800", when=buy_at + delta),
+                ]
+            )[0]
+
+        assert _hold(LONG_HOLD_THRESHOLD).is_long_hold is True
+        assert _hold(LONG_HOLD_THRESHOLD - timedelta(minutes=1)).is_long_hold is False
+
+    def test_engine_counter_can_also_be_a_long_hold(self) -> None:
+        """The two signals are independent — a real counter pair that
+        simply took days to fill is a long hold but NOT inferred."""
+        buy_at = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+        cycles = match_cycles(
+            [
+                _trade(side="buy", price="77000", amount="0.000129", when=buy_at),
+                _trade(
+                    side="sell",
+                    price="77800",
+                    amount="0.000129",
+                    when=buy_at + timedelta(days=4),
+                ),
+            ]
+        )
+        assert cycles[0].pairing_method == "engine_counter"
+        assert cycles[0].is_long_hold is True
+
+    def test_annotation_does_not_change_the_pnl_math(self) -> None:
+        """This slice is presentation only — the cash flow is untouched."""
+        buy_at = datetime(2026, 5, 23, 12, 0, tzinfo=UTC)
+        cycles = match_cycles(
+            [
+                _trade(
+                    side="buy",
+                    price="74568.30",
+                    amount="0.00013410",
+                    fee="0.025",
+                    when=buy_at,
+                ),
+                _trade(
+                    side="sell",
+                    price="77643.30",
+                    amount="0.00012879",
+                    fee="0.025",
+                    when=buy_at + timedelta(days=3),
+                ),
+            ]
+        )
+        expected = (
+            (Decimal("77643.30") - Decimal("74568.30")) * Decimal("0.00012879")
+            - Decimal("0.025")
+            - Decimal("0.025")
+        )
+        assert cycles[0].net_pnl == expected
+        assert today_realized_pnl(cycles, now=buy_at + timedelta(days=3)) == expected
+
+    def test_default_is_engine_counter_for_hand_built_cycles(self) -> None:
+        """Existing call sites construct RecentCycle without the field."""
+        now = datetime(2026, 5, 23, 15, 0, tzinfo=UTC)
+        cycle = RecentCycle(
+            symbol=_BTC_USD,
+            buy_executed_at=Timestamp(dt=now - timedelta(hours=2)),
+            sell_executed_at=Timestamp(dt=now),
+            buy_price=Price(amount=Decimal("77000"), currency="USD"),
+            sell_price=Price(amount=Decimal("77800"), currency="USD"),
+            amount=Amount(value=Decimal("0.000129"), asset="BTC"),
+            buy_fee=Decimal("0.04"),
+            sell_fee=Decimal("0.04"),
+            net_pnl=Decimal("0.10"),
+        )
+        assert cycle.pairing_method == "engine_counter"
+        assert cycle.hold_duration == timedelta(hours=2)

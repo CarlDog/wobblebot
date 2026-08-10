@@ -86,6 +86,14 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Recent Cycles says when a profit is drift, not grid spread.** A cycle that
+  sat on inventory for days realizes mostly price movement, but it lands in
+  "today's PnL" because that's the day it closed — one such row once showed
+  +$0.3460 among +$0.05 neighbours and read like a great day. Those rows now
+  carry a **"held 3d 0h"** tag, and a separate **"inferred"** tag marks cycles
+  where the matcher had to guess which BUY was closed (pre-engine inventory,
+  manual fills, or a counter canceled by a cap trip or re-anchor). The PnL
+  numbers themselves are unchanged.
 - **Notifications can be marked read, and the bell agrees across devices.** The
   unread dot used to live in your browser, so clearing it on the desktop left
   your phone still dotted — and simply opening the notifications page counted

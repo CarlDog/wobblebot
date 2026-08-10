@@ -1960,6 +1960,22 @@ table.data th {
   border-style: dashed;
 }
 
+/* Recent-Cycles annotations (P3 slice 20): "held 3d 7h" / "inferred".
+   Quiet by design — these are context for a number that's already
+   correct, not warnings. They sit next to the timestamp because the
+   thing they qualify is WHEN this PnL counts, not how much it is. */
+.cycle-flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* ---- Notifications read-state (P3 slice 19) --------------------------
    Unread rows earn a left accent bar and full-strength text; read rows
    recede. The whole point of server-side read-state is that "what still
