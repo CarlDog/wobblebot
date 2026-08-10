@@ -43,7 +43,7 @@ _LOGGER = logging.getLogger("wobblebot.tools.run_moe_check")
 
 _QUANT_MODEL = "phi4:14b-q8_0"
 _RISK_MODEL = "granite4.1:30b-q5_K_M"
-_NEWS_MODEL = "deepseek-r1:14b-qwen-distill-q8_0"
+_NEWS_MODEL = "qwen3.6:35b-a3b-q8_0"
 _ARBITRATOR_MODEL = "phi4:14b-q8_0"
 
 

@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from wobblebot.adapters.ollama import (
+    _RESPONSE_JSON_SCHEMA,
     OllamaAdapter,
     extract_last_json_object,
     is_thinking_model,
@@ -140,7 +141,9 @@ class TestGetRecommendationHappyPath:
         body = captured["body"]
         assert isinstance(body, dict)
         assert body["model"] == "test-model"
-        assert body["format"] == "json"
+        # format carries the SCHEMA, not the bare string "json" — the
+        # server constrains the shape, we don't just validate it after.
+        assert body["format"] == _RESPONSE_JSON_SCHEMA
         assert body["stream"] is False
         assert "advisor_recommendation_v1" in body["prompt"]
         assert "BTC/USD" in body["prompt"]
@@ -608,7 +611,7 @@ class TestThinkingModelGetRecommendation:
 
         body = captured["body"]
         assert isinstance(body, dict)
-        assert body["format"] == "json"
+        assert body["format"] == _RESPONSE_JSON_SCHEMA
 
 
 @pytest.mark.asyncio
@@ -649,8 +652,8 @@ class TestForceJsonOverride:
         body = captured["body"]
         assert isinstance(body, dict)
         assert (
-            body["format"] == "json"
-        ), "force_json=True must override is_thinking_model and add format=json"
+            body["format"] == _RESPONSE_JSON_SCHEMA
+        ), "force_json=True must override is_thinking_model and send the schema"
         # And the response is parsed directly, not via the free-text extractor.
         assert rec.recommendations == {"spacing_percentage": 1.0}
 
@@ -893,3 +896,82 @@ class TestSplitResponseEnvelope:
             await adapter.aclose()
         assert rec.recommendations == {"spacing_percentage": 1.5}
         assert rec.rationale == "final answer"
+
+
+class TestResponseSchemaContract:
+    """The JSON Schema sent to Ollama is the wire contract (2026-08-10).
+
+    Sending the bare string ``format: "json"`` guaranteed the body
+    *parsed* but not its *shape*. A real MoE run returned valid JSON
+    with invented keys — ``{bollinger_middle, recommend}`` from a quant
+    expert and ``{"**Recommendation", "Rationale"}`` (markdown headings
+    as keys) from the arbitrator — each surfacing only as a post-hoc
+    ``missing required field 'confidence'``. These pin the schema that
+    makes that class of failure impossible at the server.
+    """
+
+    def test_confidence_enum_cannot_drift_from_the_domain_literal(self) -> None:
+        """Derived from ConfidenceLevel, never retyped.
+
+        A hand-copied enum would silently diverge the grammar from the
+        Pydantic literal — the model would be constrained to values the
+        parser then rejects, or vice versa.
+        """
+        from typing import get_args
+
+        from wobblebot.ports.advisor import ConfidenceLevel
+
+        assert _RESPONSE_JSON_SCHEMA["properties"]["confidence"]["enum"] == list(
+            get_args(ConfidenceLevel)
+        )
+
+    def test_requires_exactly_what_the_parser_cannot_recover_from(self) -> None:
+        """`confidence` KeyErrors and `rationale` has min_length=1, so both
+        are unrecoverable. `role` defaults to the adapter's own role and
+        must NOT be required."""
+        required = set(_RESPONSE_JSON_SCHEMA["required"])
+        assert {"confidence", "rationale"} <= required
+        assert "role" not in required
+
+    def test_recommendations_is_a_required_key_but_may_be_empty(self) -> None:
+        """An empty dict is how a genuine HOLD is expressed. Requiring the
+        key stops a model signalling hold by silent omission — the probe
+        battery scores an omitted spacing as a MISS for the same reason."""
+        assert "recommendations" in _RESPONSE_JSON_SCHEMA["required"]
+        assert _RESPONSE_JSON_SCHEMA["properties"]["recommendations"] == {"type": "object"}
+
+    def test_schema_sticks_to_the_grammar_convertible_subset(self) -> None:
+        """Ollama converts the schema to GBNF via llama.cpp, whose
+        converter handles a subset of JSON Schema. Keywords outside
+        type/properties/required/enum are left to Pydantic on the parse
+        side so a grammar-conversion failure can't kill the call path."""
+        allowed_top = {"type", "properties", "required"}
+        assert set(_RESPONSE_JSON_SCHEMA) <= allowed_top
+        allowed_prop = {"type", "enum"}
+        for name, spec in _RESPONSE_JSON_SCHEMA["properties"].items():
+            assert set(spec) <= allowed_prop, f"{name} uses an unsupported keyword: {set(spec)}"
+
+    def test_schema_rejects_the_shapes_that_actually_failed(self) -> None:
+        """Both observed failures are valid JSON — that was the problem.
+
+        Checked against the schema's own required-keys rule rather than a
+        full validator: no `jsonschema` dependency is worth two tests, and
+        required-keys IS the mechanism that excludes these two shapes.
+        """
+        for bad in (
+            {"bollinger_middle": 1.0, "recommend": "widen"},
+            {"**Recommendation": "widen", "Rationale": "vol is low"},
+        ):
+            missing = set(_RESPONSE_JSON_SCHEMA["required"]) - set(bad)
+            assert missing, f"schema would have ACCEPTED the bad shape {sorted(bad)}"
+
+    def test_schema_accepts_a_well_formed_hold(self) -> None:
+        good = {
+            "role": "quant",
+            "recommendations": {},
+            "rationale": "Hold.",
+            "confidence": "high",
+        }
+        assert not set(_RESPONSE_JSON_SCHEMA["required"]) - set(good)
+        assert good["confidence"] in _RESPONSE_JSON_SCHEMA["properties"]["confidence"]["enum"]
+        assert not set(good) - set(_RESPONSE_JSON_SCHEMA["properties"])

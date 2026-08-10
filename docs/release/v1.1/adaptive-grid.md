@@ -1215,3 +1215,78 @@ detector landing first.
 candidate from "the bot already does what I told it to do" to
 "the bot proactively expands what I should consider telling it
 to do."
+
+### MoE aggregation mathematics — question stub (no design)
+
+**What (operator-raised 2026-08-10):** "Are there useful mathematical
+algorithms we should catalog and make use of for MoE advisors?"
+Filed deliberately as a **question**, not a design — same posture as
+the bot-learning stub above. Nothing here is scheduled, and none of
+it should be built before the panel proves it carries signal at all.
+
+**What already exists:** `services/aggregators.py` implements three
+strategies — `voting` (per-key majority), `weighted_confidence`
+(proposals weighted by each expert's *self-reported* confidence), and
+`arbitrator` (a fourth model reconciles). So this is not greenfield;
+the question is whether the literature offers better-founded options
+than the three we reached for first.
+
+**The organizing axis: does it need an outcome signal?** ADR-035's
+counterfactual ledger is what produces per-recommendation outcomes.
+Roughly half this territory consumes that signal and is therefore
+downstream of the keystone; the other half needs nothing but a panel
+corpus and could be computed the day one exists.
+
+*Usable as soon as a panel corpus exists (no outcomes needed):*
+
+- **Inter-rater agreement — Fleiss' / Cohen's kappa.** Measures
+  whether the panel is buying anything, or whether three voices are
+  one voice wearing three prompts. This is *literally* the question
+  `tools/run_moe_check.py` was reached for on 2026-08-10 and could
+  not answer from a single run. Cheapest useful thing on this list,
+  and it's the go/no-go for provisioning a panel at all.
+- **Robust aggregation — median / trimmed mean / MAD outlier
+  rejection.** Concrete motivation from the same session: `phi4:14b-
+  q8_0` emitted schema-valid token salad (`"ration}d_ema_data"`)
+  alongside a genuinely good `granite4.1:30b` risk opinion. A mean
+  absorbs that; a median discards it. Note this only helps for the
+  *numeric* keys, and it is a mitigation for a bad expert, not a
+  substitute for noticing one.
+
+*Downstream of the ADR-035 outcome ledger:*
+
+- **Prediction with expert advice — Hedge / multiplicative weights.**
+  The textbook formulation of exactly this problem (Cesa-Bianchi &
+  Lugosi): combine expert opinions over time with provable no-regret
+  bounds *without knowing in advance which expert is best*. The
+  ledger's per-recommendation outcome is precisely the loss signal it
+  consumes. Probably the strongest single pointer here.
+- **Proper scoring rules — Brier / log score, plus reliability
+  diagrams.** `weighted_confidence` currently trusts self-reported
+  confidence at face value, with zero evidence that "high" means
+  more-often-right for any of these models. A proper scoring rule
+  would tell us whether that weighting is grounded or decorative.
+- **Bayesian model averaging / inverse-variance weighting.** Weight
+  by posterior probability of correctness, or by estimated variance,
+  instead of by self-report.
+
+*Theory worth reading once, before building anything:*
+
+- **Condorcet jury theorem.** A panel beats a single expert only when
+  each member is better than chance *and* their errors are
+  substantially independent. That is the formal statement of the
+  Chaos Gremlin's whole rationale — and the reason a panel of three
+  consensus-trained LLMs may add nothing but cost. If kappa comes
+  back high (they agree), Condorcet says the panel is redundant and
+  no clever aggregator repairs it.
+
+**Deliberate non-goals.** This must not become a research program. A
+$100 six-symbol grid does not need one, and the project rule against
+over-engineering applies with full force. Most items above are a
+single function in `services/aggregators.py` or a one-off analysis
+script — if any of them turns into a subsystem, that is the signal to
+stop.
+
+**Trigger:** the agreement/robustness half unlocks with the first real
+MoE panel corpus; the outcome-consuming half waits on ADR-035's
+ledger. Neither is scheduled.
