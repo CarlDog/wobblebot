@@ -68,8 +68,12 @@ class TestPerEventEmbeds:
         assert "2 symbol(s)" in embed["title"]
         assert embed["color"] == COLOR_INFO
         assert "BTC/USD, ETH/USD" == embed["description"]
-        assert ("Loss cap", "$150.00") in embed["fields"]
-        assert any("unlimited" in v for _, v in embed["fields"])
+        # Four short counters ride inline so Discord packs them
+        # three-per-row rather than stacking eight lines above the
+        # symbol list (P3 slice 18 follow-up).
+        assert ("Loss cap", "$150.00", True) in embed["fields"]
+        assert any("unlimited" in field[1] for field in embed["fields"])
+        assert all(field[2] is True for field in embed["fields"])
         assert embed["footer"] == "level=info • id=1"
 
     def test_fill(self) -> None:
