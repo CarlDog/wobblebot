@@ -22,14 +22,17 @@ a real Gateway.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import discord
 import pytest
 from pydantic import ValidationError
 
+from wobblebot.adapters.discord_confirm_view import CUSTOM_ID_TEMPLATE
 from wobblebot.adapters.discord_transport import (
     COLOR_PENDING,
     CONFIRM_EMOJI,
@@ -402,24 +405,35 @@ class TestOutbound:
         assert embed.footer.text == "footer here"
 
     @pytest.mark.asyncio
-    async def test_send_confirmation_adds_both_reactions(self) -> None:
+    async def test_send_confirmation_attaches_approve_reject_buttons(self) -> None:
+        """P3: the confirm embed now carries buttons, not reactions.
+
+        The custom_id assertions are the load-bearing part — they are how
+        a click resolves back to its pending row after a daemon restart,
+        which is the whole reason buttons replaced reactions.
+        """
+        ref_id = str(uuid4())
         t = _transport()
         channel = _mock_channel(message_id=999)
         t.attach_client(_mock_client(channel))
-        msg_id = await t.send_confirmation("100", summary="Pause BTC/USD", ref_id="pc-abc")
+
+        msg_id = await t.send_confirmation("100", summary="Pause BTC/USD", ref_id=ref_id)
+
         assert msg_id == "999"
-        # Embed sent
         _, kwargs = channel.send.call_args
         embed = kwargs["embed"]
         assert embed.title == "Confirm command"
         assert embed.description == "Pause BTC/USD"
         assert embed.color.value == COLOR_PENDING
-        assert "pc-abc" in (embed.footer.text or "")
-        # Both reactions added in order
-        sent_message = channel.send.return_value
-        sent_message.add_reaction.assert_any_await(CONFIRM_EMOJI)
-        sent_message.add_reaction.assert_any_await(REJECT_EMOJI)
-        assert sent_message.add_reaction.await_count == 2
+        assert ref_id in (embed.footer.text or "")
+        # Two buttons, each carrying the row id in a template-matching id.
+        view = kwargs["view"]
+        custom_ids = [item.custom_id for item in view.children]
+        assert custom_ids == [f"wb:confirm:approve:{ref_id}", f"wb:confirm:reject:{ref_id}"]
+        for custom_id in custom_ids:
+            assert re.fullmatch(CUSTOM_ID_TEMPLATE, custom_id) is not None
+        # No reactions on the confirm message any more.
+        assert channel.send.return_value.add_reaction.await_count == 0
 
     @pytest.mark.asyncio
     async def test_add_reaction_adds_to_existing_message(self) -> None:

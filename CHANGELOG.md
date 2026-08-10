@@ -86,6 +86,12 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Discord confirmations are buttons now.** Approving a command in Discord is a
+  click on Approve or Reject instead of a ✅/❌ reaction, and the buttons keep
+  working after the bot restarts — previously a restart silently orphaned any
+  confirmation still waiting for you. Buttons also answer back: approved,
+  rejected, expired, or "you're not on the allowlist", instead of a reaction
+  that did nothing without saying why. Requires discord.py 2.4+.
 - **Execute a transfer proposal from the web (ADR-034).** The Harvester page now
   offers an Execute button on actionable proposals: confirm the amount and destination
   in a card, approve, and watch cli/harvest carry it out — the same flow the dashboard

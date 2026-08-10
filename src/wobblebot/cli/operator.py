@@ -12,8 +12,10 @@ Three concurrent concerns: (1) **notification forwarder** drains
 ``AssistantPort.parse_intent``, routes by intent variant (Command →
 confirm embed + pending row; Query → answer; Conversational/Unparseable
 → reply); (3) **confirmation flow** transitions
-``awaiting_confirmation`` → ``approved``/``rejected`` via reaction
-handler + in-memory message_id→pending_id map.
+``awaiting_confirmation`` → ``approved``/``rejected`` via the Approve /
+Reject buttons on the confirm embed. The pending id rides in each
+button's ``custom_id`` (P3), so a click still resolves to its row after
+a daemon restart — the in-memory message→row map it replaced did not.
 
 Per ADR-013 decision 3: cli/operator NEVER calls
 ``OperatorService.dispatch_command`` directly. Commands cross
@@ -42,14 +44,11 @@ from uuid import UUID, uuid4
 from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.discord_transport import (
     ACK_EMOJI,
-    CONFIRM_EMOJI,
-    REJECT_EMOJI,
     WARN_EMOJI,
     DiscordTransport,
     DiscordTransportConfig,
     DiscordTransportError,
     InboundMessage,
-    ReactionEvent,
 )
 from wobblebot.adapters.google import GoogleAssistantAdapter
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
@@ -95,6 +94,7 @@ from wobblebot.ports.operator import (
     PendingCommand,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.confirm_decision import ConfirmDecision, apply_confirm_decision
 from wobblebot.services.daemon_health import (
     DaemonHealth,
     DaemonHealthThresholds,
@@ -200,8 +200,9 @@ async def _forwarder_loop(
 async def _expire_stale_pending_commands(storage: StoragePort) -> int:
     """Mark expired any ``awaiting_confirmation`` row past its TTL.
 
-    Per ADR-013 decision 3 the operator's ✅/❌ reaction is the only
-    way an awaiting_confirmation row becomes approved/rejected. If
+    Per ADR-013 decision 3 an operator decision (an Approve/Reject
+    click, or the web UI's confirm page) is the only way an
+    awaiting_confirmation row becomes approved/rejected. If
     the operator walks away (or the daemon was offline during
     posting), the row's ``ttl_expires_at`` is the safety net — this
     expirer transitions matches to ``expired`` so the audit table
@@ -649,15 +650,14 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     outbound_channel_id: str,
     context_window_turns: int,
     confirm_ttl_seconds: int,
-    pending_message_map: dict[str, UUID],
     assistant_model_name: str,
 ) -> None:
     """Parse an inbound operator message + route the resulting intent.
 
     Persists the operator turn (with parsed intent), then dispatches:
       - IntentCommand: writes a PendingCommand row (awaiting_confirmation)
-        and posts a confirm embed; the reaction handler will transition
-        to approved/rejected.
+        and posts a confirm embed carrying Approve/Reject buttons,
+        which transition it to approved/rejected.
       - IntentQuery: calls operator_service.answer_query and posts an
         embed with the structured result.
       - IntentConversational: posts the reply_text as a plain message.
@@ -758,7 +758,6 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         transport=transport,
         outbound_channel_id=outbound_channel_id,
         confirm_ttl_seconds=confirm_ttl_seconds,
-        pending_message_map=pending_message_map,
         assistant_model_name=assistant_model_name,
     )
 
@@ -773,7 +772,6 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
     transport: DiscordTransport,
     outbound_channel_id: str,
     confirm_ttl_seconds: int,
-    pending_message_map: dict[str, UUID],
     assistant_model_name: str,
 ) -> None:
     """Dispatch the parsed intent to the right handler."""
@@ -787,7 +785,6 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
                 transport=transport,
                 outbound_channel_id=outbound_channel_id,
                 confirm_ttl_seconds=confirm_ttl_seconds,
-                pending_message_map=pending_message_map,
             )
         case IntentQuery():
             await _handle_query_intent(
@@ -831,7 +828,6 @@ async def _handle_command_intent(  # pylint: disable=too-many-arguments
     transport: DiscordTransport,
     outbound_channel_id: str,
     confirm_ttl_seconds: int,
-    pending_message_map: dict[str, UUID],
 ) -> None:
     """Persist a PendingCommand + post a confirm embed."""
     now = datetime.now(UTC)
@@ -871,7 +867,7 @@ async def _handle_command_intent(  # pylint: disable=too-many-arguments
             extra={"pending_id": str(pending.id), "error": str(exc)},
         )
         return
-    pending_message_map[confirm_message_id] = pending.id
+    del confirm_message_id  # the buttons carry pending.id in their custom_id
 
     assistant_reply = ConversationTurn(
         id=uuid4(),
@@ -987,109 +983,6 @@ async def _handle_unparseable(  # pylint: disable=too-many-arguments
         timestamp=Timestamp(dt=datetime.now(UTC)),
     )
     await _safe_save_turn(operator_storage, assistant_reply)
-
-
-# --------------------------------------------------------------------- #
-# Confirmation flow — reaction handler                                  #
-# --------------------------------------------------------------------- #
-
-
-async def _handle_reaction(  # pylint: disable=too-many-return-statements
-    event: ReactionEvent,
-    *,
-    operator_storage: StoragePort,
-    pending_message_map: dict[str, UUID],
-) -> None:
-    """Transition a PendingCommand based on a ✅ / ❌ reaction.
-
-    Lookups go through the in-memory ``pending_message_map``. If the
-    map doesn't have the message_id (daemon restarted; reaction is
-    on something other than a confirmation embed; etc.), the event
-    is ignored. Per ADR-013 the persisted pending_commands row's TTL
-    is the long-term safety net — an abandoned awaiting_confirmation
-    row expires on its own.
-    """
-    if event.action != "add":
-        return  # only add transitions
-    pending_id = pending_message_map.get(event.message_id)
-    if pending_id is None:
-        return  # not a confirmation reaction
-
-    try:
-        pending = await operator_storage.get_pending_command(pending_id)
-    except StorageError as exc:
-        _LOGGER.error(
-            "reaction handler: get_pending_command failed",
-            extra={"pending_id": str(pending_id), "error": str(exc)},
-        )
-        return
-    if pending is None:
-        return  # row already gone
-    if pending.status != "awaiting_confirmation":
-        return  # already transitioned (idempotency vs duplicate reaction)
-
-    now = Timestamp(dt=datetime.now(UTC))
-
-    # Fleet-review #19 finding 6 (Discord-side follow-up): a reaction can
-    # arrive after ttl_expires_at if it lands between _ttl_expirer_loop
-    # sweeps (the loop's own poll interval is the exposure window here,
-    # narrower than the web route's had been, but not zero). Mirror
-    # _expire_stale_pending_commands's own transition — status only, no
-    # confirming_user_id/confirmed_at, since nothing was actually
-    # confirmed — instead of acting on a decision that arrived too late.
-    if pending.ttl_expires_at.dt <= now.dt:
-        expired = pending.model_copy(update={"status": "expired"})
-        try:
-            await operator_storage.save_pending_command(expired)
-            _LOGGER.info(
-                "pending command expired (reaction arrived after TTL)",
-                extra={
-                    "pending_id": str(pending_id),
-                    "command_kind": pending.command.kind,
-                    "ttl_expires_at": pending.ttl_expires_at.dt.isoformat(),
-                },
-            )
-        except StorageError as exc:
-            _LOGGER.error(
-                "reaction handler: save_pending_command (expiry) failed",
-                extra={"pending_id": str(pending_id), "error": str(exc)},
-            )
-        return
-
-    if event.emoji == CONFIRM_EMOJI:
-        updated = pending.model_copy(
-            update={
-                "status": "approved",
-                "confirming_user_id": event.user_id,
-                "confirmed_at": now,
-            }
-        )
-    elif event.emoji == REJECT_EMOJI:
-        updated = pending.model_copy(
-            update={
-                "status": "rejected",
-                "confirming_user_id": event.user_id,
-                "confirmed_at": now,
-            }
-        )
-    else:
-        return  # other emoji; ignore
-
-    try:
-        await operator_storage.save_pending_command(updated)
-        _LOGGER.info(
-            "pending command transitioned by operator reaction",
-            extra={
-                "pending_id": str(pending_id),
-                "new_status": updated.status,
-                "confirming_user_id": event.user_id,
-            },
-        )
-    except StorageError as exc:
-        _LOGGER.error(
-            "reaction handler: save_pending_command failed",
-            extra={"pending_id": str(pending_id), "error": str(exc)},
-        )
 
 
 # --------------------------------------------------------------------- #
@@ -1451,10 +1344,38 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         )
     )
 
-    # In-memory confirm_message_id → pending_id map. Persisted state
-    # survives restart (TTL covers); the map gets rebuilt as new
-    # confirmations are posted.
-    pending_message_map: dict[str, UUID] = {}
+    # Approve/Reject button wiring (P3 buttons-over-reactions). The
+    # decision logic lives in services/confirm_decision so the button
+    # path and any future confirming surface share one implementation of
+    # the TTL / idempotency rules. Registering it here — not at
+    # transport construction — because it needs storage.
+    async def _on_confirm_decision(
+        *,
+        pending_id: UUID,
+        decision: ConfirmDecision,
+        user_id: str,
+    ) -> str:
+        outcome = await apply_confirm_decision(
+            storage=operator_storage,
+            pending_id=pending_id,
+            decision=decision,
+            user_id=user_id,
+        )
+        _LOGGER.info(
+            "operator %s command %s via button: %s",
+            decision,
+            pending_id,
+            outcome.result,
+            extra={
+                "pending_id": str(pending_id),
+                "decision": decision,
+                "result": outcome.result,
+                "confirming_user_id": user_id,
+            },
+        )
+        return outcome.message
+
+    transport.set_confirm_handler(_on_confirm_decision)
 
     async def _on_message(msg: InboundMessage) -> None:
         await _handle_inbound_message(
@@ -1469,19 +1390,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             outbound_channel_id=operator_cfg.auth.outbound_channel_id,
             context_window_turns=operator_cfg.context_window_turns,
             confirm_ttl_seconds=operator_cfg.confirm_ttl_seconds,
-            pending_message_map=pending_message_map,
             assistant_model_name=operator_cfg.assistant.model,
         )
 
-    async def _on_reaction(evt: ReactionEvent) -> None:
-        await _handle_reaction(
-            evt,
-            operator_storage=operator_storage,
-            pending_message_map=pending_message_map,
-        )
-
     transport.on_message(_on_message)
-    transport.on_reaction(_on_reaction)
 
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
