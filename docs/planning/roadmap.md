@@ -718,6 +718,22 @@ the detail; the full backlog index is
    refresh. Pinned by 3 tests (self-polling markup, terminal result stops
    polling, unknown-id partial). Test count 2879 → 2882.
 
+   **Slice 13 — modal-card action flow** ✅ **2026-08-09** (the operator's
+   amendment, completing the wait-for-completion experience): dashboard
+   actions (pause/resume icons, banner Re-anchor, Emergency Stop) now open
+   a **modal card over the dashboard** — confirm details in place,
+   Approve/Reject in the card, then the slice-12 row-watch runs inside the
+   same card to the real outcome, and on completion the status card
+   refreshes immediately underneath (`?ctx=modal` threads the context so
+   the standalone result page stays console-clean). Pure progressive
+   enhancement: htmx `hx-post` branches on the `HX-Request` header; the
+   no-JS path keeps every full-page redirect flow unchanged (pinned by the
+   pre-existing redirect tests). CSP-clean — close affordances live in
+   `static/modal.js` (script-src 'self', no inline). Includes a
+   pylint-caught lesson: an untested per-verb htmx branch shipped an
+   undefined variable — now every verb's modal path is exercised by an
+   all-verbs test. Test count 2882 → 2886.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
