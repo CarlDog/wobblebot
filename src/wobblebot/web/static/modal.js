@@ -7,8 +7,20 @@
 
   function closeModal() {
     var modal = document.getElementById("modal");
-    if (modal) {
-      modal.innerHTML = "";
+    if (!modal || modal.innerHTML === "") {
+      return;
+    }
+    modal.innerHTML = "";
+    // Closing may interrupt the in-card row-watch before its terminal
+    // state (whose own load-refresh would otherwise be the only status
+    // update) — so every close refreshes the status card. Guarded: the
+    // modal layer can host pages without a status card.
+    var status = document.getElementById("status-wrap");
+    if (status && window.htmx) {
+      window.htmx.ajax("GET", "/status/card", {
+        target: "#status-wrap",
+        swap: "outerHTML",
+      });
     }
   }
 
