@@ -158,4 +158,43 @@
     </table>
   {% endif %}
 </div>
+
+{# LLM endpoint probes (P3): advisory infrastructure per ADR-002 — an
+   unhealthy endpoint contributes YELLOW to the overall dot, never RED.
+   Section omitted entirely when no checker is wired. #}
+{% if snapshot.llm %}
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">LLM Endpoints</div>
+  </div>
+  <table class="data">
+    <colgroup>
+      <col style="width: 80px">
+      <col style="width: 220px">
+      <col style="width: 140px">
+      <col>
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="center">status</th>
+        <th>endpoint</th>
+        <th>checked</th>
+        <th>detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in snapshot.llm %}
+        <tr>
+          <td class="center">
+            <span class="health-dot health-dot-{{ "green" if e.ok else "yellow" }}" aria-hidden="true"></span>
+          </td>
+          <td><strong>{{ e.name }}</strong></td>
+          <td>{{ e.checked_at | tz_format(operator_tz, "%H:%M:%S %Z") }}</td>
+          <td>{{ e.detail }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

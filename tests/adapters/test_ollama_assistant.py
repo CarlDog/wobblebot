@@ -771,3 +771,54 @@ class TestLifecycle:
         finally:
             await adapter.aclose()
         assert any("warmup" in r.message and "failed" in r.message for r in caplog.records)
+
+
+# --------------------------------------------------------------------- #
+# Cold-start ReadTimeout retry (P3, verified live 2026-08-09)            #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestReadTimeoutRetry:
+    async def test_single_timeout_retries_and_succeeds(self) -> None:
+        """The cold-start case: first POST times out (server still
+        chewing full prompt eval), the same-payload retry rides the
+        warm cache and parses fine."""
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.ReadTimeout("read timed out", request=request)
+            return httpx.Response(
+                200,
+                json=_chat_envelope(
+                    json.dumps(
+                        {"kind": "command", "command": {"kind": "pause", "symbol": "BTC/USD"}}
+                    )
+                ),
+            )
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            intent = await adapter.parse_intent(_context(current="pause BTC"))
+        finally:
+            await adapter.aclose()
+        assert calls["n"] == 2
+        assert isinstance(intent, IntentCommand)
+
+    async def test_second_timeout_surfaces_assistant_error(self) -> None:
+        """One retry only — a second timeout is a real outage."""
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            raise httpx.ReadTimeout("read timed out", request=request)
+
+        adapter = _build_adapter(httpx.MockTransport(handler))
+        try:
+            with pytest.raises(AssistantError, match="ReadTimeout"):
+                await adapter.parse_intent(_context(current="pause BTC"))
+        finally:
+            await adapter.aclose()
+        assert calls["n"] == 2
