@@ -780,6 +780,28 @@ the detail; the full backlog index is
    unnoticed by CI; it now runs green and covers the button path end to end.
    Test count 2922 → 2940 unit, plus 5 integration tests back from the dead.
 
+   **Slice 16 — logging-quality audit, installment 2 (daemons + money path)**
+   ✅ **2026-08-10**: the second module pass, scoped by "if this fires at 3am,
+   can the operator act on the line alone?" — so it covers the ALWAYS-ON
+   daemons and the money path at WARNING/ERROR/EXCEPTION:
+   `cli/harvest_execute` (every withdrawal refusal now names the proposal id
+   and both numbers — "refusing p-x: $342.18 would push today's withdrawals
+   ($700) past the $1000 daily cap"), `cli/harvest`, `cli/live`,
+   `cli/operator`, `cli/_common`. A rule-1 violation turns out to have a
+   MECHANICAL signature — a static message paired with a non-empty `extra=` —
+   so the audit is a greppable scan, not a taste judgment: **239 violations
+   before, 165 after**, the remainder being the deliberate scope boundary
+   (one-shot CLIs + web routes + the INFO/DEBUG tier = installment 3). The
+   50 daemon call-sites were rewritten by an AST transformer that reuses the
+   EXACT value expressions already in `extra=`, so the message and the
+   structured field cannot drift. Also lands **`cli/_common.fmt_decimal`**
+   (the queued Decimal-display item): `%s` on a stored Decimal printed
+   `342.18000000` for $342.18 and `1E+2` for a round $100 — E-notation in a
+   withdrawal line is a genuine misread risk. Strips trailing zeros without
+   forcing a scale, so a live BTC quantity doesn't render as `0.00` (13 tests,
+   incl. a round-trip property). Zero behavior change. Test count 2948 → 2961.
+   **Deferred to installment 3:** the Ollama hang-audit's loop-blocking half.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving

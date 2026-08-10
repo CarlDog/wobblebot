@@ -77,7 +77,8 @@ class TestSafeShutdownPerPhaseExceptions:
         assert ran_after == [True]
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any(
-            "shutdown phase raised" in r.message
+            "shutdown phase" in r.message
+            and "raised" in r.message
             and getattr(r, "phase", None) == "phase_that_explodes"
             and getattr(r, "error", None) == "boom"
             for r in warnings
@@ -133,9 +134,7 @@ class TestSafeShutdownTimeoutEscapeValve:
 
         assert exc_info.value.code == 1
         assert exit_calls == [1]
-        timeout_warnings = [
-            r for r in caplog.records if "shutdown hung beyond timeout" in r.message
-        ]
+        timeout_warnings = [r for r in caplog.records if "shutdown hung in phase" in r.message]
         assert len(timeout_warnings) == 1
         assert getattr(timeout_warnings[0], "phase", None) == "stuck_phase"
         assert getattr(timeout_warnings[0], "timeout_seconds", None) == 0.05
@@ -164,9 +163,7 @@ class TestSafeShutdownTimeoutEscapeValve:
             with pytest.raises(SystemExit):
                 await safe_shutdown([("the_only_phase", yield_then_hang)], timeout_seconds=0.05)
 
-        timeout_warnings = [
-            r for r in caplog.records if "shutdown hung beyond timeout" in r.message
-        ]
+        timeout_warnings = [r for r in caplog.records if "shutdown hung in phase" in r.message]
         # Phase should be the one that started; "init" is the pre-loop
         # default but we expect the loop body to have set it.
         assert getattr(timeout_warnings[0], "phase", None) == "the_only_phase"

@@ -514,7 +514,7 @@ class TestPersistence:
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.harvest"):
             ok = await _run_cycle(adapter, config=config, storage=_FlakeyStorage())  # type: ignore[arg-type]
         assert ok is True  # cycle succeeded even though persist failed
-        assert any("persistence failed" in r.message for r in caplog.records)
+        assert any("failed to persist" in r.message for r in caplog.records)
 
 
 # ===== Stage 4.4c — --execute operator-approval gate =====
@@ -640,7 +640,9 @@ class TestExecuteGuardrails:
                 )
             assert rc == 1
             assert adapter.withdraw_calls == []
-            assert any("deposit proposals cannot be executed" in r.message for r in caplog.records)
+            assert any("deposits cannot be executed" in r.message for r in caplog.records)
+            # Rule 3: the line must name the entity it refused.
+            assert any("p-test" in r.message for r in caplog.records)
         finally:
             await storage.close()
 
@@ -684,7 +686,8 @@ class TestExecuteGuardrails:
                 )
             assert rc == 1
             assert adapter.withdraw_calls == []
-            assert any("stale" in r.message for r in caplog.records)
+            assert any("exceeds the" in r.message and "limit" in r.message for r in caplog.records)
+            assert any("p-test" in r.message for r in caplog.records)
         finally:
             await storage.close()
 
@@ -733,7 +736,7 @@ class TestExecuteGuardrails:
                 )
             assert rc == 1
             assert adapter.withdraw_calls == []
-            assert any("below proposed withdrawal" in r.message for r in caplog.records)
+            assert any("is below the proposed" in r.message for r in caplog.records)
         finally:
             await storage.close()
 
@@ -769,7 +772,7 @@ class TestExecuteGuardrails:
                 )
             assert rc == 1
             assert adapter.withdraw_calls == []
-            assert any("max_withdrawal_per_day_usd" in r.message for r in caplog.records)
+            assert any("daily cap" in r.message for r in caplog.records)
         finally:
             await storage.close()
 
@@ -846,7 +849,8 @@ class TestExecuteFailureModes:
             assert len(results) == 1
             assert results[0].status == "failed"
             assert results[0].transaction_id.startswith("failed-")
-            assert any("rejected the request" in r.message for r in caplog.records)
+            assert any("REJECTED" in r.message for r in caplog.records)
+            assert any("no money moved" in r.message for r in caplog.records)
         finally:
             await storage.close()
 

@@ -284,6 +284,21 @@ to every project. The wobblebot-specific items below extend it:
   automatable (see the LLM-provider-drift-watcher v1.1 entry in
   `docs/release/v1.1/infrastructure.md`); remediation stays human per
   ADR-014.
+- **Output-token caps still fit the prompts.** A prompt edit can quietly
+  outgrow a `max_tokens` set months earlier, and the failure does NOT
+  look like a config problem — the model is cut off mid-answer and you
+  get a parse error that reads like the model went stupid. Nothing gates
+  this: the 180-day pricing-freshness test above doesn't check it, and
+  the prompt and the cap live in different files. For each configured
+  `(role, model)`, confirm the cap covers a COMPLETE response to that
+  role's current prompt, then add headroom for two things that only grow:
+  (a) prompts gain required fields over time; (b) **thinking-capable
+  models bill reasoning against the same budget** — measured 2026-08-10,
+  `gemini-2.5-flash` spent 980 of a 1024-token budget on thinking and
+  left 40 for the answer, and the thinking budget is *dynamic*, expanding
+  to fill whatever it is given. Re-check after ANY prompt change, not
+  just quarterly. (Receipt: the three live cloud-LLM tests, which read as
+  provider drift and were a stale cap — PR #64.)
 
 ### Pre-1.0 one-shot (wobblebot extras, run when applicable)
 

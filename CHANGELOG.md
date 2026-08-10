@@ -86,6 +86,13 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Daemon and withdrawal logs now say what happened, not just that it did.**
+  Warnings and errors from the live, operator, and harvest daemons carry the
+  symbol, order, proposal id and the actual numbers in the message itself, so
+  the log tail is readable without a JSON viewer. A refused withdrawal now
+  reads "refusing p-x: $342.18 would push today's withdrawals ($700) past the
+  $1000 daily cap" instead of a bare "refusing". Money amounts also render as
+  $342.18 rather than $342.18000000 (or $1E+2).
 - **Clearer error when a model reply is cut off.** A truncated JSON response now
   says so — and points at the output-token cap — instead of reporting the same
   "no parseable JSON" message used when a model ignores the schema entirely.

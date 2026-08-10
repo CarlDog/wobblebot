@@ -169,7 +169,10 @@ async def _cancel_all_open(
         except WobbleBotPortError as exc:
             failed += 1
             _LOGGER.error(
-                "shutdown cancel failed",
+                "shutdown cancel failed (symbol=%s, exchange_id=%s): %s",
+                o.symbol,
+                o.exchange_id,
+                exc,
                 extra={
                     "symbol": str(o.symbol),
                     "exchange_id": o.exchange_id,
@@ -190,7 +193,11 @@ async def _cancel_all_open(
             )
         except StorageError as exc:
             _LOGGER.warning(
-                "shutdown cancel persistence failed; reconciler will catch on next start",
+                "shutdown cancel persistence failed; reconciler will catch on next start "
+                "(symbol=%s, exchange_id=%s): %s",
+                o.symbol,
+                o.exchange_id,
+                exc,
                 extra={
                     "symbol": str(o.symbol),
                     "exchange_id": o.exchange_id,
@@ -221,12 +228,15 @@ def _log_dms_confirmation(
     unconfirmed_ticks += 1
     if unconfirmed_ticks == 1:
         _LOGGER.warning(
-            "dead man's switch arm not confirmed by Kraken's response",
+            "dead man's switch arm not confirmed by Kraken's response "
+            "(requested_timeout_seconds=%s)",
+            requested_timeout_seconds,
             extra={"requested_timeout_seconds": requested_timeout_seconds},
         )
     elif unconfirmed_ticks % _DMS_UNCONFIRMED_SUMMARY_EVERY_TICKS == 0:
         _LOGGER.warning(
-            "dead man's switch still not confirmed armed",
+            "dead man's switch still not confirmed armed (consecutive_unconfirmed_ticks=%s)",
+            unconfirmed_ticks,
             extra={"consecutive_unconfirmed_ticks": unconfirmed_ticks},
         )
     return unconfirmed_ticks
@@ -274,7 +284,8 @@ async def _session_portfolio_value_usd(
             # v1: cap is in USD; non-USD quotes would need a cross-rate
             # conversion we don't ship yet. Skip and leave a breadcrumb.
             _LOGGER.warning(
-                "skipping non-USD-quoted symbol in portfolio value",
+                "skipping non-USD-quoted symbol in portfolio value (symbol=%s)",
+                symbol,
                 extra={"symbol": str(symbol)},
             )
             continue
@@ -313,7 +324,10 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
         tick_open_orders = await adapter.get_open_orders()
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "tick open-orders fetch failed; skipping this tick's steps",
+            "tick open-orders fetch failed; skipping this tick's steps (tick=%s): %s: %s",
+            tick,
+            type(exc).__name__,
+            exc,
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         tick_open_orders = None
@@ -342,7 +356,11 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 tick_trades = await adapter.get_trade_history(limit=200 * len(live.symbols))
             except WobbleBotPortError as exc:
                 _LOGGER.warning(
-                    "tick trade-history fetch failed; falling back to per-symbol fetch",
+                    "tick trade-history fetch failed; falling back to per-symbol fetch (tick=%s): "
+                    "%s: %s",
+                    tick,
+                    type(exc).__name__,
+                    exc,
                     extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
                 )
                 tick_trades = None
@@ -361,7 +379,12 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             tick_tickers[symbol] = await adapter.get_ticker(symbol)
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "tick ticker fetch failed; symbol will fetch its own price",
+                "tick ticker fetch failed; symbol will fetch its own price (tick=%s, symbol=%s): "
+                "%s: %s",
+                tick,
+                symbol,
+                type(exc).__name__,
+                exc,
                 extra={
                     "tick": tick,
                     "symbol": str(symbol),
@@ -419,7 +442,11 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 )
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "symbol step failed; continuing other symbols",
+                "symbol step failed; continuing other symbols (tick=%s, symbol=%s): %s: %s",
+                tick,
+                symbol,
+                type(exc).__name__,
+                exc,
                 extra={
                     "tick": tick,
                     "symbol": str(symbol),
@@ -441,14 +468,21 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
         )
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "post-tick portfolio-value fetch failed; skipping loss-cap check this tick",
+            "post-tick portfolio-value fetch failed; skipping loss-cap check this tick (tick=%s): "
+            "%s: %s",
+            tick,
+            type(exc).__name__,
+            exc,
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
         return False  # No cap trip; loop continues.
     session_pnl = current_value_usd - started_value_usd
     if session_pnl < -live.max_session_loss_usd:
         _LOGGER.error(
-            "session loss cap exceeded; stopping",
+            "session loss cap exceeded; stopping (session_pnl_usd=%s, limit=%s, tick=%s)",
+            session_pnl,
+            live.max_session_loss_usd,
+            tick,
             extra={
                 "session_pnl_usd": str(session_pnl),
                 "limit": str(live.max_session_loss_usd),
@@ -536,7 +570,10 @@ async def _process_pending_commands(
             )
         except OperatorError as exc:
             _LOGGER.error(
-                "operator command dispatch failed",
+                "operator command dispatch failed (pending_id=%s, command_kind=%s): %s",
+                pending.id,
+                command.kind,
+                exc,
                 extra={
                     "pending_id": str(pending.id),
                     "command_kind": command.kind,
@@ -565,7 +602,9 @@ async def _process_pending_commands(
             # That's an idempotency hazard for non-idempotent commands;
             # acceptable v1 trade-off given how rare DB failures are.
             _LOGGER.warning(
-                "failed to persist dispatched pending_command",
+                "failed to persist dispatched pending_command (pending_id=%s): %s",
+                pending.id,
+                exc,
                 extra={"pending_id": str(pending.id), "error": str(exc)},
             )
         processed += 1
@@ -727,7 +766,10 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     )
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
-                        "dead man's switch reset failed; continuing (timer retains prior value)",
+                        "dead man's switch reset failed; continuing (timer retains prior value): "
+                        "%s: %s",
+                        type(exc).__name__,
+                        exc,
                         extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
 
@@ -808,7 +850,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             ended_known = True
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "session_end balance fetch failed; PnL unavailable",
+                "session_end balance fetch failed; PnL unavailable: %s",
+                exc,
                 extra={"error": str(exc)},
             )
             ended_usd = started_usd
@@ -819,7 +862,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             cancel_clean = failed == 0
         except WobbleBotPortError as exc:
             _LOGGER.warning(
-                "session_end cancel_all_open raised; reconciler will catch stragglers",
+                "session_end cancel_all_open raised; reconciler will catch stragglers: %s",
+                exc,
                 extra={"error": str(exc)},
             )
             cancelled, failed = 0, 0
@@ -834,7 +878,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 await adapter.set_dead_mans_switch(0)
             except WobbleBotPortError as exc:
                 _LOGGER.warning(
-                    "dead man's switch disarm failed; Kraken timer will lapse harmlessly",
+                    "dead man's switch disarm failed; Kraken timer will lapse harmlessly: %s",
+                    exc,
                     extra={"error": str(exc)},
                 )
         session_pnl = ended_value_usd - started_value_usd if ended_known else Decimal("0")
@@ -849,7 +894,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 await storage.record_cap_trip(Timestamp(dt=datetime.now(UTC)), session_pnl)
             except StorageError as exc:
                 _LOGGER.warning(
-                    "failed to record cap trip for cool-down gate",
+                    "failed to record cap trip for cool-down gate: %s",
+                    exc,
                     extra={"error": str(exc)},
                 )
         duration_seconds = round(time.monotonic() - started_at, 1)
@@ -916,7 +962,11 @@ async def _main_async(  # pylint: disable=too-many-locals
             secret_var="KRAKEN_TRADER_API_SECRET",
         )
     except ValueError as exc:
-        _LOGGER.error("missing trade credentials", extra={"error": str(exc)})
+        _LOGGER.error(
+            "missing trade credentials: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
         return 2
 
     storage = SQLiteStorageAdapter(config.live.db)
@@ -937,7 +987,8 @@ async def _main_async(  # pylint: disable=too-many-locals
             last_trip_at = await storage.get_last_cap_trip_at()
         except StorageError as exc:
             _LOGGER.warning(
-                "cool-down check failed to read cap_trips; proceeding",
+                "cool-down check failed to read cap_trips; proceeding: %s",
+                exc,
                 extra={"error": str(exc)},
             )
             last_trip_at = None
@@ -946,7 +997,8 @@ async def _main_async(  # pylint: disable=too-many-locals
         )
         if status.active:
             _LOGGER.error(
-                "session-loss-cap cool-down in effect; refusing to start",
+                "session-loss-cap cool-down in effect; refusing to start (resumes_at=%s)",
+                status.resumes_at.isoformat() if status.resumes_at else None,
                 extra={
                     "resumes_at": status.resumes_at.isoformat() if status.resumes_at else None,
                 },
@@ -983,7 +1035,9 @@ async def _main_async(  # pylint: disable=too-many-locals
         report = await apply_reconciliation(adapter, storage, configured_symbols=configured_symbols)
     except WobbleBotPortError as exc:
         _LOGGER.error(
-            "startup reconciliation failed; refusing to start",
+            "startup reconciliation failed; refusing to start: %s: %s",
+            type(exc).__name__,
+            exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
         return 1
