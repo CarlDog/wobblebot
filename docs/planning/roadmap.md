@@ -1070,6 +1070,60 @@ the detail; the full backlog index is
    ever proposing anything outside what auto-apply consumes (e.g. ADR-029's
    `counter_target_mode`).
 
+   **Post-P3 — MoE seat measurement session** ✅ **2026-08-10** (operator-driven;
+   not a P3 slice). Ran the existing quant battery across six candidates, added a
+   new arbitrator battery, and settled two seats on evidence. Cloud spend for the
+   whole session: **$0.0628** (28 calls, isolated `probe_llm_cost.db`).
+
+   **Quant seat — DECIDED: cloud `gpt-5-mini`.** Core battery (12 fixtures,
+   chance = 12/36): gpt-5-mini **30/36**; llama3.1:8b-q8 15; qwen3.6:35b-a3b 13;
+   qwen2.5:7b-q8 12; phi4:14b-q8 9; granite4.1:30b-q5 **6**. **No local model is
+   meaningfully better than chance.** gpt-5-mini took 8/8 action fixtures with
+   zero MISS/WRONG/ERROR. Held-out discriminator set: **14/24** — a real drop, and
+   `heldout_drawdown_overrides_calm` (expected widen, said tighten) shows it is
+   *partly rule-following*: when a secondary signal should override volatility, it
+   follows volatility. Suspected PROMPT gap (does `quant.md` state the override?),
+   not a model gap — filed, not chased. Production already escalates to this
+   model, so this validates existing config rather than changing it.
+
+   **Arbitrator seat — DECIDED: an LLM arbitrator DOES earn its cost.** New
+   `tools/probe_arbitrator.py`: 8 fixtures, one per arbitration rule in
+   `arbitrator.md` plus both hard constraints, scored for a candidate model AND
+   for the two free aggregators on identical inputs. Result: **gpt-5-mini 8/8,
+   `voting` 5/8, `weighted_confidence` 1/8.** This REVERSES the morning's read
+   ("voting beat the broken arbitrator, maybe skip the seat"): three of voting's
+   five passes are ACCIDENTAL — it omits the key whenever experts differ, so it
+   can HOLD safely but can never take the conservative ACTION rules 1 and 4
+   require. Both free aggregators are structurally incapable of rules 1 and 2
+   (no concept of expert role). **Safety finding pinned by test:**
+   `aggregate_weighted_confidence` emits spacing **below the fee floor** (0.525
+   vs the 0.66 break-even) and lets **news alone drive a number** (5.0),
+   contra ADR-007 — the auto-apply floor is what actually stops these reaching
+   the engine, so it is defence-in-depth, but the aggregator does not honour the
+   documented arbitration rules. Baselines are pinned in
+   `tests/tools/test_probe_arbitrator_rubric.py` so a future aggregator change
+   forces a deliberate re-baseline.
+
+   **⚠️ BUG FOUND — `risk.md` promises inputs that do not exist.** The prompt tells
+   the model it receives "current open exposure vs the configured caps,
+   time-to-recovery from the last loss, and daily spend so far vs the daily cap".
+   `PerformanceSummary` contains **none of those** (only `max_drawdown`;
+   `active_orders` is a count, and no cap value is passed at all). This is why the
+   live MoE risk expert wrote "the account has not yet approached its drawdown or
+   daily spend caps" — it **confabulated**, fluently, and was initially read as an
+   excellent answer. **The risk battery is BLOCKED on this**: fixtures built today
+   would grade models on three-quarters-imaginary inputs. Fix is either extending
+   the DTO (preferred — the engine and config have the data, it just isn't
+   plumbed) or narrowing the prompt to what exists.
+
+   **Method note, twice-learned:** fluency is not correctness. `granite4.1:30b`
+   produced the most impressive-sounding risk prose of the session and scored
+   **worst of six** on the quant battery; the risk expert's confabulated
+   cap-headroom claim read as rigour. Both were caught only by a scored battery,
+   which is what these tools are for. Also: all five role prompts exist —
+   `quant` / `risk` / `news` / `arbitrator` / **`gremlin`** — and only quant has
+   ever run in production.
+
    **P3 close audit** ✅ **2026-08-10.** Green: schema-drift 19/19 clean;
    `tools/scan_logging.py --check rule1` exit 0; `domain/` imports zero
    adapters; pylint 10.00 exit 0; mypy strict clean; 3026 tests (2973 at P3
