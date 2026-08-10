@@ -40,10 +40,18 @@
           <strong>{{ rec.oldest_order_age_seconds | humanize_duration }}</strong>
           <span>oldest order</span>
         </div>
+        {# Will a re-anchored grid actually CYCLE? One cell, two
+           horizons — they answer the same question and only mean
+           something next to each other. A quiet 2h inside a lively
+           fortnight is noise; a quiet 2h inside a dead fortnight is
+           the idle-ladder case (2026-08-09: an executed BTC re-anchor
+           whose correctly-placed orders nothing touched). Both are
+           FACTS, and neither ever hides or downgrades this banner —
+           see the module docstring in web/routes/status.py. #}
         <div class="reanchor-stat"
-             title="Recent price range over the 2h sparkline window, in grid spacings. Well under 1× means the market isn't moving enough to cycle even a correctly-placed grid — a re-anchor would buy an idle ladder. This is a fact, not a forecast; you do the weighting.">
-          <strong>{% if rec.recent_range_spacings is not none %}{{ "%.1f"|format(rec.recent_range_spacings) }}×{% else %}—{% endif %}</strong>
-          <span>2h range vs spacing</span>
+             title="Will a correctly-placed grid here actually cycle? Left: price range over the last 2h, in grid spacings. Right: Wilder ATR(14) over 14 days of hourly bars, per hour, in the same units — 0.15× means a typical hour moves price a seventh of a spacing, so even a perfect ladder waits ~7 hours per fill. Under 1× on both means re-anchoring buys an idle ladder; consider pausing instead. Facts, not forecasts — and a low reading never hides this banner.">
+          <strong>{% if rec.recent_range_spacings is not none %}{{ "%.1f"|format(rec.recent_range_spacings) }}×{% else %}—{% endif %}<span class="reanchor-stat-sep"> · </span>{% if rec.atr_spacings_per_hour is not none %}{{ "%.2f"|format(rec.atr_spacings_per_hour) }}×{% else %}—{% endif %}</strong>
+          <span>activity: 2h · ATR/hr</span>
         </div>
         <div class="reanchor-stat"
              title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">

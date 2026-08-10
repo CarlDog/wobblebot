@@ -15,6 +15,19 @@ visible to the operator rather than silently hiding the section.
 Per ADR-016 routes consume the existing ports; no engine state +
 no money mutations here. Mutations live in
 ``wobblebot.web.routes.commands`` (Stage 7.2.C).
+
+**Re-anchor banners annotate, they never suppress.** Both viability
+stats (``recent_range_spacings``, ``atr_spacings_per_hour``) can say
+"a re-anchored grid probably wouldn't cycle here" — and neither one
+hides or downgrades a banner when it does. Two reasons. First,
+"re-anchoring isn't worth it" and "the current grid is fine" are
+different states: a misplaced ladder in a dead market is still
+capital sitting idle, and the right response may be *pause this
+symbol*, not *leave it drifted and say nothing*. Second, per the
+advisor philosophy (ADR-002, transparent guardrail), a heuristic that
+silently withholds information the operator would have acted on is
+exactly the failure mode this project designs against. Show the
+number; let the operator weigh it.
 """
 
 from __future__ import annotations
@@ -30,7 +43,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from wobblebot.config.grid import KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
@@ -47,6 +59,11 @@ from wobblebot.web.dependencies import (
     get_observe_storage,
     get_operator_storage,
     get_templates,
+)
+from wobblebot.web.routes.status_reanchor import (
+    ReanchorRecommendation,
+    load_reanchor_recommendations,
+    load_reanchor_snoozes,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,56 +101,8 @@ _SPARK_PAD = 2.0
 _SPARK_LOOKBACK_MINUTES = 120  # 2h of price snapshots
 
 TrendDirection = Literal["up", "down", "flat"]
-ReanchorSeverity = Literal["mild", "moderate", "strong"]
-
-# Re-anchor banner thresholds. Drift is the gate (no drift = no
-# banner, even if grid is stale); age can escalate severity but
-# can't trigger alone. Calm-market parked grids don't get scary
-# banners; misaligned grids do.
-_DRIFT_MILD_SPACINGS = 1.5
-_DRIFT_MODERATE_SPACINGS = 2.5
-_DRIFT_STRONG_SPACINGS = 4.0
-_AGE_MILD_HOURS = 24
-_AGE_MODERATE_HOURS = 48
-_AGE_STRONG_HOURS = 72
 
 router = APIRouter(tags=["status"])
-
-
-@dataclass(frozen=True)
-class ReanchorRecommendation:  # pylint: disable=too-many-instance-attributes
-    # Display DTO for the banner — the attribute count grows with the
-    # decision facts it carries (same posture as StatusSnapshot).
-    """Per-symbol recommendation that the operator consider re-anchoring.
-
-    Rendered as a colored banner on the dashboard. Severity tier
-    drives the color: mild (yellow) -> moderate (orange) ->
-    strong (red). The banner carries the Re-anchor action button
-    (through pending_commands) + Snooze (UI-local) per the P3
-    blueprint; ``projected_fee_usd`` is the fee-only decision
-    economics line (paper-loss-on-stranded-inventory was rejected
-    as misleading — cancelling doesn't sell the asset).
-    """
-
-    symbol: Symbol
-    severity: ReanchorSeverity
-    drift_in_spacings: float
-    oldest_order_age_seconds: int
-    current_price: Decimal
-    anchor_price: Decimal
-    # Fee-only projected cost of acting on the banner: taker rate on
-    # the cancelled ladder's notional + the same again for the re-laid
-    # ladder (approximated as equal). Cancels themselves are free on
-    # Kraken — this is the ceiling on fees the rotation itself commits
-    # you to, deliberately excluding unrealized inventory swings.
-    projected_fee_usd: Decimal = Decimal("0")
-    # Recent price range (sparkline window) expressed in grid spacings —
-    # the honest activity stat (operator-requested 2026-08-09): well
-    # under 1x means the market isn't moving enough to cycle even a
-    # correctly-placed grid, so a re-anchor would buy an idle ladder.
-    # Deliberately a FACT, not a probability claim — the operator does
-    # the weighting. None when the price series is too thin.
-    recent_range_spacings: float | None = None
 
 
 @dataclass(frozen=True)
@@ -303,39 +272,6 @@ def _classify_trend(oldest: Decimal, newest: Decimal) -> TrendDirection:
     if abs(delta_pct) <= _TREND_FLAT_THRESHOLD:
         return "flat"
     return "up" if delta_pct > 0 else "down"
-
-
-def _classify_reanchor_severity(drift_spacings: float, age_seconds: int) -> ReanchorSeverity | None:
-    """Return severity tier, or ``None`` if no banner should show.
-
-    Drift is the gate: without meaningful drift the engine isn't
-    misaligned, so a banner would be noise even if the grid has
-    been sitting for days. Age escalates severity but doesn't
-    trigger alone — a calm market with a parked grid is normal.
-    """
-    if drift_spacings < _DRIFT_MILD_SPACINGS:
-        return None
-    if drift_spacings < _DRIFT_MODERATE_SPACINGS:
-        drift_tier = 1
-    elif drift_spacings < _DRIFT_STRONG_SPACINGS:
-        drift_tier = 2
-    else:
-        drift_tier = 3
-    age_hours = age_seconds / 3600
-    if age_hours < _AGE_MILD_HOURS:
-        age_tier = 0
-    elif age_hours < _AGE_MODERATE_HOURS:
-        age_tier = 1
-    elif age_hours < _AGE_STRONG_HOURS:
-        age_tier = 2
-    else:
-        age_tier = 3
-    tier = max(drift_tier, age_tier)
-    if tier == 1:
-        return "mild"
-    if tier == 2:
-        return "moderate"
-    return "strong"
 
 
 async def _load_current_prices(
@@ -678,9 +614,15 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     # One series fetch serves both the sparklines and the banner's
     # activity stat (recent range in spacings).
     price_series = await _load_price_series(observe_storage, set(all_symbols))
-    snoozed = await _load_reanchor_snoozes(operator_storage, now=now)
-    reanchor_recs = await _load_reanchor_recommendations(
-        live_storage, list(open_orders), prices, order_ages, snoozed, price_series
+    snoozed = await load_reanchor_snoozes(operator_storage, now=now)
+    reanchor_recs = await load_reanchor_recommendations(
+        live_storage,
+        list(open_orders),
+        prices,
+        order_ages,
+        snoozed,
+        price_series,
+        observe_storage,
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
@@ -779,107 +721,6 @@ async def _load_engine_states(
         for row in rows
         if (now - row.updated_at).total_seconds() <= threshold_seconds
     }
-
-
-async def _load_reanchor_snoozes(
-    operator_storage: StoragePort | None,
-    *,
-    now: datetime,
-) -> set[Symbol]:
-    """Symbols with an UNEXPIRED banner snooze; degrades to empty.
-
-    Storage failure or an unwired operator.db degrade to "nothing
-    snoozed" — the worst case is a banner the operator asked to
-    hide reappearing, never a hidden recommendation.
-    """
-    if operator_storage is None:
-        return set()
-    try:
-        snoozes = await operator_storage.get_reanchor_snoozes()
-    except StorageError as exc:
-        _LOGGER.warning(
-            "reanchor-snooze lookup failed; showing all banners: %s",
-            exc,
-            extra={"error": str(exc)},
-        )
-        return set()
-    return {symbol for symbol, until in snoozes.items() if until > now}
-
-
-async def _load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
-    # too-many-arguments: the loader consumes the snapshot's already-
-    # fetched slices (orders, prices, ages, snoozes, series) rather
-    # than re-querying storage — each param saves a duplicate query.
-    live_storage: StoragePort,
-    open_orders: list[Order],
-    current_prices: dict[Symbol, Decimal],
-    order_ages: dict[str, int],
-    snoozed: set[Symbol],
-    price_series: dict[Symbol, list[Decimal]],
-) -> tuple[ReanchorRecommendation, ...]:
-    """Per-symbol re-anchor recommendations from drift + age heuristic.
-
-    Drift = distance from current price to the nearest open order,
-    expressed in units of grid spacing. Age = oldest open order
-    for that symbol. ``_classify_reanchor_severity`` gates and
-    tiers; symbols in ``snoozed`` are suppressed entirely;
-    per-symbol storage failures are logged + skipped.
-    ``price_series`` (the sparkline window) feeds the banner's
-    activity stat — recent range in spacings.
-    """
-    if not open_orders:
-        return ()
-    symbols = {o.symbol for o in open_orders}
-    recommendations: list[ReanchorRecommendation] = []
-    for symbol in symbols:
-        if symbol in snoozed:
-            continue
-        current = current_prices.get(symbol)
-        if current is None:
-            continue
-        try:
-            state = await live_storage.get_grid_state(symbol)
-        except StorageError as exc:
-            _LOGGER.warning(
-                "grid_state lookup failed for %s; skipping reanchor calc",
-                symbol,
-                extra={"symbol": str(symbol), "error": str(exc)},
-            )
-            continue
-        if state is None:
-            continue
-        spacing = state.reference_price * state.spacing_percentage / Decimal("100")
-        if spacing <= 0:
-            continue
-        symbol_orders = [o for o in open_orders if o.symbol == symbol]
-        if not symbol_orders:
-            continue
-        nearest_distance = min(abs(o.price.amount - current) for o in symbol_orders)
-        drift = float(nearest_distance / spacing)
-        oldest_age = max(order_ages.get(str(o.id), 0) for o in symbol_orders)
-        severity = _classify_reanchor_severity(drift, oldest_age)
-        if severity is None:
-            continue
-        # Fee-only decision economics (P3 blueprint): taker rate on the
-        # cancelled ladder's notional, plus the same again for the
-        # re-laid ladder (approximated as equal to the current one).
-        open_notional = sum((o.price.amount * o.amount.value for o in symbol_orders), Decimal(0))
-        projected_fee = open_notional * KRAKEN_TAKER_FEE_RATE * Decimal(2)
-        series = price_series.get(symbol)
-        recent_range = float((max(series) - min(series)) / spacing) if series else None
-        recommendations.append(
-            ReanchorRecommendation(
-                symbol=symbol,
-                severity=severity,
-                drift_in_spacings=drift,
-                oldest_order_age_seconds=oldest_age,
-                current_price=current,
-                anchor_price=state.reference_price,
-                projected_fee_usd=projected_fee,
-                recent_range_spacings=recent_range,
-            )
-        )
-    return tuple(recommendations)
 
 
 # --------------------------------------------------------------------- #

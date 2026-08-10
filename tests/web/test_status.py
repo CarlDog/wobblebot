@@ -45,10 +45,19 @@ async def live_storage() -> AsyncIterator[SQLiteStorageAdapter]:
     await adapter.close()
 
 
+@pytest_asyncio.fixture
+async def observe_storage() -> AsyncIterator[SQLiteStorageAdapter]:
+    adapter = SQLiteStorageAdapter(":memory:")
+    await adapter.connect()
+    yield adapter
+    await adapter.close()
+
+
 def _build_client(
     operator: SQLiteStorageAdapter,
     live: SQLiteStorageAdapter | None,
     *,
+    observe: SQLiteStorageAdapter | None = None,
     cool_down_minutes: float | None = None,
     live_tick_seconds: float | None = None,
 ) -> TestClient:
@@ -57,6 +66,7 @@ def _build_client(
         operator_storage=operator,
         session_secret="x" * 64,
         live_storage=live,
+        observe_storage=observe,
         cool_down_minutes=cool_down_minutes,
         live_tick_seconds=live_tick_seconds,
     )
@@ -885,10 +895,10 @@ class TestReanchorBannerSnoozeAndFee:
     ) -> None:
         """$30 open notional -> $0.24 projected: 0.40% taker on the
         cancelled ladder plus the same again for the re-laid one."""
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
@@ -904,10 +914,10 @@ class TestReanchorBannerSnoozeAndFee:
     async def test_snoozed_symbol_suppresses_banner(
         self, live_storage: SQLiteStorageAdapter
     ) -> None:
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {Symbol(base="BTC", quote="USD"): Decimal("30600")},
@@ -920,11 +930,11 @@ class TestReanchorBannerSnoozeAndFee:
     async def test_recent_range_stat_in_spacings(self, live_storage: SQLiteStorageAdapter) -> None:
         """The activity stat: a 600-wide 2h range at 300 spacing = 2.0x.
         A fact from the sparkline series, not a probability claim."""
-        from wobblebot.web.routes.status import _load_reanchor_recommendations
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
         sym = Symbol(base="BTC", quote="USD")
-        recs = await _load_reanchor_recommendations(
+        recs = await load_reanchor_recommendations(
             live_storage,
             [order],
             {sym: Decimal("30600")},
@@ -940,7 +950,7 @@ class TestReanchorBannerSnoozeAndFee:
     ) -> None:
         """Round-trips through the real adapter: an unexpired snooze
         suppresses, an expired one is ignored on read."""
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
         await operator_storage.save_reanchor_snooze(
@@ -949,18 +959,18 @@ class TestReanchorBannerSnoozeAndFee:
         await operator_storage.save_reanchor_snooze(
             Symbol(base="ETH", quote="USD"), now - timedelta(minutes=1)
         )
-        active = await _load_reanchor_snoozes(operator_storage, now=now)
+        active = await load_reanchor_snoozes(operator_storage, now=now)
         assert active == {Symbol(base="BTC", quote="USD")}
 
     async def test_resnooze_upserts_expiry(self, operator_storage: SQLiteStorageAdapter) -> None:
         """One row per symbol: a second snooze replaces the first."""
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
         sym = Symbol(base="BTC", quote="USD")
         await operator_storage.save_reanchor_snooze(sym, now - timedelta(minutes=1))
         await operator_storage.save_reanchor_snooze(sym, now + timedelta(hours=24))
-        assert await _load_reanchor_snoozes(operator_storage, now=now) == {sym}
+        assert await load_reanchor_snoozes(operator_storage, now=now) == {sym}
         snoozes = await operator_storage.get_reanchor_snoozes()
         assert len(snoozes) == 1
 
@@ -970,10 +980,10 @@ class TestReanchorBannerSnoozeAndFee:
         """Unwired operator.db or a storage failure shows every banner
         — the failure mode is a reappearing banner, never a hidden one."""
         from wobblebot.ports.exceptions import StorageError
-        from wobblebot.web.routes.status import _load_reanchor_snoozes
+        from wobblebot.web.routes.status_reanchor import load_reanchor_snoozes
 
         now = datetime.now(UTC)
-        assert await _load_reanchor_snoozes(None, now=now) == set()
+        assert await load_reanchor_snoozes(None, now=now) == set()
 
         class _Broken(SQLiteStorageAdapter):
             async def get_reanchor_snoozes(self):  # type: ignore[no-untyped-def]
@@ -982,7 +992,7 @@ class TestReanchorBannerSnoozeAndFee:
         broken = _Broken(":memory:")
         await broken.connect()
         try:
-            assert await _load_reanchor_snoozes(broken, now=now) == set()
+            assert await load_reanchor_snoozes(broken, now=now) == set()
         finally:
             await broken.close()
 
@@ -1319,3 +1329,134 @@ class TestFillsSection:
         snap = await _load_snapshot(live_storage, None)
         assert snap.fills_summary is not None
         assert snap.fills_summary.net_usd < 0
+
+
+@pytest.mark.asyncio
+class TestReanchorViabilityStat:
+    """ATR-based viability annotation (P3 slice 22, the full item).
+
+    Answers the question drift+age can't: would a correctly-placed
+    grid here actually CYCLE? The 2026-08-09 case — an
+    operator-executed BTC re-anchor whose fresh, correctly-positioned
+    ladder then sat idle because the market wasn't oscillating a full
+    spacing.
+    """
+
+    async def _seed_hourly_bars(
+        self,
+        observe_storage: SQLiteStorageAdapter,
+        *,
+        bar_range: str,
+        count: int = 40,
+    ) -> None:
+        """`count` hourly BTC bars, each with a true range of `bar_range`."""
+        from wobblebot.domain.value_objects import OHLCBar
+
+        base = datetime(2026, 8, 1, tzinfo=UTC)
+        span = Decimal(bar_range)
+        bars = [
+            OHLCBar(
+                symbol=Symbol(base="BTC", quote="USD"),
+                interval_minutes=60,
+                opened_at=base + timedelta(hours=i),
+                open=Decimal("30000"),
+                high=Decimal("30000") + span,
+                low=Decimal("30000"),
+                close=Decimal("30000"),
+                vwap=Decimal("30000"),
+                volume=Decimal("1"),
+                count=10,
+            )
+            for i in range(count)
+        ]
+        await observe_storage.save_ohlc_bars(bars)
+
+    async def _recs(
+        self,
+        live_storage: SQLiteStorageAdapter,
+        observe_storage: SQLiteStorageAdapter | None,
+    ):  # type: ignore[no-untyped-def]
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
+
+        order = await _seed_drifted_grid(live_storage)
+        return await load_reanchor_recommendations(
+            live_storage,
+            [order],
+            {Symbol(base="BTC", quote="USD"): Decimal("30600")},
+            {str(order.id): 0},
+            set(),
+            {},
+            observe_storage,
+        )
+
+    async def test_lively_market_scores_near_one_spacing_per_hour(
+        self, live_storage: SQLiteStorageAdapter, observe_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Spacing is 300 (1% of 30000). A 300-wide hourly true range
+        means a typical hour traverses a full spacing -> 1.0x."""
+        await self._seed_hourly_bars(observe_storage, bar_range="300")
+        recs = await self._recs(live_storage, observe_storage)
+        assert len(recs) == 1
+        assert recs[0].atr_spacings_per_hour == pytest.approx(1.0, abs=0.01)
+
+    async def test_dead_market_scores_well_under_one(
+        self, live_storage: SQLiteStorageAdapter, observe_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The idle-ladder case: 30-wide hourly range at 300 spacing =
+        0.1x, i.e. ~10 hours per fill from a perfect ladder."""
+        await self._seed_hourly_bars(observe_storage, bar_range="30")
+        recs = await self._recs(live_storage, observe_storage)
+        assert recs[0].atr_spacings_per_hour == pytest.approx(0.1, abs=0.01)
+
+    async def test_poor_viability_never_suppresses_the_banner(
+        self, live_storage: SQLiteStorageAdapter, observe_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Load-bearing: "not worth re-anchoring" and "the grid is fine"
+        are different states. A drifted ladder in a dead market is still
+        idle capital — the answer may be pause, not silence."""
+        await self._seed_hourly_bars(observe_storage, bar_range="1")
+        recs = await self._recs(live_storage, observe_storage)
+        assert len(recs) == 1
+        assert recs[0].severity == "mild"  # NOT downgraded or dropped
+        assert recs[0].atr_spacings_per_hour is not None
+        assert recs[0].atr_spacings_per_hour < 0.05
+
+    async def test_thin_bar_history_degrades_to_none(
+        self, live_storage: SQLiteStorageAdapter, observe_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Fewer bars than ATR(14) needs -> no claim, banner intact."""
+        await self._seed_hourly_bars(observe_storage, bar_range="300", count=3)
+        recs = await self._recs(live_storage, observe_storage)
+        assert len(recs) == 1
+        assert recs[0].atr_spacings_per_hour is None
+
+    async def test_unwired_observe_db_degrades_to_none(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        recs = await self._recs(live_storage, None)
+        assert len(recs) == 1
+        assert recs[0].atr_spacings_per_hour is None
+
+    async def test_both_horizons_render_in_one_stat_cell(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+        observe_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """The two activity numbers share a cell — they only mean
+        something next to each other."""
+        await self._seed_hourly_bars(observe_storage, bar_range="30")
+        await _seed_drifted_grid(live_storage)
+        order = _make_order(price="30000")
+        await live_storage.save_order(order)
+        for i in range(6):
+            await observe_storage.save_price_snapshot(
+                Symbol(base="BTC", quote="USD"),
+                Price(amount=Decimal("30600"), currency="USD"),
+                Timestamp(dt=datetime.now(UTC) - timedelta(minutes=10 - i)),
+            )
+        with _build_client(operator_storage, live_storage, observe=observe_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "activity: 2h · ATR/hr" in body
+        assert "reanchor-stat-sep" in body

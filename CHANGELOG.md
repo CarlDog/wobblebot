@@ -86,6 +86,14 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Re-anchor banners now say whether re-anchoring would actually help.** The
+  banner already told you a grid was misplaced; it now also shows how much the
+  market is moving relative to your grid spacing, over two windows — the last
+  2 hours and the last two weeks. A reading well under 1× on both means a
+  freshly-placed ladder would just sit there, so pausing the symbol may beat
+  re-anchoring it. The banner still shows at full severity either way: a
+  drifted grid in a dead market is still idle capital, and the number is there
+  to inform your call, never to hide the warning.
 - **Each symbol card shows what you're holding.** A line in every symbol header
   now reads `holding 0.00131400 BTC ≈ $101.83`, so an `insufficient balance`
   refusal is explainable from the same card that shows the orders and the
