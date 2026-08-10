@@ -86,6 +86,17 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Execute a transfer proposal from the web (ADR-034).** The Harvester page now
+  offers an Execute button on actionable proposals: confirm the amount and destination
+  in a card, approve, and watch cli/harvest carry it out — the same flow the dashboard
+  actions use. The web never withdraws; it queues a command that only the Harvester (the
+  sole module with a withdraw-scoped key) can execute, and the daemon re-checks the
+  approved amount and destination against the stored proposal before moving anything.
+  The page says so plainly when the harvest daemon isn't running.
+- **Readable links.** Links inside page content and the footer used the browser's
+  default dark blue, which was effectively invisible on the dark theme — including
+  the /health links the app points you at when something needs checking. They now
+  use the theme's link colour.
 - **Slice 13 — modal-card action flow.** Dashboard actions no longer navigate
   through interim pages: pause/resume, banner Re-anchor, and Emergency Stop
   open a card over the dashboard — confirm in place, watch the execution in

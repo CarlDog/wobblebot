@@ -15,6 +15,7 @@ mint a token.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -169,6 +170,7 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
     cool_down_minutes: float | None = None,
     live_tick_seconds: float | None = None,
+    withdrawal_destinations: Mapping[str, str] | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
 
@@ -300,6 +302,13 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # currency in units of the WRITER's tick cadence, threaded through
     # like cool_down_minutes (lives on LiveConfig, not WebConfig).
     app.state.live_tick_seconds = live_tick_seconds
+    # ADR-034 — the asset→Kraken-destination-label map the Execute
+    # button echoes into its command (and shows the operator before
+    # they approve). Same "read the daemon's own config section" rule
+    # as cool_down_minutes: cli/harvest resolves the real label at
+    # execution time and refuses on mismatch, so a stale copy here can
+    # only ever REFUSE a transfer, never redirect one.
+    app.state.withdrawal_destinations = dict(withdrawal_destinations or {})
     # Stage 8.4.E health-icon work — KrakenHealthProbe singleton.
     # cli/web constructs one in production; tests pass None when they
     # don't care (the /health page renders Kraken as "not configured").

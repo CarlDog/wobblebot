@@ -67,6 +67,7 @@ from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.operator_intents import *  # noqa: F401,F403
 from wobblebot.ports.operator_intents import (
     OperatorCommand,
+    QueueableCommand,
 )
 from wobblebot.ports.operator_results import *  # noqa: F401,F403
 from wobblebot.ports.operator_results import (
@@ -107,10 +108,17 @@ class PendingCommand(BaseModel):
     ``IntentCommand``; consumed by ``cli/live`` after operator
     confirmation. The table itself lands in Stage 5.4 — this type is
     the schema-shaped contract every downstream stage depends on.
+
+    ``command`` is a ``QueueableCommand``, not an ``OperatorCommand``:
+    the row may also carry the web-only ``ExecuteProposalCommand``
+    (ADR-034), which no LLM parse can produce. Consumers filter by kind
+    — ``cli/live`` polls the engine kinds, ``cli/harvest`` polls
+    ``execute_proposal`` — so each daemon only ever sees rows it has
+    the authority to dispatch (ADR-003).
     """
 
     id: UUID
-    command: OperatorCommand
+    command: QueueableCommand
     status: PendingCommandStatus = "awaiting_confirmation"
     channel_id: str = Field(min_length=1)
     requesting_user_id: str = Field(min_length=1)
@@ -222,6 +230,8 @@ __all__ = (
     "OperatorIntent",
     "OperatorQuery",
     "OptionalSymbolInput",
+    "QueueableCommand",
+    "ExecuteProposalCommand",
     "PauseAllCommand",
     "PauseCommand",
     "RecentFillsQuery",

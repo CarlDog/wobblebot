@@ -2290,6 +2290,108 @@ extractors stay in adapters, pricing/gating in services, the record in domain.
   command — inherits the guard), ADR-005 (Position model stays deferred; the trades ledger is
   the basis source).
 
-<!-- ADR-032 is the last in this file; new ADRs append below. -->
+## ADR-034 — Execute a Transfer Proposal from the Web, via `pending_commands`
+
+**Status:** Accepted (P3, v1.1)
+**Date:** 2026-08-09
+
+**Context:** Until now `cli/harvest --execute <id>` was the *only* way to move money out —
+an operator at a terminal, typing a proposal id. The web UI showed proposals read-only. That
+is a defensible v1.0 posture, but it makes the one action the treasury layer exists for the
+only action with no operator surface, and it means acting on a proposal requires shell access
+to the container host. Meanwhile the dashboard had just grown a full confirm→watch→result
+modal flow (P3 slices 12–13) that every *engine* command already uses.
+
+The obvious move — add `ExecuteProposalCommand` to `OperatorCommand` and let the existing
+plumbing carry it — is the dangerous one. `OperatorCommand` is the payload type of
+`IntentCommand`, i.e. **the schema the Discord LLM assistant emits**. Anything in that union
+is, by construction, something a language model can produce from parsed chat text. ADR-002
+says the LLM is advisory only; putting a withdrawal in its output schema would make that
+guarantee depend on prompt discipline and runtime checks rather than on types.
+
+A second hazard: `pending_commands` would now be polled by two daemons. `cli/live`'s poll was
+unfiltered (`WHERE status='approved'`). It would have claimed withdrawal rows, handed them to
+`OperatorService` (which has no dispatcher for them), and marked the operator's approved
+transfer `failed` — using a key that has no withdraw scope at all (ADR-003).
+
+**Decision:**
+
+1. **A separate union.** `ExecuteProposalCommand` is defined *outside* `OperatorCommand` and
+   joins a new `QueueableCommand = engine kinds | ExecuteProposalCommand`. `PendingCommand.command`
+   widens to `QueueableCommand`; `IntentCommand` keeps `OperatorCommand`. The result is that
+   ADR-002 holds *structurally* — there is no branch of the assistant's output type that can
+   produce a withdrawal, and a crafted payload naming `execute_proposal` fails validation at
+   the boundary. Pinned by `tests/ports/test_execute_proposal_command.py`.
+
+2. **Kind-scoped polling.** `get_pending_commands` takes a `kinds` allowlist. `cli/live` polls
+   its engine kinds (derived from the `OperatorCommand` union by introspection, so a new engine
+   command is picked up automatically); `cli/harvest` polls `("execute_proposal",)`. The sets are
+   disjoint, so each daemon only ever claims rows it has the authority to dispatch. An empty
+   allowlist matches nothing — never "everything".
+
+3. **`cli/harvest` grows a second, faster poll loop.** The proposal cycle keeps the operator's
+   configured cadence (hours); approved commands poll every 15s, because a human is watching a
+   modal spinner and the approval TTL is 10 minutes. Two `run_poll_loop`s under one `gather`.
+
+4. **Echo validation — approve a value, not an id.** The command carries `amount_usd` and
+   `destination` alongside `proposal_id`. `cli/harvest` re-reads the proposal at execution time
+   and refuses if either disagrees. Models and humans both transpose ids; this makes the thing
+   the operator *saw and approved* the thing that must still be true when it runs. The web reads
+   both values server-side from the stored proposal + config — a client-supplied amount would
+   make the gate check the browser's claim against itself.
+
+5. **One implementation of the money path.** The seven defense layers moved to
+   `cli/harvest_execute.py` and now return a structured `ExecuteOutcome` instead of an exit
+   code. `--execute` maps it to an exit code; the poll maps it to a `CommandResult` the modal
+   renders. Neither path can drift from the other's gates. (The split also took
+   `cli/harvest.py` back under the 1000-line lint gate, and gives the money path its own
+   auditable file.)
+
+6. **Honest dormancy.** The Harvester page warns when `cli/harvest`'s heartbeat is stale: the
+   button still queues, but the operator is told the approval will sit until the daemon runs
+   (and may expire at its TTL). Failing open on a heartbeat-read error — a read failure is not
+   evidence the daemon is down.
+
+**Consequences:**
+
+- **Positive:** The money-out action gets the same confirm→watch→result treatment as every
+  other command, with the amount and destination shown before approval. ADR-003 is unchanged —
+  the web process has no withdraw-scoped key and calls no exchange API. ADR-002 gets stronger:
+  what was a policy is now a type. `cli/live`'s poll is correctly scoped, closing a latent bug
+  that would have appeared the moment a withdrawal row existed.
+- **Negative:** `pending_commands` is now genuinely multi-consumer; a future third daemon must
+  pick a disjoint kind set (the `kinds` parameter makes this explicit rather than implicit).
+  The idempotency guard (layer 2b) becomes load-bearing in a new way: if persisting a
+  dispatched row fails, the row stays `approved` and is re-polled — layer 2b is what stops the
+  re-poll from double-withdrawing. Covered by a test.
+- **Neutral:** dormant in practice today — the operator's harvest container is stopped by
+  design, so the path ships tested and unused until harvesting is deliberately turned on.
+
+**Rejected alternatives:**
+
+- *Add the kind to `OperatorCommand`* — rejected; see Context. It would make an LLM parse a
+  possible origin for a withdrawal.
+- *A `confirm: true` flag on the command instead of the pending_commands round-trip* — rejected;
+  a self-suppliable flag is advisory against an autonomous agent, and the confirm gate already
+  exists.
+- *Let `cli/live` dispatch it* — rejected by ADR-003: cli/live holds the trade key, which has
+  no withdraw scope. Only the Harvester may move money.
+- *Web-side execution with a withdraw-scoped key* — rejected; would put transfer authority in
+  the process with the largest attack surface, inverting ADR-003.
+
+**Scope note — Apply and Acknowledge deferred.** The queued "per-entity buttons" work also
+named an *Apply* button (advisor suggestion → `settings.yml`) and *Acknowledge* (notifications).
+Apply is deferred: no running daemon can cleanly own a config rewrite today (`cli/advise` must
+never execute per ADR-002; `cli/live` doesn't own its config file; a containerized rewrite needs
+hot-reload or restart orchestration). Acknowledge folds into the notifications read-state item —
+it is web-local UI state, not an engine mutation, so it does not belong in `pending_commands`.
+
+**References:**
+- ADR-002 (LLM advisory only — now type-enforced for this command), ADR-003 (Harvester is the
+  sole transfer authority), ADR-013 (confirm-before-execute firewall), ADR-026 (the
+  `transfer_results.proposal_id` UNIQUE idempotency guard this leans on).
+- `docs/release/v1.1/README.md` — the per-entity web buttons row.
+
+<!-- ADR-034 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

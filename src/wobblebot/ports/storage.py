@@ -11,6 +11,7 @@ Adapters implement this interface for specific storage backends (SQLite, Postgre
 # mapping concerns to extract into sibling modules).
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -712,6 +713,7 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         self,
         status: PendingCommandStatus | None = None,
         limit: int | None = None,
+        kinds: Sequence[str] | None = None,
     ) -> list[PendingCommand]:
         """Query ``PendingCommand`` rows.
 
@@ -719,10 +721,22 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         pick up confirmed commands; operator inspection tools may pass
         ``status=None`` for the full audit log.
 
+        ``kinds`` scopes a poll to the commands the caller has the
+        authority to dispatch, so two daemons can share the table
+        without contending: ``cli/live`` passes its engine kinds,
+        ``cli/harvest`` passes ``("execute_proposal",)`` (ADR-034). The
+        sets are disjoint, so a row is only ever claimed by the daemon
+        that can actually execute it — an unfiltered poll would let
+        ``cli/live`` mark a withdrawal row ``failed`` it never had the
+        key to perform.
+
         Args:
             status: Optional status filter (one of the six lifecycle
                 states from ``PendingCommandStatus``).
             limit: Maximum rows to return. ``None`` means unbounded.
+            kinds: Optional ``command_kind`` allowlist. ``None`` means
+                every kind. An EMPTY sequence matches nothing and
+                returns ``[]`` — it is never treated as "no filter".
 
         Returns:
             Matching rows ordered by ``created_at`` ASC (oldest first)

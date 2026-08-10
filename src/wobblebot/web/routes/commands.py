@@ -47,16 +47,22 @@ from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.operator import (
-    OperatorCommand,
+    ExecuteProposalCommand,
     PauseCommand,
     PendingCommand,
+    QueueableCommand,
     ReanchorCommand,
     ResumeCommand,
     StopCommand,
 )
 from wobblebot.ports.storage import StoragePort
 from wobblebot.web.auth import get_user_preferences, require_user
-from wobblebot.web.dependencies import get_operator_storage, get_templates
+from wobblebot.web.dependencies import (
+    get_harvest_storage,
+    get_operator_storage,
+    get_templates,
+    get_withdrawal_destinations,
+)
 from wobblebot.web.middleware import require_csrf_token
 
 router = APIRouter(prefix="/commands", tags=["commands"])
@@ -72,6 +78,9 @@ _WEB_CHANNEL_ID = "web"
 # Banner snooze horizon ("Snooze 24h" per the P3 blueprint). Fixed —
 # a duration picker is speculative surface until an operator asks.
 _SNOOZE_HOURS = 24
+# Proposal lookup slice for the Execute button. Matches cli/harvest's own
+# limit so the web can't offer a proposal the daemon then can't find.
+_PROPOSAL_LOOKUP_LIMIT = 1000
 
 
 # --------------------------------------------------------------------- #
@@ -95,7 +104,7 @@ def _parse_symbol(raw: str) -> Symbol:
 
 async def _create_pending(
     *,
-    command: OperatorCommand,
+    command: QueueableCommand,
     user: User,
     storage: StoragePort,
 ) -> PendingCommand:
@@ -344,6 +353,65 @@ async def reanchor_submit(
             request,
             "_modal_confirm.html",
             {"pending": pending, "operator_tz": prefs.timezone},
+        )
+    return _redirect_to_confirm(pending.id)
+
+
+@router.post("/execute-proposal")
+async def execute_proposal_submit(
+    request: Request,
+    _csrf: None = Depends(require_csrf_token),
+    proposal_id: str = Form(..., min_length=1, max_length=128),
+    user: User = Depends(require_user),
+    storage: StoragePort = Depends(get_operator_storage),
+    templates: Jinja2Templates = Depends(get_templates),
+    prefs: UserPreferences = Depends(get_user_preferences),
+    harvest_storage: StoragePort | None = Depends(get_harvest_storage),
+    destinations: dict[str, str] = Depends(get_withdrawal_destinations),
+) -> Response:
+    """Harvester "Execute" button — queue a withdrawal for approval (ADR-034).
+
+    The web never withdraws. This writes an ``ExecuteProposalCommand``
+    row in ``awaiting_confirmation``; only after the operator approves
+    does ``cli/harvest``'s kind-scoped poll pick it up and run the seven
+    defense layers. ADR-003 is intact — the web process has no
+    withdraw-scoped key and calls no exchange API.
+
+    The amount and destination are read **server-side** from the stored
+    proposal + config, never from the form: a client-supplied amount
+    would make the echo-validation gate meaningless (the browser could
+    then name both what it approves and what it checks against). The
+    form carries only the proposal id.
+    """
+    if harvest_storage is None:
+        return HTMLResponse("Harvest storage is not wired.", status_code=503)
+    try:
+        proposals = await harvest_storage.get_transfer_proposals(limit=_PROPOSAL_LOOKUP_LIMIT)
+    except StorageError as exc:
+        return HTMLResponse(f"Failed to read proposals: {exc}", status_code=503)
+    proposal = next((p for p in proposals if p.proposal_id == proposal_id), None)
+    if proposal is None:
+        return HTMLResponse("Proposal not found.", status_code=404)
+    destination = destinations.get(proposal.asset)
+    if not destination:
+        return HTMLResponse(
+            f"No withdrawal destination configured for {proposal.asset}.",
+            status_code=400,
+        )
+    pending = await _create_pending(
+        command=ExecuteProposalCommand(
+            proposal_id=proposal.proposal_id,
+            amount_usd=proposal.amount,
+            destination=destination,
+        ),
+        user=user,
+        storage=storage,
+    )
+    if _is_htmx(request):
+        return templates.TemplateResponse(
+            request,
+            "_modal_confirm.html",
+            {"pending": pending, "operator_tz": prefs.timezone, "proposal": proposal},
         )
     return _redirect_to_confirm(pending.id)
 

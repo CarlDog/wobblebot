@@ -55,7 +55,7 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.shadow` — same engine, `ShadowExchangeAdapter` (live prices, synthetic ledger). Backtest sandbox.
 - `cli.advise` — MoE advisor daemon; writes suggestions, **never executes** (ADR-002).
 - `cli.apply` — operator-gated auto-tune. Dry-run default; `--commit` rewrites `settings.yml`. Default-off gate; news-role never auto-applies.
-- `cli.harvest` — treasury daemon; `--execute <id>` is the **only** money-out path (seven defense layers, Harvester key).
+- `cli.harvest` — treasury daemon and the **only** module that can move money (Harvester key, ADR-003). Two ways in, one implementation of the seven defense layers (`cli/harvest_execute.py`): `--execute <id>` from a terminal, or an operator-approved `execute_proposal` row queued by the web UI and picked up by its 15s command poll (ADR-034).
 - `cli.operator` — Discord interaction daemon (ADR-013). Intent → `pending_commands`; `WHERE status='approved'` is the ADR-002 firewall.
 - `cli.web` — FastAPI dashboard (ADR-016/017). Read-mostly; mutations firewalled via `pending_commands`. Needs `WOBBLEBOT_WEB_SESSION_SECRET`.
 - `cli.recalibrate` — scale USD-denominated knobs to a new target balance (operator-initiated; dry-run default).
@@ -142,7 +142,7 @@ This is the single most important invariant. No one module controls both trading
 | **Orchestrator** | Coordinate the three modules; aggregate logs | Bypass any port |
 
 **Non-negotiables:**
-1. Only Harvester initiates fund transfers. Per ADR-004, it uses Kraken's withdrawal API via `ExchangePort` — there is no separate banking adapter or `BankingPort`.
+1. Only Harvester initiates fund transfers. Per ADR-004, it uses Kraken's withdrawal API via `ExchangePort` — there is no separate banking adapter or `BankingPort`. The web UI may *queue* a withdrawal for approval but never performs one (ADR-034); `ExecuteProposalCommand` sits outside the LLM-emittable `OperatorCommand` union, so no assistant parse can originate a transfer.
 2. The Kraken **trading** API key must NOT have withdrawal permissions. Withdrawal permissions live on a separate Harvester key.
 3. LLM output is JSON-schema-validated and bounded by configured min/max ranges before any auto-application.
 4. Max exposure caps and daily spend limits are enforced inside Bot Core, not by adapters.

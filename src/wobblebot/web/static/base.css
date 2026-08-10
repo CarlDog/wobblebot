@@ -248,6 +248,24 @@ nav.primary {
   flex: 1;
 }
 
+/* Content links. Pre-existing gap found 2026-08-09: the theme defined
+   `--color-link` (and a dark-mode value) but no rule ever applied it to
+   a plain anchor, so links inside cards, notes, and the footer fell back
+   to the browser's default #0000EE — effectively invisible on the dark
+   surface. Affected the /health links in the harvester dormancy note and
+   the slice-12 slow-pickup warning: the one word the operator needs to
+   click was the least readable thing on the page. Scoped to content and
+   footer; the nav rules below are more specific and unaffected. */
+.content a,
+.app-footer a {
+  color: var(--color-link);
+}
+
+.content a:hover,
+.app-footer a:hover {
+  color: var(--color-link-hover);
+}
+
 nav.primary a {
   color: var(--nav-text);
   text-decoration: none;
@@ -1848,6 +1866,68 @@ table.data th {
 
 .modal-note {
   font-size: 12px;
+}
+
+/* Money-out confirm (ADR-034). The one modal that gets real emphasis:
+   an amount large enough to read at a glance and a warning line with a
+   left rule. Deliberately NOT a red wash — "a recommendation is not an
+   alarm" still holds, but this IS the alarm-adjacent case, so the
+   accent carries it rather than the background. */
+.modal-amount {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.modal-proposal-id,
+.modal-rationale {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.modal-proposal-id {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  word-break: break-all;
+}
+
+.modal-warn {
+  font-size: 12px;
+  color: var(--text-primary);
+  border-left: 3px solid var(--color-fail);
+  padding: 6px 0 6px 10px;
+  margin: 12px 0 0;
+}
+
+/* Harvester Execute button + its dormancy note.
+
+   Outlined, not filled. `--color-fail` is the FAILED-tag / Emergency-Stop
+   token; a solid fill here would read as "something is wrong" when this
+   is the treasury feature's intended happy path. The outline says
+   "consequential — read before clicking" and reserves the solid
+   red-and-green emphasis for the confirm modal, where the actual money
+   decision is made. Fills on hover so the affordance is unmistakable. */
+.btn-execute {
+  background: transparent;
+  color: var(--color-fail);
+  border: 1px solid var(--color-fail);
+  white-space: nowrap;
+}
+
+.btn-execute:hover {
+  background: var(--color-fail);
+  color: #fff;
+}
+
+.row-action {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dormant-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
 }
 
 /* Row-watch spinner (P3 wait-for-completion): a small pulsing dot on

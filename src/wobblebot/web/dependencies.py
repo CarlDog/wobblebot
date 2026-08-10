@@ -78,6 +78,16 @@ def get_live_tick_seconds(request: Request) -> float | None:
     return request.app.state.live_tick_seconds  # type: ignore[no-any-return]
 
 
+def get_withdrawal_destinations(request: Request) -> dict[str, str]:
+    """Pull the asset→destination-label map (ADR-034) off ``app.state``.
+
+    Empty dict when no ``harvester:`` section is wired — the Harvester
+    page then renders proposals without an Execute button, since there
+    is no destination to approve.
+    """
+    return request.app.state.withdrawal_destinations  # type: ignore[no-any-return]
+
+
 def get_templates(request: Request) -> Jinja2Templates:
     """Pull the shared ``Jinja2Templates`` instance off ``app.state``.
     Routes use this to render HTML responses."""

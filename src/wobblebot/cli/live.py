@@ -47,7 +47,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, get_args
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
@@ -83,7 +83,7 @@ from wobblebot.ports.notification_events import (
     SessionStartEvent,
 )
 from wobblebot.ports.notifier import NotifierPort
-from wobblebot.ports.operator import CommandResult
+from wobblebot.ports.operator import CommandResult, ExecuteProposalCommand, OperatorCommand
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.grid_engine import GridEngine
@@ -101,6 +101,14 @@ _DMS_UNCONFIRMED_SUMMARY_EVERY_TICKS = 240
 # path itself can't re-trigger a Kraken rate-limit storm during the
 # most safety-critical cleanup (DMS-armed shutdown).
 _INTER_CANCEL_PACING_SECONDS = 0.2
+
+# ADR-034: the command kinds THIS daemon may dispatch. Derived from the
+# OperatorCommand union rather than hand-listed, so a new engine command
+# is picked up automatically — while ExecuteProposalCommand, which lives
+# outside that union, stays invisible to this poll. cli/harvest owns it.
+_ENGINE_COMMAND_KINDS: tuple[str, ...] = tuple(
+    variant.model_fields["kind"].default for variant in get_args(get_args(OperatorCommand)[0])
+)
 
 
 # ---------------------------------------------------------------------------
@@ -485,14 +493,40 @@ async def _process_pending_commands(
     finding): the operator's ✅ used to get silence — which hid a
     "placed 0/6" re-anchor outcome — because the result landed only in
     this table. Best-effort like every notification.
+
+    The poll is **kind-scoped** (ADR-034): ``pending_commands`` is now
+    shared with ``cli/harvest``, which owns ``execute_proposal`` rows.
+    Without the filter this loop would claim a withdrawal row, hand it
+    to ``OperatorService`` (which has no dispatcher for it), and mark
+    the operator's approved transfer ``failed`` — using a key that
+    cannot withdraw in the first place (ADR-003).
     """
-    approved = await operator_storage.get_pending_commands(status="approved")
+    approved = await operator_storage.get_pending_commands(
+        status="approved",
+        kinds=_ENGINE_COMMAND_KINDS,
+    )
     if not approved:
         _LOGGER.debug("no approved pending_commands to process")
         return 0
+    processed = 0
     for pending in approved:
+        command = pending.command
+        if isinstance(command, ExecuteProposalCommand):
+            # Unreachable through the kind-scoped SELECT above. Kept as a
+            # hard refusal rather than a type-ignore: if the filter is
+            # ever widened by accident, this loop must NOT touch a
+            # withdrawal row — leaving it 'approved' lets cli/harvest,
+            # the only module with transfer authority, still pick it up
+            # (ADR-003). Skipping is the safe failure here; dispatching
+            # or marking it failed are both worse.
+            _LOGGER.error(
+                "refusing to dispatch execute_proposal %s — cli/harvest owns this kind",
+                pending.id,
+                extra={"pending_id": str(pending.id), "command_kind": command.kind},
+            )
+            continue
         try:
-            cmd_result = await operator_service.dispatch_command(pending.command)
+            cmd_result = await operator_service.dispatch_command(command)
             updated = pending.model_copy(
                 update={
                     "status": "dispatched",
@@ -505,7 +539,7 @@ async def _process_pending_commands(
                 "operator command dispatch failed",
                 extra={
                     "pending_id": str(pending.id),
-                    "command_kind": pending.command.kind,
+                    "command_kind": command.kind,
                     "error": str(exc),
                 },
             )
@@ -515,7 +549,7 @@ async def _process_pending_commands(
                     "dispatched_at": Timestamp(dt=datetime.now(UTC)),
                     "result": CommandResult(
                         success=False,
-                        command_kind=pending.command.kind,
+                        command_kind=command.kind,
                         message=f"OperatorError: {exc}",
                         executed_at=Timestamp(dt=datetime.now(UTC)),
                     ),
@@ -534,26 +568,24 @@ async def _process_pending_commands(
                 "failed to persist dispatched pending_command",
                 extra={"pending_id": str(pending.id), "error": str(exc)},
             )
+        processed += 1
         # The ✅'s receipt: echo the result to Discord via the forwarder.
         result = updated.result
         if result is not None:
-            symbol = getattr(pending.command, "symbol", None)
+            symbol = getattr(command, "symbol", None)
             await notify(
                 notifier,
                 level="info" if result.success else "error",
-                title=(
-                    f"Command {'executed' if result.success else 'failed'}: "
-                    f"{pending.command.kind}"
-                ),
+                title=(f"Command {'executed' if result.success else 'failed'}: {command.kind}"),
                 message=result.message,
                 event=CommandResultEvent(
-                    command_kind=pending.command.kind,
+                    command_kind=command.kind,
                     symbol=str(symbol) if symbol is not None else None,
                     success=result.success,
                     message=result.message,
                 ),
             )
-    return len(approved)
+    return processed
 
 
 async def _emit_engine_states(
