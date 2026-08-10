@@ -86,6 +86,16 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   severity chip, a scannable stat row (price, drift, anchor, order age,
   projected fee), and a proper action hierarchy — filled severity-tinted
   Re-anchor, quiet ghost Snooze. Operator-requested after a live design review.
+- **Each symbol card shows what you're holding.** A line in every symbol header
+  now reads `holding 0.00131400 BTC ≈ $101.83`, so an `insufficient balance`
+  refusal is explainable from the same card that shows the orders and the
+  price. The per-symbol figures are derived from the same rule as the
+  scoreboard's "in positions" total, so they always add up to it.
+- **Recent Fills gained an age column and a summary line.** Each fill shows how
+  long ago it happened, and a subhead above the table gives the buy/sell split,
+  the signed USD flow, and total fees for exactly the fills shown. The
+  "last fill X ago" freshness signal moved down here from the card header,
+  where it couldn't say which of six symbols had filled.
 - **Recent Cycles says when a profit is drift, not grid spread.** A cycle that
   sat on inventory for days realizes mostly price movement, but it lands in
   "today's PnL" because that's the day it closed — one such row once showed

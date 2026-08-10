@@ -1960,6 +1960,25 @@ table.data th {
   border-style: dashed;
 }
 
+/* Per-symbol held inventory (P3 slice 21). Sits in the symbol header
+   next to the price — the two-sided framing: what you hold, beside
+   what it's worth right now. Quiet weight; the price stays the loud
+   element in that row. */
+.symbol-held {
+  margin-left: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Recent Fills section summary (P3 slice 21) — freshness + the column
+   totals, directly above the table they describe. */
+.fills-summary {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 /* Recent-Cycles annotations (P3 slice 20): "held 3d 7h" / "inferred".
    Quiet by design — these are context for a number that's already
    correct, not warnings. They sit next to the timestamp because the

@@ -908,6 +908,36 @@ the detail; the full backlog index is
    pair carries only "held 2d 0h", and the three normal cycles stay unadorned.
    Real-money cost $0.00. Test count 2997 → 3006.
 
+   **Slice 21 — per-symbol held inventory + Recent Fills rework** ✅
+   **2026-08-10**: two dashboard leaves, batched because both are the same
+   "the card doesn't tell you enough to act" complaint.
+   **(a) Held inventory.** Each symbol header now carries
+   `holding 0.00131400 BTC ≈ $101.83` — the per-coin half of the two-sided
+   framing whose aggregate strip shipped 2026-06-03. Without it a flat-start
+   `insufficient balance` refusal is unexplainable from the card: you can see
+   the orders and the price but not what you already hold. Extracted
+   `held_by_symbol` as the ONE rule for "what counts as held and what it's
+   worth," and re-derived the scoreboard's `in positions` total from it — so a
+   card row can never disagree with the total above it (pinned by a
+   sums-to-the-total test). An unpriced holding is listed with its amount and
+   no valuation rather than hidden: the position is real either way.
+   **(b) Recent Fills.** `last fill X ago` moved out of card-meta (which was
+   collecting every freshness signal at once, and with six symbols can't say
+   WHICH one filled) into a subhead above the table, joined by a buy/sell
+   split, signed net USD flow, and total fees for exactly the rows below. Added
+   a per-row **age** column reusing the existing `humanize_duration`;
+   `trade_ages` is precomputed in the loader so Jinja only formats, never does
+   datetime arithmetic (the `order_ages` rule).
+   **Bug caught by rendering it, not by the tests:** the summary first summed
+   the per-row "net USD" column verbatim and called the result *net*. That
+   column carries direction in an arrow, not a sign — so a buy-heavy window
+   reported a large POSITIVE "net" that reads exactly like profit. Now signed
+   (SELL adds `cost − fee`, BUY subtracts `cost + fee`), tooltip says it's cash
+   flow and not profit, and a regression test asserts a buy-only window nets
+   negative. The first version's own test was wrong in the same direction,
+   which is why looking at the page is a gate and not a courtesy.
+   Real-money cost $0.00. Test count 3006 → 3015.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
