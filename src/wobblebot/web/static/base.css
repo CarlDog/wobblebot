@@ -1788,6 +1788,24 @@ table.data th {
   background: #64748b;
 }
 
+/* Row-watch spinner (P3 wait-for-completion): a small pulsing dot on
+   the "waiting for cli/live" line. Subtle by design — waiting is the
+   normal state for up to one tick. */
+.watch-spinner {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  margin-right: 6px;
+  animation: watch-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes watch-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 /* Paused-symbol dimming (P3 state-aware buttons): the section's BODY
    fades so a held symbol reads as inactive at a glance, while the
    header — badge, price, and the resume button — stays full-strength

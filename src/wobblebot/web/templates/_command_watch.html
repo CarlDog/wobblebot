@@ -1,0 +1,54 @@
+{# Row-watch partial (P3 wait-for-completion): polls its own pending
+   command to a TERMINAL state and then shows the actual outcome —
+   the ✅ no longer stops at "approved". Watching only, never
+   executing: cli/live's status='approved' poll remains the sole
+   path from row to engine (ADR-002/ADR-013). Swapped via htmx
+   every 2s while non-terminal; the full-page flow works without
+   JS (this block simply stays on "waiting" until a manual
+   refresh). #}
+{% if pending.status in ("awaiting_confirmation", "approved") %}
+  <div id="command-watch"
+       hx-get="/commands/{{ pending.id }}/watch"
+       hx-trigger="every 2s"
+       hx-swap="outerHTML">
+    <p class="muted">
+      <span class="watch-spinner" aria-hidden="true"></span>
+      Approved — waiting for cli/live to pick this up on its next tick…
+      {% if elapsed_seconds is defined and elapsed_seconds is not none and elapsed_seconds > 30 %}
+        <br><span class="tag warn">slow</span>
+        cli/live hasn't picked this up after
+        {{ elapsed_seconds | humanize_duration }} — is the live daemon
+        running? Check <a href="/health">/health</a>. The command stays
+        queued and executes when the daemon returns (or expires at its
+        TTL if it was never approved).
+      {% endif %}
+    </p>
+  </div>
+{% else %}
+  <div id="command-watch">
+    {% if pending.status == "dispatched" and pending.result %}
+      <p>
+        <span class="tag {{ "ok" if pending.result.success else "fail" }}">
+          {{ "executed" if pending.result.success else "FAILED" }}
+        </span>
+        {{ pending.result.message }}
+      </p>
+    {% elif pending.status == "failed" %}
+      <p>
+        <span class="tag fail">FAILED</span>
+        {% if pending.result %}{{ pending.result.message }}{% else %}Dispatch failed — see cli/live logs.{% endif %}
+      </p>
+    {% elif pending.status == "expired" %}
+      <p class="muted">
+        The confirmation window expired before execution. Nothing
+        reached the engine.
+      </p>
+    {% elif pending.status == "rejected" %}
+      <p class="muted">Rejected. Nothing reaches the engine.</p>
+    {% endif %}
+    {# The future modal context adds an immediate status-card refresh
+       here; the standalone result page has no #status-wrap to update,
+       and rendering a dangling hx-target would just log console
+       errors (professional-webui rule: no console noise). #}
+  </div>
+{% endif %}
