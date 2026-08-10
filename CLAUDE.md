@@ -26,8 +26,12 @@ rule); this section is a pointer, not a changelog.
   detector needs ~30d of baseline (matures ~2026-09-07), disk-space awareness
   bundles onto it *and* waits on the data-retention policy, and the advisor's
   Apply / Approve-Reject is blocked by ADR-034's scope note (no daemon can own a
-  `settings.yml` rewrite; unblocking it needs an ADR, not code). P4
-  (advisor-feedback, data-gated) remains unstarted. Phase 9 (Kraken Securities equities)
+  `settings.yml` rewrite; unblocking it needs an ADR, not code). **P4
+  (advisor-feedback) remains unstarted, but its keystone is no longer data-gated**
+  — **ADR-035** (2026-08-10) settled the methodology: scoring is *counterfactual*
+  via the ADR-028 replay (not applied-rec, a clock measured at 0 rows that had no
+  mechanism to start), reported as *rank and hit-rate, never dollars*. The corpus
+  (2586 suggestions, 2026-05-27 →) already exists. Phase 9 (Kraken Securities equities)
   follows, not immediately after this merge.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04

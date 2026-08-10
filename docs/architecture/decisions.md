@@ -2392,6 +2392,172 @@ it is web-local UI state, not an engine mutation, so it does not belong in `pend
   `transfer_results.proposal_id` UNIQUE idempotency guard this leans on).
 - `docs/release/v1.1/README.md` — the per-entity web buttons row.
 
-<!-- ADR-034 is the last in this file; new ADRs append below. -->
+---
+
+## ADR-035 — Advisor Outcome Scoring is Counterfactual, and Ranked Not Priced
+
+**Status:** Accepted (P4 keystone gate, v1.1). Decision only — nothing built yet.
+**Date:** 2026-08-10
+
+**Context:** P4's keystone is the advisor outcome ledger — `recommendation_outcomes` +
+`advisor_evaluator` + a per-model/per-role scoreboard. Its gate was written as *"needs 30–90d
+of **applied-rec** data and an operator 'success' definition."* That phrasing quietly assumed a
+methodology: score only the recommendations the operator actually applied, by observing what
+happened next.
+
+Measured 2026-08-10 against the live NAS deployment:
+
+```
+rows=0 first=None last=None      -- SELECT COUNT(*), MIN/MAX(applied_at) FROM applied_suggestions
+```
+
+Not "few" — **never any**. `cli/apply` is the table's sole writer (`apply.py:364`) and has no
+service in the compose stack; it exists only as a manual one-shot under the profile-gated
+`tools` container. So the applied-rec clock was not running slowly, it was **not running at
+all**, and nothing in the deployment would ever start it.
+
+Two further facts made the applied-only reading untenable rather than merely slow:
+
+- **It contradicts the ratified soak posture.** Auto-apply was deliberately kept off for the
+  soak *specifically to preserve the rec→outcome learning signal* (operator decision
+  2026-06-04). A methodology that can only learn from applied recs would discard exactly the
+  data that decision set out to protect.
+- **The `/advisor` page has no Apply button and never had one** — it is a GET route with no
+  POST handlers. ADR-034's scope note deferred Apply because no daemon can cleanly own a
+  `settings.yml` rewrite. The operator's "Approve" clicks during the soak were the *command*
+  confirm flow (`pause` / `reanchor` / …) on `pending_commands`, a different system that never
+  touches `applied_suggestions`. Both surfaces say "Approve"; only one relates to the advisor.
+
+Meanwhile the machinery for the other reading already shipped: **ADR-028's auditor** replays a
+config through the real `GridEngine` over stored bars. ADR-028 itself anticipated this, listing
+rec-scoring as the deferred P4 half of the same tool.
+
+**Decision:**
+
+1. **Score counterfactually, not by application.** For each recommendation, replay through the
+   auditor **two arms over the same window from the same seed balance**: the *proposed* config
+   and the config that was actually in force. The recommendation's outcome is the **sign of the
+   difference** — did the proposed config do better? Applying a recommendation is no longer a
+   precondition for scoring it, which un-gates the keystone: months of `advisor_suggestions`
+   from the soak are already scoreable.
+
+2. **Same seed, same window, both arms.** The auditor takes a seed balance as a parameter, so an
+   absolute replay result is a function of that seed. Running both arms from an identical seed
+   over identical bars makes the seed cancel out of the comparison. Never compare a replay
+   against live history — compare replay to replay.
+
+3. **The unit is rank and hit-rate. Never dollars.** ADR-028 pins the auditor as *directional,
+   not exact*; intra-bar fill ordering is unknowable. A scoreboard reporting "this rec would
+   have earned $0.43" would carry precision the replay cannot support, and the first reader
+   would over-trust it. The scoreboard reports per-role/per-model **hit-rate** ("quant called it
+   correctly 61% of the time; risk 48%") and **rank** — nothing denominated in currency.
+
+4. **Two scoreable shapes, one ledger.** A *config recommendation* (spacing, order size) scores
+   by the two-arm replay above. A *directional call* — the Chaos Gremlin's shape — scores
+   against realized price direction over its stated horizon, with no replay at all. Both land in
+   `recommendation_outcomes` with a discriminator; the evaluator dispatches on it.
+
+5. **Only score what the auditor can replay.** Recommendations whose keys are non-numeric or
+   outside the replayable config surface (e.g. ADR-029's `counter_target_mode`, deliberately
+   excluded from auto-apply's numeric whitelist) are recorded as **unscoreable**, not scored as
+   neutral. A silent zero would drag every aggregate toward the mean and read as "the advisor is
+   average" when the truth is "we didn't measure this."
+
+6. **Aggregate before believing.** A single counterfactual score describes one window of one
+   market and means very little. The scoreboard surfaces a role's hit-rate only past a stated
+   minimum sample, and shows the sample size beside every figure.
+
+7. **Never print a naive `heuristic` vs `quant` hit-rate.** Measured corpus, 2026-08-10:
+
+   ```
+   rows=2586  first=2026-05-27T18:22:26Z  last=2026-08-10T20:43:38Z
+   [('heuristic', 2390), ('quant', 196)]
+   ```
+
+   These are not two competitors sampled from one population — they are the two branches of
+   ADR-022's **cascade router** (`--profile cpu-only`). The deterministic guards resolve the
+   *clear* ticks; `quant` (gpt-5-mini) sees only what the guards *declined*. The LLM is
+   therefore graded on a strictly harder subset, and a side-by-side hit-rate would read as
+   "the heuristic beats the LLM" when it mostly means "easy cases are easier." This is the
+   *evaluate-the-slice-that-reaches-the-model* trap, and at a 2390-vs-196 split it would be a
+   confident wrong answer.
+
+   A fair head-to-head is available and cheap: the heuristic is **deterministic and free**, so
+   re-run it offline over the 196 escalated inputs to produce its would-have-said answer, then
+   compare **paired, on the escalated subset only**. Until that pairing exists, the two roles
+   are reported as separate figures against their own counterfactuals, never as a ranking
+   against each other.
+
+**Consequences:**
+
+- **Positive:** The keystone stops being data-gated and becomes buildable now, which re-orders
+  P4 — outcome tracking + per-cycle tracing (one migration) can start whenever it's scheduled
+  rather than waiting on a clock that was never ticking. The soak's advisory-only posture is
+  retroactively vindicated: it produced exactly the corpus this methodology consumes — **2586
+  suggestions across 75 days**, verified 2026-08-10.
+- **Positive:** Scores are unbiased by operator selection. Applied-only scoring would only ever
+  have measured recommendations the operator already liked.
+- **Negative — the first scoreboard has two rows, not a panel.** The P4 row says
+  "per-model/per-role scoreboard," which implies comparing quant / risk / news / arbitrator.
+  Production has only ever run the cascade, so the corpus contains exactly two roles and
+  **one** LLM (gpt-5-mini). Until a panel corpus exists the honest framing is: the scoreboard
+  measures **the cascade's escalated branch against its counterfactual**, which is ADR-022's
+  own core premise and a worthwhile first question — not an inter-expert ranking.
+- **Neutral — a panel corpus does NOT require running MoE in production.** `input_summary`
+  persists the complete `PerformanceSummary` (`model_dump(mode="json")`) on every suggestion,
+  so any panel can be replayed **offline over the stored historical inputs** — the full 75-day
+  window rather than however long a production MoE stint runs, with no change to the live
+  advisor and no daily-cost-cap pressure. **This is not an argument against running MoE** —
+  MoE was never retired (ADR-022 retired the vol→spacing *curve*; the adapter, the
+  aggregators, and both profiles remain live and tested). It has simply never been *enabled*
+  here, because the NAS deploys `--profile cpu-only`. The two shipped MoE profiles don't fit
+  this host as written — `moe-advisor` is an all-Ollama lineup with `phi4:14b-q8_0` ×2 and a
+  `deepseek-r1:8b` whose 2048-token budget cannot finish inside its 180s timeout on a CPU-only
+  box; `cloud-only-moe` would put ≈144 cloud calls/day against a `$1.00/day` gate at
+  `enforce: true` and hard-stop mid-day. Enabling MoE in production is therefore a separate,
+  legitimate work item (a CPU-viable `moe-cpu` profile, benchmarked — note
+  `OLLAMA_NUM_PARALLEL=1` serializes the experts' `gather`), independent of how this ADR
+  scores whatever corpus exists.
+- **Negative — replay fidelity bounds every score.** ADR-028 is `_Sim`-equivalent only at **1m**
+  bar granularity, and today only BTC has 1m history imported (4.77M bars); every other symbol
+  would score at hourly, with correspondingly more uncertainty. Either scope the first
+  scoreboard to BTC or state the granularity per row.
+- **Negative — the daily-cap neuter propagates.** The auditor neuters `max_daily_spend_usd` for
+  replay (ADR-028 correction 1). Both arms are neutered identically so the comparison stays
+  fair, but neither arm models the real cap, so a recommendation that would have collided with
+  the daily cap in production scores as if it hadn't. Every other cap and the ADR-032 sell guard
+  *do* run as configured.
+- **Neutral:** "Was the advice right?" and "did acting on it make money?" are now explicitly
+  different questions, and only the first is answered. If the second is ever wanted it needs
+  applied recs, which needs an Apply executor, which needs its own ADR (ADR-034 scope note).
+
+**Rejected alternatives:**
+
+- *Keep the applied-only reading and wait.* Rejected: it waits on a clock with no mechanism to
+  start it, and would need an Apply executor built first — inverting the dependency so the
+  cheapest observation waits on the most contested feature.
+- *Build the Apply button first to start the applied clock.* Rejected for now: blocked by
+  ADR-034's scope note, and it would then need 30–90d before any scoring could begin. It also
+  reintroduces the bias counterfactual scoring avoids.
+- *Report dollar deltas anyway, with a disclaimer.* Rejected: a disclaimer does not survive
+  contact with a number. The unit is the honest constraint, not a footnote on it.
+- *Score against live realized PnL instead of a second replay arm.* Rejected: live history has
+  exactly one arm. Without a counterfactual there is nothing to compare a recommendation
+  against, and attributing a day's PnL to a rec that was never applied is meaningless.
+- *A bespoke scoring simulator.* Rejected for ADR-028's original reason — it would drift from
+  the real engine's caps and counter behavior, which is the entire value of replaying.
+
+**References:**
+- ADR-028 (the replay auditor this leans on, and its directional-not-exact caveat), ADR-002
+  (advisory-only — scoring changes nothing about execution authority), ADR-034 (scope note
+  deferring Apply), ADR-029 (`counter_target_mode`, an example unscoreable key), ADR-032
+  (sell guard — runs as configured in both arms).
+- ADR-022 (the cascade whose router creates the non-comparable populations in decision 7).
+- `docs/release/v1.1/README.md` — the P4 table; this ADR supersedes the keystone row's
+  "needs 30–90d of applied-rec data" gate.
+- Operator decision 2026-06-04 (auto-apply off during soak to preserve the learning signal),
+  confirmed still in force by `advisor.auto_apply.enabled: false` in the live config.
+
+<!-- ADR-035 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
