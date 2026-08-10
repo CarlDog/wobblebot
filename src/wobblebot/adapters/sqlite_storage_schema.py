@@ -263,6 +263,10 @@ CREATE INDEX IF NOT EXISTS idx_pending_commands_ttl
 -- context_json holds the Notification's structured context dict;
 -- forwarded / forwarded_at track Discord forwarding status independent
 -- of the originating write.
+-- read_at (P3 slice 19) is the OPERATOR's acknowledgement, orthogonal to
+-- forwarded: forwarded means "Discord got it", read_at means "a human
+-- dismissed it in the web UI". One column, not one per user — ADR-017
+-- ships a single operator account.
 CREATE TABLE IF NOT EXISTS notifications (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     level           TEXT NOT NULL CHECK (level IN ('info', 'warning', 'error', 'critical')),
@@ -272,13 +276,19 @@ CREATE TABLE IF NOT EXISTS notifications (
     context_json    TEXT NOT NULL DEFAULT '{}',
     forwarded       INTEGER NOT NULL DEFAULT 0 CHECK (forwarded IN (0, 1)),
     forwarded_at    TEXT,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    read_at         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_forwarded
     ON notifications(forwarded, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_timestamp
     ON notifications(timestamp);
+-- The unread partial index is created by _migrate_notifications_read_at,
+-- NOT here: SCHEMA runs via executescript BEFORE the migrations, so an
+-- index over read_at would raise "no such column" on any operator DB
+-- created before this slice. The migration adds the column first, then
+-- the index, and covers fresh DBs too (the ALTER no-ops there).
 
 -- Stage 5.6 — conversation history per Discord (channel, user) pair.
 -- cli/operator persists every operator + assistant turn for multi-turn

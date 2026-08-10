@@ -48,6 +48,10 @@ class PersistedNotification(BaseModel):
         created_at: When the row was inserted into storage. May differ
             from ``notification.timestamp`` if the writer queued the
             event slightly before persisting.
+        read_at: When the operator acknowledged the row in the web UI;
+            ``None`` means unread. Orthogonal to ``forwarded`` —
+            "Discord received it" and "a human dismissed it" are
+            different facts, and the bell badge tracks the second.
     """
 
     id: int | None = None
@@ -55,6 +59,7 @@ class PersistedNotification(BaseModel):
     forwarded: bool = False
     forwarded_at: Timestamp | None = None
     created_at: Timestamp
+    read_at: Timestamp | None = None
 
     class Config:
         frozen = True

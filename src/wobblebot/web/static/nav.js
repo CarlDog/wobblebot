@@ -1,9 +1,12 @@
 // Nav-icon alert dots. Two independent pollers driving the same
 // visual treatment (.has-alert on the nav-icon -> red dot via CSS).
 //
-// Bell: compares server's latest-notification timestamp to
-// localStorage's "last seen" timestamp; shows the dot when newer.
-// The /notifications page sets last-seen on visit to clear the dot.
+// Bell: shows the dot when the server reports unread notifications.
+// Server-side since P3 slice 19 — the old localStorage "last seen"
+// comparison was per-browser, so clearing the dot on the desktop left
+// the phone dotted, and merely opening /notifications counted as
+// reading everything. The dot now clears when the operator actually
+// acknowledges a row (or Mark all read).
 //
 // Health: hits /health/overall.json on the same cadence; shows the
 // dot when overall status is not green (yellow or red). The page
@@ -17,11 +20,10 @@ window.updateBellBadge = async function () {
   try {
     const r = await fetch('/notifications/latest-timestamp');
     if (!r.ok) return;
-    const { latest_at } = await r.json();
+    const { unread } = await r.json();
     const bell = document.getElementById('nav-bell');
     if (!bell) return;
-    const lastSeen = localStorage.getItem('wobblebot_last_seen_notifications') || '1970-01-01';
-    if (latest_at && latest_at > lastSeen) {
+    if (unread > 0) {
       bell.classList.add('has-alert');
     } else {
       bell.classList.remove('has-alert');

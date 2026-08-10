@@ -18,9 +18,9 @@ Files here ship to the operator via FastAPI's `StaticFiles` mount at
   Pin to 2.x. HTMX is stable but minor versions occasionally
   tweak default attribute behavior; verify SHA-256 from
   <https://htmx.org/> before swapping in.
-- **`theme-init.js` / `nav.js` / `notifications-seen.js`** — v1.1:
+- **`theme-init.js` / `nav.js`** — v1.1:
   extracted from inline `<script>` blocks in `base.html` /
-  `layout.html` / `notifications.html` so the dashboard's
+  `layout.html` so the dashboard's
   Content-Security-Policy (`web/middleware.py`) can set
   `script-src 'self'` with no `'unsafe-inline'`. No Jinja
   interpolation lives in any of these — they're plain JS, editable

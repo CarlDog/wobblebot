@@ -298,6 +298,7 @@ def row_to_notification(row: aiosqlite.Row) -> PersistedNotification:
             else None
         ),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
+        read_at=(Timestamp(dt=datetime.fromisoformat(row["read_at"])) if row["read_at"] else None),
     )
 
 

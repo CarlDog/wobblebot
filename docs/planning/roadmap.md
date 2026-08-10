@@ -848,6 +848,38 @@ the detail; the full backlog index is
    COUNTERS, not a value that is a sentence, an id, or a transition.
    Test count 2961 → 2973.
 
+   **Slice 19 — notifications server-side read-state + Acknowledge + deep
+   links** ✅ **2026-08-10**: the bell badge lived in browser localStorage, so
+   clearing the dot on the desktop left the phone dotted, and merely *opening*
+   `/notifications` counted as reading everything. Now a `read_at` column
+   (additive migration; pre-slice rows land on NULL = unread, the honest
+   reading since nobody could acknowledge them), `count_unread_notifications` /
+   `mark_notifications_read` / `mark_all_notifications_read` on `StoragePort`,
+   a per-row **Acknowledge** button and a **Mark all read** action, and a badge
+   driven by a real server-side count. Acknowledgement is deliberately
+   **explicit** rather than implicit-on-visit — the whole value of a badge is
+   that you have to dismiss it. `notifications-seen.js` is deleted.
+   **Firewall call:** these writes are **UI-local**, straight to operator.db,
+   following the `reanchor_snoozes` precedent from slice 5 — reading a
+   notification moves no money and touches no engine state, so a
+   `pending_commands` round-trip would put a row in the ADR-002 queue that no
+   daemon should ever act on. Pinned by a zero-firewall-rows test; auth + CSRF
+   still gate both endpoints. **Deep links** come free off slice 7's typed
+   event union: trading events → `/`, treasury events → `/harvester`, untyped
+   and legacy rows → no link at all (a link that lands somewhere unhelpful is
+   worse than none). Two traps recorded in the migration's own docstring: the
+   unread **partial index must live in the migration, not SCHEMA** — SCHEMA is
+   `executescript`'d BEFORE any migration, so an index over `read_at` aborts
+   `connect()` on every pre-slice operator DB (pinned against a genuinely
+   pre-slice table, not a fresh one) — and `mark_notifications_read([])` is a
+   no-op that must never be read as "all", so an empty computed selection can't
+   silently clear the table. One column, not one per user: ADR-017 ships a
+   single operator account. Verified live in a browser against a seeded
+   instance — unread accent bar, per-row acknowledge, mark-all, and the bell
+   clearing from server state (DOM + computed styles; the pane wouldn't
+   composite for a raster capture). Real-money cost $0.00.
+   Test count 2973 → 2997.
+
    **Same-session addendum — activity stat** ✅ **2026-08-09**
    (operator-requested, the v0 of the new re-anchor-viability item): a sixth
    banner stat, **2h range vs spacing** ("0.4×" = the market isn't moving
