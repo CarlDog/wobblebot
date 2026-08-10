@@ -20,6 +20,7 @@ no money mutations here. Mutations live in
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -155,6 +156,35 @@ class Sparkline:
 
 
 @dataclass(frozen=True)
+class HeldInventory:
+    """How much of one asset the operator holds, and what it's worth.
+
+    ``value_usd`` is ``None`` when no observed price is available —
+    the position is real either way, so the card shows the amount and
+    omits the valuation rather than hiding the holding.
+    """
+
+    amount: Decimal
+    value_usd: Decimal | None
+
+
+@dataclass(frozen=True)
+class FillsSummary:
+    """Aggregate stats for the fills currently on screen.
+
+    Scoped to exactly the rows in ``recent_trades`` — the subhead has
+    to describe the table under it, not a different window, or the
+    numbers won't add up when the operator checks them by hand.
+    """
+
+    count: int
+    buys: int
+    sells: int
+    total_fees: Decimal
+    net_usd: Decimal
+
+
+@dataclass(frozen=True)
 class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     """Everything the status template needs in one immutable bundle."""
 
@@ -238,6 +268,20 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # paused/offside ONLY from entries present here; absence renders
     # nothing new.
     engine_states: dict[Symbol, EngineStateRow] = field(default_factory=dict)
+    # Per-symbol held inventory (P3 slice 21) — the second half of the
+    # buying-power item, whose aggregate strip shipped 2026-06-03. Same
+    # observe.db balance snapshot the strip uses, split per symbol via
+    # the shared ``held_by_symbol`` rule, so a card row can never
+    # disagree with the "in positions" total above it. Empty when
+    # observe.db is unwired.
+    held_inventory: dict[Symbol, HeldInventory] = field(default_factory=dict)
+    # Per-trade age in seconds, keyed by ``Trade.id`` — the fills
+    # table's "age" column. Precomputed here so Jinja only formats and
+    # never does datetime arithmetic (same rule as ``order_ages``).
+    trade_ages: dict[str, int] = field(default_factory=dict)
+    # Aggregate stats for exactly the fills in ``recent_trades``.
+    # ``None`` when there are no fills to describe.
+    fills_summary: FillsSummary | None = None
     error: str | None = None
 
 
@@ -468,6 +512,64 @@ async def _load_balances(observe_storage: StoragePort | None) -> list[Balance]:
         return []
 
 
+def held_by_symbol(
+    balances: list[Balance],
+    prices: dict[Symbol, Decimal],
+) -> dict[Symbol, HeldInventory]:
+    """Per-symbol held inventory, valued at the observed price.
+
+    The single definition of "what counts as held and what it's
+    worth" — the scoreboard's aggregate ``in positions`` figure is
+    derived from THIS map (see ``_compute_balance_metrics``), so a
+    per-symbol row can never disagree with the total above it.
+
+    USD is excluded (it's the quote side, reported as free/total, not
+    inventory) and so are zero balances. An asset with no observed
+    price still gets an entry with ``value_usd=None``: the operator
+    holds it, and saying "0.0013 BTC, price unknown" beats pretending
+    the position isn't there.
+    """
+    held: dict[Symbol, HeldInventory] = {}
+    for bal in balances:
+        if bal.asset == "USD" or bal.total <= 0:
+            continue
+        symbol = Symbol(base=bal.asset, quote="USD")
+        price = prices.get(symbol)
+        held[symbol] = HeldInventory(
+            amount=bal.total,
+            value_usd=bal.total * price if price is not None else None,
+        )
+    return held
+
+
+def _summarize_fills(trades: Sequence[Trade]) -> FillsSummary | None:
+    """Aggregate the fills the table is about to render.
+
+    ``net_usd`` is SIGNED: a SELL adds ``cost − fee`` (USD in), a BUY
+    subtracts ``cost + fee`` (USD out). The per-row cell renders the
+    same two quantities but carries direction in an arrow rather than
+    a sign, so summing that column verbatim would total gross churn
+    and label it "net" — a number that reads like profit and isn't.
+    Positive here means USD flowed into the account across these
+    fills. Returns ``None`` for an empty window — nothing to describe.
+    """
+    if not trades:
+        return None
+    buys = sum(1 for t in trades if t.side.value == "buy")
+    net = Decimal(0)
+    fees = Decimal(0)
+    for trade in trades:
+        fees += trade.fee
+        net += -(trade.cost + trade.fee) if trade.side.value == "buy" else trade.cost - trade.fee
+    return FillsSummary(
+        count=len(trades),
+        buys=buys,
+        sells=len(trades) - buys,
+        total_fees=fees,
+        net_usd=net,
+    )
+
+
 def _compute_balance_metrics(
     balances: list[Balance],
     prices: dict[Symbol, Decimal],
@@ -485,17 +587,15 @@ def _compute_balance_metrics(
         return (None, None, None)
     usd_total = Decimal(0)
     free_usd = Decimal(0)
-    held_value = Decimal(0)
     for bal in balances:
         if bal.asset == "USD":
             usd_total = bal.total
             free_usd = bal.available
-            continue
-        if bal.total <= 0:
-            continue
-        price = prices.get(Symbol(base=bal.asset, quote="USD"))
-        if price is not None:
-            held_value += bal.total * price
+            break
+    held_value = sum(
+        (h.value_usd for h in held_by_symbol(balances, prices).values() if h.value_usd is not None),
+        Decimal(0),
+    )
     return (free_usd, usd_total + held_value, held_value)
 
 
@@ -559,9 +659,12 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         observe_storage, symbols_with_orders | held_symbols | trade_symbols
     )
     free_usd, account_value, held_value = _compute_balance_metrics(balances, prices)
+    held_inventory = held_by_symbol(balances, prices)
     balance_as_of = balances[0].updated_at.dt if balances else None
     now = datetime.now(UTC)
     order_ages = {str(o.id): int((now - o.created_at.dt).total_seconds()) for o in open_orders}
+    trade_ages = {t.id: int((now - t.executed_at.dt).total_seconds()) for t in recent}
+    fills_summary = _summarize_fills(recent)
     # A card renders for every symbol you have orders for, hold a balance
     # in, or traded recently — so a parked/held coin (e.g. offside BTC)
     # keeps its card + price even when its last fill ages out of the
@@ -619,6 +722,9 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         cool_down_active=cool_down.active,
         cool_down_resumes_at=cool_down.resumes_at,
         engine_states=engine_states,
+        held_inventory=held_inventory,
+        trade_ages=trade_ages,
+        fills_summary=fills_summary,
     )
 
 

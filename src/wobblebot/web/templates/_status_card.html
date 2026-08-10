@@ -106,10 +106,12 @@
            with the bell's red-dot alert pattern. The /health page is
            still the granular drill-down. #}
       </div>
+      {# "last fill X ago" moved down into the Recent Fills section
+         (P3 slice 21): card-meta was accumulating every freshness
+         signal at once, and with six symbols a single card-level fill
+         age can't say WHICH symbol filled. It belongs above the table
+         that shows the fills. #}
       <div class="card-meta">
-        {% if snapshot.last_fill_age_seconds is not none %}
-          last fill {{ snapshot.last_fill_age_seconds | humanize_duration }} ago ·
-        {% endif %}
         refreshed {{ last_refreshed_at | tz_format(operator_tz, "%H:%M:%S %Z") }}
         <button type="button"
                 class="btn-link"
@@ -221,6 +223,21 @@
                   <circle class="spark-marker" cx="{{ spark.marker_x }}" cy="{{ spark.marker_y }}" r="2.2"></circle>
                 </svg>
               {% endif %}
+              {# Held inventory (P3 slice 21) — the per-symbol half of
+                 the two-sided framing whose aggregate strip shipped
+                 2026-06-03. Without it a flat-start "insufficient
+                 balance" refusal is unexplainable from this card: you
+                 can see the orders and the price but not what you're
+                 already holding. Valued through the SAME
+                 `held_by_symbol` rule the scoreboard total uses, so
+                 these can never sum to something else. #}
+              {% set held = snapshot.held_inventory.get(symbol) %}
+              {% if held %}
+                <span class="symbol-held"
+                      title="Held {{ symbol.base }} inventory from the latest observe.db balance snapshot{% if held.value_usd is none %} (no observed price, so it isn't valued here){% endif %}.">
+                  holding {{ "%.8f"|format(held.amount) }} {{ symbol.base }}{% if held.value_usd is not none %} ≈ ${{ "%.2f"|format(held.value_usd) }}{% endif %}
+                </span>
+              {% endif %}
             </div>
             <div class="symbol-actions">
               {# State-aware action (P3 blueprint): exactly ONE of
@@ -305,10 +322,25 @@
       {% endfor %}
 
       <h2 class="card-subtitle">Recent Fills (Last {{ snapshot.recent_trades|length }})</h2>
+      {% if snapshot.fills_summary %}
+        {# Section-level freshness + summary (P3 slice 21). The stats
+           describe EXACTLY the rows below — net USD is the sum of the
+           column, so the operator can check it by adding them up. #}
+        <p class="fills-summary">
+          {% if snapshot.last_fill_age_seconds is not none %}
+            last fill <strong>{{ snapshot.last_fill_age_seconds | humanize_duration }}</strong> ago ·
+          {% endif %}
+          {{ snapshot.fills_summary.buys }} buy / {{ snapshot.fills_summary.sells }} sell ·
+          <span title="Signed USD flow across the fills below: a SELL adds (cost − fee), a BUY subtracts (cost + fee). Positive means USD came into the account. This is cash flow, not profit — a BUY that will sell later reads as negative here.">net
+          {% if snapshot.fills_summary.net_usd < 0 %}−${{ "%.4f"|format(-snapshot.fills_summary.net_usd) }}{% else %}+${{ "%.4f"|format(snapshot.fills_summary.net_usd) }}{% endif %}</span> ·
+          ${{ "%.4f"|format(snapshot.fills_summary.total_fees) }} fees
+        </p>
+      {% endif %}
       {% if snapshot.recent_trades %}
         <table class="data compact">
           <colgroup>
             <col>
+            <col style="width: 90px">
             <col style="width: 120px">
             <col style="width: 80px">
             <col style="width: 140px">
@@ -318,6 +350,7 @@
           <thead>
             <tr>
               <th>when</th>
+              <th class="num">age</th>
               <th class="center">symbol</th>
               <th class="center">side</th>
               <th class="num">price</th>
@@ -337,6 +370,7 @@
               {% endif %}
               <tr>
                 <td>{{ t.executed_at.dt | tz_format(operator_tz) }}</td>
+                <td class="num muted">{{ snapshot.trade_ages.get(t.id) | humanize_duration }}</td>
                 <td class="center">{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
                 <td class="center"><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
                 <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>

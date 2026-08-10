@@ -18,7 +18,12 @@ from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
-from wobblebot.web.routes.status import _build_sparkline, _compute_balance_metrics
+from wobblebot.web.routes.status import (
+    _build_sparkline,
+    _compute_balance_metrics,
+    _load_snapshot,
+    held_by_symbol,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -1173,3 +1178,144 @@ class TestCycleAnnotations:
         # body would satisfy the negative assertion for free.
         assert "Recent Cycles (Last 1)" in body
         assert "cycle-flag" not in body
+
+
+class TestHeldInventory:
+    """Per-symbol held inventory (P3 slice 21)."""
+
+    def test_splits_balances_by_symbol_and_values_them(self) -> None:
+        balances = [
+            Balance(
+                asset="USD", total=Decimal("100"), available=Decimal("80"), locked=Decimal("20")
+            ),
+            Balance(
+                asset="BTC", total=Decimal("0.001"), available=Decimal("0.001"), locked=Decimal("0")
+            ),
+            Balance(
+                asset="ETH", total=Decimal("0.5"), available=Decimal("0.5"), locked=Decimal("0")
+            ),
+        ]
+        prices = {
+            Symbol(base="BTC", quote="USD"): Decimal("50000"),
+            Symbol(base="ETH", quote="USD"): Decimal("2000"),
+        }
+        held = held_by_symbol(balances, prices)
+        assert set(held) == {Symbol(base="BTC", quote="USD"), Symbol(base="ETH", quote="USD")}
+        assert held[Symbol(base="BTC", quote="USD")].value_usd == Decimal("50")
+        assert held[Symbol(base="ETH", quote="USD")].value_usd == Decimal("1000")
+
+    def test_unpriced_holding_is_listed_without_a_valuation(self) -> None:
+        """The position is real even when the price isn't known — showing
+        the amount beats pretending the holding isn't there."""
+        balances = [
+            Balance(
+                asset="DOGE", total=Decimal("500"), available=Decimal("500"), locked=Decimal("0")
+            ),
+        ]
+        held = held_by_symbol(balances, {})
+        entry = held[Symbol(base="DOGE", quote="USD")]
+        assert entry.amount == Decimal("500")
+        assert entry.value_usd is None
+
+    def test_usd_and_zero_balances_are_excluded(self) -> None:
+        balances = [
+            Balance(
+                asset="USD", total=Decimal("100"), available=Decimal("100"), locked=Decimal("0")
+            ),
+            Balance(asset="SOL", total=Decimal("0"), available=Decimal("0"), locked=Decimal("0")),
+        ]
+        assert held_by_symbol(balances, {}) == {}
+
+    def test_per_symbol_rows_sum_to_the_scoreboard_total(self) -> None:
+        """The whole point of sharing one rule: a card row can never
+        disagree with the "in positions" figure above it."""
+        balances = [
+            Balance(
+                asset="USD", total=Decimal("100"), available=Decimal("80"), locked=Decimal("20")
+            ),
+            Balance(
+                asset="BTC", total=Decimal("0.001"), available=Decimal("0.001"), locked=Decimal("0")
+            ),
+            Balance(
+                asset="ETH", total=Decimal("0.5"), available=Decimal("0.5"), locked=Decimal("0")
+            ),
+            # Unpriced — excluded from BOTH sides, so they still agree.
+            Balance(
+                asset="DOGE", total=Decimal("500"), available=Decimal("500"), locked=Decimal("0")
+            ),
+        ]
+        prices = {
+            Symbol(base="BTC", quote="USD"): Decimal("50000"),
+            Symbol(base="ETH", quote="USD"): Decimal("2000"),
+        }
+        _, _, held_total = _compute_balance_metrics(balances, prices)
+        per_symbol = sum(
+            (h.value_usd for h in held_by_symbol(balances, prices).values() if h.value_usd),
+            Decimal(0),
+        )
+        assert per_symbol == held_total
+
+
+class TestFillsSection:
+    """Recent Fills freshness + summary + per-row age (P3 slice 21)."""
+
+    @pytest.mark.asyncio
+    async def test_summary_net_is_signed_cash_flow(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        buy, sell = _make_cycle_trades()
+        for trade in (buy, sell):
+            await live_storage.save_trade(trade)
+        snap = await _load_snapshot(live_storage, None)
+        assert snap.fills_summary is not None
+        # SIGNED cash flow: the SELL adds (cost - fee), the BUY
+        # subtracts (cost + fee). The per-row cell shows the same
+        # magnitudes with an arrow for direction, so summing that
+        # column verbatim would total gross churn and call it "net".
+        expected = (sell.cost - sell.fee) - (buy.cost + buy.fee)
+        assert snap.fills_summary.net_usd == expected
+        assert snap.fills_summary.total_fees == buy.fee + sell.fee
+        assert (snap.fills_summary.buys, snap.fills_summary.sells) == (1, 1)
+
+    @pytest.mark.asyncio
+    async def test_no_fills_means_no_summary(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        snap = await _load_snapshot(live_storage, None)
+        assert snap.fills_summary is None
+
+    @pytest.mark.asyncio
+    async def test_age_column_and_summary_render(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        for trade in _make_cycle_trades():
+            await live_storage.save_trade(trade)
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "fills-summary" in body
+        assert "1 buy / 1 sell" in body
+        assert '<th class="num">age</th>' in body
+        # And the freshness line left card-meta for the fills section.
+        assert body.index("fills-summary") > body.index("card-meta")
+
+    @pytest.mark.asyncio
+    async def test_every_rendered_fill_has_an_age(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        for trade in _make_cycle_trades():
+            await live_storage.save_trade(trade)
+        snap = await _load_snapshot(live_storage, None)
+        assert {t.id for t in snap.recent_trades} == set(snap.trade_ages)
+
+    @pytest.mark.asyncio
+    async def test_buy_only_window_nets_negative(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Regression for the bug this slice's own preview caught: an
+        unsigned sum reported a buy-only window as a large POSITIVE
+        "net", which reads like profit. Buying spends USD."""
+        await live_storage.save_trade(_make_trade(side="buy"))
+        snap = await _load_snapshot(live_storage, None)
+        assert snap.fills_summary is not None
+        assert snap.fills_summary.net_usd < 0
