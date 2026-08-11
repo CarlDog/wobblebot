@@ -310,3 +310,67 @@ class TestKendallTauB:
 
     def test_too_few_points_is_undefined(self) -> None:
         assert mod.kendall_tau_b([1], [2]) is None
+
+
+# ---------------------------------------------------------------------------
+# GEN3 (2026-08-11) — built because `hard` ceilinged at 119/120.
+#
+# Pins the three design answers so the set cannot drift back into the
+# failure modes of its two predecessors: v1 rewarded a do-nothing model
+# (constant-HOLD 86%), and `hard` compressed the calibration axis to
+# three evidence levels with 8 of 15 at the top.
+# ---------------------------------------------------------------------------
+
+
+class TestGen3Design:
+    def test_every_fixture_is_guard_free(self) -> None:
+        offenders = mod.verify_no_guard(mod.GEN3_FIXTURES)
+        assert offenders == [], f"gen3 fixtures firing a guard: {offenders}"
+
+    def test_no_constant_strategy_beats_the_ceiling(self) -> None:
+        for name, fn in _CONSTANTS.items():
+            counts = _constant_score(mod.GEN3_FIXTURES, fn)
+            ok_frac = counts["OK"] / len(mod.GEN3_FIXTURES)
+            assert ok_frac <= _CONSTANT_CEILING, (
+                f"constant-{name.upper()} scores {ok_frac:.0%} on gen3 "
+                f"(ceiling {_CONSTANT_CEILING:.0%})"
+            )
+
+    def test_directions_are_exactly_balanced(self) -> None:
+        sole: dict[str, int] = {"widen": 0, "hold": 0, "tighten": 0}
+        for fx in mod.GEN3_FIXTURES:
+            assert len(fx.acceptable) == 1, f"{fx.name} accepts {sorted(fx.acceptable)}"
+            sole[next(iter(fx.acceptable))] += 1
+        assert len(set(sole.values())) == 1, f"unbalanced: {sole}"
+
+    def test_evidence_spans_every_level(self) -> None:
+        """The reason gen3 exists for the calibration axis: `hard` spans
+        only 3 levels with 8 of 15 at the top, which compresses tau_b."""
+        levels = {mod.evidence_quality(fx) for fx in mod.GEN3_FIXTURES}
+        assert levels == {1, 2, 3, 4, 5}, f"gen3 evidence levels: {sorted(levels)}"
+
+    def test_calibration_axis_has_headroom(self) -> None:
+        """A perfect tracker must score near +1 and any constant must be
+        undefined — otherwise the axis cannot rank models on this set."""
+        ladder = ["low", "low", "medium", "medium", "high"]
+        perfect = [
+            {
+                "evidence": mod.evidence_quality(fx),
+                "confidence": ladder[mod.evidence_quality(fx) - 1],
+            }
+            for fx in mod.GEN3_FIXTURES
+        ]
+        assert (mod.calibration_tau(perfect) or 0) > 0.9
+        constant = [
+            {"evidence": mod.evidence_quality(fx), "confidence": "high"} for fx in mod.GEN3_FIXTURES
+        ]
+        assert mod.calibration_tau(constant) is None
+
+    def test_every_label_is_argued(self) -> None:
+        for fx in mod.GEN3_FIXTURES:
+            assert len(fx.note) > 80, f"{fx.name}: note too thin to audit"
+            assert fx.forbidden not in fx.acceptable
+
+    def test_registered_and_v1_still_default(self) -> None:
+        assert mod.FIXTURE_SETS["gen3"] is mod.GEN3_FIXTURES
+        assert len(mod.GEN3_FIXTURES) == 21

@@ -681,9 +681,485 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# GEN3 set (2026-08-11) — built because `hard` CEILINGED.
+#
+# grok-4.5 scored 119/120 with a single SUBOPTIMAL on `hard`, so that set
+# can no longer measure anything better than it and the next challenger
+# cannot be ranked against it. `hard` fixed saturation at the BOTTOM
+# (v1's constant-HOLD scored 86%, beating the champion); grok hit it at
+# the TOP.
+#
+# Three design answers, chosen deliberately:
+#
+# 1. HARDER VIA CONFLICTING *STATED* RULES, not manufactured ambiguity.
+#    quant.md states a precedence — the widen/tighten asymmetry
+#    ("tightening into a directional move or a drawdown is the dominant
+#    way a grid bleeds"), don't-fix-working, spacing-is-the-wrong-lever
+#    on a runaway, and the fee floor. A fixture is hard when two of those
+#    point different ways and the prompt's OWN precedence resolves it.
+#    Target: best current model ~75-85%. Pushing for 60% would mean
+#    inventing ambiguity, which is exactly how PR #86's two bad fixtures
+#    happened — both encoded rules quant.md never states.
+#
+# 2. FULL 1-5 EVIDENCE SPREAD for the calibration axis. `hard` spans only
+#    3 levels with 8 of 15 at level 5, which compresses tau_b. Thin
+#    fixtures here are built so ONE dominant signal survives the
+#    thinness, keeping the direction label defensible while the evidence
+#    is genuinely weak — quant.md says thin evidence lowers CONFIDENCE,
+#    it does not withhold the call.
+#
+# 3. 21 FIXTURES, 7 PER DIRECTION. Constants stay pinned at 33% and tau_b
+#    gets real resolution.
+#
+# Labels argued from quant.md BEFORE any model ran. Not yet validated
+# against a live model — the operator's probe budget was nearly spent
+# when this landed, so the difficulty target is a HYPOTHESIS until a run
+# confirms it.
+# ---------------------------------------------------------------------------
+GEN3_FIXTURES: tuple[NoGuardFixture, ...] = (
+    NoGuardFixture(
+        "gen3_fee_bleed_high_evidence",
+        _summary(
+            current_spacing=0.75,
+            volatility=0.0068,
+            max_drawdown=-0.018,
+            win_rate=0.36,
+            cycle_count=12,
+            flatness=0.55,
+            total_pnl=-2.1,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Twelve round-trips at 36% win and clearly negative pnl: the "
+            "grid is trading hard and losing to fees. Vol implies swings "
+            "~2.5x the 0.75% spacing. Strong evidence, unambiguous call."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_whipsaw_underspaced_thin",
+        _summary(
+            current_spacing=0.7,
+            volatility=0.0135,
+            max_drawdown=-0.022,
+            win_rate=0.4,
+            cycle_count=0,
+            flatness=0.38,
+            total_pnl=0.0,
+            snapshot_count=60,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "THIN (60 snapshots, no completed cycles) but one signal "
+            "dominates: vol 0.0135 against a 0.70% grid is a 4x mismatch. "
+            "quant.md says thin evidence lowers CONFIDENCE, not that you "
+            "withhold the call."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_trend_onset_still_cycling",
+        _summary(
+            current_spacing=1.05,
+            volatility=0.0072,
+            max_drawdown=-0.044,
+            win_rate=0.41,
+            cycle_count=8,
+            flatness=0.26,
+            total_pnl=-1.3,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Flatness 0.26 = directional, drawdown -4.4% (inside the -5% "
+            "guard), still cycling. Widen is the documented defensive "
+            "lever; tightening into a developing move is the cardinal "
+            "failure."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_high_winrate_but_bleeding",
+        _summary(
+            current_spacing=0.8,
+            volatility=0.009,
+            max_drawdown=-0.02,
+            win_rate=0.8,
+            cycle_count=3,
+            flatness=0.48,
+            total_pnl=-0.95,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "TRAP: an 80% win rate reads as a working grid, but three "
+            "cycles have netted NEGATIVE pnl in active vol against a 0.80% "
+            "spacing -- the wins are small and the losses are not. Win rate "
+            "without pnl is not health."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_vol_regime_shift_up",
+        _summary(
+            current_spacing=0.95,
+            volatility=0.0105,
+            max_drawdown=-0.03,
+            win_rate=0.44,
+            cycle_count=9,
+            flatness=0.42,
+            total_pnl=-0.6,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Vol has moved to whipsaw territory while the grid stayed put; "
+            "nine cycles at 44% win and net negative confirm the spacing no "
+            "longer captures the swing."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_thin_but_far_below_swing",
+        _summary(
+            current_spacing=0.6,
+            volatility=0.0088,
+            max_drawdown=-0.015,
+            win_rate=0.33,
+            cycle_count=3,
+            flatness=0.45,
+            total_pnl=-0.55,
+            snapshot_count=60,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Thin window, but the mismatch is extreme: vol implies ~1.9% "
+            "and the grid is 0.60%. Three cycles already negative. The "
+            "dominant signal survives the thin evidence."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_active_market_tight_midevidence",
+        _summary(
+            current_spacing=0.85,
+            volatility=0.0082,
+            max_drawdown=-0.026,
+            win_rate=0.38,
+            cycle_count=3,
+            flatness=0.5,
+            total_pnl=-0.85,
+            snapshot_count=150,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Middling evidence (150 snapshots, 3 cycles) with a consistent "
+            "story: active vol, too-tight grid, losing. No rule points the "
+            "other way."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_starved_tight_range",
+        _summary(
+            current_spacing=2.6,
+            volatility=0.0016,
+            max_drawdown=-0.004,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.95,
+            total_pnl=0.0,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Flatness 0.95 at vol 0.0016 = a tight genuine range; a 2.6% "
+            "grid is several times the swing and has completed ZERO cycles. "
+            "Holding means continuing to do nothing -- exactly what "
+            "quant.md says TIGHTEN is for."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_starved_thin_window",
+        _summary(
+            current_spacing=3.0,
+            volatility=0.0021,
+            max_drawdown=-0.006,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.93,
+            total_pnl=0.0,
+            snapshot_count=60,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "THIN (60 snapshots) but starvation is unmistakable: no fills "
+            "at all in a calm, tightly range-bound market against a 3.0% "
+            "grid. Widening guarantees permanent inactivity."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_overwide_one_lucky_cycle",
+        _summary(
+            current_spacing=2.8,
+            volatility=0.0026,
+            max_drawdown=-0.005,
+            win_rate=1.0,
+            cycle_count=1,
+            flatness=0.89,
+            total_pnl=0.21,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "TRAP: a 100% win rate on ONE cycle reads as a working grid. It "
+            "is evidence the grid barely trades. Ranging market, spacing "
+            "far above the swing. cycles=1 keeps dont_fix_working dormant."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_range_bound_overwide_mid",
+        _summary(
+            current_spacing=2.2,
+            volatility=0.0031,
+            max_drawdown=-0.007,
+            win_rate=0.5,
+            cycle_count=3,
+            flatness=0.9,
+            total_pnl=0.06,
+            snapshot_count=150,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Strong ranging; vol implies ~1.05% swings against a 2.2% grid. "
+            "Three cycles on a 150-snapshot window is sparse, not healthy."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_quiet_above_floor_wide",
+        _summary(
+            current_spacing=1.9,
+            volatility=0.0013,
+            max_drawdown=-0.003,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.96,
+            total_pnl=0.0,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Quiet and range-bound but NOT guard territory: vol 0.0013 "
+            "exceeds fee_floor_calm's 0.001 and spacing 1.9% far exceeds "
+            "its 0.68%, so it escalates. Long room to tighten before the "
+            "fee floor bites."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_ranging_sparse_fills_thin",
+        _summary(
+            current_spacing=2.4,
+            volatility=0.0024,
+            max_drawdown=-0.006,
+            win_rate=0.6,
+            cycle_count=3,
+            flatness=0.91,
+            total_pnl=0.12,
+            snapshot_count=60,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Thin window, but ranging is strong (0.91) and the grid is "
+            "~2.4x the vol-implied swing with only sparse fills. The one "
+            "dominant signal is the spacing/swing mismatch."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_overwide_despite_fills",
+        _summary(
+            current_spacing=2.5,
+            volatility=0.0029,
+            max_drawdown=-0.009,
+            win_rate=0.5,
+            cycle_count=8,
+            flatness=0.92,
+            total_pnl=-0.08,
+            snapshot_count=150,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "TRAP the other way: eight cycles reads as 'it is filling, "
+            "leave it'. But pnl is NEGATIVE and the market is tightly "
+            "ranging at ~1.0% implied swing against a 2.5% grid -- it is "
+            "filling on the wrong moves. dont_fix_working needs win>=0.85 "
+            "AND a shallow drawdown, so the guard stays dormant and the "
+            "judgement is the LLM's."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_matched_and_earning",
+        _summary(
+            current_spacing=1.25,
+            volatility=0.0041,
+            max_drawdown=-0.009,
+            win_rate=0.71,
+            cycle_count=8,
+            flatness=0.76,
+            total_pnl=1.45,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Spacing sits on the vol-implied swing; eight cycles at 71% win "
+            "and clearly positive. Nothing is broken. win<0.85 keeps "
+            "dont_fix_working dormant, so the model must reach this itself."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_ran_away_wrong_lever",
+        _summary(
+            current_spacing=1.3,
+            volatility=0.0062,
+            max_drawdown=-0.038,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.22,
+            total_pnl=0.0,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden=None,
+        note=(
+            "Price ran away directionally (flatness 0.22) and round-trips "
+            "have STOPPED, drawdown -3.8% inside the -5% guard. quant.md "
+            "states it verbatim: spacing is the wrong lever, that needs "
+            "re-anchoring, so HOLD spacing. Hard because it LOOKS like it "
+            "demands action."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_marginal_gap_not_worth_churn",
+        _summary(
+            current_spacing=1.35,
+            volatility=0.0043,
+            max_drawdown=-0.011,
+            win_rate=0.66,
+            cycle_count=7,
+            flatness=0.73,
+            total_pnl=0.9,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden=None,
+        note=(
+            "Spacing ~8% off the vol-implied ideal -- inside noise, and "
+            "profitable. Acting on a gap this small is the over-trading "
+            "failure; neither direction is dangerous, both are unjustified."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_recovering_and_working",
+        _summary(
+            current_spacing=1.6,
+            volatility=0.0058,
+            max_drawdown=-0.031,
+            win_rate=0.68,
+            cycle_count=7,
+            flatness=0.66,
+            total_pnl=0.5,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Drawdown -3.1% but recovering: still cycling, still net "
+            "positive, spacing near the swing. Widening sacrifices a "
+            "working grid to a move that already passed; tightening into a "
+            "drawdown is the cardinal failure. TWO stated rules conflict "
+            "and the asymmetry resolves it."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_working_thin_window",
+        _summary(
+            current_spacing=1.4,
+            volatility=0.0047,
+            max_drawdown=-0.01,
+            win_rate=1.0,
+            cycle_count=3,
+            flatness=0.7,
+            total_pnl=0.65,
+            snapshot_count=60,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "THIN (60 snapshots) but what evidence exists is "
+            "one-directional: every completed cycle won and pnl is "
+            "positive. quant.md's don't-fix-working clause applies -- "
+            "disrupting what prints fills has a real cost, and thin "
+            "evidence is a reason for LOW CONFIDENCE, not for action."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_vol_dropped_but_grid_works",
+        _summary(
+            current_spacing=1.2,
+            volatility=0.0022,
+            max_drawdown=-0.01,
+            win_rate=0.8,
+            cycle_count=9,
+            flatness=0.82,
+            total_pnl=2.1,
+            snapshot_count=720,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden=None,
+        note=(
+            "TRAP: vol has fallen to 0.0022, which naively implies "
+            "tightening toward ~0.90%. But the grid is demonstrably working "
+            "-- nine cycles, 80% win, clearly positive. win<0.85 keeps the "
+            "guard dormant. don't-fix-working outranks a theoretical curve "
+            "match."
+        ),
+    ),
+    NoGuardFixture(
+        "gen3_mild_uptrend_grid_keeps_up",
+        _summary(
+            current_spacing=1.9,
+            volatility=0.0079,
+            max_drawdown=-0.012,
+            win_rate=0.63,
+            cycle_count=5,
+            flatness=0.58,
+            total_pnl=0.72,
+            snapshot_count=150,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Vol implies ~1.9% swings and the grid IS 1.9% -- matched, "
+            "mildly trending, profitable. The trap is reading 'trend' as an "
+            "automatic widen when the spacing already fits."
+        ),
+    ),
+)
+
+
 FIXTURE_SETS: dict[str, tuple[NoGuardFixture, ...]] = {
     "v1": FIXTURES,
     "hard": HARD_FIXTURES,
+    "gen3": GEN3_FIXTURES,
 }
 
 
