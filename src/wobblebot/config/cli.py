@@ -505,6 +505,15 @@ class AdviseConfig(BaseModel):
     # default) leaves those fields null, which the prompt explicitly
     # distinguishes from zero. Point it at the DB the engine writes:
     # data/wobblebot-live.db, or the shadow DB for a paper run.
+    #
+    # ⚠️ NOT a risk-seat-only switch (verified 2026-08-11): every advisor
+    # adapter serializes the WHOLE ``PerformanceSummary`` into its prompt
+    # (``summary.model_dump_json()``), so enabling this adds seven
+    # exposure fields to EVERY role's input — including the quant seat,
+    # the only one running in the default profile, whose prompt never
+    # mentions exposure or caps. Gate on the risk seat actually running,
+    # or on ``quant.md`` describing the fields. Full note in
+    # config/settings.example.yml.
     orders_db: str | None = None
     metrics_lookback_hours: float = Field(default=6.0, gt=0)
     news_lookback_hours: float = Field(default=24.0, ge=0)  # 0 disables news context

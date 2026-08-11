@@ -432,6 +432,22 @@ advise:
   # model. Leave unset and those fields go to the model as null, which
   # risk.md explicitly tells it means "unknown", never zero. Point it at
   # whichever DB your engine writes (live, or shadow for a paper run).
+  #
+  # ⚠️ THIS IS NOT A RISK-SEAT-ONLY SWITCH. Every advisor adapter
+  # serializes the WHOLE PerformanceSummary into its prompt
+  # (`summary.model_dump_json()`), so setting this adds seven exposure
+  # fields to the input of EVERY role — including the quant seat, which
+  # is the only one running in the default profile. `quant.md` does not
+  # describe those fields, so the quant model would receive seven
+  # unexplained numbers it was never briefed on.
+  #
+  # Gate it on ONE of these before enabling (verified 2026-08-11):
+  #   - the risk seat is actually running (advisor.type: moe with a risk
+  #     expert) — i.e. something consumes the fields; or
+  #   - `quant.md` gains a line telling the quant judge what the exposure
+  #     fields are and whether to weigh them.
+  # Until then it buys nothing and perturbs the live advisor's input for
+  # no reason, so it ships OFF.
   # orders_db: "data/wobblebot-live.db"
   metrics_lookback_hours: 6                 # window for vol/drawdown/flatness/cycles
   news_lookback_hours: 24                   # 0 disables news in the prompt
