@@ -440,6 +440,132 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # gen-3.5+ flash line sits at ~7x gpt-5-mini per call at freejudge token
     # volumes — priced for completeness, outside the escalation seat's
     # current cost class (routine threshold: <=3x champion).
+    # --- Atlas Cloud (OpenAI-compatible gateway; keyed under "openai"
+    # because that is the adapter it reuses — a bare OpenAI model id
+    # never contains "/", so the namespaced ids cannot collide) ---
+    #
+    # Verified 2026-08-10 against Atlas's own published catalogue, which
+    # embeds per-model flat rates in the payload behind
+    # https://www.atlascloud.ai/pricing (61 of its models are priced
+    # publicly; its ~25 Anthropic entries are NOT — do not infer those
+    # from upstream list prices, see .env.example).
+    #
+    # These exist so the ADR-014 gate will admit them at all: it RAISES
+    # on an unpriced (provider, model) rather than estimating. Scope is
+    # PROBES — no daemon selects an `atlas` provider.
+    #
+    # SELECTION IS CAPABILITY-FIRST, NOT PRICE-FIRST (operator
+    # correction, 2026-08-10). The routine's <=3x cost gate is a filter
+    # applied when DECIDING a switch, not a way to pick a roster —
+    # and this battery has spent all day killing the cheap tier
+    # (claude-haiku-4-5 worst-ever on quant; every local 3B-14B at
+    # chance). A sweep of flash/mini variants would mostly re-derive
+    # that. So: flagship/frontier models that are unreachable natively,
+    # plus two mid-tier entries to test whether cheap is viable at all.
+    # Flagship tier — the capability question, cost gate notwithstanding.
+    ("openai", "moonshotai/kimi-k3"): LLMPricePoint(
+        provider="openai",
+        model="moonshotai/kimi-k3",
+        input_per_million_usd=Decimal("3.00"),
+        output_per_million_usd=Decimal("15.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.30"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "deepseek-ai/deepseek-v4-pro"): LLMPricePoint(
+        provider="openai",
+        model="deepseek-ai/deepseek-v4-pro",
+        input_per_million_usd=Decimal("1.68"),
+        output_per_million_usd=Decimal("3.38"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.13"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "xai/grok-4.5"): LLMPricePoint(
+        provider="openai",
+        model="xai/grok-4.5",
+        input_per_million_usd=Decimal("2.00"),
+        output_per_million_usd=Decimal("6.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.50"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "qwen/qwen3.8-max"): LLMPricePoint(
+        provider="openai",
+        model="qwen/qwen3.8-max",
+        input_per_million_usd=Decimal("2.00"),
+        output_per_million_usd=Decimal("6.00"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "zai-org/glm-5.2"): LLMPricePoint(
+        provider="openai",
+        model="zai-org/glm-5.2",
+        input_per_million_usd=Decimal("1.26"),
+        output_per_million_usd=Decimal("3.96"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.234"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    # Mid tier — is a cheaper model viable on this task at all?
+    ("openai", "moonshotai/kimi-k2.6"): LLMPricePoint(
+        provider="openai",
+        model="moonshotai/kimi-k2.6",
+        input_per_million_usd=Decimal("0.95"),
+        output_per_million_usd=Decimal("4.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.16"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "minimaxai/minimax-m3"): LLMPricePoint(
+        provider="openai",
+        model="minimaxai/minimax-m3",
+        input_per_million_usd=Decimal("0.30"),
+        output_per_million_usd=Decimal("1.20"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.06"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    # Small/cheap tier — the CAPABILITY-FLOOR test (operator-authorized
+    # 2026-08-10). The flagship sweep found 10 of 11 current models emit
+    # ZERO unsafe calls, i.e. that axis has saturated among frontier
+    # models; these establish where it stops being saturated. Priced for
+    # the probe gate only.
+    ("openai", "qwen/qwen3.5-flash"): LLMPricePoint(
+        provider="openai",
+        model="qwen/qwen3.5-flash",
+        input_per_million_usd=Decimal("0.10"),
+        output_per_million_usd=Decimal("0.40"),
+        reasoning_per_million_usd=None,
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "xiaomi/mimo-v2.5"): LLMPricePoint(
+        provider="openai",
+        model="xiaomi/mimo-v2.5",
+        input_per_million_usd=Decimal("0.14"),
+        output_per_million_usd=Decimal("0.28"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.003"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "deepseek-ai/deepseek-v4-flash"): LLMPricePoint(
+        provider="openai",
+        model="deepseek-ai/deepseek-v4-flash",
+        input_per_million_usd=Decimal("0.14"),
+        output_per_million_usd=Decimal("0.28"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.028"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    ("openai", "bytedance/doubao-seed-2.0-mini-260428"): LLMPricePoint(
+        provider="openai",
+        model="bytedance/doubao-seed-2.0-mini-260428",
+        input_per_million_usd=Decimal("0.10"),
+        output_per_million_usd=Decimal("0.40"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.02"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
     ("google", "gemini-3.6-flash"): LLMPricePoint(
         provider="google",
         model="gemini-3.6-flash",
