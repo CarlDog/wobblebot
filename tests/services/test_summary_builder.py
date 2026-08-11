@@ -11,7 +11,8 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.domain.models import NewsItem, Trade
+from wobblebot.config.safety import SafetyConfig
+from wobblebot.domain.models import NewsItem, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
     OHLCBar,
@@ -380,3 +381,121 @@ class TestTAFields:
         rendered = " ".join(r.getMessage() for r in caplog.records)
         assert "TA fields null" in rendered
         assert "--resume" in rendered
+
+
+class TestExposureFields:
+    """The risk seat's inputs (2026-08-10).
+
+    `risk.md` promised "current open exposure vs the configured caps …
+    and daily spend so far vs the daily cap" and received none of it —
+    the live risk expert confabulated cap headroom fluently enough that
+    it initially read as rigour. These pin the plumbing that makes the
+    promise true, and the null contract that keeps a missing value from
+    reading as $0 (which a model would take as full headroom).
+    """
+
+    @staticmethod
+    def _caps() -> SafetyConfig:
+        return SafetyConfig(
+            max_total_exposure_usd=Decimal("100"),
+            max_daily_spend_usd=Decimal("50"),
+            max_per_coin_exposure_usd=Decimal("60"),
+            max_orders_per_coin=6,
+        )
+
+    @staticmethod
+    async def _seed_open_buy(
+        storage: SQLiteStorageAdapter,
+        *,
+        symbol: Symbol = BTC_USD,
+        price: str,
+        amount: str,
+        status: str = "open",
+    ) -> None:
+        await storage.save_order(
+            Order(
+                symbol=symbol,
+                side=OrderSide.BUY,
+                price=Price(amount=Decimal(price), currency=symbol.quote),
+                amount=Amount(value=Decimal(amount), asset=symbol.base),
+                status=status,
+                created_at=Timestamp(dt=datetime.now(UTC)),
+            )
+        )
+
+    async def test_without_safety_config_every_field_is_none(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Default construction must stay backward-compatible: existing
+        callers that pass no caps get the pre-2026-08-10 shape."""
+        await _seed_prices(storage)
+        summary = await SummaryBuilder(storage).build(BTC_USD, lookback=timedelta(hours=1))
+        assert summary.total_exposure_usd is None
+        assert summary.max_total_exposure_usd is None
+        assert summary.daily_spend_usd is None
+        assert summary.max_orders_per_coin is None
+
+    async def test_caps_and_current_values_are_populated(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        await _seed_prices(storage)
+        await self._seed_open_buy(storage, price="100", amount="0.3")
+        builder = SummaryBuilder(storage, exposure_storage=storage, safety=self._caps())
+        summary = await builder.build(BTC_USD, lookback=timedelta(hours=1))
+
+        assert summary.total_exposure_usd == 30.0
+        assert summary.coin_exposure_usd == 30.0
+        assert summary.daily_spend_usd == 30.0
+        assert summary.max_total_exposure_usd == 100.0
+        assert summary.max_per_coin_exposure_usd == 60.0
+        assert summary.max_daily_spend_usd == 50.0
+        assert summary.max_orders_per_coin == 6
+
+    async def test_daily_spend_excludes_canceled_buys(self, storage: SQLiteStorageAdapter) -> None:
+        """The whole reason the math is shared with the engine: a
+        canceled BUY never moved money, so the advisor must not see it
+        as spent headroom either. Independent re-implementation here is
+        exactly the drift this guards."""
+        await _seed_prices(storage)
+        await self._seed_open_buy(storage, price="100", amount="0.2")
+        await self._seed_open_buy(storage, price="100", amount="0.9", status="canceled")
+        builder = SummaryBuilder(storage, exposure_storage=storage, safety=self._caps())
+        summary = await builder.build(BTC_USD, lookback=timedelta(hours=1))
+
+        assert summary.daily_spend_usd == 20.0
+        # ...and the canceled order is not standing exposure either.
+        assert summary.total_exposure_usd == 20.0
+
+    async def test_coin_exposure_is_symbol_scoped_but_total_is_not(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        eth = Symbol(base="ETH", quote="USD")
+        await _seed_prices(storage)
+        await self._seed_open_buy(storage, price="100", amount="0.2")
+        await self._seed_open_buy(storage, symbol=eth, price="100", amount="0.5")
+        builder = SummaryBuilder(storage, exposure_storage=storage, safety=self._caps())
+        summary = await builder.build(BTC_USD, lookback=timedelta(hours=1))
+
+        assert summary.coin_exposure_usd == 20.0
+        assert summary.total_exposure_usd == 70.0
+
+    async def test_safety_without_exposure_storage_yields_nulls_not_zeros(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The trap this shape exists to prevent.
+
+        cli/advise reads prices from the OBSERVE db, which holds zero
+        orders. If exposure defaulted to that storage, the risk expert
+        would be told "$0 exposure of a $100 cap" — full headroom, the
+        most dangerous wrong answer for a risk model, and strictly
+        worse than admitting the number is unknown.
+        """
+        await _seed_prices(storage)
+        builder = SummaryBuilder(storage, safety=self._caps())
+        summary = await builder.build(BTC_USD, lookback=timedelta(hours=1))
+
+        assert summary.total_exposure_usd is None
+        assert summary.daily_spend_usd is None
+        # and crucially NOT the falsy-but-plausible zero
+        assert summary.total_exposure_usd != 0.0
+        assert summary.max_total_exposure_usd is None

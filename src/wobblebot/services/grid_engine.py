@@ -47,7 +47,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -77,6 +77,11 @@ from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cost_basis import SellGuard
+from wobblebot.services.exposure import (
+    daily_spend_usd,
+    notional_usd,
+    total_exposure_usd,
+)
 from wobblebot.services.reconciler import _resolve_terminal_order
 
 _PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
@@ -109,13 +114,6 @@ _STARVED_RETRY_EVERY_TICKS = 60
 # (that's the separate, not-yet-built P3 re-anchor command). Detection
 # only, per the backlog item's own framing.
 _STALE_ANCHOR_AGE = timedelta(hours=24)
-
-# Order statuses that represent committed funds for the
-# max_daily_spend_usd cap (Stage 8.4.E follow-up 2026-05-22): the
-# field's name says SPEND, so canceled / expired BUYs — which never
-# moved money — must not count. "open" = funds locked at the
-# exchange; "pending" = in-flight to the exchange; "closed" = filled.
-_SPEND_COMMITTED_STATUSES: frozenset[str] = frozenset({"open", "pending", "closed"})
 
 
 StepAction = Literal[
@@ -1278,30 +1276,18 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if len(coin_open) + 1 > cap.max_orders_per_coin:
             return _SafetyDecision(ok=False, reason="max_orders_per_coin")
 
-        coin_exposure = sum((o.price.amount * o.amount.value for o in coin_open), Decimal("0"))
-        if coin_exposure + proposed > cap.max_per_coin_exposure_usd:
+        if notional_usd(coin_open) + proposed > cap.max_per_coin_exposure_usd:
             return _SafetyDecision(ok=False, reason="max_per_coin_exposure_usd")
 
-        all_open = await self._storage.get_open_orders()
-        total_exposure = sum((o.price.amount * o.amount.value for o in all_open), Decimal("0"))
-        if total_exposure + proposed > cap.max_total_exposure_usd:
+        if await total_exposure_usd(self._storage) + proposed > cap.max_total_exposure_usd:
             return _SafetyDecision(ok=False, reason="max_total_exposure_usd")
 
         if level.side is OrderSide.BUY:
-            today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
-            todays_buys = await self._storage.get_orders(
-                side=OrderSide.BUY.value, created_after=today_start
-            )
-            # Only BUYs that actually committed funds count toward the
-            # SPEND cap. canceled + expired never moved money, so
-            # including them would mean every cancellation permanently
-            # eats into today's headroom. Operator-surfaced 2026-05-22
-            # soak Day 5 when re-anchors + the engine auto-re-layout
-            # stuffed 11 canceled BUYs into the day's counter and
-            # blocked legitimate placements at $110/$100.
-            committed = [o for o in todays_buys if o.status in _SPEND_COMMITTED_STATUSES]
-            daily_spend = sum((o.price.amount * o.amount.value for o in committed), Decimal("0"))
-            if daily_spend + proposed > cap.max_daily_spend_usd:
+            # Committed-funds-only rule (canceled/expired BUYs excluded)
+            # lives in services.exposure so the risk advisor reports the
+            # same headroom this cap enforces. See that module for the
+            # 2026-05-22 incident behind it.
+            if await daily_spend_usd(self._storage) + proposed > cap.max_daily_spend_usd:
                 return _SafetyDecision(ok=False, reason="max_daily_spend_usd")
 
         return _SafetyDecision(ok=True)

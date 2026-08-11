@@ -1116,6 +1116,51 @@ the detail; the full backlog index is
    the DTO (preferred — the engine and config have the data, it just isn't
    plumbed) or narrowing the prompt to what exists.
 
+   **↳ FIXED 2026-08-10 (same session) — the risk battery is UNBLOCKED.** Both
+   halves, because the claim above was only three-quarters right: the DTO was
+   extended where real data existed, and the prompt narrowed where it did not.
+
+   - **New `services/exposure.py`** holds the three cap computations, and
+     `GridEngine._check_safety` now calls it instead of its own inline copies.
+     That sharing is the point, not tidiness: the engine ENFORCES these caps
+     and the advisor now REPORTS them, so two implementations would drift and
+     the advisor would reason about headroom the engine denies. The
+     committed-funds rule (canceled/expired BUYs excluded — the 2026-05-22
+     soak Day 5 incident where 11 canceled BUYs ate the day's headroom and
+     blocked placements at $110/$100) now lives in exactly one place.
+   - **Seven `PerformanceSummary` fields**: `total_exposure_usd`,
+     `coin_exposure_usd`, `daily_spend_usd`, their three caps, and
+     `max_orders_per_coin` (pairs with the existing `active_orders`).
+   - **`risk.md` rewritten** to enumerate exactly the fields it receives,
+     require the model to QUOTE figures ("exposure $48 of $100"), report the
+     tightest binding constraint rather than averaging, and — the direct
+     anti-confabulation clause — "do not cite a limit, headroom figure, or
+     recovery time that is not in the fields above." **The
+     "time-to-recovery from the last loss" clause is DELETED**: `CycleStats`
+     is aggregate-only with no per-cycle timestamps, so there was no source.
+     Inventing a metric to justify existing prose is the wrong direction.
+   - **⚠️ The trap that nearly shipped, now pinned by a test.** `cli/advise`
+     reads prices from the OBSERVE db, which holds **zero orders**. Defaulting
+     exposure to that same storage — the obvious wiring — would have reported
+     "$0 exposure against a $100 cap" = FULL HEADROOM, which for a risk model
+     is a worse failure than the confabulation this slice set out to fix. So
+     `exposure_storage` is a separate, deliberately un-defaulted parameter and
+     `advise.orders_db` is opt-in; unset, the fields are `null`, which the
+     prompt defines as "unknown, never zero."
+   - **Live-verified** against the real live DB: coin exposure $40.30/$40.00,
+     total $40.30/$150, daily spend $0/$120, and `None` (not `0.0`) on the
+     unwired path. Tests 3074 → 3092.
+
+   **↳ Observation from that verification, unrelated to the change:** BTC sits
+   at **$40.30 against its $40.00 per-coin cap** (4 open SELLs at ~$10.10, placed
+   2026-05-26/27 when `order_size_usd` was $10; it is $5–6 now). Because the gate
+   is `existing + proposed > cap`, that symbol can place nothing in this DB. The
+   engine's own comment assumes the price×amount rounding artifact sits "far
+   above any rounding artifact" relative to cap thresholds — an assumption that
+   breaks when the cap is an exact multiple of the order size. Seen in a local
+   DB copy (last written 12:24), so production state is unconfirmed. Not chased
+   here; flagged for the operator.
+
    **Method note, twice-learned:** fluency is not correctness. `granite4.1:30b`
    produced the most impressive-sounding risk prose of the session and scored
    **worst of six** on the quant battery; the risk expert's confabulated

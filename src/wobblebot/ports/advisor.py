@@ -91,6 +91,13 @@ class PerformanceSummary(BaseModel):
             Stage 3.2 single-LLM advisor may or may not consume it;
             the Stage 3.4a news expert needs it.
 
+    Exposure fields (2026-08-10, the risk seat): ``total_exposure_usd``
+    / ``coin_exposure_usd`` / ``daily_spend_usd`` and the three caps
+    they sit against, plus ``max_orders_per_coin`` (pairs with
+    ``active_orders``). Computed via ``services/exposure.py`` — the same
+    functions ``GridEngine._check_safety`` enforces with. ``None`` means
+    "no SafetyConfig was supplied to the builder", NOT zero.
+
     TA fields (P2 slice 3): standard bar-based indicators computed by
     ``services/ta_metrics.py`` over ``ohlc_bars`` — the vocabulary the
     LLM's training distribution expects (RSI(14) on bars, not a tick
@@ -112,6 +119,27 @@ class PerformanceSummary(BaseModel):
     active_orders: int = Field(ge=0, default=0)
     current_grid: CurrentGridParams = Field(default_factory=CurrentGridParams)
     recent_news: list[NewsItemSummary] = Field(default_factory=list)
+
+    # --- Risk-seat exposure fields (2026-08-10) ---
+    # `risk.md` promised the model "current open exposure vs the
+    # configured caps … and daily spend so far vs the daily cap" and
+    # received NONE of it — the live risk expert confabulated cap
+    # headroom fluently enough to read as rigour. These carry the real
+    # numbers, computed by `services/exposure.py`, the SAME code path
+    # `GridEngine._check_safety` enforces with, so the advisor can never
+    # reason about headroom the engine disagrees exists.
+    #
+    # All optional: a builder without a SafetyConfig leaves them None,
+    # and None means "not supplied," never "zero" — same contract as the
+    # TA fields above. The prompt must state that distinction, because a
+    # model reading a null exposure as $0 would infer maximum headroom.
+    total_exposure_usd: float | None = None
+    max_total_exposure_usd: float | None = None
+    coin_exposure_usd: float | None = None
+    max_per_coin_exposure_usd: float | None = None
+    daily_spend_usd: float | None = None
+    max_daily_spend_usd: float | None = None
+    max_orders_per_coin: int | None = None
 
     # --- TA indicators (P2 slice 3; textbook periods) ---
     rsi_14: float | None = None

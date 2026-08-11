@@ -425,6 +425,14 @@ advise:
   db: "data/wobblebot-advise.db"
   observe_db: "data/wobblebot-observe.db"   # where to read price history
   news_db: "data/wobblebot-news.db"         # where to read news context
+  # Where ORDERS live, for the MoE risk expert's exposure + daily-spend
+  # inputs. Deliberately NOT observe_db: that file holds prices and zero
+  # orders, so reading exposure from it would report $0 against a real
+  # cap — "full headroom", the worst possible wrong answer for a risk
+  # model. Leave unset and those fields go to the model as null, which
+  # risk.md explicitly tells it means "unknown", never zero. Point it at
+  # whichever DB your engine writes (live, or shadow for a paper run).
+  # orders_db: "data/wobblebot-live.db"
   metrics_lookback_hours: 6                 # window for vol/drawdown/flatness/cycles
   news_lookback_hours: 24                   # 0 disables news in the prompt
   news_match_coin: false                    # true = only news mentioning the symbol's base
