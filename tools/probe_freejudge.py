@@ -501,7 +501,11 @@ def main() -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--provider", choices=("openai", "anthropic", "google"), default="openai")
+    p.add_argument(
+        "--provider",
+        choices=("openai", "anthropic", "google", "atlas"),
+        default="openai",
+    )
     p.add_argument("--model", default="gpt-5-mini")
     p.add_argument("--prompt-file", default="config/prompts/quant.md")
     p.add_argument("--max-tokens", type=int, default=4000)

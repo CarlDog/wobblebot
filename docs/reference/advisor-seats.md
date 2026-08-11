@@ -61,13 +61,45 @@ before use."
 5. **Record the decision here and in the bake-off doc, in the same
    commit as the config change.**
 
-## Coverage gaps (2026-08-10)
+## Coverage (2026-08-11 — the Gemini + Atlas gap is CLOSED)
 
-Tested provider stacks: **Ollama**, **OpenAI**, **Anthropic**.
-Untested: **Google/Gemini** (last measured May 2026, superseded models)
-and **Atlas Cloud** (plumbing verified end-to-end, but not one fixture
-has been scored through it). Atlas's value is the ~61 publicly-priced
-models unreachable natively — DeepSeek, Qwen, Kimi, MiniMax, ByteDance,
-Grok — several of which are *cheaper* than the champion and therefore
-inside the routine's cost gate. Models already tested natively should
-not be re-run through Atlas.
+Tested provider stacks: **Ollama**, **OpenAI**, **Anthropic**,
+**Google/Gemini**, **Atlas Cloud**. The 2026-08-10 gap note below was
+closed by a 15-model sweep on `probe_freejudge`; full record in
+`advisor-llm-models.md` Rev 2026-08-11.
+
+**The finding that matters is about the instrument, not the models.**
+Ten of eleven frontier models scored **zero UNSAFE** — including
+`gpt-5-mini`, which averages 0.67 per run. UNSAFE is the axis the
+review routine's switch thresholds are built on, and it has
+**saturated** among current models: it can no longer separate them.
+Only `gemini-2.5-flash`, the oldest model in the field, registered any.
+
+**The capability floor is a PARSEABILITY cliff, not a judgment cliff.**
+Four sub-$0.15/M models were run to locate where UNSAFE starts
+discriminating again. They failed — but almost none by judging badly:
+21 of 56 fixtures produced no parseable output at all
+(`xiaomi/mimo-v2.5` errored on all 14; retries exhausted), against
+**0 errors in 84 mid-tier judgments**. What separates the tiers on this
+battery is reliably emitting schema-valid JSON under a long prompt, not
+market judgment. That reframes the flagship result too: this battery
+measures instruction-following more than trading sense, which is why
+everything above the floor looks identical on it.
+
+**Two genuine challengers exist, and neither files a switch yet.**
+Across 42 judgments each: `minimaxai/minimax-m3` **40/42 OK, 1 UNSAFE,
+0.2x champion cost**; `deepseek-ai/deepseek-v4-pro` **37/42 OK, 0
+UNSAFE, 2.5x**. Both beat the champion's 35/42 and both are in-gate.
+But the champion had 2 UNSAFE in 42, so the deciding axis separates
+them by 2-vs-1-vs-0 at n=42 — inside noise (`zai-org/glm-5.2` scored
+9/10/11 across three runs of identical fixtures). **Filing a switch on
+that would repeat the `claude-sonnet-5` error with cheaper models.**
+
+**Next work is a better instrument, not another sweep:** fixtures that
+discriminate ABOVE the instruction-following floor. Until those exist,
+the battery cannot justify moving a seat.
+
+Atlas's standing value remains the ~61 publicly-priced models
+unreachable natively. Models already tested natively should not be
+re-run through it. Note Atlas does **not** publish prices for its ~25
+Anthropic entries — never infer those from upstream list prices.

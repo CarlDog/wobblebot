@@ -23,6 +23,83 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-11 — Gemini + Atlas sweep: the UNSAFE axis has saturated
+
+Operator-directed, closing the coverage gap named in the 2026-08-10 seat
+register (Gemini last measured May 2026; Atlas plumbed but never scored).
+15 models on `tools/probe_freejudge.py`. Roster is **capability-first**:
+the ≤3x cost gate decides a SWITCH, it does not pick who gets measured —
+picking on price first would have sampled only the tier this battery was
+already killing.
+
+**Flagship field, 1 run each (14 fixtures).** Champion `gpt-5-mini`
+3-run average = 11.7 OK / 0.67 UNSAFE at $0.00221/call.
+
+| Model | OK | SUB | UNSAFE | ERR | $/call | vs champ |
+|---|---|---|---|---|---|---|
+| `xai/grok-4.5` | 13 | 1 | 0 | 0 | $0.00932 | 4.2x |
+| `minimaxai/minimax-m3` | 13 | 1 | 0 | 0 | $0.00047 | **0.2x** |
+| `gemini-3.1-pro-preview` | 12 | 2 | 0 | 0 | $0.01971 | 8.9x |
+| `moonshotai/kimi-k3` | 12 | 2 | 0 | 0 | $0.02724 | 12.3x |
+| `deepseek-ai/deepseek-v4-pro` | 11 | 3 | 0 | 0 | $0.00578 | 2.6x |
+| `gemini-3.5-flash` | 11 | 3 | 0 | 0 | $0.01572 | 7.1x |
+| `gemini-3.6-flash` | 11 | 3 | 0 | 0 | $0.01249 | 5.6x |
+| `zai-org/glm-5.2` (3 runs: 9/10/11) | 10 | 4 | 0 | 0 | $0.00916 | 4.1x |
+| `moonshotai/kimi-k2.6` | 10 | 2 | 0 | 2 | $0.01773 | 8.0x |
+| `qwen/qwen3.8-max` | 10 | 2 | 0 | 2 | $0.01691 | 7.7x |
+| `gemini-2.5-flash` | 8 | 4 | **2** | 0 | $0.00544 | 2.5x |
+
+**⚠️ THE HEADLINE: 10 of 11 scored ZERO UNSAFE.** That axis — the one
+the routine's switch thresholds are built on — no longer separates
+current models. Only the oldest model in the field registered any. Treat
+a clean UNSAFE card as table stakes, not as evidence.
+
+**Confirmation, 3 runs = 42 judgments each** (single runs cannot
+separate anything here; `glm-5.2` alone swung 9/10/11 on identical
+fixtures):
+
+| Model | per-run | OK/42 | UNSAFE | $/call | vs champ |
+|---|---|---|---|---|---|
+| `minimaxai/minimax-m3` | 14/0/0 · 12/1/**1** · 14/0/0 | **40 (95%)** | 1 | $0.00039 | 0.2x |
+| `deepseek-ai/deepseek-v4-pro` | 13/1/0 · 12/2/0 · 12/2/0 | 37 (88%) | **0** | $0.00553 | 2.5x |
+| `gpt-5-mini` (champion) | — | 35 (83%) | 2 | $0.00221 | 1x |
+
+Both beat the champion on OK% **and** sit inside the cost gate — the
+first challengers all week to clear both. The 3-run rule earned its keep
+immediately: `minimax-m3` posted two perfect 14/0/0 runs around one
+containing an **UNSAFE**, which its single-run debut had shown as clean.
+Its unsafe rate (1/42) is statistically the champion's (2/42).
+
+**Verdict: NO SWITCH, and the blocker is the instrument.** The deciding
+axis now separates champion / minimax / deepseek by 2 vs 1 vs 0 at
+n=42. Filing on that repeats the `claude-sonnet-5` error (p=0.49) with
+cheaper models. Both are **watch items with a real claim** — revisit
+when fixtures exist that discriminate above the floor described next.
+
+**Capability floor — a PARSEABILITY cliff, not a judgment cliff.** Four
+sub-$0.15/M models, 1 run each, to find where UNSAFE starts
+discriminating again:
+
+| Model | OK | SUB | UNSAFE | **ERR** | failure mode |
+|---|---|---|---|---|---|
+| `qwen/qwen3.5-flash` | 9 | 1 | 0 | **4** | empty response |
+| `bytedance/doubao-seed-2.0-mini` | 9 | 2 | 1 | **2** | schema validation |
+| `deepseek-ai/deepseek-v4-flash` | 7 | 5 | 1 | 1 | schema validation |
+| `xiaomi/mimo-v2.5` | 0 | 0 | 0 | **14** | retries exhausted — total failure |
+
+They failed by **not producing parseable output**, not by judging badly:
+21 of 56 fixtures errored, against **0 errors in 84 mid-tier
+judgments**. On the fixtures they did answer, calls were mostly
+defensible. So the capability separating tiers here is emitting
+schema-valid JSON under a long prompt — which means **this battery
+measures instruction-following more than market judgment**, and explains
+why everything above the floor looks identical on it.
+
+**Next advisor work is a better instrument, not another sweep.**
+
+Cloud spend: **$2.51** flagship sweep + **$0.32** confirmation/floor.
+Isolated `data/probe_llm_cost.db`. Nothing deployed or reconfigured.
+
 ## Rev 2026-08-10 — Claude-5 roster bake-off: champion holds; haiku verdict closed
 
 Operator-specified roster ("Claude 5 or lower, leave Fable 5 alone"), run on
