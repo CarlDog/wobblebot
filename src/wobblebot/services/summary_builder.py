@@ -23,6 +23,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.advisor import (
     CurrentGridParams,
@@ -30,6 +31,11 @@ from wobblebot.ports.advisor import (
     PerformanceSummary,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.exposure import (
+    coin_exposure_usd,
+    daily_spend_usd,
+    total_exposure_usd,
+)
 from wobblebot.services.metrics import (
     compute_cycle_stats,
     compute_flatness,
@@ -58,6 +64,16 @@ _TA_LOOKBACK_BARS = 260
 # fields go out as None — stale indicators presented as current would
 # quietly poison the advisor's regime read (ADR-019: trend dominates).
 _TA_MAX_STALENESS_INTERVALS = 3
+
+_EXPOSURE_FIELD_NAMES = (
+    "total_exposure_usd",
+    "max_total_exposure_usd",
+    "coin_exposure_usd",
+    "max_per_coin_exposure_usd",
+    "daily_spend_usd",
+    "max_daily_spend_usd",
+    "max_orders_per_coin",
+)
 
 _TA_FIELD_NAMES = (
     "rsi_14",
@@ -93,6 +109,18 @@ class SummaryBuilder:
             the news DB. Defaults to ``storage`` when ``None`` —
             useful for tests and for setups where everything lives
             in one DB.
+        exposure_storage: Optional separate ``StoragePort`` holding
+            ORDERS, for the risk seat's exposure/daily-spend fields.
+            Deliberately NOT defaulted to ``storage``: ``cli/advise``
+            reads prices from the observe DB, which contains **zero
+            orders**, so falling back would report $0 exposure against
+            a real cap — i.e. "full headroom", the most dangerous wrong
+            answer a risk model can be handed. Absent this, the fields
+            stay ``None`` and the prompt tells the model a null is not
+            a zero. Point it at the live/shadow DB the engine writes.
+        safety: The engine's ``SafetyConfig``. Required alongside
+            ``exposure_storage`` — an exposure figure without its cap
+            is not interpretable.
     """
 
     def __init__(
@@ -100,9 +128,13 @@ class SummaryBuilder:
         storage: StoragePort,
         *,
         news_storage: StoragePort | None = None,
+        exposure_storage: StoragePort | None = None,
+        safety: SafetyConfig | None = None,
     ) -> None:
         self._storage = storage
         self._news_storage = news_storage if news_storage is not None else storage
+        self._exposure_storage = exposure_storage
+        self._safety = safety
 
     async def build(  # pylint: disable=too-many-arguments,too-many-locals
         self,
@@ -163,6 +195,8 @@ class SummaryBuilder:
             symbol, now=now, interval_minutes=ta_interval_minutes
         )
 
+        exposure_fields = await self._compute_exposure_fields(symbol, now=now)
+
         return PerformanceSummary(
             symbol=str(symbol),
             lookback_hours=lookback.total_seconds() / 3600,
@@ -178,7 +212,39 @@ class SummaryBuilder:
             current_grid=current_grid or CurrentGridParams(),
             recent_news=recent_news,
             **ta_fields,
+            **exposure_fields,
         )
+
+    async def _compute_exposure_fields(
+        self, symbol: Symbol, *, now: datetime
+    ) -> dict[str, float | int | None]:
+        """The seven risk-seat exposure fields, or all-``None`` without caps.
+
+        Computed through ``services/exposure.py`` — the same functions
+        ``GridEngine._check_safety`` enforces with — so the risk expert
+        can never report headroom the engine disagrees exists. Notably
+        that means daily spend excludes canceled/expired BUYs, which a
+        naive re-sum here would have silently included.
+
+        All-``None`` when no ``SafetyConfig`` was supplied: the caps are
+        half of every ratio in this block, and an exposure figure
+        without its cap is not interpretable. ``None`` reads as "not
+        supplied," never "zero" — the prompt says so explicitly, because
+        a model reading a null exposure as $0 would infer full headroom.
+        """
+        if self._safety is None or self._exposure_storage is None:
+            return dict.fromkeys(_EXPOSURE_FIELD_NAMES, None)
+        orders = self._exposure_storage
+        caps = self._safety
+        return {
+            "total_exposure_usd": float(await total_exposure_usd(orders)),
+            "max_total_exposure_usd": float(caps.max_total_exposure_usd),
+            "coin_exposure_usd": float(await coin_exposure_usd(orders, symbol)),
+            "max_per_coin_exposure_usd": float(caps.max_per_coin_exposure_usd),
+            "daily_spend_usd": float(await daily_spend_usd(orders, now=now)),
+            "max_daily_spend_usd": float(caps.max_daily_spend_usd),
+            "max_orders_per_coin": caps.max_orders_per_coin,
+        }
 
     async def _compute_ta_fields(
         self,

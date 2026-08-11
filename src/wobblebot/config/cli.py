@@ -497,6 +497,15 @@ class AdviseConfig(BaseModel):
     db: str = "data/wobblebot-advise.db"
     observe_db: str = "data/wobblebot-observe.db"
     news_db: str = "data/wobblebot-news.db"
+    # Where ORDERS live, for the risk expert's exposure + daily-spend
+    # fields (2026-08-10). Separate from observe_db on purpose: the
+    # observe DB holds prices and ZERO orders, so computing exposure
+    # from it would report $0 against a real cap — "full headroom", the
+    # most dangerous wrong answer for a risk model. ``None`` (the
+    # default) leaves those fields null, which the prompt explicitly
+    # distinguishes from zero. Point it at the DB the engine writes:
+    # data/wobblebot-live.db, or the shadow DB for a paper run.
+    orders_db: str | None = None
     metrics_lookback_hours: float = Field(default=6.0, gt=0)
     news_lookback_hours: float = Field(default=24.0, ge=0)  # 0 disables news context
     news_match_coin: bool = False

@@ -629,7 +629,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
     await news_storage.connect()
     await advise_storage.connect()
 
-    summary_builder = SummaryBuilder(observe_storage, news_storage=news_storage)
+    # The risk seat's exposure fields need the ORDERS db, which is not
+    # observe_db (that one holds prices and no orders — see
+    # AdviseConfig.orders_db). Unset leaves the fields null rather than
+    # reporting a fictitious $0 of exposure.
+    orders_storage = await _open_orders_storage(config)
+
+    summary_builder = SummaryBuilder(
+        observe_storage,
+        news_storage=news_storage,
+        exposure_storage=orders_storage,
+        safety=config.safety,
+    )
     # Build a current-grid snapshot per symbol once at startup. The
     # engine's running grid lives in settings.yml; cli/apply rewrites
     # that file out-of-band, but cli/advise doesn't pick up mid-run
@@ -677,9 +688,43 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
             ("close_news_storage", news_storage.close),
             ("close_advise_storage", advise_storage.close),
         ]
+        if orders_storage is not None:
+            phases.append(("close_orders_storage", orders_storage.close))
         if operator_storage is not None:
             phases.append(("close_operator_storage", operator_storage.close))
         await safe_shutdown(phases, logger=_LOGGER)
+
+
+async def _open_orders_storage(config: Any) -> SQLiteStorageAdapter | None:
+    """Connect the ORDERS db backing the risk seat's exposure fields, if set.
+
+    Separate from ``observe_db`` on purpose: that file holds prices and
+    zero orders, so sourcing exposure from it would report $0 against a
+    real cap — "full headroom", the worst wrong answer for a risk model.
+    Returns ``None`` when unconfigured, which leaves the fields null.
+    """
+    if config.advise.orders_db is None:
+        _LOGGER.info(
+            "advise.orders_db unset — risk exposure fields will be null "
+            "(null means unknown, not zero)"
+        )
+        return None
+    storage = SQLiteStorageAdapter(config.advise.orders_db)
+    await storage.connect()
+    _LOGGER.info(
+        "risk exposure inputs enabled from %s (caps: total $%s, daily $%s, per-coin $%s)",
+        config.advise.orders_db,
+        fmt_decimal(config.safety.max_total_exposure_usd),
+        fmt_decimal(config.safety.max_daily_spend_usd),
+        fmt_decimal(config.safety.max_per_coin_exposure_usd),
+        extra={
+            "orders_db": config.advise.orders_db,
+            "max_total_exposure_usd": str(config.safety.max_total_exposure_usd),
+            "max_daily_spend_usd": str(config.safety.max_daily_spend_usd),
+            "max_per_coin_exposure_usd": str(config.safety.max_per_coin_exposure_usd),
+        },
+    )
+    return storage
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

@@ -22,6 +22,24 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added
+
+- **The MoE risk expert now receives the exposure data its prompt promised.**
+  `risk.md` told the model it was handed "current open exposure vs the
+  configured caps … and daily spend so far vs the daily cap"; of those,
+  `PerformanceSummary` carried none — which is why the live risk expert
+  confabulated cap headroom fluently enough to read as rigour. Seven
+  fields added (`total_exposure_usd`, `coin_exposure_usd`,
+  `daily_spend_usd`, their three caps, and `max_orders_per_coin`),
+  computed by a new `services/exposure.py` that `GridEngine._check_safety`
+  now shares — so the advisor can never report headroom the engine
+  disagrees exists, including the committed-funds rule that excludes
+  canceled/expired BUYs. `cli/advise` gains an opt-in `advise.orders_db`;
+  unset, the fields go to the model as `null`, which `risk.md` now
+  explicitly defines as "unknown", never zero. The clause promising
+  "time-to-recovery from the last loss" is **removed** — no such metric
+  exists, and inventing one to match prose was the wrong direction.
+
 ### Fixed
 
 - **Anthropic adapters 400'd on every Claude 5 call.** Anthropic deprecated

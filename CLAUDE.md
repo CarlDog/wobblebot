@@ -198,6 +198,11 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Implementation:** `docs/implementation/coding-guidelines.md`, `module-specs.md`, `development-workflow.md`
 - **Planning:** `docs/planning/roadmap.md` (source of truth — current phase + per-stage detail), `requirements.md`, `testing-plan.md`, plus per-stage `stage-N.M-design.md` slicing docs
 - **Kraken API reference:** `docs/reference/kraken-api-reference.md`
+- **Which LLM holds which advisor seat:** `docs/reference/advisor-seats.md` (the
+  register — holder, evidence, battery, and whether `settings.yml` agrees). Evidence
+  lives in `advisor-llm-models.md` / `operator-llm-models.md`. **Only the quant seat
+  runs in production**; the MoE profiles still name unscored models, so reconcile
+  against the register before flipping any profile to `type: moe`.
 - **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored). Per-CLI sections + grid/safety + advisor + profiles. Operators copy this to `settings.yml` and adjust values; comments and structure stay in sync per the schema-drift tests.
 - **Prompt files:** `config/prompts/{quant,risk,news,arbitrator}.md` (committed defaults; operators edit freely). YAML frontmatter + Markdown body; loader in `wobblebot.config.prompts`.
 - **Env vars example:** `.env.example` at the repo root (single source of truth — schema-drift tests verify operator `.env` files stay in sync)
