@@ -1206,25 +1206,96 @@ the detail; the full backlog index is
    OVERTRADE), `heldout_clear_widen` (0/4, all OVERSHOOT),
    `widen_tight_moderate` (0/4, all OVERSHOOT), `hold_quiet_matched` (0/4, all
    OVERTRADE). When `claude-opus-5` and a 3B-class local model fail the same
-   fixture the same way, that is not a model gap — it is either a rule
-   `quant.md` never states or a fixture whose ideal band is wrong. This
-   **confirms** the single-model suspicion filed with the gpt-5-mini heldout
-   result ("suspected PROMPT gap, filed not chased") with four models of
-   evidence, and is now the highest-value open item in the advisor track —
-   worth more than any model swap. NOT chased here: it needs its own slice
-   (read `quant.md` against each failed fixture; decide prompt-fix vs
-   fixture-fix; a fixture change must be justified before the fact, never
-   after seeing a score).
+   fixture the same way, that is not a model gap.
 
-   **Seat decisions: NO SWITCH.** `gpt-5-mini` ties `claude-opus-5` on
-   quant-core at ~1/10th the cost, and Opus 5's 5x price premium buys nothing
-   held-out (14/24, identical to the incumbent). `claude-sonnet-5` posts the
-   best held-out score ever measured (17/24) but the whole margin is ONE
-   fixture — `heldout_directional_downtrend`, which gpt-5-mini over-traded —
-   while scoring 3 points worse on core at 6x the price. Not a switch case.
-   Note the scoring nuance: MISS and WRONG both score 0, so Sonnet 5 and Opus 5
-   failing `heldout_drawdown_overrides_calm` *less badly* than gpt-5-mini
-   (held rather than tightened) contributes nothing to their score.
+   **↳ ROOT-CAUSED 2026-08-10, same session — and it is NOT a `quant.md` gap.**
+   This paragraph originally called it "a rule `quant.md` never states or a
+   fixture whose ideal band is wrong" and filed a prompt-gap slice as the top
+   advisor item. **Both readings were wrong.** Running every fixture through
+   the shipped `HeuristicAdvisorAdapter` settles it deterministically, offline:
+
+   | fixture | reaches the LLM in production? |
+   |---|---|
+   | `hold_quiet_matched` | **no** — `fee_floor_calm` guard fires |
+   | `heldout_fee_floor` | **no** — `fee_floor_calm` guard fires |
+   | `heldout_drawdown_overrides_calm` | **no** — `defensive_drawdown` guard fires |
+   | `heldout_clear_widen` | yes (OVERSHOOT: magnitude only) |
+   | `widen_tight_moderate` | yes (OVERSHOOT: magnitude only) |
+
+   Three of the five are cases the deterministic guards handle *before* the LLM
+   is consulted — and `quant.md` explicitly tells the model "the clear cases (a
+   directional run-away, a sharp drawdown, a demonstrably working grid, spacing
+   already at the fee floor) are already handled before you." Every model read
+   that, correctly inferred it was not looking at a fee-floor or drawdown case,
+   and was marked wrong for it. **The models were graded on the guards' job
+   after being told it was not theirs.** The other two are pure OVERSHOOT —
+   right direction, magnitude outside an ideal band derived from the
+   **vol→spacing curve ADR-022 RETIRED**, against a prompt that says in as many
+   words "There is no formula to apply and no target curve to follow."
+
+   Overall only **3 of 8** heldout and **11 of 12** core fixtures escalate at
+   all. **None of this was new information** — ADR-022's own consequences say
+   these fixtures were "repurposed as the LLM-grading oracle (not rebuilt)",
+   `tools/probe_freejudge.py`'s docstring says the heldout battery has "only 3
+   fixtures [that] actually escalate", and the 2026-07-31 bake-off already ran
+   heldout "as directional context only … most of it never escalates in
+   production". The prompt-gap slice filed above was re-deriving a known
+   answer; **it is withdrawn, not scheduled.**
+
+   **Consequence for the roster table above: the two quant columns measure the
+   pre-ADR-022 contract and must not be read as quant-seat scores.** In
+   particular `claude-sonnet-5`'s 17/24 — reported mid-session as "the best
+   held-out score ever measured" — is exactly what
+   `docs/reference/advisor-llm-models.md` warns about: "the hold-more bias
+   flattering the maintainer curve, not judgment". Corroborating evidence that
+   the instrument is noisy off-contract: `gpt-5-mini` scored 8/24 on it in July
+   and 14/24 today, unchanged model.
+
+   **Seat decisions: NO SWITCH** — deciding evidence is the freejudge run
+   recorded below, NOT the two quant columns, which the root-cause above
+   disqualifies for seat selection. On the off-contract batteries for the
+   record: `gpt-5-mini` ties `claude-opus-5` on quant-core at ~1/10th the cost,
+   and Opus 5's 5x premium buys nothing held-out (14/24, identical to the
+   incumbent); `claude-sonnet-5`'s 17/24 is one fixture of margin
+   (`heldout_directional_downtrend`) while scoring 3 lower on core at 6x the
+   price — and is hold-bias, not judgment, per the root-cause note. Scoring
+   nuance worth keeping: MISS and WRONG both score 0, so Sonnet 5 and Opus 5
+   failing `heldout_drawdown_overrides_calm` *less badly* than gpt-5-mini (held
+   rather than tightened) contributes nothing to their score.
+
+   **↳ RE-MEASURED ON THE RIGHT INSTRUMENT** ✅ (same session, operator-approved
+   after the root-cause above; Opus 5 dropped by the operator on cost).
+   `tools/probe_freejudge.py` — 14 no-guard fixtures × 3 runs = 42 judgments
+   per model, scored OK / SUBOPTIMAL / **UNSAFE** against the bot's risk model
+   rather than a retired curve:
+
+   | model | OK | SUBOPT | **UNSAFE** | $/call | vs champion |
+   |---|---|---|---|---|---|
+   | `gpt-5-mini` (champion) | 83% | 5 | **2 (5%)** | $0.00221 | 1x |
+   | `claude-sonnet-5` | **88%** | 5 | **0 (0%)** | $0.01345 | **6.1x** |
+   | `claude-haiku-4-5` | 79% | 5 | **4 (10%)** | $0.00323 | 1.5x |
+
+   **NO SWITCH — `gpt-5-mini` holds the quant seat.** Sonnet 5's clean UNSAFE
+   card is the best ever recorded on this battery and still does not file:
+   Fisher exact on 0/42 vs 2/42 is **p = 0.49** (indistinguishable from chance
+   at this n), +5 OK misses the routine's `OK+10`, and at **6.1x** per-call it
+   fails the routine's own ≤3x cost pre-filter — the gate that left
+   gemini-3.5/3.6-flash and gpt-5.5 unprobed in July. Scale check:
+   ~$0.61/day / ~$18/mo at ADR-022 full escalation, on a bot running $10 orders
+   and $60 exposure. Watch item only, and its introductory pricing expires
+   2026-08-31 moving it *further* out of band ($2/$10 → $3/$15).
+
+   **Champion reproduced across six weeks** (81%→83% OK, 1→2 UNSAFE of 42 vs
+   the 2026-07-31 baseline), and **July's `claude-haiku-4-5` "no verdict" is
+   now closed as NOT champion-class** — that bake-off died on an exhausted
+   Anthropic credit balance; three clean runs give 4 UNSAFE (double the
+   champion) at `calm_well_matched_lowcycle` x2, `developing_downtrend_mild`,
+   `recovering_after_dip`. **Two independent instruments agree** on haiku's
+   over-tightening bias (freejudge UNSAFE 10%; the off-contract core battery
+   8/36, tightening on all four `hold_*_matched`), so that finding survives the
+   instrument correction. Full record in
+   `docs/reference/advisor-llm-models.md` Rev 2026-08-10. Freejudge spend
+   **$0.79** / 126 calls.
 
    **⚠️ BUG FOUND + FIXED — the Anthropic adapters 400 on every Claude 5 call.**
    `AnthropicAdvisorAdapter` and `AnthropicAssistantAdapter` both sent

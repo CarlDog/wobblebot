@@ -17,6 +17,79 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-10 — Claude-5 roster bake-off: champion holds; haiku verdict closed
+
+Operator-specified roster ("Claude 5 or lower, leave Fable 5 alone"), run on
+the **primary instrument** — `tools/probe_freejudge.py`, 14 no-guard fixtures
+× 3 runs = 42 judgments per model. Opus 5 dropped by the operator before this
+stage (10× champion cost; it had already tied gpt-5-mini on the off-contract
+battery). Native provider paths, not the Atlas gateway.
+
+| Model | OK | SUBOPT | **UNSAFE** | ERR | $/call (measured) | vs champion |
+|---|---|---|---|---|---|---|
+| **gpt-5-mini** (champion) | 83% | 5 | **2 (5%)** | 0 | $0.00221 | 1× |
+| claude-sonnet-5 | **88%** | 5 | **0 (0%)** | 0 | $0.01345 | **6.1×** |
+| claude-haiku-4-5 | 79% | 5 | **4 (10%)** | 0 | $0.00323 | 1.5× |
+
+**Verdict: no switch — `gpt-5-mini` stays.** `claude-sonnet-5` posts the only
+clean UNSAFE card ever recorded here, and it is still not a switch:
+
+1. **Not significant.** Fisher exact two-tailed on 0/42 vs 2/42 gives
+   **p = 0.49** — indistinguishable from chance at this n. Its +5 OK points
+   also miss the routine's `OK+10` criterion.
+2. **Outside the cost class.** At **6.1×** the champion's per-call cost it
+   fails the routine's ≤3× pre-filter — the same gate that left
+   gemini-3.5/3.6-flash and gpt-5.5 priced-but-unprobed in July. It was probed
+   here only because the operator named the roster; that does not exempt it
+   from the threshold on the way out.
+3. **Scale check.** ~$0.61/day / ~$18/mo at ADR-022's full-escalation rate, on
+   a bot running $10 orders and $60 total exposure whose cycles clear in cents.
+
+Watch item on the same footing July gave `gpt-5.4-mini`: revisit if Sonnet 5's
+price enters the ≤3× band (its $2/$10 introductory rate expires 2026-08-31 and
+moves the WRONG way, to $3/$15) or if a larger sample separates 0 from 2.
+
+**Champion stability across six weeks:** 81%→83% OK, 1→2 UNSAFE of 42 vs the
+2026-07-31 stored baseline. One of today's two UNSAFE is
+`slightly_tight_but_healthy` — the same fixture that sank gpt-5.4-mini's
+challenge. The instrument reproduces.
+
+**`claude-haiku-4-5`: the July "no verdict" is now closed — NOT champion-class.**
+July's run died on an exhausted Anthropic credit balance (31/50 calls failed)
+and left the note "its valid run 1 showed OK 8/14 with 2 UNSAFE, not obviously
+champion-class." Three clean runs confirm it: **4 UNSAFE (10%), double the
+champion**, at `calm_well_matched_lowcycle` ×2, `developing_downtrend_mild`,
+and `recovering_after_dip` — i.e. tightening a matched grid and tightening into
+a developing trend, the exact pathologies the seat is judged on. A **second,
+independent instrument agrees**: on the (off-contract) core battery it scored
+**8/36**, the worst ever recorded there, tightening on all four
+`hold_*_matched` fixtures. Two instruments measuring different things converge
+on the same over-tightening bias, so the finding stands on its own.
+
+**⚠️ Method note — the roster's first attempt produced fake zeros.** Sonnet 5
+and Opus 5 initially scored 0/36 and 0/8: those were `400 invalid_request_error`
+responses (Anthropic deprecated `temperature` for the Claude 5 generation), not
+model results. Reported as scores they would have produced a confident and
+completely false finding. The battery's separate ERROR count is what exposed
+it — a harness that folded errors into "wrong answer" would have laundered an
+adapter bug into a model verdict. Fixed in PR #81
+(`anthropic.supports_temperature`).
+
+**⚠️ Do not use `probe_advisor.py`'s core/heldout batteries for seat
+selection.** They key to the vol→spacing curve ADR-022 retired, and only
+**3 of 8** heldout / **11 of 12** core fixtures escalate to the LLM at all
+(verified deterministically against the shipped `HeuristicAdvisorAdapter`
+2026-08-10). Three fixtures failed by all four roster models —
+`heldout_fee_floor`, `heldout_drawdown_overrides_calm`, `hold_quiet_matched` —
+are guard-handled cases that `quant.md` explicitly tells the model are
+"already handled before you." **There is no `quant.md` prompt gap**; a slice
+filed to chase one was withdrawn. See the roadmap's 2026-08-10 entry.
+
+Cloud spend: **$0.79** freejudge (126 calls) + $1.71 recorded for the earlier
+roster sweep on the off-contract batteries. Isolated
+`data/probe_llm_cost.db`. Nothing deployed or reconfigured — recommendation
+only.
+
 ## Rev 2026-07-31 — Monthly advisor-model-review bake-off #1: champion holds
 
 First challenger bake-off under the monthly advisor-model-review routine
