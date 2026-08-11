@@ -545,3 +545,51 @@ class TestConstruction:
         adapter = _build_adapter(httpx.MockTransport(handler), storage)
         rec = await adapter.get_recommendation(_make_summary())
         assert await adapter.validate_recommendation(rec) is True
+
+
+# --------------------------------------------------------------------- #
+# temperature deprecation (Claude 5+)                                   #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestTemperatureFieldByGeneration:
+    """Anthropic deprecated ``temperature`` from the Claude 5 generation;
+    sending it is a 400 on EVERY call, so this is availability, not
+    tuning. Asserted against the real outbound request body — the
+    boundary logic itself is covered in
+    ``test_anthropic_temperature_support.py``, but only a caller-side
+    test catches a body builder that forgets to consult it.
+    """
+
+    @staticmethod
+    def _capture(
+        storage: SQLiteStorageAdapter, model: str
+    ) -> tuple[AnthropicAdvisorAdapter, list[dict[str, object]]]:
+        seen: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json=_anthropic_envelope(inner=_valid_recommendation_dict()))
+
+        adapter = _build_adapter(httpx.MockTransport(handler), storage, model=model)
+        return adapter, seen
+
+    async def test_claude_5_request_omits_temperature(self, storage: SQLiteStorageAdapter) -> None:
+        adapter, seen = self._capture(storage, "claude-opus-5")
+        await adapter.get_recommendation(_make_summary())
+        assert "temperature" not in seen[0]
+        assert seen[0]["model"] == "claude-opus-5"
+
+    async def test_claude_4_request_still_sends_temperature(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        adapter, seen = self._capture(storage, "claude-sonnet-4-6")
+        await adapter.get_recommendation(_make_summary())
+        assert "temperature" in seen[0]
+
+    async def test_haiku_4_5_keeps_temperature(self, storage: SQLiteStorageAdapter) -> None:
+        """The 4.5 tier has a '5' in its id but is generation 4."""
+        adapter, seen = self._capture(storage, "claude-haiku-4-5")
+        await adapter.get_recommendation(_make_summary())
+        assert "temperature" in seen[0]

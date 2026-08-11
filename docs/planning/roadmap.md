@@ -1169,14 +1169,122 @@ the detail; the full backlog index is
    so no header plumbing was needed. Model IDs are namespaced
    (`anthropic/claude-opus-5`), and a wrong id returns `400 "not found"`, not 403.
 
-   **⚠️ Cost-gate caveat, recorded in `.env.example`:** `services/llm_pricing.py`
-   has no entries for Atlas-hosted models, so ADR-014's gate falls back to its
-   heuristic — Atlas spend figures are APPROXIMATE until real per-model prices
-   are recorded. Probes write to an isolated `data/probe_llm_cost.db`, never the
-   operator ledger. Nothing in any daemon reads `ATLASCLOUD_API_KEY`; setting it
-   changes no runtime behaviour.
+   **⚠️ Cost-gate caveat, recorded in `.env.example`** — *this paragraph
+   originally said the gate "falls back to its heuristic"; that was **wrong**
+   and is corrected here (caught 2026-08-10 by the roster session's first live
+   call).* `get_price_point()` **raises** `PricingLookupError` on an unmodeled
+   `(provider, model)`, so an Atlas model must be priced in
+   `services/llm_pricing.py` before it will run at all — there are no
+   approximate Atlas spend figures, only priced models and hard failures.
+   Probes write to an isolated `data/probe_llm_cost.db`, never the operator
+   ledger. Nothing in any daemon reads `ATLASCLOUD_API_KEY`; setting it changes
+   no runtime behaviour.
 
    Test count 3041 → 3047.
+
+   **Post-P3 — Claude-5 roster run + the Anthropic temperature bug** ✅
+   **2026-08-10** (operator-driven; operator specified the roster as "Claude 5
+   or lower, leave Fable 5 alone"). All three batteries run across four models
+   on **native provider paths**, with `gpt-5-mini` re-run in-session as a
+   control rather than compared against its recorded score.
+
+   | model | quant-core | quant-heldout | arbitrator | news |
+   |---|---|---|---|---|
+   | `gpt-5-mini` (control) | **29/36** | 14/24 | **8/8** | 11/12 |
+   | `claude-opus-5` | **29/36** ¹ | 14/24 | **8/8** | **12/12** |
+   | `claude-sonnet-5` | 26/36 | **17/24** | 7/8 | **12/12** |
+   | `claude-haiku-4-5` | 8/36 | 14/24 | **8/8** | **12/12** |
+
+   ¹ one call died retries-exhausted, worth up to 3 points; true range 29–32.
+   Control reproduced its record within 1 point of 68 graded points
+   (core 29 vs the recorded 30; heldout 14 = 14; arbitrator 8/8), so the
+   harness is stable enough to read Claude scores against prior sessions.
+
+   **⚠️ THE HEADLINE IS NOT THE RANKING — five fixtures were failed by EVERY
+   model tested** (4 models, 2 vendors, a 20x price range):
+   `heldout_drawdown_overrides_calm` (0/4), `heldout_fee_floor` (0/4, all
+   OVERTRADE), `heldout_clear_widen` (0/4, all OVERSHOOT),
+   `widen_tight_moderate` (0/4, all OVERSHOOT), `hold_quiet_matched` (0/4, all
+   OVERTRADE). When `claude-opus-5` and a 3B-class local model fail the same
+   fixture the same way, that is not a model gap — it is either a rule
+   `quant.md` never states or a fixture whose ideal band is wrong. This
+   **confirms** the single-model suspicion filed with the gpt-5-mini heldout
+   result ("suspected PROMPT gap, filed not chased") with four models of
+   evidence, and is now the highest-value open item in the advisor track —
+   worth more than any model swap. NOT chased here: it needs its own slice
+   (read `quant.md` against each failed fixture; decide prompt-fix vs
+   fixture-fix; a fixture change must be justified before the fact, never
+   after seeing a score).
+
+   **Seat decisions: NO SWITCH.** `gpt-5-mini` ties `claude-opus-5` on
+   quant-core at ~1/10th the cost, and Opus 5's 5x price premium buys nothing
+   held-out (14/24, identical to the incumbent). `claude-sonnet-5` posts the
+   best held-out score ever measured (17/24) but the whole margin is ONE
+   fixture — `heldout_directional_downtrend`, which gpt-5-mini over-traded —
+   while scoring 3 points worse on core at 6x the price. Not a switch case.
+   Note the scoring nuance: MISS and WRONG both score 0, so Sonnet 5 and Opus 5
+   failing `heldout_drawdown_overrides_calm` *less badly* than gpt-5-mini
+   (held rather than tightened) contributes nothing to their score.
+
+   **⚠️ BUG FOUND + FIXED — the Anthropic adapters 400 on every Claude 5 call.**
+   `AnthropicAdvisorAdapter` and `AnthropicAssistantAdapter` both sent
+   `temperature` unconditionally; Anthropic **deprecated** that field from the
+   Claude 5 generation and returns `400 invalid_request_error: 'temperature'
+   is deprecated for this model`. The first roster attempt scored sonnet-5 and
+   opus-5 at 0/36 — **not a model result, a broken request**, and the failure
+   surfaces as a generic transport error rather than "unsupported model".
+   Latent, not an active outage: live `settings.yml` runs `claude-sonnet-4-6`
+   (generation 4), so the bug was armed for the first Claude 5 upgrade — of
+   the advisor escalation seat *or* the Discord operator assistant. Fixed with
+   `anthropic.supports_temperature()`, parsing the MAJOR generation out of the
+   model id (sibling of `openai.is_reasoning_model`). The boundary is the
+   point: `claude-haiku-4-5` contains a "5" but is generation 4 and still
+   accepts the field, so a naive substring check would strip it from every
+   4.5-tier model — pinned by `tests/adapters/test_anthropic_temperature_support.py`
+   plus caller-side request-body tests in both adapters' existing MockTransport
+   harnesses (a pure-function test cannot catch a body builder that forgets to
+   ask). Live-verified: sonnet-5 went 0/8 → 7/8 on the arbitrator battery.
+
+   **Pricing: `claude-opus-5` + `claude-sonnet-5` added** (Anthropic's published
+   table, verified 2026-08-10). Sonnet 5's `$2/$10` is **introductory through
+   2026-08-31**, reverting to `$3/$15`; the entry deliberately encodes the
+   STANDARD rate because over-pricing is the module's stated safe direction and
+   the 180-day freshness test cannot catch a price that changes on a known
+   future date. Consequence while the promo runs: Sonnet 5 spend reads ~50%
+   high. Revisit after 2026-09-01, when the entry becomes exact on its own.
+
+   **⚠️ TWO EARLIER CLAIMS IN THIS SESSION WERE WRONG, both corrected above:**
+   (a) the cost gate does NOT fall back to a heuristic for unpriced models — it
+   RAISES, which is how the bug above was caught on the first live call; (b) the
+   per-model Atlas price table produced earlier was **not sourced from Atlas**.
+   Atlas publishes flat rates for 61 of its models and **none of its ~25
+   Anthropic entries**; the quoted Claude/gpt-5-mini figures were upstream list
+   prices misattributed to Atlas, and are withdrawn. Where Atlas's published set
+   overlaps ours it matches upstream exactly (`gpt-5.5` 5/30,
+   `gemini-3.1-pro-preview` 2/12, `gemini-3.5-flash` 1.5/9) — evidence of
+   pass-through, not proof for an unlisted model. **Consequence: Atlas is a
+   DISCOVERY tool, not a measurement path** — this roster ran native, where
+   pricing is published and verifiable and no gateway sits in the comparison.
+
+   **Bias controls** (operator asked how to rule out home-team bias when the
+   evaluator is itself an Anthropic model): rubrics frozen in `main` with pinned
+   tests BEFORE any Claude model ran; operator picked the roster; control
+   re-run in-session; every lost fixture named in the table above. The Anthropic
+   models won the two rule-following batteries, tied-or-lost the two numeric
+   ones, and the cheapest of them posted **the worst quant-core score ever
+   recorded against this battery, local or cloud** (8/36 — below the 19/36
+   constant ceiling AND below 12/36 chance, worse than `granite4.1:30b`'s 6/36
+   only in that it is not, at 2 OK / 4 OVERTRADE / 4 MISS, a constant). Its
+   profile is near-inverted on the hold/tighten axis: it tightened on all four
+   `hold_*_matched` fixtures — including `hold_moderate_matched`, where current
+   spacing EQUALS the ideal — and held on three of four `tighten_*` fixtures.
+   That is textbook fee-churn behaviour and disqualifies it for the quant seat
+   regardless of its perfect news and arbitrator cards.
+
+   Session probe spend: **$1.71 recorded / ~$1.52 actual** (the delta is the
+   deliberate Sonnet 5 over-pricing above), 243 calls, isolated
+   `data/probe_llm_cost.db`. 81 of those calls were the pre-fix 400s, which
+   cost $0.
 
    **P3 close audit** ✅ **2026-08-10.** Green: schema-drift 19/19 clean;
    `tools/scan_logging.py --check rule1` exit 0; `domain/` imports zero

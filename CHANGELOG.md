@@ -22,6 +22,34 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Anthropic adapters 400'd on every Claude 5 call.** Anthropic deprecated
+  the `temperature` field starting with the Claude 5 generation; both
+  `AnthropicAdvisorAdapter` and `AnthropicAssistantAdapter` sent it
+  unconditionally, so any Claude 5 model configured as the advisor
+  escalation seat or the Discord operator assistant would have failed
+  100% of calls with `400 invalid_request_error` — surfaced as a generic
+  transport error, not "unsupported model". Latent rather than an active
+  outage: shipped config runs `claude-sonnet-4-6` (generation 4), so the
+  bug was armed for the first Claude 5 upgrade. Fixed via
+  `anthropic.supports_temperature()`, which parses the major generation
+  out of the model id — `claude-haiku-4-5` contains a "5" but is
+  generation 4 and still takes the field, so a substring check would have
+  broken every 4.5-tier model. Found by the 2026-08-10 model-roster run.
+
+### Added
+
+- **Pricing entries for `claude-opus-5` and `claude-sonnet-5`**
+  (`services/llm_pricing.py`), so the ADR-014 gate admits them — it
+  *raises* on an unpriced model rather than estimating, so this is what
+  makes them runnable at all. Sonnet 5 is deliberately billed at its
+  standard `$3/$15` rather than the introductory `$2/$10` in effect
+  through 2026-08-31: over-pricing is this module's stated safe
+  direction, and the 180-day freshness test cannot catch a price that
+  changes on a known future date. Sonnet 5 spend therefore reads ~50%
+  high until 2026-09-01, when the entry becomes exact on its own.
+
 ### P3 — ops/observability/UX, STARTED (2026-08-08)
 
 - **Slice 1 — stale-heartbeat Discord push alert.** `cli/operator` grows a third

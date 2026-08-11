@@ -502,3 +502,38 @@ class TestParseFailures:
         adapter = _build_adapter(httpx.MockTransport(handler), storage)
         intent = await adapter.parse_intent(_context(current="status?"))
         assert isinstance(intent, IntentQuery)
+
+
+@pytest.mark.asyncio
+class TestTemperatureFieldByGeneration:
+    """Same Claude-5 ``temperature`` deprecation as the advisor adapter.
+    The assistant builds its own body, so it needs its own guard — and
+    its own test, or a future edit fixes one path and leaves the
+    operator's Discord surface 400ing.
+    """
+
+    async def test_claude_5_request_omits_temperature(self, storage: SQLiteStorageAdapter) -> None:
+        seen: list[dict[str, object]] = []
+        envelope = _anthropic_envelope(inner={"kind": "query", "query": {"kind": "status"}})
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json=envelope)
+
+        adapter = _build_adapter(httpx.MockTransport(handler), storage, model="claude-sonnet-5")
+        await adapter.parse_intent(_context(current="status?"))
+        assert "temperature" not in seen[0]
+
+    async def test_claude_4_request_still_sends_temperature(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        seen: list[dict[str, object]] = []
+        envelope = _anthropic_envelope(inner={"kind": "query", "query": {"kind": "status"}})
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json=envelope)
+
+        adapter = _build_adapter(httpx.MockTransport(handler), storage, model="claude-sonnet-4-6")
+        await adapter.parse_intent(_context(current="status?"))
+        assert "temperature" in seen[0]

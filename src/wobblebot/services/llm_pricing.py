@@ -144,6 +144,12 @@ _VERIFIED_2026_07_31 = date(2026, 7, 31)
 # Entries NOT in this sweep keep their old dates and cached=None
 # (fallback to full input rate — conservative).
 _VERIFIED_2026_08_02 = date(2026, 8, 2)
+# Claude-5-generation sweep (2026-08-10): the probe batteries needed
+# opus-5 / sonnet-5 priced before the ADR-014 gate would let them run
+# (``get_price_point`` RAISES on an unmodeled pair — it does not fall
+# back to a heuristic). Source: the Anthropic model-pricing table at
+# platform.claude.com/docs/en/about-claude/pricing, read on this date.
+_VERIFIED_2026_08_10 = date(2026, 8, 10)
 
 
 _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
@@ -155,6 +161,39 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # input, 5m write 1.25x input) — confirmed as absolute rates on the
     # pricing table 2026-08-02. Counts stay 0 while ADR-033 defers
     # cache_control, but the rates are real if that ever lifts.
+    # Claude 5 generation (verified 2026-08-10). Opus 5 matches the 4.5-4.8
+    # Opus tier exactly ($5/$25, 0.1x read, 1.25x 5m write).
+    ("anthropic", "claude-opus-5"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-opus-5",
+        input_per_million_usd=Decimal("5.00"),
+        output_per_million_usd=Decimal("25.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.50"),
+        cache_write_per_million_usd=Decimal("6.25"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
+    # ⚠️ Sonnet 5 carries INTRODUCTORY pricing of $2/$10 (read 0.20, 5m
+    # write 2.50) that expires 2026-08-31, reverting to the standard
+    # $3/$15 on 2026-09-01. This entry deliberately encodes the STANDARD
+    # rate, not the introductory one, for two reasons: (a) the module's
+    # stated convention is to over-price rather than ever under-report,
+    # and (b) an entry pinned to the intro rate would go silently wrong
+    # three weeks from now — the 180-day freshness test cannot catch a
+    # price that changes on a known future date. Consequence while the
+    # promo lasts: recorded spend for this model reads ~50% HIGH, and
+    # ADR-014's caps bind proportionally early. Both are safe directions.
+    # Revisit after 2026-09-01, when the table becomes exact on its own.
+    ("anthropic", "claude-sonnet-5"): LLMPricePoint(
+        provider="anthropic",
+        model="claude-sonnet-5",
+        input_per_million_usd=Decimal("3.00"),
+        output_per_million_usd=Decimal("15.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.30"),
+        cache_write_per_million_usd=Decimal("3.75"),
+        verified_date=_VERIFIED_2026_08_10,
+    ),
     ("anthropic", "claude-sonnet-4-6"): LLMPricePoint(
         provider="anthropic",
         model="claude-sonnet-4-6",
