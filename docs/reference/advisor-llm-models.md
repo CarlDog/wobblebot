@@ -23,6 +23,78 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-11b — head-to-head on `hard`: `grok-4.5` FILES; decision is cost
+
+The first challenger in this project's history to clear the routine's §5
+thresholds **with statistical significance**. Run on the `hard` fixture
+set (built earlier the same day after v1 was found saturated), 8 runs /
+120 judgments each. A constant strategy scores 33% on this set.
+
+| Model | OK | SUB | **UNSAFE** | per-run OK | $/call | vs champ |
+|---|---|---|---|---|---|---|
+| **`xai/grok-4.5`** | **119/120 (99%)** | 1 | **0** | 15,15,15,14,15,15,15,15 | $0.00781 | **3.8x** |
+| `gpt-5-mini` (champion) | 102/120 (85%) | 11 | **7** | 13,14,13,13,12,13,12,12 | $0.00206 | 1x |
+
+**Fisher exact: OK p=0.000041, UNSAFE p=0.014.** The fresh 5-run half
+reproduces it on its own (OK p=0.0011), so this is not a pooling artifact.
+Both §5 criteria met — UNSAFE more than halved (7 → 0) and OK gained 14
+points (>+10). For contrast, every previous challenger died in the
+p=0.24–0.49 range: `claude-sonnet-5` at p=0.49, `minimax-m3` and
+`deepseek-v4-pro` at p=0.24–0.38 on the pre-correction set.
+
+Grok dropped exactly ONE fixture across 120 judgments and produced ZERO
+unsafe calls. The champion produced **seven** — one per 17 judgments — on
+a battery purpose-built so the actively dangerous call is the thing being
+measured.
+
+**NO SWITCH APPLIED. The blocker is cost and the call is the operator's.**
+3.8x champion per-call, outside the routine's ≤3x pre-filter — it would
+never have been rostered under the routine as written; it ran because the
+operator asked for it after being told the gate excluded it. At ADR-022
+full escalation: ~$0.38/day, ~$11/month, on a bot running $10 orders with
+$60 total exposure.
+
+**Full 4-model field on the corrected `hard` set** (3 runs / 45 judgments,
+before the head-to-head extension):
+
+| Model | OK | UNSAFE | $/call | vs champ |
+|---|---|---|---|---|
+| `xai/grok-4.5` | 45/45 (100%) | 0 | $0.00781 | 3.8x |
+| `gpt-5-mini` | 40/45 (89%) | 2 | $0.00206 | 1x |
+| `deepseek-ai/deepseek-v4-pro` | 38/45 (84%) | 2 | $0.00504 | 2.4x |
+| `minimaxai/minimax-m3` | 38/45 (84%) | **0** | $0.00039 | **0.2x** |
+
+**`minimax-m3` is the cost-dominant answer**: champion-level judgment with
+zero unsafe calls at one-fifth the price. If the seat is ever chosen on
+$/judgment rather than judgment, it is the pick.
+
+**`deepseek-v4-pro` was an artifact of the old battery.** It LED v1 at 88%
+and sits mid-field here at 84%, with the highest hold rate in the field
+(46% vs grok 40%, minimax 42%, champion 24%). v1 accepted `hold` on 12 of
+its 14 fixtures, so it structurally rewarded exactly that lean. The
+reorder is the corrected instrument doing its job.
+
+**⚠️ Two caveats that must travel with these numbers.**
+
+1. **Grok has CEILINGED `hard`.** 119/120 with one SUBOPTIMAL means the
+   battery cannot measure anything better than it, so the next challenger
+   cannot be ranked against it here. `hard` fixed saturation at the bottom
+   (v1's constant-HOLD scored 86%, beating the champion's 83%); grok has
+   now hit it at the top. A third-generation set will be needed before any
+   future bake-off means anything.
+2. **The fixture corrections made `hard` EASIER.** Every model gained ~5
+   points when two defective fixtures were fixed (PR #86 — one labelled a
+   working, profitable grid as needing action, contradicting quant.md's
+   don't-fix-working clause; the other tested "thin data ⇒ hold", a rule
+   the prompt never states). Justification was correctness, not
+   difficulty, but the effect is real: absolute scores here are NOT
+   comparable to the pre-correction run. The *comparison between models*
+   is valid; the *level* is not.
+
+Cloud spend for the head-to-head: **$0.74** (150 fresh judgments), rolling
+24h $7.36. Isolated `data/probe_llm_cost.db`. Nothing deployed or
+reconfigured.
+
 ## Rev 2026-08-11 — Gemini + Atlas sweep: the UNSAFE axis has saturated
 
 Operator-directed, closing the coverage gap named in the 2026-08-10 seat

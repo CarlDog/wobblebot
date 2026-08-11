@@ -15,12 +15,58 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 
 | Seat | Holder | Evidence | Battery | Decided | Config status |
 |---|---|---|---|---|---|
-| **quant** (escalation) | `gpt-5-mini` | freejudge OK 83% / UNSAFE 2 of 42; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
+| **quant** (escalation) | `gpt-5-mini` — **but a challenger has FILED, see below** | freejudge `hard` OK 102/120 (85%), **UNSAFE 7**; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano, minimax-m3, deepseek-v4-pro | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
 | **arbitrator** | `gpt-5-mini` | 8/8 vs `voting` 5/8 and `weighted_confidence` 1/8 on identical inputs | `probe_arbitrator.py` | 2026-08-10 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
 | **news** | *undecided* | 4 models scored (haiku-4-5 / sonnet-5 / opus-5 12/12, gpt-5-mini 11/12, qwen3.6:35b-a3b 10/12) but no seat chosen | `probe_news.py` | — | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
 | **risk** | *undecided* | battery was blocked on the input mismatch; **unblocked 2026-08-10** | *(none yet)* | — | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
+
+## ⚠️ OPEN DECISION — `xai/grok-4.5` has FILED against the quant seat (2026-08-11)
+
+**First challenger in the project's history to clear the review routine's
+§5 thresholds with statistical significance.** 8 runs / 120 judgments each
+on the `hard` fixture set:
+
+| model | OK | SUB | **UNSAFE** | per-run OK | $/call |
+|---|---|---|---|---|---|
+| `xai/grok-4.5` | **119/120 (99%)** | 1 | **0** | 15,15,15,14,15,15,15,15 | $0.00781 |
+| `gpt-5-mini` (champion) | 102/120 (85%) | 11 | **7** | 13,14,13,13,12,13,12,12 | $0.00206 |
+
+Fisher exact: **OK p=0.000041**, **UNSAFE p=0.014**. The fresh 5-run half
+reproduces it alone (p=0.0011), so it is not a pooling artifact. Both §5
+criteria met: UNSAFE more than halved (7 → 0), OK gained >10 points. Every
+prior challenger died at p=0.24–0.49; this is the first that did not.
+
+**THE DECISION IS COST, AND IT IS THE OPERATOR'S — NOT SWITCHED.**
+`grok-4.5` measures **3.8x** the champion, outside the routine's ≤3x
+pre-filter, which would have excluded it from the roster entirely (it was
+run because the operator asked for it). At ADR-022 full escalation that is
+roughly **$0.38/day, ~$11/month**, against a bot running $10 orders with
+$60 total exposure. Perfect judgment is worth something; whether it is
+worth 3.8x on a bot this size is a capital decision, not a threshold.
+
+**Two caveats that must travel with these numbers:**
+
+1. **`grok-4.5` has CEILINGED this battery.** 119/120 with a single
+   SUBOPTIMAL means the instrument can no longer measure anything better,
+   so future challengers cannot be ranked against it here. `hard` fixed
+   saturation at the *bottom* (v1's constant-HOLD scored 86%); grok has
+   now hit it at the *top*.
+2. **The corrected fixtures made the battery EASIER.** Every model gained
+   ~5 points when two defective fixtures were fixed (PR #86). The
+   justification was correctness — both contradicted `quant.md` — but the
+   absolute numbers are softer than the pre-correction set. The
+   *comparison* is valid; the *level* is not comparable to earlier revs.
+
+Also measured and worth keeping: **`minimaxai/minimax-m3` at 38/45 (84%)
+with 0 UNSAFE for 0.2x champion cost** — the cheapest model that holds
+champion-level judgment, and the right pick if cost dominates.
+**`deepseek-v4-pro` was an artifact of the old battery**: it led v1 at 88%
+and sits at 84% on `hard` with the field's highest hold rate (46%), which
+is exactly the bias v1 rewarded.
+
+Full record: `advisor-llm-models.md` Rev 2026-08-11 (head-to-head).
 
 ## What "not wired" means here
 
