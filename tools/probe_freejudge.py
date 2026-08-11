@@ -343,6 +343,308 @@ FIXTURES: tuple[NoGuardFixture, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# HARD set (2026-08-11) — built because v1 SATURATED.
+#
+# Measured on v1: a model that always answers HOLD scores **12/14 OK (86%)
+# with ZERO UNSAFE** — beating the champion's 83% and nine of the eleven
+# models in the 2026-08-11 sweep. `hold` is in the acceptable set of 12 of
+# 14 fixtures, and 10 of 14 accept two of three directions, so a coin flip
+# passes. That is why the whole field scored 0 UNSAFE: doing nothing scores
+# 0 UNSAFE too. v1 measures instruction-following, not judgment.
+#
+# The fix is BALANCE, not subtlety: five fixtures for each direction as the
+# ONLY defensible answer, so no constant strategy clears ~33%.
+#
+# Labels are argued from the metrics BEFORE any model ran — a fixture
+# change must be justified in advance, never after seeing a score.
+# ``tests/tools/test_freejudge_battery.py`` pins the guard-free property
+# AND the constant-baseline ceiling, so this set cannot drift back into
+# hold-bias unnoticed.
+#
+# Domain reasoning follows quant.md's own asymmetry: WIDEN is the defensive
+# lever, and a TIGHTEN is defensible "only when the metrics show genuine
+# ranging that the current spacing is too wide to capture."
+# ---------------------------------------------------------------------------
+HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
+    # --- WIDEN only (5) ---
+    NoGuardFixture(
+        "hard_fee_bleed_churn",
+        _summary(
+            current_spacing=0.75,
+            volatility=0.0065,
+            max_drawdown=-0.015,
+            win_rate=0.38,
+            cycle_count=14,
+            flatness=0.55,
+            total_pnl=-1.85,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "14 cycles at 38% win with NEGATIVE pnl: round-tripping constantly "
+            "and losing to fees. Vol implies swings far wider than 0.75%. "
+            "Holding keeps bleeding; tightening accelerates it."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_vol_spike_grid_far_too_tight",
+        _summary(
+            current_spacing=0.85,
+            volatility=0.0125,
+            max_drawdown=-0.030,
+            win_rate=0.45,
+            cycle_count=9,
+            flatness=0.35,
+            total_pnl=-0.90,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note="Whipsaw vol against a 0.85% grid, ~3x too tight; low flatness = real movement.",
+    ),
+    NoGuardFixture(
+        "hard_trend_onset_still_cycling",
+        _summary(
+            current_spacing=1.1,
+            volatility=0.0075,
+            max_drawdown=-0.042,
+            win_rate=0.42,
+            cycle_count=7,
+            flatness=0.28,
+            total_pnl=-1.20,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note=(
+            "Flatness 0.28 = directional, drawdown -4.2% (just inside the -5% "
+            "guard), still cycling. Widen is the documented defensive lever."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_whipsaw_underspaced",
+        _summary(
+            current_spacing=1.0,
+            volatility=0.0135,
+            max_drawdown=-0.025,
+            win_rate=0.50,
+            cycle_count=11,
+            flatness=0.40,
+            total_pnl=-0.35,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note="Extreme whipsaw vs a 1.0% grid; many cycles at break-even = churn without capture.",
+    ),
+    NoGuardFixture(
+        "hard_active_market_tight_grid_flat_pnl",
+        _summary(
+            current_spacing=0.9,
+            volatility=0.009,
+            max_drawdown=-0.020,
+            win_rate=0.55,
+            cycle_count=10,
+            flatness=0.50,
+            total_pnl=0.05,
+        ),
+        acceptable=frozenset({"widen"}),
+        forbidden="tighten",
+        note="Active vol vs 0.9% spacing; ten cycles netted ~zero — effort without profit.",
+    ),
+    # --- TIGHTEN only (5) ---
+    NoGuardFixture(
+        "hard_starved_tight_range",
+        _summary(
+            current_spacing=2.6,
+            volatility=0.0016,
+            max_drawdown=-0.004,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.95,
+            total_pnl=0.0,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Flatness 0.95 at vol 0.0016 = a tight genuine range; a 2.6% grid is "
+            "several times the swing and has completed ZERO cycles. Holding means "
+            "continuing to do nothing — exactly what quant.md says a TIGHTEN is for."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_starved_calm_very_wide",
+        _summary(
+            current_spacing=3.0,
+            volatility=0.0021,
+            max_drawdown=-0.006,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.92,
+            total_pnl=0.0,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Starvation one tier wider: no fills at all; widening guarantees "
+            "permanent inactivity."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_overwide_one_lucky_cycle",
+        _summary(
+            current_spacing=2.8,
+            volatility=0.0026,
+            max_drawdown=-0.005,
+            win_rate=1.0,
+            cycle_count=1,
+            flatness=0.89,
+            total_pnl=0.21,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "A 100% win rate on ONE cycle is evidence the grid barely trades, not "
+            "that it works. The trap is reading win_rate without cycle_count."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_range_bound_overwide",
+        _summary(
+            current_spacing=2.2,
+            volatility=0.0031,
+            max_drawdown=-0.007,
+            win_rate=0.50,
+            cycle_count=2,
+            flatness=0.90,
+            total_pnl=0.06,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note="Strong ranging, vol implies ~1.05% swings vs a 2.2% grid; 2 cycles/6h is starvation.",
+    ),
+    NoGuardFixture(
+        "hard_quiet_but_above_floor_wide",
+        _summary(
+            current_spacing=1.9,
+            volatility=0.0013,
+            max_drawdown=-0.003,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.96,
+            total_pnl=0.0,
+        ),
+        acceptable=frozenset({"tighten"}),
+        forbidden="widen",
+        note=(
+            "Quiet and range-bound but NOT guard territory: vol 0.0013 exceeds "
+            "fee_floor_calm's 0.001 and spacing 1.9% far exceeds its 0.68%, so it "
+            "escalates. Long way to tighten before the fee floor bites."
+        ),
+    ),
+    # --- HOLD only (5) ---
+    NoGuardFixture(
+        "hard_matched_and_earning",
+        _summary(
+            current_spacing=1.25,
+            volatility=0.0041,
+            max_drawdown=-0.009,
+            win_rate=0.71,
+            cycle_count=7,
+            flatness=0.76,
+            total_pnl=1.35,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Spacing sits on the vol-implied swing; 7 cycles at 71% win, clearly "
+            "positive. Nothing is broken. win<0.85 keeps dont_fix_working dormant, "
+            "so the LLM must reach this itself."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_marginal_gap_not_worth_churn",
+        _summary(
+            current_spacing=1.35,
+            volatility=0.0043,
+            max_drawdown=-0.011,
+            win_rate=0.66,
+            cycle_count=6,
+            flatness=0.73,
+            total_pnl=0.82,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden=None,
+        note=(
+            "Spacing ~8% off the vol-implied ideal — inside noise, and profitable. "
+            "Acting on a gap this small is the over-trading failure; neither "
+            "direction is dangerous, both are unjustified."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_thin_window_mixed_signals",
+        _summary(
+            current_spacing=1.4,
+            volatility=0.0048,
+            max_drawdown=-0.018,
+            win_rate=0.50,
+            cycle_count=2,
+            flatness=0.61,
+            total_pnl=-0.10,
+            snapshot_count=38,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden=None,
+        note=(
+            "38 snapshots is thin and the signals conflict; hold at LOW "
+            "confidence is the honest call."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_recovering_and_working",
+        _summary(
+            current_spacing=1.6,
+            volatility=0.0058,
+            max_drawdown=-0.031,
+            win_rate=0.68,
+            cycle_count=6,
+            flatness=0.66,
+            total_pnl=0.44,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Drawdown -3.1% but recovering: still cycling, still net positive, "
+            "spacing near the swing. Widening sacrifices a working grid to a move "
+            "that already passed."
+        ),
+    ),
+    NoGuardFixture(
+        "hard_mild_uptrend_grid_keeping_up",
+        _summary(
+            current_spacing=1.9,
+            volatility=0.0079,
+            max_drawdown=-0.012,
+            win_rate=0.63,
+            cycle_count=5,
+            flatness=0.58,
+            total_pnl=0.67,
+        ),
+        acceptable=frozenset({"hold"}),
+        forbidden="tighten",
+        note=(
+            "Vol implies ~1.9% swings and the grid IS 1.9% — matched, mildly "
+            "trending, profitable. The trap is reading 'trend' as an automatic "
+            "widen when the spacing already fits."
+        ),
+    ),
+)
+
+
+FIXTURE_SETS: dict[str, tuple[NoGuardFixture, ...]] = {
+    "v1": FIXTURES,
+    "hard": HARD_FIXTURES,
+}
+
+
 def classify_direction(proposed: object, current: float | None) -> Direction:
     """Map a proposed spacing to widen/hold/tighten vs the current grid.
 
@@ -412,7 +714,8 @@ def _load_cloud_builder() -> object:
 
 
 async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-many-locals
-    offenders = verify_no_guard()
+    fixtures = FIXTURE_SETS[args.fixture_set]
+    offenders = verify_no_guard(fixtures)
     if offenders:
         print("error: battery integrity check FAILED — these fixtures fire a guard:")
         for name, reason in offenders:
@@ -436,12 +739,15 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
         daily_cap=args.daily_cap,
     )
 
-    print(f"# free-judge battery: {len(FIXTURES)} no-guard fixtures (all verified guard-free)")
+    print(
+        f"# free-judge battery [{args.fixture_set}]: {len(fixtures)} no-guard "
+        f"fixtures (all verified guard-free)"
+    )
     print(f"# model: {args.provider}/{args.model}  prompt: {args.prompt_file}")
     counts = {"OK": 0, "SUBOPTIMAL": 0, "UNSAFE": 0, "ERROR": 0}
     rows: list[dict[str, object]] = []
     try:
-        for fx in FIXTURES:
+        for fx in fixtures:
             t0 = time.monotonic()
             try:
                 rec = await adapter.get_recommendation(fx.summary)
@@ -477,13 +783,19 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
     print(
         f"\nSUMMARY  OK={counts['OK']}  SUBOPTIMAL={counts['SUBOPTIMAL']}  "
         f"UNSAFE={counts['UNSAFE']}  ERROR={counts['ERROR']}  "
-        f"(non-unsafe {safe}/{len(FIXTURES)})"
+        f"(non-unsafe {safe}/{len(fixtures)})"
     )
     if args.json:
         print(
             "JSON_RESULT: "
             + json.dumps(
-                {"model": args.model, "provider": args.provider, "counts": counts, "rows": rows}
+                {
+                    "model": args.model,
+                    "provider": args.provider,
+                    "fixture_set": args.fixture_set,
+                    "counts": counts,
+                    "rows": rows,
+                }
             )
         )
     return 0
@@ -507,6 +819,17 @@ def main() -> int:
         default="openai",
     )
     p.add_argument("--model", default="gpt-5-mini")
+    p.add_argument(
+        "--fixture-set",
+        choices=tuple(FIXTURE_SETS),
+        default="v1",
+        help=(
+            "Which battery. 'v1' (default) is the 14-fixture set every recorded "
+            "score uses -- keep it for comparability. 'hard' is the 15-fixture "
+            "balanced set built 2026-08-11 after v1 saturated (constant-HOLD "
+            "scores 86%% there vs 33%% on hard)."
+        ),
+    )
     p.add_argument("--prompt-file", default="config/prompts/quant.md")
     p.add_argument("--max-tokens", type=int, default=4000)
     p.add_argument("--temperature", type=float, default=0.5)
