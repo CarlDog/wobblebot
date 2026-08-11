@@ -362,6 +362,16 @@ FIXTURES: tuple[NoGuardFixture, ...] = (
 # AND the constant-baseline ceiling, so this set cannot drift back into
 # hold-bias unnoticed.
 #
+# KNOWN GAP (filed 2026-08-11, not built): this battery scores DIRECTION
+# only. quant.md also makes an explicit, testable demand about calibration —
+# "if the metrics are thin or ambiguous, say so with confidence: low" — and
+# nothing here checks it. That gap is what made the original
+# hard_thin_window_mixed_signals invalid: it tried to test thin-data
+# handling through the direction axis, encoding "thin => hold", which the
+# prompt never says. Testing calibration properly means scoring the
+# `confidence` field against fixture ambiguity, which is a new axis rather
+# than a new fixture.
+#
 # Domain reasoning follows quant.md's own asymmetry: WIDEN is the defensive
 # lever, and a TIGHTEN is defensible "only when the metrics show genuine
 # ranging that the current spacing is too wide to capture."
@@ -436,19 +446,28 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
         note="Extreme whipsaw vs a 1.0% grid; many cycles at break-even = churn without capture.",
     ),
     NoGuardFixture(
-        "hard_active_market_tight_grid_flat_pnl",
+        "hard_active_market_tight_grid_losing",
         _summary(
             current_spacing=0.9,
             volatility=0.009,
-            max_drawdown=-0.020,
-            win_rate=0.55,
+            max_drawdown=-0.028,
+            win_rate=0.36,
             cycle_count=10,
             flatness=0.50,
-            total_pnl=0.05,
+            total_pnl=-1.40,
         ),
         acceptable=frozenset({"widen"}),
         forbidden="tighten",
-        note="Active vol vs 0.9% spacing; ten cycles netted ~zero — effort without profit.",
+        note=(
+            "Active vol (0.009) against a 0.9% grid: ten round-trips at 36% win "
+            "and clearly NEGATIVE pnl. The grid is trading hard and losing to "
+            "fees, which is the widen case. CORRECTED 2026-08-11 — the original "
+            "carried win 0.55 and pnl +0.05, i.e. a grid 'completing round-trips "
+            "and staying green', which quant.md says to LEAVE ALONE. All four "
+            "models answered hold on all 12 runs and were right; the label "
+            "contradicted the prompt. Fixed by making the metrics match the "
+            "note's stated intent, not by relabelling to match the answers."
+        ),
     ),
     # --- TIGHTEN only (5) ---
     NoGuardFixture(
@@ -580,22 +599,30 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
         ),
     ),
     NoGuardFixture(
-        "hard_thin_window_mixed_signals",
+        "hard_ran_away_spacing_is_wrong_lever",
         _summary(
-            current_spacing=1.4,
-            volatility=0.0048,
-            max_drawdown=-0.018,
-            win_rate=0.50,
-            cycle_count=2,
-            flatness=0.61,
-            total_pnl=-0.10,
-            snapshot_count=38,
+            current_spacing=1.3,
+            volatility=0.0062,
+            max_drawdown=-0.038,
+            win_rate=0.0,
+            cycle_count=0,
+            flatness=0.22,
+            total_pnl=0.0,
+            latest_price=71500.0,
         ),
         acceptable=frozenset({"hold"}),
         forbidden=None,
         note=(
-            "38 snapshots is thin and the signals conflict; hold at LOW "
-            "confidence is the honest call."
+            "Price ran away directionally (flatness 0.22) and round-trips have "
+            "STOPPED (0 cycles), with drawdown -3.8% — inside the -5% "
+            "directional_runaway guard, so it escalates. quant.md states the "
+            "rule verbatim: 'If price has run away directionally and round-trips "
+            "have stopped, spacing is the wrong lever — that needs re-anchoring, "
+            "not retuning, so HOLD spacing.' Hard because it LOOKS like it "
+            "demands action. REPLACES hard_thin_window_mixed_signals (2026-08-11), "
+            "which labelled a thin 38-snapshot window hold-only — a rule quant.md "
+            "does NOT state: it says thin data means confidence: low, not "
+            "inaction. 9 of 12 model runs tightened and were defensible."
         ),
     ),
     NoGuardFixture(
