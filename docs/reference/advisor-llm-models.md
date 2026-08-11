@@ -1,5 +1,11 @@
 # Trading-Advisor LLM Compatibility Matrix
 
+> **Looking for "which model holds which seat, and why?"** — that index
+> is [`advisor-seats.md`](advisor-seats.md). This file is the evidence
+> behind it: the bake-off records, per-model scores, and rejected
+> challengers, newest rev first.
+
+
 Empirical comparison of Ollama-served local models against the
 **trading-advisor** routing battery. Sister document to
 [operator-llm-models.md](operator-llm-models.md), which covers the
