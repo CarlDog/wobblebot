@@ -146,3 +146,84 @@ def test_classify_direction_boundaries() -> None:
     assert mod.classify_direction(1.02, 1.0) == "hold"  # within ±5% deadband
     assert mod.classify_direction(None, 1.0) == "hold"  # omitted -> hold
     assert mod.classify_direction(1.5, None) == "hold"  # no current -> hold
+
+
+# ---------------------------------------------------------------------------
+# HARD set (2026-08-11) — the anti-saturation invariants
+#
+# v1 saturated: a model that always answers HOLD scores 12/14 OK (86%) with
+# ZERO UNSAFE, beating the champion's 83% and nine of eleven models in the
+# 2026-08-11 sweep. `hold` was acceptable in 12 of 14 fixtures. These tests
+# pin the property that makes `hard` different, so it cannot silently drift
+# back into rewarding a do-nothing model.
+# ---------------------------------------------------------------------------
+
+
+def _constant_score(fixtures, spacing_fn) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    """Score a degenerate always-the-same-answer strategy."""
+    counts = {"OK": 0, "SUBOPTIMAL": 0, "UNSAFE": 0, "ERROR": 0}
+    for fx in fixtures:
+        current = fx.summary.current_grid.spacing_percentage
+        verdict, _, _ = mod.score_fixture(
+            _rec(None if spacing_fn is None else spacing_fn(current)), fx
+        )
+        counts[verdict] += 1
+    return counts
+
+
+_CONSTANTS = {
+    "hold": None,
+    "widen": lambda c: c * 1.3,
+    "tighten": lambda c: c * 0.7,
+}
+_CONSTANT_CEILING = 0.40  # no degenerate strategy may clear 40% OK on `hard`
+
+
+class TestHardSetIsBalanced:
+    def test_every_hard_fixture_is_guard_free(self) -> None:
+        """Same load-bearing check as v1: a fixture whose guard fires is not
+        a case the LLM ever sees in production."""
+        offenders = mod.verify_no_guard(mod.HARD_FIXTURES)
+        assert offenders == [], f"hard fixtures that wrongly fire a guard: {offenders}"
+
+    def test_no_constant_strategy_beats_the_ceiling(self) -> None:
+        """THE point of this set. On v1, constant-HOLD scores 86% — better
+        than the real champion. A battery a rock can pass measures nothing."""
+        for name, fn in _CONSTANTS.items():
+            counts = _constant_score(mod.HARD_FIXTURES, fn)
+            ok_frac = counts["OK"] / len(mod.HARD_FIXTURES)
+            assert ok_frac <= _CONSTANT_CEILING, (
+                f"constant-{name.upper()} scores {ok_frac:.0%} on the hard set "
+                f"(ceiling {_CONSTANT_CEILING:.0%}) — the set has drifted back "
+                f"toward rewarding a degenerate strategy"
+            )
+
+    def test_v1_constant_hold_advantage_is_documented_not_fixed(self) -> None:
+        """v1 is deliberately LEFT saturated so historical scores stay
+        comparable. This asserts the known value rather than 'fixing' v1,
+        which would invalidate every recorded bake-off."""
+        counts = _constant_score(mod.FIXTURES, _CONSTANTS["hold"])
+        assert counts["OK"] == 12 and counts["UNSAFE"] == 0
+
+    def test_each_direction_is_the_sole_answer_equally_often(self) -> None:
+        """Balance is what caps the constants. Any direction over-represented
+        as the sole answer hands a constant an edge."""
+        sole = {"widen": 0, "hold": 0, "tighten": 0}
+        for fx in mod.HARD_FIXTURES:
+            assert len(fx.acceptable) == 1, (
+                f"{fx.name} accepts {sorted(fx.acceptable)} — a 2-of-3 set lets a "
+                f"coin flip pass, which is how v1 saturated"
+            )
+            sole[next(iter(fx.acceptable))] += 1
+        assert max(sole.values()) - min(sole.values()) <= 1, f"unbalanced: {sole}"
+
+    def test_hard_set_is_registered_and_v1_is_the_default(self) -> None:
+        assert mod.FIXTURE_SETS["hard"] is mod.HARD_FIXTURES
+        assert mod.FIXTURE_SETS["v1"] is mod.FIXTURES
+
+    def test_every_hard_label_is_argued(self) -> None:
+        """A fixture label is a claim; the note is its justification. Labels
+        must be defensible BEFORE a model runs, never adjusted after."""
+        for fx in mod.HARD_FIXTURES:
+            assert len(fx.note) > 60, f"{fx.name}: note too thin to audit"
+            assert fx.forbidden not in fx.acceptable
