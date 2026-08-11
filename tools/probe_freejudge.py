@@ -87,6 +87,11 @@ class NoGuardFixture:
     acceptable: frozenset[Direction]
     forbidden: Direction | None
     note: str
+    # True when the metrics are genuinely thin or conflicting. quant.md
+    # demands the model "say so with confidence: low" on exactly these.
+    # REPORTED, NOT SCORED (2026-08-11) -- see the calibration note in the
+    # module header for why measurement has to come before a rubric.
+    ambiguous: bool = False
 
 
 def _summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -278,6 +283,7 @@ FIXTURES: tuple[NoGuardFixture, ...] = (
             "Mixed signal on a thin window — an honest low-confidence HOLD or a "
             "defensive widen on the -2% drawdown are both defensible."
         ),
+        ambiguous=True,
     ),
     NoGuardFixture(
         "moderate_drawdown_below_guard",
@@ -597,6 +603,12 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
             "Acting on a gap this small is the over-trading failure; neither "
             "direction is dangerous, both are unjustified."
         ),
+        # NOT ambiguous: snapshot_count is the default 720 and the metrics
+        # are clear (profitable, cycling, matched). Its "ambiguity" is that
+        # the DECISION is marginal, which is not what quant.md means by
+        # "thin or ambiguous" -- that is about the EVIDENCE. Marked True on
+        # 2026-08-11 and corrected the same day when all three models
+        # answered `high` here and were right.
     ),
     NoGuardFixture(
         "hard_ran_away_spacing_is_wrong_lever",
@@ -780,8 +792,10 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
                 rec = await adapter.get_recommendation(fx.summary)
                 verdict, direction, why = score_fixture(rec, fx)
                 spacing = rec.recommendations.get("spacing_percentage", "—")
+                confidence = rec.confidence
             except (AdvisorError, LLMCostCapExceeded) as exc:
                 verdict, direction, why, spacing = "ERROR", "hold", str(exc)[:60], "—"
+                confidence = None
             elapsed = time.monotonic() - t0
             counts[verdict] = counts.get(verdict, 0) + 1
             rows.append(
@@ -793,6 +807,8 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
                     "forbidden": fx.forbidden,
                     "acceptable": sorted(fx.acceptable),
                     "why": why,
+                    "confidence": confidence,
+                    "ambiguous": fx.ambiguous,
                     "elapsed_s": round(elapsed, 1),
                 }
             )
@@ -812,6 +828,33 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
         f"UNSAFE={counts['UNSAFE']}  ERROR={counts['ERROR']}  "
         f"(non-unsafe {safe}/{len(fixtures)})"
     )
+    # --- calibration: MEASURED, NOT SCORED (2026-08-11) ---
+    # quant.md demands "if the metrics are thin or ambiguous, say so with
+    # confidence: low". Nothing has ever recorded the confidence field, so
+    # there is no evidence models vary it at all. Report the distribution
+    # first; design a rubric from real data second. Building the rubric
+    # blind is what produced the news-battery and fixture defects earlier
+    # in this arc.
+    conf_counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("confidence"))
+        conf_counts[key] = conf_counts.get(key, 0) + 1
+    spread = len([k for k in conf_counts if k != "None"])
+    print(
+        "CALIBRATION (reported, not scored)  "
+        + "  ".join(f"{k}={v}" for k, v in sorted(conf_counts.items()))
+        + (
+            "   [DEGENERATE: one level for every fixture]"
+            if spread <= 1
+            else f"   [{spread} levels used]"
+        )
+    )
+    for row in rows:
+        if row.get("ambiguous"):
+            got = row.get("confidence")
+            mark = "as quant.md asks" if got == "low" else "quant.md asks for low"
+            print(f"  ambiguous fixture {row['name']}: confidence={got} ({mark})")
+
     if args.json:
         print(
             "JSON_RESULT: "
