@@ -227,3 +227,86 @@ class TestHardSetIsBalanced:
         for fx in mod.HARD_FIXTURES:
             assert len(fx.note) > 60, f"{fx.name}: note too thin to audit"
             assert fx.forbidden not in fx.acceptable
+
+
+# ---------------------------------------------------------------------------
+# Calibration axis (2026-08-11) — scored as ASSOCIATION, not per-fixture
+# correctness.
+#
+# quant.md: "if the metrics are thin or ambiguous, say so with confidence:
+# low." Scoring that per-fixture is degenerate — a model answering `low` to
+# everything passes every thin fixture, the constant-HOLD problem in a new
+# axis. The prompt's demand only means something if confidence VARIES: the
+# point of "say so" is to DISTINGUISH. So the axis scores whether
+# confidence TRACKS evidence quality, which is non-degenerate by
+# construction and needs no rule the prompt does not state.
+# ---------------------------------------------------------------------------
+
+
+def _rows(pairs):  # type: ignore[no-untyped-def]
+    """(evidence, confidence) pairs as scorer input rows."""
+    return [{"evidence": e, "confidence": c} for e, c in pairs]
+
+
+class TestCalibrationIsNonDegenerate:
+    def test_constant_confidence_scores_undefined_not_high(self) -> None:
+        """THE property that made correlation the right choice. A model
+        answering the same confidence everywhere carries no signal, and
+        must not be able to score well by parroting `low` at thin
+        fixtures."""
+        for level in ("low", "medium", "high"):
+            rows = _rows([(1, level), (3, level), (5, level), (4, level)])
+            assert mod.calibration_tau(rows) is None, f"constant-{level} scored a number"
+
+    def test_perfect_tracking_scores_positive(self) -> None:
+        rows = _rows([(1, "low"), (2, "low"), (4, "high"), (5, "high")])
+        tau = mod.calibration_tau(rows)
+        assert tau is not None and tau > 0.8
+
+    def test_inverted_confidence_scores_negative(self) -> None:
+        """Confident on thin evidence, hedging on strong — the actively
+        wrong shape, which must score BELOW zero rather than merely low."""
+        rows = _rows([(1, "high"), (2, "high"), (4, "low"), (5, "low")])
+        tau = mod.calibration_tau(rows)
+        assert tau is not None and tau < -0.8
+
+    def test_no_evidence_spread_is_undefined(self) -> None:
+        """A fixture set where every scenario has identical evidence
+        cannot measure calibration — distinct from a model with no
+        signal, and reported differently."""
+        rows = _rows([(3, "low"), (3, "medium"), (3, "high")])
+        assert mod.calibration_tau(rows) is None
+
+
+class TestEvidenceQualityIsMechanical:
+    def test_derived_from_snapshots_and_cycles_only(self) -> None:
+        """Evidence must never be a per-fixture judgement call — that is
+        where an author's own inference re-enters, which is how two hard
+        fixtures ended up encoding rules quant.md never states."""
+        for fx in mod.HARD_FIXTURES + mod.FIXTURES:
+            expected = (
+                1
+                + (
+                    2
+                    if fx.summary.snapshot_count >= 300
+                    else (1 if fx.summary.snapshot_count >= 100 else 0)
+                )
+                + (2 if fx.summary.cycle_count >= 6 else (1 if fx.summary.cycle_count >= 2 else 0))
+            )
+            assert mod.evidence_quality(fx) == expected
+
+    def test_both_sets_have_enough_spread_to_score(self) -> None:
+        """Without spread the axis is undefined — a silent n/a would look
+        like a passing run."""
+        for name, fixtures in mod.FIXTURE_SETS.items():
+            levels = {mod.evidence_quality(fx) for fx in fixtures}
+            assert len(levels) >= 3, f"{name} has only {levels} evidence levels"
+
+
+class TestKendallTauB:
+    def test_handles_ties_without_dividing_by_zero(self) -> None:
+        assert mod.kendall_tau_b([1, 1, 1], [1, 2, 3]) is None
+        assert mod.kendall_tau_b([1, 2, 3], [2, 2, 2]) is None
+
+    def test_too_few_points_is_undefined(self) -> None:
+        assert mod.kendall_tau_b([1], [2]) is None

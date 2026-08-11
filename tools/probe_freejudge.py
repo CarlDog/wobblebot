@@ -38,6 +38,15 @@ ADR-014 cost gate (isolated ``data/probe_llm_cost.db``). ``--json`` appends a
 machine-readable ``JSON_RESULT:`` line.
 """
 
+# pylint: disable=too-many-lines
+# One battery: fixture data + its scoring rubric + the runner. The file is
+# ~60% fixture literals, and they must stay beside the rubric that grades
+# them -- a label is only auditable next to the scoring rule it feeds.
+# NOT split into a sibling module because tools/ is not a package and both
+# this file and probe_advisor.py are path-loaded (spec_from_file_location)
+# by tests and by each other, so a sibling import would need sys.path
+# manipulation to resolve. Revisit if tools/ ever becomes a package.
+
 from __future__ import annotations
 
 import argparse
@@ -87,11 +96,6 @@ class NoGuardFixture:
     acceptable: frozenset[Direction]
     forbidden: Direction | None
     note: str
-    # True when the metrics are genuinely thin or conflicting. quant.md
-    # demands the model "say so with confidence: low" on exactly these.
-    # REPORTED, NOT SCORED (2026-08-11) -- see the calibration note in the
-    # module header for why measurement has to come before a rubric.
-    ambiguous: bool = False
 
 
 def _summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -283,7 +287,6 @@ FIXTURES: tuple[NoGuardFixture, ...] = (
             "Mixed signal on a thin window — an honest low-confidence HOLD or a "
             "defensive widen on the -2% drawdown are both defensible."
         ),
-        ambiguous=True,
     ),
     NoGuardFixture(
         "moderate_drawdown_below_guard",
@@ -684,6 +687,93 @@ FIXTURE_SETS: dict[str, tuple[NoGuardFixture, ...]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Calibration axis (2026-08-11): does the model's confidence TRACK the
+# quality of the evidence?
+#
+# quant.md: "If the metrics are thin or ambiguous, say so with
+# confidence: low." Scoring that as a per-fixture rule is degenerate — a
+# model that answers `low` to everything passes every thin fixture. The
+# prompt's demand only means something if confidence VARIES: the purpose
+# of "say so" is to DISTINGUISH, and a signal that never changes cannot.
+#
+# So the axis scores ASSOCIATION, not per-fixture correctness. That is
+# non-degenerate by construction (any constant confidence has zero
+# variance and scores 0.0) and needs no rule the prompt does not state —
+# it tests the instruction as written rather than an inference layered on
+# top, which is what produced two bad fixtures earlier today.
+#
+# Evidence quality is DERIVED MECHANICALLY, never hand-assigned: a
+# subjective per-fixture "ambiguity" rating is precisely where an author's
+# own inference re-enters. Both inputs are things the prompt itself names
+# as evidence weight — snapshot_count ("how much data backs the window —
+# thin => trust it less") and completed cycles (realized round-trips).
+# ---------------------------------------------------------------------------
+_CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
+def evidence_quality(fixture: NoGuardFixture) -> int:
+    """How much evidence backs this fixture, 1 (thinnest) to 5 (strongest).
+
+    Mechanical and auditable: no per-fixture judgement call, so it cannot
+    be tuned to flatter a model after the fact.
+    """
+    snapshots = fixture.summary.snapshot_count
+    cycles = fixture.summary.cycle_count
+    snap_pts = 2 if snapshots >= 300 else (1 if snapshots >= 100 else 0)
+    cycle_pts = 2 if cycles >= 6 else (1 if cycles >= 2 else 0)
+    return 1 + snap_pts + cycle_pts
+
+
+def kendall_tau_b(xs: list[int], ys: list[int]) -> float | None:
+    """Kendall's tau-b, or ``None`` when it is undefined.
+
+    tau-b (not Spearman) because confidence has only three levels, so
+    ties dominate and tau-b is the tie-corrected form. ``None`` means one
+    side had zero variance — every fixture rated the same, or every
+    answer the same confidence — which is the degenerate case the axis
+    exists to expose, not a score of zero to be averaged in.
+    """
+    n = len(xs)
+    if n < 2:
+        return None
+    concordant = discordant = 0
+    tie_x = tie_y = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = xs[i] - xs[j]
+            dy = ys[i] - ys[j]
+            product = dx * dy
+            if product > 0:
+                concordant += 1
+            elif product < 0:
+                discordant += 1
+            else:
+                if dx == 0:
+                    tie_x += 1
+                if dy == 0:
+                    tie_y += 1
+    n0 = n * (n - 1) / 2
+    denominator = ((n0 - tie_x) * (n0 - tie_y)) ** 0.5
+    if denominator == 0:
+        return None
+    return (concordant - discordant) / denominator
+
+
+def calibration_tau(rows: list[dict[str, object]]) -> float | None:
+    """Association between evidence quality and reported confidence."""
+    xs: list[int] = []
+    ys: list[int] = []
+    for row in rows:
+        rank = _CONFIDENCE_RANK.get(str(row.get("confidence")))
+        evidence = row.get("evidence")
+        if rank is None or not isinstance(evidence, int):
+            continue
+        xs.append(evidence)
+        ys.append(rank)
+    return kendall_tau_b(xs, ys)
+
+
 def classify_direction(proposed: object, current: float | None) -> Direction:
     """Map a proposed spacing to widen/hold/tighten vs the current grid.
 
@@ -752,6 +842,37 @@ def _load_cloud_builder() -> object:
     return module._build_cloud_advisor  # type: ignore[attr-defined]
 
 
+def _calibration_line(rows: list[dict[str, object]]) -> str:
+    """One-line calibration verdict for the run summary.
+
+    Extracted from ``main_async`` to keep it under pylint's statement cap
+    -- the same R0915 that reached CI once already this week.
+    """
+    conf_counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("confidence"))
+        conf_counts[key] = conf_counts.get(key, 0) + 1
+    tau = calibration_tau(rows)
+    if tau is None:
+        distinct_evidence = len({row.get("evidence") for row in rows})
+        verdict = (
+            "[UNDEFINED: the FIXTURE SET has no evidence spread]"
+            if distinct_evidence <= 1
+            else "[DEGENERATE: one confidence level for every fixture -- no signal]"
+        )
+        tau_text = "n/a"
+    else:
+        tau_text = f"{tau:+.2f}"
+        if tau >= 0.4:
+            verdict = "[tracks evidence]"
+        elif tau > 0.0:
+            verdict = "[weak]"
+        else:
+            verdict = "[INVERTED: confident when the evidence is thin]"
+    counts = "  ".join(f"{k}={v}" for k, v in sorted(conf_counts.items()))
+    return f"CALIBRATION tau_b={tau_text} {verdict}  {counts}"
+
+
 async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-many-locals
     fixtures = FIXTURE_SETS[args.fixture_set]
     offenders = verify_no_guard(fixtures)
@@ -808,7 +929,7 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
                     "acceptable": sorted(fx.acceptable),
                     "why": why,
                     "confidence": confidence,
-                    "ambiguous": fx.ambiguous,
+                    "evidence": evidence_quality(fx),
                     "elapsed_s": round(elapsed, 1),
                 }
             )
@@ -835,25 +956,7 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
     # first; design a rubric from real data second. Building the rubric
     # blind is what produced the news-battery and fixture defects earlier
     # in this arc.
-    conf_counts: dict[str, int] = {}
-    for row in rows:
-        key = str(row.get("confidence"))
-        conf_counts[key] = conf_counts.get(key, 0) + 1
-    spread = len([k for k in conf_counts if k != "None"])
-    print(
-        "CALIBRATION (reported, not scored)  "
-        + "  ".join(f"{k}={v}" for k, v in sorted(conf_counts.items()))
-        + (
-            "   [DEGENERATE: one level for every fixture]"
-            if spread <= 1
-            else f"   [{spread} levels used]"
-        )
-    )
-    for row in rows:
-        if row.get("ambiguous"):
-            got = row.get("confidence")
-            mark = "as quant.md asks" if got == "low" else "quant.md asks for low"
-            print(f"  ambiguous fixture {row['name']}: confidence={got} ({mark})")
+    print(_calibration_line(rows))
 
     if args.json:
         print(
@@ -864,6 +967,7 @@ async def main_async(args: argparse.Namespace) -> int:  # pylint: disable=too-ma
                     "provider": args.provider,
                     "fixture_set": args.fixture_set,
                     "counts": counts,
+                    "calibration_tau_b": calibration_tau(rows),
                     "rows": rows,
                 }
             )
