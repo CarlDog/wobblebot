@@ -45,6 +45,7 @@ unchanged — it's its own domain error.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -72,6 +73,37 @@ from wobblebot.services.llm_retry import LLMRetryConfig
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_API_VERSION = "2023-06-01"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
+
+# Anthropic DEPRECATED ``temperature`` starting with the Claude 5
+# generation: sending it returns 400 ``invalid_request_error:
+# `temperature` is deprecated for this model``. This is a hard failure
+# on EVERY call, not a warning — measured 2026-08-10 against
+# claude-sonnet-5 and claude-opus-5 (claude-haiku-4-5 still accepts it).
+# Sibling of ``openai.is_reasoning_model``, which drops temperature for
+# the o-series/gpt-5 family for the same reason.
+#
+# Parsing rather than an allowlist, so a model shipped tomorrow works
+# without a code change. Ids look like ``claude-<tier>-<major>[-<minor>]``
+# with an optional ``-YYYYMMDD`` snapshot suffix, so the MAJOR component
+# is the generation: ``claude-haiku-4-5`` is 4.5 (keeps temperature) while
+# ``claude-opus-5`` is 5 (drops it). Getting that boundary wrong in the
+# other direction is what a naive "contains -5" check would do.
+_MODEL_GENERATION_RE = re.compile(r"^claude-[a-z]+-(?P<major>\d+)(?:-(?P<minor>\d+))?(?:-\d{8})?$")
+_TEMPERATURE_DEPRECATED_FROM_GENERATION = 5
+
+
+def supports_temperature(model: str) -> bool:
+    """Return True iff ``model`` still accepts a ``temperature`` field.
+
+    Unparseable ids default to **True** (send it): an unrecognized id is
+    far more likely to be a proxy/test alias for an older model than a
+    future Claude generation, and the failure mode of guessing wrong
+    here is a loud 400 rather than silent bad output.
+    """
+    match = _MODEL_GENERATION_RE.match(model)
+    if match is None:
+        return True
+    return int(match.group("major")) < _TEMPERATURE_DEPRECATED_FROM_GENERATION
 
 
 def parse_text_blocks(content: list[dict[str, Any]]) -> str:
@@ -208,8 +240,9 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
             "system": self._prompt.body,
             "messages": [{"role": "user", "content": user_message}],
             "max_tokens": self._max_tokens,
-            "temperature": self._temperature,
         }
+        if supports_temperature(self._model):
+            body["temperature"] = self._temperature
 
         async def _call() -> dict[str, Any]:
             return await post_messages(

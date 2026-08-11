@@ -43,6 +43,7 @@ from wobblebot.adapters.anthropic import (
     extract_anthropic_tokens,
     parse_text_blocks,
     post_messages,
+    supports_temperature,
 )
 from wobblebot.config.prompts import Prompt
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
@@ -159,8 +160,9 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
             "system": system_prompt,
             "messages": messages,
             "max_tokens": self._max_tokens,
-            "temperature": self._temperature,
         }
+        if supports_temperature(self._model):
+            body["temperature"] = self._temperature
 
         async def _call() -> dict[str, Any]:
             return await post_messages(
