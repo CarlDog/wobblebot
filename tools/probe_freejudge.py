@@ -483,7 +483,10 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
         ),
         acceptable=frozenset({"tighten"}),
         forbidden="widen",
-        note="Starvation one tier wider: no fills at all; widening guarantees permanent inactivity.",
+        note=(
+            "Starvation one tier wider: no fills at all; widening guarantees "
+            "permanent inactivity."
+        ),
     ),
     NoGuardFixture(
         "hard_overwide_one_lucky_cycle",
@@ -590,7 +593,10 @@ HARD_FIXTURES: tuple[NoGuardFixture, ...] = (
         ),
         acceptable=frozenset({"hold"}),
         forbidden=None,
-        note="38 snapshots is thin and signals conflict; hold at LOW confidence is the honest call.",
+        note=(
+            "38 snapshots is thin and the signals conflict; hold at LOW "
+            "confidence is the honest call."
+        ),
     ),
     NoGuardFixture(
         "hard_recovering_and_working",
