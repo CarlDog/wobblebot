@@ -64,6 +64,40 @@ cost us the answer.
 
 **NOT SWITCHED. Operator's call — a live-money config change.**
 
+### 2026-08-11 UPDATE — confirmed on REAL production inputs
+
+The gen3 result above was measured on fixtures *built* to be ambiguous.
+The obvious objection — "production serves easy reads, so the edge buys
+nothing there" — was tested rather than argued, by replaying the exact
+24 `input_summary` blobs gpt-5-mini answered in production through
+grok-4.5 at the deployed escalation params. **The objection was
+refuted.**
+
+| | gpt-5-mini (recorded) | grok-4.5 (replay) |
+|---|---|---|
+| **HOLD** | **0** | **4 / 24 (17%)** |
+| ≥ deployed 3.0% | 0 | 0 |
+| modal value | 1.00 | 1.20 |
+| lowest value | 0.66 | 0.90 |
+
+gpt-5-mini has emitted **zero HOLDs in 216 production calls**; grok
+emitted 4 in 24 on the same input class (Fisher **p = 7.9e-05** vs the
+full record, **p = 0.055** on the matched 24 — thin sample). All four
+grok HOLDs carry `medium` confidence, matching its better gen3
+calibration; production gpt-5-mini is 189/216 `high`.
+
+On the 20 non-HOLD cases both models agree on direction every time —
+the separation is entirely *whether the model will decline to act*.
+
+**Cost is still the counterweight, and the real numbers are now
+measured** (not estimated): production tokens are in 3120 / out 153 /
+reasoning 1045, unit cost $0.00318/call. At 4h × 6 symbols that is
+**$3.48/mo incumbent vs $14.70/mo grok**. Going direct to xAI does NOT
+help — headline rates are identical ($2/$6); only cached input differs
+($0.30 vs Atlas's $0.50), worth ~$0.08/mo.
+
+Full evidence: `production-advisor-forensics-2026-08-11.md`.
+
 ### Superseded: the 3-round gen3 result
 
 #### gen3 bake-off, 3 rounds (superseded by the 8-round result above)
