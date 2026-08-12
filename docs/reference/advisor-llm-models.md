@@ -23,6 +23,72 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-11d — constant-baseline audit of EVERY battery
+
+The check that demolished freejudge-v1 had only ever been run on the
+quant track. Applied uniformly to all seven fixture sets so each seat's
+evidence is judged by one standard. Offline, free, deterministic.
+
+**A battery is sound when no constant strategy scores near the best real
+model. A battery a rock can pass measures nothing.**
+
+| battery | best constant | best real model | margin | verdict |
+|---|---|---|---|---|
+| `freejudge/v1` | **86%** (HOLD) | gpt-5-mini 83% | **−3%** | ROCK BEATS CHAMPION |
+| **`quant/heldout`** | **75%** (HOLD) | sonnet-5 71% | **−4%** | **ROCK BEATS CHAMPION** |
+| `quant/core` | 33% | gpt-5-mini 83% | +50% | sound |
+| `freejudge/hard` | 33% | grok-4.5 99% | +66% | sound |
+| `freejudge/gen3` | 33% | grok-4.5 95% | +62% | sound |
+| `arbitrator` | 50% (OMIT) | gpt-5-mini 100% | +50% | sound |
+| `news` | 58% (echo current) | four models 100% | +42% | sound |
+
+### ⚠️ `quant/heldout` is a SECOND degenerate battery
+
+**Constant-HOLD scores 18/24 = 75%, beating every model ever measured on
+it.** `claude-sonnet-5`'s 17/24 was written up on 2026-08-10 as "the best
+held-out score ever measured" — a model that answers `hold` to everything
+beats it. The set was already known to be off-contract (only 3 of 8
+fixtures escalate; the rest are guard-resolved), and it is ALSO
+hold-degenerate. Two independent reasons it cannot support a seat
+decision.
+
+This retroactively explains the 2026-07-31 note that `gpt-5.4-nano`'s
+"best-in-field heldout 14/24 is the hold-more bias flattering the
+maintainer curve" — correct by intuition, never measured. It is measured
+now: the bias is worth 75 percentage points to a model that does nothing.
+
+**Neither v1 nor heldout is being "fixed."** Both stay exactly as they
+are so every historical score remains comparable — the same reasoning
+that kept v1 frozen. They are marked unusable for seat selection, not
+repaired.
+
+### The arbitrator and news batteries are STRUCTURALLY SOUND
+
+Constant-OMIT scores 50% on arbitrator and constant-echo 58% on news,
+against real models at 100% — margins of +50% and +42%. The concern that
+those seats rested on rock-passable evidence was WRONG; both batteries
+discriminate.
+
+**Their weakness is sample size, not degeneracy:** 8 and 12 fixtures,
+single runs. That is a far cheaper fix than a rebuild — more runs and
+more fixtures, not a new instrument. Recorded so the next person does
+not mistake "thin" for "broken".
+
+### Why this audit existed at all
+
+The operator asked why the quant advisor had absorbed so much more effort
+than the other seats. Roughly a third of the imbalance is justified —
+quant is the only seat with a live path (the deployed profile is
+`engine: cascade, type: single`). The rest is momentum: the quant track
+had the most prior investment, so it had the most surface area for
+defects, and each finding generated the next.
+
+The tell is inside the quant track itself: every hard-won standard —
+constant baselines, ceiling checks, calibration — was applied to
+freejudge while `quant/heldout` sat unaudited beside it, and its scores
+were still being cited the same day. Asymmetric rigour, not just
+asymmetric attention.
+
 ## Rev 2026-08-11c — gen3 bake-off: the `hard` significance was CEILING-INFLATED
 
 Run on `gen3` (21 fixtures, built the same day because grok ceilinged
@@ -305,7 +371,12 @@ adapter bug into a model verdict. Fixed in PR #81
 (`anthropic.supports_temperature`).
 
 **⚠️ Do not use `probe_advisor.py`'s core/heldout batteries for seat
-selection.** They key to the vol→spacing curve ADR-022 retired, and only
+selection.** TWO independent reasons, the second measured later (Rev
+2026-08-11d): they key to the retired vol→spacing curve AND
+`heldout` is **hold-degenerate — constant-HOLD scores 18/24 = 75%,
+beating every model ever measured on it**, including the sonnet-5 17/24
+recorded below as "the best held-out score ever measured". `core` is
+clean on that axis (best constant 33%). Only
 **3 of 8** heldout / **11 of 12** core fixtures escalate to the LLM at all
 (verified deterministically against the shipped `HeuristicAdvisorAdapter`
 2026-08-10). Three fixtures failed by all four roster models —
