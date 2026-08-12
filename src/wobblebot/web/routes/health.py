@@ -53,6 +53,7 @@ from wobblebot.services.kraken_health import (
     KrakenHealthResult,
     KrakenSystemStatus,
 )
+from wobblebot.services.llm_call_streak import LLMCallStreak, fetch_llm_call_streaks
 from wobblebot.services.llm_health import LLMEndpointHealth, LLMHealthChecker
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
@@ -63,6 +64,12 @@ from wobblebot.web.dependencies import (
 router = APIRouter(tags=["health"])
 
 _LOGGER = logging.getLogger("wobblebot.web.routes.health")
+
+# Roles whose failure streaks are worth surfacing. `single` is what the
+# cascade's escalation records itself as (verified against the live
+# ledger 2026-08-11 — the 3.5-day outage is 387 `single` rows), so
+# omitting it would miss the exact incident this was built for.
+_STREAK_ROLES = ("single", "quant", "risk", "news", "arbitrator", "operator")
 
 
 class OverallStatus(StrEnum):
@@ -84,12 +91,19 @@ class HealthSnapshot:
     # LLM endpoint probes (P3): empty when no checker is wired (tests,
     # deployments with no LLM config) — the template omits the section.
     llm: tuple[LLMEndpointHealth, ...] = ()
+    # Consecutive-failure streaks read from operator.db's llm_calls
+    # (2026-08-11). The endpoint probes above hit each provider's FREE
+    # models-list URL, which answers 200 on a quota-exhausted key — so
+    # they read green through a 3.5-day advisor outage. These read the
+    # request path that actually bills.
+    llm_streaks: tuple[LLMCallStreak, ...] = ()
 
 
 def compute_overall_status(
     kraken: KrakenHealthResult | None,
     daemons: tuple[DaemonHealth, ...],
     llm: tuple[LLMEndpointHealth, ...] = (),
+    llm_streaks: tuple[LLMCallStreak, ...] = (),
 ) -> OverallStatus:
     """Roll up Kraken + per-daemon states into one traffic light.
 
@@ -121,6 +135,12 @@ def compute_overall_status(
     # it contributes YELLOW at most.
     if any(not e.ok for e in llm):
         has_yellow = True
+    # A sustained failure streak is yellow for the same reason: the
+    # advisor is degraded, trading is not. `failing` is False when there
+    # were no calls at all, so a cascade whose guards resolved every tick
+    # does not read as broken.
+    if any(s.failing for s in llm_streaks):
+        has_yellow = True
     return OverallStatus.YELLOW if has_yellow else OverallStatus.GREEN
 
 
@@ -149,12 +169,19 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
         operator_db=_path_or_none(config.operator_db),
         thresholds=thresholds,
     )
+    streaks = tuple(
+        await fetch_llm_call_streaks(
+            operator_db=_path_or_none(config.operator_db),
+            roles=_STREAK_ROLES,
+        )
+    )
     return HealthSnapshot(
         kraken=kraken_result,
         daemons=tuple(daemons),
-        overall=compute_overall_status(kraken_result, tuple(daemons), llm),
+        overall=compute_overall_status(kraken_result, tuple(daemons), llm, streaks),
         last_refreshed_at=datetime.now(UTC),
         llm=llm,
+        llm_streaks=streaks,
     )
 
 

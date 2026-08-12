@@ -240,6 +240,92 @@ class TestHealthzLiveness:
         assert resp.json() == {"status": "ok"}
 
 
+class TestLLMCallStreakSection:
+    """End-to-end render of the silent-outage guard (2026-08-11).
+
+    The endpoint-probe card above cannot detect a quota-exhausted key —
+    it polls a free models-list URL that still answers 200 — which is how
+    a 3.5-day advisor outage read green. This card reads operator.db's
+    llm_calls instead, so it has to actually reach the page.
+    """
+
+    def test_a_failure_streak_renders_and_pulls_the_dot_yellow(  # type: ignore[no-untyped-def]
+        self, storage, tmp_path
+    ) -> None:
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        from fastapi.testclient import TestClient
+
+        from tests.web._helpers import login_as
+        from wobblebot.config.cli import WebConfig
+        from wobblebot.web.app import create_app
+
+        db = tmp_path / "operator.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE llm_calls (timestamp TEXT, role TEXT, success INT, error_kind TEXT)"
+        )
+        now = datetime.now(UTC)
+        conn.executemany(
+            "INSERT INTO llm_calls (timestamp, role, success, error_kind) VALUES (?,?,?,?)",
+            [
+                ((now - timedelta(minutes=10 * i)).isoformat(), "single", 0, "LLMRetryExhausted")
+                for i in range(12)
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10, operator_db=str(db)),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get("/health")
+            assert resp.status_code == 200
+            assert "LLM Call Outcomes" in resp.text
+            assert "12 consecutive failures" in resp.text
+            assert "LLMRetryExhausted" in resp.text
+            # Advisory infrastructure — yellow, never red (ADR-002).
+            assert client.get("/health/overall.json").json()["overall"] == "yellow"
+
+    def test_a_role_with_no_calls_is_shown_not_hidden(  # type: ignore[no-untyped-def]
+        self, storage, tmp_path
+    ) -> None:
+        """"No calls in 24h" is information. Hiding it, or painting it
+        green, is the false-green this card exists to remove."""
+        import sqlite3
+
+        from fastapi.testclient import TestClient
+
+        from tests.web._helpers import login_as
+        from wobblebot.config.cli import WebConfig
+        from wobblebot.web.app import create_app
+
+        db = tmp_path / "operator.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE llm_calls (timestamp TEXT, role TEXT, success INT, error_kind TEXT)"
+        )
+        conn.commit()
+        conn.close()
+
+        app = create_app(
+            config=WebConfig(bcrypt_cost=10, operator_db=str(db)),
+            operator_storage=storage,
+            session_secret="x" * 64,
+        )
+        with TestClient(app, follow_redirects=False) as client:
+            login_as(client)
+            resp = client.get("/health")
+            assert "LLM Call Outcomes" in resp.text
+            assert "no calls in the last 24h" in resp.text
+            assert "health-dot-muted" in resp.text
+
+
 class TestLLMHealthSection:
     def test_llm_section_renders_and_contributes_yellow(self, storage) -> None:  # type: ignore[no-untyped-def]
         """A wired checker's results render as the LLM Endpoints card and

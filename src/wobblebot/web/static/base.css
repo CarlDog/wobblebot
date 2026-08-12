@@ -1687,6 +1687,15 @@ table.data th {
 .health-dot-red {
   background: #dc2626;
 }
+/* Neutral: "we have nothing to judge", NOT "we checked and it's fine".
+   Used by the LLM-call-outcomes table for a role that made no calls in
+   the window — a cascade whose deterministic guards resolved every tick
+   is healthy, but it is not the same state as a confirmed success, and
+   rendering it green is how a dead advisor looked alive for 3.5 days. */
+.health-dot-muted {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--text-muted, #9ca3af);
+}
 
 /* Wrapper for the dashboard-card variant: click-through to /health
    with the dot inline. Slightly larger hit target than the dot

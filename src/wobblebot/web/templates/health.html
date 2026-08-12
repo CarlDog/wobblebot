@@ -197,4 +197,51 @@
   </table>
 </div>
 {% endif %}
+
+{# LLM call outcomes (2026-08-11). The endpoint probes above hit each
+   provider's FREE models-list URL, which answers 200 on a quota-exhausted
+   key — so they read green through a 3.5-day advisor outage (387
+   consecutive 429s, silently absorbed by the cascade's heuristic
+   fallback). This table reads the request path that actually bills.
+   Roles with no calls are shown, not hidden: "no calls in 24h" is
+   meaningful information, and collapsing it into green is the bug. #}
+{% if snapshot.llm_streaks %}
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">LLM Call Outcomes</div>
+    <div class="card-subtitle">consecutive failures per role, last 24h</div>
+  </div>
+  <table class="data">
+    <colgroup>
+      <col style="width: 80px">
+      <col style="width: 220px">
+      <col>
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="center">status</th>
+        <th>role</th>
+        <th>detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in snapshot.llm_streaks %}
+        <tr>
+          <td class="center">
+            {% if s.failing %}
+              <span class="health-dot health-dot-yellow" aria-hidden="true"></span>
+            {% elif not s.has_data %}
+              <span class="health-dot health-dot-muted" aria-hidden="true"></span>
+            {% else %}
+              <span class="health-dot health-dot-green" aria-hidden="true"></span>
+            {% endif %}
+          </td>
+          <td><strong>{{ s.role }}</strong></td>
+          <td>{{ s.detail }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}
