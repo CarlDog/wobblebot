@@ -23,6 +23,56 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-11e — DECISIVE: `grok-4.5` beats the champion significantly on gen3
+
+8 rounds on `gen3`, **168 judgments each**. This is the run that settles
+the direction question the 3-round bake-off left at p=0.076.
+
+| Model | OK/168 | OK% | SUB | **UNSAFE** | tau mean | $/call |
+|---|---|---|---|---|---|---|
+| **`xai/grok-4.5`** | **160** | **95%** | 8 | **0** | +0.35 | $0.00781 |
+| `gpt-5-mini` (champion) | 141 | 84% | 17 | **10** | +0.26 | $0.00206 |
+
+**Fisher exact: OK p=0.001045, UNSAFE p=0.0017.** Power was computed
+BEFORE running (resampling the observed per-run scores gave ~100% at +5
+rounds, projected p=0.0010) — the run landed within 5% of the
+projection, which is itself a check that the model of the process was
+right.
+
+**Not a ceiling artifact this time.** Per-run OK for grok:
+20,19,21,19,20,21,19,21 — it drops fixtures on most runs, so the test
+has real variance to work against. Contrast `hard`, where 119/120 left
+almost none and manufactured p=0.000041 from an exhausted battery
+(Rev 2026-08-11c).
+
+**Zero unsafe calls in 168 judgments vs the champion's TEN** — one per
+17 judgments. On a battery whose forbidden call is the actively
+dangerous one, that is a safety property rather than a scoring nicety.
+
+### ⚠️ Correction: the calibration gap CONVERGED
+
+At 3 runs, grok +0.44 vs champion +0.30 was written up as grok's
+clearest and most consistent advantage. At 8 runs it is **+0.35 vs
++0.26** — still ahead, but modest. **Direction and safety are the real
+separation; calibration is not.** A three-run tau on 21 points was
+noisier than the write-up implied.
+
+### The decision is now purely cost
+
+grok is significantly better on both deciding axes at **3.8x** the
+champion (~$0.38/day, ~$11/month at ADR-022 full escalation, on a bot
+running $10 orders with $60 exposure). No statistical ambiguity remains.
+
+**Flagged for the routine itself:** the ≤3x cost pre-filter would have
+excluded grok from the roster. It was probed only because the operator
+overrode that gate, and it is the only model that has ever beaten the
+incumbent. If the switch happens, that threshold should be revisited —
+it nearly cost us the answer.
+
+**NOT SWITCHED — operator's call, live-money config change.**
+
+Cloud spend for this run: **$1.02** (210 judgments).
+
 ## Rev 2026-08-11d — constant-baseline audit of EVERY battery
 
 The check that demolished freejudge-v1 had only ever been run on the

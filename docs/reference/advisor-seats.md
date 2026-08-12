@@ -22,11 +22,51 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
 
-## ⚠️ OPEN DECISION — `xai/grok-4.5` leads the quant seat, but NOT significantly
+## ⚠️ OPEN DECISION — `xai/grok-4.5` beats the quant seat SIGNIFICANTLY; the blocker is cost alone
 
-**Read the gen3 result first — it supersedes the `hard` numbers below.**
+**DECISIVE RESULT (2026-08-11): 8 rounds on gen3, 168 judgments each.**
 
-### gen3 bake-off (2026-08-11, 4 models x 3 runs x 21 fixtures = 252 judgments)
+| model | OK/168 | OK% | SUB | **UNSAFE** | tau mean |
+|---|---|---|---|---|---|
+| **`xai/grok-4.5`** | **160** | **95%** | 8 | **0** | +0.35 |
+| `gpt-5-mini` (champion) | 141 | 84% | 17 | **10** | +0.26 |
+
+**Fisher exact: OK p=0.001, UNSAFE p=0.0017.** Both clear 0.05 decisively.
+Projected p was 0.0010 before the run; it landed at 0.001045.
+
+**This is NOT a ceiling artifact.** Grok's per-run scores are
+20,19,21,19,20,21,19,21 — it drops fixtures on most runs, so there is
+real variance for the test to work against. That is precisely what was
+missing on `hard`, where 119/120 manufactured p=0.000041 out of an
+exhausted battery.
+
+**Zero unsafe calls in 168 judgments against the champion's TEN** — one
+per 17 judgments, on a battery built so the actively dangerous call is
+the thing measured. That is a safety property, not a scoring nicety, and
+it is the finding to weigh most heavily.
+
+**CORRECTION to the earlier write-up:** calibration CONVERGED with more
+data — grok +0.35 vs champion +0.26. At 3 runs it looked like grok's
+clearest advantage (+0.44 vs +0.30); at 8 runs the gap is modest.
+**Direction and safety are the real separation; calibration is not.**
+
+**THE DECISION IS NOW PURELY COST.** grok is significantly better on
+both axes at **3.8x** the champion — ~$0.38/day, ~$11/month at ADR-022
+full escalation, on a bot running $10 orders with $60 total exposure.
+There is no statistical ambiguity left to hold it up: it is better, and
+it costs more.
+
+**Worth revisiting if you switch:** the review routine's **≤3x cost
+pre-filter** would have excluded grok from the roster entirely. It was
+rostered only because the operator overrode that gate — and it turned
+out to be the only model that beat the incumbent. The threshold nearly
+cost us the answer.
+
+**NOT SWITCHED. Operator's call — a live-money config change.**
+
+### Superseded: the 3-round gen3 result
+
+#### gen3 bake-off, 3 rounds (superseded by the 8-round result above)
 
 Run on `gen3`, built the same day because grok CEILINGED `hard` at
 119/120. Constant baseline 33%.
