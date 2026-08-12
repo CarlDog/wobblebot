@@ -573,6 +573,7 @@ def _build(args: argparse.Namespace) -> tuple[Any, Any]:
                 model=args.model,
                 prompt=prompt,
                 role="news",
+                base_url=args.base_url,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 timeout_seconds=args.timeout_seconds,
@@ -691,6 +692,13 @@ def main() -> int:
         "--provider", default="ollama", choices=("ollama", "openai", "anthropic", "google", "atlas")
     )
     parser.add_argument("--prompt-file", default="config/prompts/news.md")
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:11434",
+        help="Ollama endpoint. The NAS runs the deployed models on a "
+        "CPU-only box, so point here to measure REAL deployment latency "
+        "(e.g. http://carldog-nas:11434); ignored for cloud providers.",
+    )
     parser.add_argument(
         "--fixture-set",
         choices=tuple(FIXTURE_SETS),

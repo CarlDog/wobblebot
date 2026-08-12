@@ -636,25 +636,46 @@ async def main_async(  # pylint: disable=too-many-locals
     args: argparse.Namespace,
 ) -> int:
     prompt = load_prompt(Path(args.prompt_file))
-    build = _load_cloud_builder()
-    storage = SQLiteStorageAdapter("data/probe_llm_cost.db")
-    Path("data").mkdir(exist_ok=True)
-    await storage.connect()
-    adapter: AdvisorPort = build(  # type: ignore[operator]
-        provider=args.provider,
-        model=args.model,
-        prompt=prompt,
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-        timeout_seconds=args.timeout_seconds,
-        storage=storage,
-        session_cap=args.session_cap,
-        daily_cap=args.daily_cap,
-    )
-    # NOTE: _build_cloud_advisor has no `role` parameter, so cost rows in the
-    # isolated probe db are tagged with its default. Harmless here (the probe
-    # ledger is never the operator ledger) and not worth changing a builder
-    # four other tools depend on.
+    storage: SQLiteStorageAdapter | None = None
+    adapter: AdvisorPort
+    if args.provider == "ollama":
+        # Local models cost nothing, so they take neither the cost gate nor
+        # the ledger. Added 2026-08-12: `ollama` was in --provider's choices
+        # from day one but every path led to _build_cloud_advisor, whose
+        # first statement is _CLOUD_KEY_ENV[provider] — a dict with no
+        # "ollama" key. The flag was advertised and raised KeyError, so this
+        # battery could not score a local model at all.
+        from wobblebot.adapters.ollama import OllamaAdapter  # noqa: PLC0415
+
+        adapter = OllamaAdapter(
+            model=args.model,
+            prompt=prompt,
+            role="risk",
+            base_url=args.base_url,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            timeout_seconds=args.timeout_seconds,
+        )
+    else:
+        build = _load_cloud_builder()
+        storage = SQLiteStorageAdapter("data/probe_llm_cost.db")
+        Path("data").mkdir(exist_ok=True)
+        await storage.connect()
+        adapter = build(  # type: ignore[operator]
+            provider=args.provider,
+            model=args.model,
+            prompt=prompt,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            timeout_seconds=args.timeout_seconds,
+            storage=storage,
+            session_cap=args.session_cap,
+            daily_cap=args.daily_cap,
+        )
+        # NOTE: _build_cloud_advisor has no `role` parameter, so cost rows in
+        # the isolated probe db are tagged with its default. Harmless here
+        # (the probe ledger is never the operator ledger) and not worth
+        # changing a builder four other tools depend on.
 
     print(f"# risk battery: {len(FIXTURES)} fixtures (9 comfortable / 4 moderate / 5 severe)")
     print(f"# model: {args.provider}/{args.model}  prompt: {args.prompt_file}")
@@ -693,7 +714,8 @@ async def main_async(  # pylint: disable=too-many-locals
         aclose = getattr(adapter, "aclose", None)
         if aclose is not None:
             await aclose()
-        await storage.close()
+        if storage is not None:
+            await storage.close()
 
     safe = counts["OK"] + counts["SUBOPTIMAL"]
     print(
@@ -730,6 +752,13 @@ def main() -> int:
         choices=("ollama", "openai", "anthropic", "google", "atlas"),
     )
     parser.add_argument("--prompt-file", default="config/prompts/risk.md")
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:11434",
+        help="Ollama endpoint. The NAS runs the deployed models on a "
+        "CPU-only box, so point here to measure REAL deployment latency "
+        "(e.g. http://carldog-nas:11434); ignored for cloud providers.",
+    )
     parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)

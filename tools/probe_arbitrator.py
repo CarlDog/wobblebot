@@ -78,6 +78,10 @@ _CURRENT_ORDER_SIZE = 5.0
 # arbitrator.md: "Never reconcile to a spacing below the fee floor
 # (~0.66%, the maker+taker round-trip break-even)."
 _FEE_FLOOR = 0.66
+# Float slop for "did the model restate the live spacing" — matches
+# probe_news's constant of the same name so the two batteries agree on
+# what counts as an echo.
+_ECHO_TOLERANCE = 0.001
 
 
 def _op(
@@ -542,6 +546,22 @@ def _grade(  # pylint: disable=too-many-return-statements
         # HOLD: the key must be absent. A tighten is the specific breach.
         if spacing is None:
             return Verdict(fx.name, fx.rule, True, "correctly omitted spacing", got=None)
+        # An ECHO of the live spacing is semantically a HOLD, not a change,
+        # and the auto-apply gate treats it as a no-op. Grading it as a
+        # failure calls the CORRECT decision a breach — and on the fee-floor
+        # and never-tighten fixtures it would report the safest possible
+        # answer as the dangerous one.
+        #
+        # probe_news learned this on 2026-08-10 (a first-draft rubric scored
+        # qwen3.6 at 5/12 for emitting exactly 3.0 on five quiet windows) and
+        # grew ``_is_echo``. This battery did not, so the two siblings
+        # disagreed on the same question until 2026-08-12, when the local
+        # sweep surfaced it: llama3.1:8b-q4 answers HOLD by restating 3.0 and
+        # was losing four fixtures for being right. arbitrator.md does prefer
+        # omission ("Omit any field you don't want to change"), so this is a
+        # style deviation — not a rule breach, and not scored as one.
+        if isinstance(spacing, int | float) and abs(spacing - _CURRENT_SPACING) <= _ECHO_TOLERANCE:
+            return Verdict(fx.name, fx.rule, True, f"held (echoed live {spacing})", got=spacing)
         detail = f"expected HOLD (omit spacing), got {spacing}"
         if isinstance(spacing, int | float) and spacing < _FEE_FLOOR:
             detail += f" — BELOW FEE FLOOR {_FEE_FLOOR}"
@@ -613,6 +633,7 @@ async def _build_llm(args: argparse.Namespace) -> tuple[Any, Any]:
                 model=args.model,
                 prompt=prompt,
                 role="arbitrator",
+                base_url=args.base_url,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 timeout_seconds=args.timeout_seconds,
@@ -750,6 +771,13 @@ def main() -> int:
     parser.add_argument("--session-cap", type=float, default=2.0)
     parser.add_argument("--daily-cap", type=float, default=5.0)
     parser.add_argument("--prompt-file", default="config/prompts/arbitrator.md")
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:11434",
+        help="Ollama endpoint. The NAS runs the deployed models on a "
+        "CPU-only box, so point here to measure REAL deployment latency "
+        "(e.g. http://carldog-nas:11434); ignored for cloud providers.",
+    )
     parser.add_argument(
         "--fixture-set",
         choices=tuple(FIXTURE_SETS),

@@ -67,6 +67,27 @@ class TestDeterministicBaselines:
             frac = self._frac("gen2", fn)
             assert frac <= 0.55, f"{label} scores {frac:.0%} on gen2 — no longer a floor"
 
+    def test_a_do_nothing_constant_scores_badly(self) -> None:
+        """Gap found 2026-08-12 by the local sweep, not by this file.
+
+        The tests above pinned the two AGGREGATORS but never a naive
+        constant, so nothing caught that "emit nothing every time" scores
+        6/17. That mattered the moment real candidates arrived: six of
+        eight local models landed on exactly 5-6/17 — i.e. they were not
+        performing the task at all, and only the constant baseline made
+        that legible. A battery that cannot name its own do-nothing floor
+        cannot tell a bad model from an absent one.
+        """
+        fixtures = mod.FIXTURE_SETS["gen2"]
+        for label, rec in [
+            ("EMPTY", mod._op("arbitrator")),
+            ("ECHO", mod._op("arbitrator", spacing_percentage=mod._CURRENT_SPACING)),
+            ("WIDEN", mod._op("arbitrator", spacing_percentage=4.0)),
+        ]:
+            ok = sum(1 for f in fixtures if mod._grade(f, rec).ok)
+            frac = ok / len(fixtures)
+            assert frac <= 0.40, f"constant-{label} scores {frac:.0%} — too high for a floor"
+
     def test_the_free_aggregators_cannot_reach_the_role_rules(self) -> None:
         """They have no concept of expert ROLE, so rules 1 and 2 are
         structurally unreachable. If one ever passes both, the fixtures
@@ -154,6 +175,45 @@ class TestOrderSizeGrading:
         )
         rec = mod._op("arbitrator", spacing_percentage=3.6, order_size_usd=4.0)
         assert not mod._grade(fx_strict, rec).ok
+
+
+class TestEchoIsAHold:
+    """Pinned 2026-08-12 after the local sweep exposed the divergence.
+
+    probe_news has treated an echo of the live spacing as a HOLD since
+    2026-08-10; this battery did not, so llama3.1:8b-q4 — which answers
+    HOLD by restating 3.0 — lost four fixtures for being right. The two
+    siblings must not disagree about what an echo means.
+    """
+
+    def _hold_fixture(self):  # type: ignore[no-untyped-def]
+        return next(
+            f
+            for f in mod.FIXTURE_SETS["gen2"]
+            if f.expect_spacing is None and not f.forbid_any_recommendation
+        )
+
+    def test_echoing_live_spacing_scores_as_a_hold(self) -> None:
+        fx = self._hold_fixture()
+        result = mod._grade(fx, mod._op("arbitrator", spacing_percentage=mod._CURRENT_SPACING))
+        assert result.ok
+        assert "echoed" in result.detail
+
+    def test_a_real_tighten_still_fails(self) -> None:
+        """The tolerance must not swallow the breach it sits next to."""
+        fx = self._hold_fixture()
+        assert not mod._grade(fx, mod._op("arbitrator", spacing_percentage=0.9)).ok
+        assert not mod._grade(fx, mod._op("arbitrator", spacing_percentage=2.5)).ok
+
+    def test_a_real_widen_still_fails_a_hold_fixture(self) -> None:
+        fx = self._hold_fixture()
+        assert not mod._grade(fx, mod._op("arbitrator", spacing_percentage=4.2)).ok
+
+    def test_rule_5_still_demands_an_empty_dict(self) -> None:
+        """all_low_confidence says "return NO recommendations" — an echo is
+        still a recommendation there, so the tolerance must not apply."""
+        fx = next(f for f in mod.FIXTURE_SETS["gen2"] if f.forbid_any_recommendation)
+        assert not mod._grade(fx, mod._op("arbitrator", spacing_percentage=mod._CURRENT_SPACING)).ok
 
 
 class TestRuleCoverage:
