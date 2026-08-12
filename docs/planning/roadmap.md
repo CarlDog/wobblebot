@@ -1296,6 +1296,17 @@ the detail; the full backlog index is
    the instrument is noisy off-contract: `gpt-5-mini` scored 8/24 on it in July
    and 14/24 today, unchanged model.
 
+   **↳ MEASURED 2026-08-11, and it is worse than "flattering":
+   `quant/heldout` is DEGENERATE.** A constant-HOLD strategy scores
+   **18/24 = 75%** on it — beating sonnet-5's 17/24 and every other model
+   ever measured on that set. The hold-bias was diagnosed by intuition in
+   July and cited again mid-session; the uniform constant-baseline audit
+   (advisor-llm-models.md Rev 2026-08-11d) put a number on it. Two
+   independent disqualifiers now: off-contract (3 of 8 fixtures escalate)
+   AND rock-passable. `quant/core` is clean on that axis (best constant
+   33%). Neither set is being fixed — both stay frozen so historical
+   scores remain comparable, marked unusable rather than repaired.
+
    **Seat decisions: NO SWITCH** — deciding evidence is the freejudge run
    recorded below, NOT the two quant columns, which the root-cause above
    disqualifies for seat selection. On the off-contract batteries for the

@@ -144,6 +144,32 @@ before use."
 
 **Before enabling MoE, reconcile the profile against this table.**
 
+## Battery health (constant-baseline audit, 2026-08-11)
+
+A battery is sound when no constant strategy scores near the best real
+model. Two of the seven fixture sets fail that test and must not be used
+for seat selection:
+
+| battery | best constant | best real | margin | usable? |
+|---|---|---|---|---|
+| `freejudge/gen3` | 33% | 95% | +62% | ✅ current instrument |
+| `freejudge/hard` | 33% | 99% | +66% | ✅ (but grok ceilings it) |
+| `quant/core` | 33% | 83% | +50% | ⚠️ off-contract only |
+| `arbitrator` | 50% | 100% | +50% | ✅ sound, but only 8 fixtures |
+| `news` | 58% | 100% | +42% | ✅ sound, but only 12 fixtures |
+| `freejudge/v1` | **86%** | 83% | **−3%** | ❌ rock beats champion |
+| **`quant/heldout`** | **75%** | 71% | **−4%** | ❌ **rock beats champion** |
+
+**arbitrator and news are structurally SOUND** — the concern that those
+seats rested on rock-passable evidence was wrong. Their weakness is
+SAMPLE SIZE (8 and 12 fixtures, single runs), which is a far cheaper fix
+than a rebuild: more runs and more fixtures, not a new instrument.
+
+**`quant/heldout` is degenerate** — constant-HOLD scores 75%, beating
+every model measured on it. Combined with being off-contract (3 of 8
+fixtures escalate), it has two independent disqualifiers. Frozen, not
+fixed, so historical scores stay comparable.
+
 ## Rules for changing a seat
 
 1. **A seat changes on battery evidence, not on vibes or vendor news.**
