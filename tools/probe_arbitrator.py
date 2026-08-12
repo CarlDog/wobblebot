@@ -47,6 +47,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -457,6 +458,15 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    # Match probe_freejudge / probe_news / probe_risk: this module's
+    # docstring is non-ASCII and argparse prints it as the description, so
+    # even `--help` raised UnicodeEncodeError on a cp1252 console
+    # (pre-existing; caught 2026-08-11). probe_advisor / probe_assistant /
+    # probe_discord_bot lack this too but their help text is currently
+    # ASCII-clean, so they fail only latently.
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=None, help="Arbitrator model; omit for baselines only.")
     parser.add_argument(

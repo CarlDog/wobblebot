@@ -16,7 +16,7 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | Seat | Holder | Evidence | Battery | Decided | Config status |
 |---|---|---|---|---|---|
 | **quant** (escalation) | `gpt-5-mini` — **but a challenger has FILED, see below** | freejudge `hard` OK 102/120 (85%), **UNSAFE 7**; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano, minimax-m3, deepseek-v4-pro | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
-| **arbitrator** | `gpt-5-mini` | 8/8 vs `voting` 5/8 and `weighted_confidence` 1/8 on identical inputs | `probe_arbitrator.py` | 2026-08-10 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
+| **arbitrator** | `gpt-5-mini` — **re-validated, but see below** | 3 rounds: **23/24**; `claude-haiku-4-5` **24/24**; free `voting` 15/24, `weighted_confidence` 3/24 | `probe_arbitrator.py` | 2026-08-10, re-run 2026-08-11 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
 | **news** | **`claude-haiku-4-5`** — recommended, not yet wired | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043** | `probe_news.py` | 2026-08-11 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
 | **risk** | *undecided* | battery was blocked on the input mismatch; **unblocked 2026-08-10** | *(none yet)* | — | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
@@ -241,8 +241,8 @@ SAMPLE SIZE (8 and 12 fixtures, single runs), which is a far cheaper fix
 than a rebuild: more runs and more fixtures, not a new instrument.
 
 **News took that fix on 2026-08-11 and it worked** — see the seat result
-below. Arbitrator has not; its 8-fixture single run is now the weakest
-evidence in the register.
+below. **Arbitrator was re-run the same day and the single-run 8/8 did
+NOT reproduce** — see below.
 
 ### ⚠️ A SINGLE RUN IS NOT A SCORE (measured 2026-08-11)
 
@@ -321,6 +321,47 @@ rule does cover.
 
 **NOT WIRED.** The `moe-advisor` profile still says `deepseek-r1:8b`,
 which has never been scored. MoE is off, so nothing is live either way.
+
+## Arbitrator seat — RE-VALIDATED 2026-08-11: the 8/8 did not reproduce
+
+The register recorded `gpt-5-mini` at 8/8 from **one run of 8 fixtures**.
+Re-run at 3 rounds:
+
+| | round 1 | round 2 | round 3 | total | $/mo @1094 sweeps |
+|---|---|---|---|---|---|
+| `gpt-5-mini` (incumbent) | **7/8** | 8/8 | 8/8 | **23/24** | $2.46 |
+| `claude-haiku-4-5` | 8/8 | 8/8 | 8/8 | **24/24** | $3.06 |
+| `voting` (free, deterministic) | 5/8 | 5/8 | 5/8 | 15/24 | $0 |
+| `weighted_confidence` (free) | 1/8 | 1/8 | 1/8 | 3/24 | $0 |
+
+**Three things follow.**
+
+**1. The headline number was optimistic.** 8/8 was one draw of a
+distribution whose mean is 23/24. Not wrong, not reproducible — which is
+the whole point of the variance finding above.
+
+**2. The dropped fixture is the dangerous one.** gpt-5-mini's single
+failure was `never_emit_a_tighten`: it emitted 0.9 against a live 3.0 —
+a tighten the auto-apply gate discards, on a prompt that forbids them
+outright. Note the pattern across seats: on news its 10 failures were all
+OVERTRADE, and on quant it has never once held in 216 production calls.
+**One disposition — bias toward acting — surfacing as a different defect
+in each seat.** That is a model property worth carrying forward, not
+three unrelated results.
+
+**3. The LLM arbitrator DOES earn its cost over mechanical aggregation.**
+That was this tool's founding question and the 3-round answer is
+unambiguous: 23–24/24 against `voting`'s 15/24 and
+`weighted_confidence`'s 3/24. The free baselines fail by construction —
+they have no concept of expert ROLE, so rules 1 and 2 are unreachable —
+but that is exactly the gap an LLM in the seat is being paid to close.
+
+**Still ceilinged, and NOT re-decided.** Both candidates sit at 23–24/24,
+so 8 fixtures cannot rank them; `haiku-4-5`'s one-point edge is inside
+the run-to-run noise measured above. Choosing between them needs the
+gen2 treatment (boundary cases per rule), which is queued, not done. The
+seat stays with `gpt-5-mini` — this pass re-validated it, it did not
+replace it.
 
 ## Rules for changing a seat
 
