@@ -1451,6 +1451,76 @@ the detail; the full backlog index is
    Claude-in-Chrome screenshot. Known nit for the next web slice: the
    projected-cost label's capital P breaks label-case consistency.
 
+   **Post-P3 — production forensics + the seat-confirmation arc** ✅
+   **2026-08-11 → 08-12** (operator-driven; not a P3 slice). The operator
+   supplied the NAS UNC share, turning every prior claim about advisor
+   behaviour from inference into measurement — the local corpus was 109
+   May suggestions, all `phi4`. Read-only; nothing deployed. Full write-up:
+   `docs/reference/production-advisor-forensics-2026-08-11.md`; seat state
+   in `docs/reference/advisor-seats.md`.
+
+   **Four production findings.** (1) **The advisor was dead for 3.5 days
+   and nothing said so** — 387 consecutive OpenAI 429s (08-05 → 08-08),
+   silently absorbed by the cascade's heuristic fallback, row rate
+   unchanged at 36/day. The same signature appears seven weeks earlier
+   (981 o3 attempts on 06-18, 975 exhausted). `services/llm_health` could
+   not catch either: it probes the FREE models-list endpoint, which
+   answers 200 on a quota-exhausted key. **Closed** by
+   `services/llm_call_streak` + an "LLM Call Outcomes" card on /health.
+   (2) **Escalation went 0% → 100% on 2026-08-09, by config not bug** —
+   July ran **1116 decisions with ZERO LLM calls**; the ADR-022 guards are
+   all structurally unreachable at 3.0% spacing (`quant.yml` already
+   documents one as "DORMANT AT WIDE (~3%) SPACING"). So $0/mo → $3.48/mo
+   was a deploy. **Parked by the operator for later** — the lever is the
+   guard set, not the sweep cadence. (3) **The incumbent is a constant** —
+   216/216 quant calls recommend TIGHTEN, zero HOLDs, none at or above the
+   deployed 3.0%, while trades ran 9 / 44 / 16 / **1** per month
+   (May→Aug). (4) **Zero prompt-cache hits in 222 calls** despite a
+   1270-token static prefix; mechanism undiagnosed, prize sized at ~9% of
+   spend so nobody over-invests.
+
+   **The cadence question that started it, answered:** churn between 4h
+   sweeps is 54–69%, but the DIRECTION never changes; subsampling the real
+   record to 12h keeps 7/9 distinct values, same median, zero direction
+   changes. Reduction is nearly free — *which is the reason not to do it*:
+   it saves $1–2/mo and makes a degenerate signal harder to monitor.
+
+   **A prediction of Claude's was tested and refuted.** The argument that
+   grok-4.5's fixture edge would buy nothing on production input was
+   checked by replaying the exact 24 `input_summary` blobs: grok held 4/24
+   where gpt-5-mini has **never** held in 216 production calls (Fisher
+   p=7.9e-05 vs the full record, p=0.055 on the matched 24). Recorded as
+   method, because the reasoning was plausible and would have frozen a
+   decision on a false premise.
+
+   **Seats confirmed on rebuilt batteries** (all NOT wired — MoE is off):
+   news → `claude-haiku-4-5` (gen2, 3 rounds, 65/66; ties sonnet-5 at
+   1/4.5 the cost, p=0.5); risk → `gpt-5-mini` on cost alone (50/54 vs
+   haiku 49/54, p=0.5 — **0 UNSAFE and 15/15 severe for both**);
+   arbitrator → `claude-haiku-4-5` **weakly** (75/75 vs 73/75, p=0.248).
+
+   **Three method findings outrank the scores.** (a) **A single run is not
+   a score** — haiku ran 21/22/22/21/22 on identical inputs, which
+   retroactively weakened every single-run seat decision, the arbitrator's
+   8/8 most of all (it re-ran at 23/24). (b) **One disposition, three
+   costumes** — gpt-5-mini's bias toward acting shows up as 10/10 OVERTRADE
+   on news, a forbidden tighten on arbitrator, and never holding on quant;
+   on the risk seat the same trait is an ASSET, because there acting means
+   de-risking. (c) **When most models fail one fixture, suspect the
+   fixture** — `single_denied_rumor` was withdrawn mid-measurement after 3
+   of 4 models read it the other way and were defensible.
+
+   **Two honest negatives, recorded as such:** arbitrator gen2 **did not
+   break its tie** (all nine new boundary cases passed by both models,
+   every round — the role is rule-application, not judgment; do not build
+   a gen3), and it emerged that free `voting` scores 62% on arbitrator v1,
+   well above the 50% the battery-health table implied.
+
+   **Open, pinned by the operator:** three of four seats were decided on
+   **cloud-only fields**, and every one of those calls turned on cost —
+   an axis local inference deletes. A rigorous Ollama pass across news /
+   risk / arbitrator is owed before any of these are treated as settled.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
