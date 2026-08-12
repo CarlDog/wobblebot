@@ -469,6 +469,106 @@ class TestBuildAdvisorDispatch:
         assert label == "moe[weighted_confidence:quant:m1/risk:m2/news:m3]"
 
 
+class TestAtlasProvider:
+    """`atlas` reaches an OpenAI-compatible gateway (added 2026-08-12).
+
+    It exists because a seat could be MEASURED and then not EXPRESSED:
+    the probes reach `xai/grok-4.5` by hardcoding the Atlas base URL, but
+    `base_url` was configurable only for Ollama, so settings.yml could not
+    name the model the batteries had chosen.
+    """
+
+    def test_atlas_builds_the_openai_adapter_with_the_gateway_base_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from wobblebot.adapters.openai import OpenAIAdvisorAdapter
+        from wobblebot.cli.advise import _ATLAS_BASE_URL, _build_advisor_adapter
+        from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+
+        monkeypatch.setenv("ATLASCLOUD_API_KEY", "test-key-not-a-real-secret")
+
+        class _Wiring:
+            storage = None
+            session_tracker = SessionCostTracker()
+
+            class llm_config:  # noqa: N801 - test stub mirroring the real shape
+                cost = LLMCostConfig(
+                    max_spend_per_day_usd=Decimal("1"),
+                    max_spend_per_session_usd=Decimal("1"),
+                    enforce=False,
+                )
+                retry = None
+
+        adapter = _build_advisor_adapter(
+            provider="atlas",
+            model="xai/grok-4.5",
+            prompt_file="config/prompts/quant.md",
+            inference_params=InferenceParams(),
+            role="quant",
+            cloud_wiring=_Wiring(),  # type: ignore[arg-type]
+        )
+        assert isinstance(adapter, OpenAIAdvisorAdapter)
+        # The whole point: a base_url override, not a second adapter.
+        assert _ATLAS_BASE_URL == "https://api.atlascloud.ai"
+
+    def test_atlas_without_a_key_fails_with_a_named_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deprived-env discipline: a clean message naming the variable,
+        never a raw KeyError — which is exactly how probe_risk's advertised
+        `ollama` provider failed before 2026-08-12."""
+        from wobblebot.cli.advise import _build_advisor_adapter
+        from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
+
+        monkeypatch.delenv("ATLASCLOUD_API_KEY", raising=False)
+
+        class _Wiring:
+            storage = None
+            session_tracker = SessionCostTracker()
+
+            class llm_config:  # noqa: N801
+                cost = LLMCostConfig(
+                    max_spend_per_day_usd=Decimal("1"),
+                    max_spend_per_session_usd=Decimal("1"),
+                    enforce=False,
+                )
+                retry = None
+
+        with pytest.raises(ValueError, match="ATLASCLOUD_API_KEY"):
+            _build_advisor_adapter(
+                provider="atlas",
+                model="xai/grok-4.5",
+                prompt_file="config/prompts/quant.md",
+                inference_params=InferenceParams(),
+                role="quant",
+                cloud_wiring=_Wiring(),  # type: ignore[arg-type]
+            )
+
+    def test_atlas_without_the_llm_block_names_the_cost_gate(self) -> None:
+        from wobblebot.cli.advise import _build_advisor_adapter
+
+        with pytest.raises(ValueError, match="no `llm:` block"):
+            _build_advisor_adapter(
+                provider="atlas",
+                model="xai/grok-4.5",
+                prompt_file="config/prompts/quant.md",
+                inference_params=InferenceParams(),
+                role="quant",
+                cloud_wiring=None,
+            )
+
+    def test_the_grok_seat_model_is_priced_under_openai(self) -> None:
+        """The silent-failure guard. Atlas cost rows resolve through
+        llm_pricing keyed as ("openai", "<vendor>/<model>"); if that key
+        ever moves, the gate falls back to raising and the seat stops
+        working in production rather than in a test."""
+        from wobblebot.services.llm_pricing import get_price_point
+
+        point = get_price_point("openai", "xai/grok-4.5")
+        assert point.input_per_million_usd > 0
+        assert point.output_per_million_usd > 0
+
+
 class TestEngineDispatch:
     """Stage 8.5: ``advisor.engine`` picks heuristic / llm / cascade."""
 

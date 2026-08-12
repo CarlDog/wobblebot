@@ -23,7 +23,17 @@ from pydantic import BaseModel, Field, model_validator
 
 # Provider tag — extend when new adapters land. The MoE adapter
 # dispatches on this string at construction time.
-LLMProvider = Literal["ollama", "anthropic", "openai", "google"]
+#
+# ``atlas`` (added 2026-08-12) is not a distinct API shape: Atlas Cloud is
+# an OpenAI-COMPATIBLE gateway fronting ~400 models, so it reuses
+# OpenAIAdvisorAdapter with a base_url override — the same construction
+# tools/probe_advisor.py has used since the Atlas roster was priced. It
+# exists as its own tag because a model like ``xai/grok-4.5`` is
+# unreachable otherwise: base_url was configurable ONLY for Ollama, so a
+# seat could be measured by the probes and then not expressed in
+# settings.yml. Cost rows are recorded under provider ``openai``, which
+# is how services/llm_pricing already keys the Atlas roster.
+LLMProvider = Literal["ollama", "anthropic", "openai", "google", "atlas"]
 
 # Specialty role — informational only; the advisor uses this to
 # label expert opinions in logs and (later) in the aggregator's

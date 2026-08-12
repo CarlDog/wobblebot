@@ -494,7 +494,15 @@ advisor:
   # (key: `advise`), alongside every other periodic-task interval.
 
   # Single-mode LLM target. Required when type=single (and engine is llm/cascade).
-  provider: ollama                    # ollama | anthropic | openai | google
+  # ollama | anthropic | openai | google | atlas.
+  # `atlas` (2026-08-12) is Atlas Cloud, an OpenAI-COMPATIBLE gateway
+  # fronting ~400 models — it reuses the OpenAI adapter with a base_url
+  # override, needs ATLASCLOUD_API_KEY, and its models carry a vendor
+  # prefix (`xai/grok-4.5`). It exists because base_url was configurable
+  # only for ollama, so a seat the batteries had CHOSEN could not be
+  # NAMED here. Cost rows record provider `openai`, which is how
+  # services/llm_pricing keys the Atlas roster.
+  provider: ollama
   model: deepseek-r1:7b
   prompt_file: "config/prompts/quant.md"
   inference_params:

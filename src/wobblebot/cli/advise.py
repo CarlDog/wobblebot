@@ -86,6 +86,11 @@ from wobblebot.services.summary_builder import SummaryBuilder
 
 _LOGGER = logging.getLogger("wobblebot.cli.advise")
 
+# Atlas Cloud's OpenAI-compatible endpoint. Same literal the probe tools
+# use; kept here rather than imported from tools/ because src must not
+# depend on the probe scripts.
+_ATLAS_BASE_URL = "https://api.atlascloud.ai"
+
 
 def _current_grid_from_config(config: WobbleBotConfig, symbol: Symbol) -> CurrentGridParams:
     """Map the engine's grid config for the symbol into the advisor's view."""
@@ -128,11 +133,14 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
     """Construct one ``AdvisorPort`` from the (provider, model, prompt_file)
     triple shared by single + per-expert + arbitrator config blocks.
 
-    Dispatches by provider:
+    Dispatches by provider (the "not yet implemented" note here was stale
+    from Stage 6.2 — every branch below is live):
     - ``ollama`` → ``OllamaAdapter`` (local, free; bypasses the cost gate).
-    - ``anthropic`` → ``AnthropicAdvisorAdapter`` (Phase 6 Stage 6.2;
-      requires ``cloud_wiring`` non-None).
-    - ``openai`` / ``google`` → not yet implemented; raise.
+    - ``anthropic`` / ``openai`` / ``google`` → that provider's adapter;
+      each requires ``cloud_wiring`` non-None for the ADR-014 cost gate.
+    - ``atlas`` → ``OpenAIAdvisorAdapter`` with a base_url override, since
+      Atlas Cloud is an OpenAI-compatible gateway rather than a distinct
+      API shape.
     """
     prompt = load_prompt(Path(prompt_file))
     if provider == "ollama":
@@ -194,6 +202,39 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             role=role,  # type: ignore[arg-type]
             api_key=api_key,
             organization=organization,
+            storage=cloud_wiring.storage,
+            session_tracker=cloud_wiring.session_tracker,
+            cost_config=cloud_wiring.llm_config.cost,
+            retry_config=cloud_wiring.llm_config.retry,
+            temperature=float(inference_params.temperature),
+            max_tokens=inference_params.max_tokens,
+            timeout_seconds=inference_params.timeout_seconds,
+        )
+    if provider == "atlas":
+        if cloud_wiring is None:
+            raise ValueError(
+                "Atlas provider configured but settings.yml has no `llm:` "
+                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
+                "providers; add an `llm:` block and ensure operator.operator_db "
+                "is set so the cost ledger can be written."
+            )
+        api_key = os.environ.get("ATLASCLOUD_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ATLASCLOUD_API_KEY missing from environment; required when "
+                "advisor.provider=='atlas'."
+            )
+        # Atlas is an OpenAI-compatible gateway, so this is the SAME adapter
+        # with a base_url override — no separate client, no second cost-gate
+        # implementation. Models carry a vendor prefix ("xai/grok-4.5"), and
+        # llm_pricing keys the Atlas roster under provider "openai", so the
+        # gate and the ledger both resolve without special-casing.
+        return OpenAIAdvisorAdapter(
+            model=model,
+            prompt=prompt,
+            role=role,  # type: ignore[arg-type]
+            api_key=api_key,
+            base_url=_ATLAS_BASE_URL,
             storage=cloud_wiring.storage,
             session_tracker=cloud_wiring.session_tracker,
             cost_config=cloud_wiring.llm_config.cost,
