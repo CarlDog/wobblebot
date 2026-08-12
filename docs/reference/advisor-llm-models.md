@@ -23,6 +23,75 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-08-11c — gen3 bake-off: the `hard` significance was CEILING-INFLATED
+
+Run on `gen3` (21 fixtures, built the same day because grok ceilinged
+`hard` at 119/120), 4 models x 3 runs = **252 judgments**. Constant
+baseline 33%. Round-interleaved — all four models at r1, then r2, then
+r3 — so an early stop leaves a COMPLETE round for every model rather
+than full data for whoever ran first.
+
+| Model | OK/63 | OK% | SUB | **UNSAFE** | per-run | **tau_b mean** | $/call |
+|---|---|---|---|---|---|---|---|
+| **`xai/grok-4.5`** | **60** | **95%** | 3 | **0** | 20,19,21 | **+0.44** | $0.00781 |
+| `deepseek-ai/deepseek-v4-pro` | 55 | 87% | 7 | 0 | 17,18,20 | −0.06 | $0.00504 |
+| `gpt-5-mini` (champion) | 53 | 84% | 7 | **3** | 18,18,17 | +0.30 | $0.00206 |
+| `minimaxai/minimax-m3` | 49 | 78% | 13 | 1 | 17,17,15 | −0.07 | $0.00039 |
+
+Fisher exact vs champion: **grok OK p=0.076**, **UNSAFE (0 vs 3)
+p=0.244**, deepseek p=0.80, minimax p=0.50. **Nothing clears 0.05.**
+
+### ⚠️ The methodological finding — this generalizes beyond wobblebot
+
+Rev 2026-08-11b recorded grok at **p=0.000041** on `hard`. That
+arithmetic is correct and the data is real, but the result is an
+**artifact of grok scoring 119/120 there**: a near-perfect score has
+almost no variance for a significance test to work against, so the
+p-value collapses toward zero. Give the same model room to be imperfect
+— 95% on gen3 — and the identical comparison yields **p=0.076**. Three
+orders of magnitude, same models, same prompt, harder fixtures.
+
+**A challenger that ceilings your battery will always look
+statistically overwhelming.** The fix is a harder instrument, not more
+runs — more runs on a saturated set only sharpen a number that is
+measuring the ceiling rather than the model. This is the fourth
+instrument defect in this arc and the subtlest: the battery was not
+wrong, it was EXHAUSTED, and exhaustion looks like overwhelming
+evidence.
+
+### What survived the harder test
+
+**`grok-4.5` leads every axis**, and is the only model with **stable
+calibration**: tau_b +0.45 / +0.43 / +0.45, above the "tracks evidence"
+threshold on every run. The champion swings +0.40 / +0.18 / +0.31, and
+both other challengers average NEGATIVE — more confident as evidence
+thins. Calibration is the one axis where the gap is consistent rather
+than marginal.
+
+### What did not
+
+**`minimax-m3` COLLAPSES.** 84% on `hard` → **78% on gen3**, below the
+champion, with 13 SUBOPTIMAL. Its cheapness (0.2x) is real; its
+judgement does not hold once fixtures require resolving CONFLICTING
+rules rather than following a clear one. The "cost-dominant
+alternative" recorded in Rev 2026-08-11b is materially weaker than it
+looked. `deepseek-v4-pro` rises to 87% but is statistically
+indistinguishable from the champion (p=0.80) and mildly anti-calibrated.
+
+### Decision
+
+**NO SWITCH APPLIED — operator's call, a live-money config change.**
+grok is the best model measured on every axis by a margin that does NOT
+clear the routine's bar at n=63, for 3.8x the champion's cost
+(~$0.38/day, ~$11/month at ADR-022 full escalation, on a bot running $10
+orders with $60 exposure). Everything else measured is worse than the
+incumbent. Options: switch on the consistent direction of the evidence;
+stay put because the margin fails its own bar; or run 5+ more gen3
+rounds (~$1.60) to settle whether p=0.076 is a real effect needing power.
+
+Cloud spend: **$0.96** (252 judgments). Nothing deployed or
+reconfigured.
+
 ## Rev 2026-08-11b — head-to-head on `hard`: `grok-4.5` FILES; decision is cost
 
 The first challenger in this project's history to clear the routine's §5
@@ -37,6 +106,11 @@ set (built earlier the same day after v1 was found saturated), 8 runs /
 
 **Fisher exact: OK p=0.000041, UNSAFE p=0.014.** The fresh 5-run half
 reproduces it on its own (OK p=0.0011), so this is not a pooling artifact.
+
+> **⚠️ SUPERSEDED — these p-values are CEILING-INFLATED.** See Rev
+> 2026-08-11c. The arithmetic is right, but grok's 119/120 leaves almost
+> no variance for the test; on gen3 (95%) the same comparison gives
+> p=0.076. Do not cite 0.000041 as evidence for a switch.
 Both §5 criteria met — UNSAFE more than halved (7 → 0) and OK gained 14
 points (>+10). For contrast, every previous challenger died in the
 p=0.24–0.49 range: `claude-sonnet-5` at p=0.49, `minimax-m3` and
