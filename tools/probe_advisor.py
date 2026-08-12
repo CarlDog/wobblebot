@@ -658,10 +658,13 @@ def _build_cloud_advisor(  # pylint: disable=too-many-arguments,too-many-positio
             **common,  # type: ignore[arg-type]
         )
     if provider == "atlas":
-        # No organization header, and NOTE: llm_pricing has no entries for
-        # Atlas-hosted models, so the cost gate falls back to its heuristic
-        # — spend figures from an Atlas sweep are approximate until real
-        # prices are recorded.
+        # No organization header. Atlas is keyed under provider "openai" in
+        # llm_pricing (its models carry a vendor prefix, e.g.
+        # "xai/grok-4.5"), and the roster used by the probe batteries is
+        # priced there — so Atlas sweep spend is real, not approximate. An
+        # UNpriced model raises PricingLookupError from the pre-call gate
+        # rather than falling back to an estimate; add the price point
+        # before sweeping a new Atlas model.
         return OpenAIAdvisorAdapter(
             base_url=_ATLAS_BASE_URL,
             **common,  # type: ignore[arg-type]
