@@ -321,9 +321,31 @@ call volume none of those bind either.
 
 1. **Silent-outage detection** (Finding 1) — still open. Prefer the
    `llm_calls` failure-streak surface over a reachability probe.
-2. **The escalation lever is the guard set, not the cadence**
-   (Finding 2). At 3.0% spacing the guards cannot fire; that is a
-   design question, not a tuning one.
+2. ~~**The escalation lever is the guard set, not the cadence**~~ —
+   **RESOLVED 2026-08-12, and the resolution went the other way.**
+   A candidate guard (`flatness ≥ 0.95`, `cycle_count == 0`,
+   `spacing ≥ 3× ATR%`) was measured against all 216 escalated
+   production ticks and would have resolved **216/216 — 100%**. There is
+   no partial setting: `cycle_count` is 0 on *every* tick, flatness spans
+   only 0.966–0.998, and spacing sits at **6.7× ATR**. Every tick looks
+   identical.
+
+   So the guard-set lever is all-or-nothing, and "all" means **zero LLM
+   suggestions** — which starves the corpus ADR-035's replay scoring
+   needs and reproduces exactly the July regime (1116 decisions, zero LLM
+   calls) that made the 3.5-day outage invisible.
+
+   **Operator's call: cut the cadence to 12h instead, no new guard.**
+   Keeps the corpus accruing at 1/3 the rate; takes grok-4.5 from
+   $14.70 to **$4.90/mo**. Justified by this document's own subsampling
+   measurement — direction never changed across 216 calls, and 12h keeps
+   7 of 9 distinct values at the same median.
+
+   *This reverses the recommendation made above.* That recommendation
+   rested on two legs: the saving was only $1–2/mo, and a quieter
+   advisor would be harder to monitor. Both moved — grok makes the
+   saving $9.80/mo, and the failure-streak surface (Finding 1) removed
+   the monitoring objection.
 3. **The advisor seat decision IS decidable on production data** — see
    the challenger replay above. The pre-run expectation (that both
    models would answer this input class identically) was measured and

@@ -137,7 +137,11 @@ schedules:
   observe_prices: 30s                 # cli/observe: public Ticker poll cadence
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
   news: 30m                           # cli/news: poll every enabled source
-  advise: 4h                          # cli/advise (Stage 3.3): advisor invocation cadence
+  # cli/advise: advisor invocation cadence. 12h is deliberate, not a
+  # default — on a wide (3%) grid in a flat regime the advisor's direction
+  # does not change between 4h sweeps, so the extra calls buy jitter, not
+  # signal. Tighten it if your grid actually cycles.
+  advise: 12h
   harvest: 1h                         # cli/harvest (Stage 4.2): balance-monitor cadence
   maintenance_vacuum: 7d              # cli/maintenance (Stage 8.2): VACUUM cadence
   maintenance_prune: 1d               # cli/maintenance: price_snapshots prune+archive cadence
