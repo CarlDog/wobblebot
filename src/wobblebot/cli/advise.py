@@ -121,6 +121,45 @@ class _CloudWiring:
     llm_config: LLMConfig
 
 
+_CLOUD_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "atlas": "ATLASCLOUD_API_KEY",
+}
+
+
+def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
+    """Assert the two preconditions every cloud provider shares, and return
+    its API key.
+
+    Extracted 2026-08-12 when the ``atlas`` branch pushed
+    ``_build_advisor_adapter`` past pylint's branch ceiling. The four cloud
+    branches each repeated these same two guards verbatim, differing only
+    in the provider name and the env-var name — four copies of a rule that
+    matters (ADR-014: no cloud call without a cost gate). Adding a fifth
+    provider would have made five.
+
+    Both messages stay specific: the deprived-env discipline is that an
+    operator sees exactly which block or which variable is missing, never
+    a KeyError or a generic failure.
+    """
+    if cloud_wiring is None:
+        raise ValueError(
+            f"{provider.capitalize()} provider configured but settings.yml has no "
+            "`llm:` block. Phase 6 / ADR-014 requires cost-cap config for cloud "
+            "providers; add an `llm:` block and ensure operator.operator_db "
+            "is set so the cost ledger can be written."
+        )
+    key_var = _CLOUD_KEY_ENV[provider]
+    api_key = os.environ.get(key_var)
+    if not api_key:
+        raise ValueError(
+            f"{key_var} missing from environment; required when " f"advisor.provider=='{provider}'."
+        )
+    return api_key
+
+
 def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     *,
     provider: str,
@@ -155,19 +194,8 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             timeout_seconds=inference_params.timeout_seconds,
         )
     if provider == "anthropic":
-        if cloud_wiring is None:
-            raise ValueError(
-                "Anthropic provider configured but settings.yml has no `llm:` "
-                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
-                "providers; add an `llm:` block and ensure operator.operator_db "
-                "is set so the cost ledger can be written."
-            )
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "ANTHROPIC_API_KEY missing from environment; required when "
-                "advisor.provider=='anthropic'."
-            )
+        api_key = _require_cloud_key("anthropic", cloud_wiring)
+        assert cloud_wiring is not None  # narrowed by _require_cloud_key
         return AnthropicAdvisorAdapter(
             model=model,
             prompt=prompt,
@@ -182,19 +210,8 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             timeout_seconds=inference_params.timeout_seconds,
         )
     if provider == "openai":
-        if cloud_wiring is None:
-            raise ValueError(
-                "OpenAI provider configured but settings.yml has no `llm:` "
-                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
-                "providers; add an `llm:` block and ensure operator.operator_db "
-                "is set so the cost ledger can be written."
-            )
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENAI_API_KEY missing from environment; required when "
-                "advisor.provider=='openai'."
-            )
+        api_key = _require_cloud_key("openai", cloud_wiring)
+        assert cloud_wiring is not None  # narrowed by _require_cloud_key
         organization = os.environ.get("OPENAI_ORGANIZATION") or None
         return OpenAIAdvisorAdapter(
             model=model,
@@ -211,19 +228,8 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             timeout_seconds=inference_params.timeout_seconds,
         )
     if provider == "atlas":
-        if cloud_wiring is None:
-            raise ValueError(
-                "Atlas provider configured but settings.yml has no `llm:` "
-                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
-                "providers; add an `llm:` block and ensure operator.operator_db "
-                "is set so the cost ledger can be written."
-            )
-        api_key = os.environ.get("ATLASCLOUD_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "ATLASCLOUD_API_KEY missing from environment; required when "
-                "advisor.provider=='atlas'."
-            )
+        api_key = _require_cloud_key("atlas", cloud_wiring)
+        assert cloud_wiring is not None  # narrowed by _require_cloud_key
         # Atlas is an OpenAI-compatible gateway, so this is the SAME adapter
         # with a base_url override — no separate client, no second cost-gate
         # implementation. Models carry a vendor prefix ("xai/grok-4.5"), and
@@ -244,19 +250,8 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             timeout_seconds=inference_params.timeout_seconds,
         )
     if provider == "google":
-        if cloud_wiring is None:
-            raise ValueError(
-                "Google provider configured but settings.yml has no `llm:` "
-                "block. Phase 6 / ADR-014 requires cost-cap config for cloud "
-                "providers; add an `llm:` block and ensure operator.operator_db "
-                "is set so the cost ledger can be written."
-            )
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "GOOGLE_API_KEY missing from environment; required when "
-                "advisor.provider=='google'."
-            )
+        api_key = _require_cloud_key("google", cloud_wiring)
+        assert cloud_wiring is not None  # narrowed by _require_cloud_key
         return GoogleAdvisorAdapter(
             model=model,
             prompt=prompt,
