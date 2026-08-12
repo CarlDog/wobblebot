@@ -22,11 +22,62 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
 
-## ⚠️ OPEN DECISION — `xai/grok-4.5` has FILED against the quant seat (2026-08-11)
+## ⚠️ OPEN DECISION — `xai/grok-4.5` leads the quant seat, but NOT significantly
 
-**First challenger in the project's history to clear the review routine's
-§5 thresholds with statistical significance.** 8 runs / 120 judgments each
-on the `hard` fixture set:
+**Read the gen3 result first — it supersedes the `hard` numbers below.**
+
+### gen3 bake-off (2026-08-11, 4 models x 3 runs x 21 fixtures = 252 judgments)
+
+Run on `gen3`, built the same day because grok CEILINGED `hard` at
+119/120. Constant baseline 33%.
+
+| model | OK/63 | OK% | SUB | **UNSAFE** | per-run | **tau_b mean** | $/call |
+|---|---|---|---|---|---|---|---|
+| **`xai/grok-4.5`** | **60** | **95%** | 3 | **0** | 20,19,21 | **+0.44** | $0.00781 |
+| `deepseek-ai/deepseek-v4-pro` | 55 | 87% | 7 | 0 | 17,18,20 | −0.06 | $0.00504 |
+| `gpt-5-mini` (champion) | 53 | 84% | 7 | **3** | 18,18,17 | +0.30 | $0.00206 |
+| `minimaxai/minimax-m3` | 49 | 78% | 13 | 1 | 17,17,15 | −0.07 | $0.00039 |
+
+**Fisher exact vs the champion: grok OK p=0.076, UNSAFE (0 vs 3)
+p=0.244.** Neither clears 0.05. deepseek p=0.80, minimax p=0.50.
+
+**⚠️ RETRACTION — the `hard` significance was CEILING-INFLATED.** The
+p=0.000041 recorded below is real arithmetic on real data, but it is an
+artifact of grok scoring 119/120 there: a near-perfect score has almost
+no variance for a test to work against, so the p-value collapses. Give
+the same model room to be imperfect (95% on gen3) and the margin falls
+to **p=0.076** — three orders of magnitude, same models, same prompt,
+harder fixtures. **General rule: a challenger that ceilings your battery
+will always look statistically overwhelming.** The fix is a harder
+instrument, not more runs.
+
+**What survived the harder test:** grok leads on every axis, and is the
+only model with STABLE calibration — tau_b +0.45/+0.43/+0.45, above the
+"tracks evidence" threshold on every run. The champion swings
++0.40/+0.18/+0.31. Both other challengers average NEGATIVE (more
+confident as evidence thins).
+
+**What did not:** `minimax-m3` COLLAPSES on the harder set — 84% on
+`hard` → 78% on gen3, below the champion. Its cheapness is real; its
+judgement does not hold once fixtures require resolving conflicting
+rules rather than following a clear one. **The "cost-dominant
+alternative" option is materially weaker than it looked.**
+
+**The decision, stated plainly:** grok is the best model measured on
+every axis, by a margin that does NOT clear the routine's significance
+bar at n=63, for **3.8x** the champion's cost (~$0.38/day, ~$11/month at
+ADR-022 full escalation, on a bot running $10 orders with $60 exposure).
+Everything else measured is worse than the incumbent on gen3. Three
+options: switch on the consistent direction of the evidence; stay put
+because the margin fails its own bar; or run 5+ more gen3 rounds
+(~$1.60) to settle whether p=0.076 is a real effect needing power.
+
+**NOT SWITCHED. Operator's call — it is a live-money config change.**
+
+### Superseded: the `hard` result (kept for the record)
+
+8 runs / 120 judgments each on the `hard` fixture set, which grok
+ceilinged:
 
 | model | OK | SUB | **UNSAFE** | per-run OK | $/call |
 |---|---|---|---|---|---|
@@ -37,6 +88,12 @@ Fisher exact: **OK p=0.000041**, **UNSAFE p=0.014**. The fresh 5-run half
 reproduces it alone (p=0.0011), so it is not a pooling artifact. Both §5
 criteria met: UNSAFE more than halved (7 → 0), OK gained >10 points. Every
 prior challenger died at p=0.24–0.49; this is the first that did not.
+
+> **⚠️ These p-values are ceiling-inflated — see the gen3 section above.**
+> The arithmetic is correct, but grok's 119/120 leaves almost no variance
+> for the test to work against. On gen3, where it scores 95% instead of
+> 99%, the same comparison gives p=0.076. Do not cite the 0.000041 as
+> evidence for a switch.
 
 **THE DECISION IS COST, AND IT IS THE OPERATOR'S — NOT SWITCHED.**
 `grok-4.5` measures **3.8x** the champion, outside the routine's ≤3x
