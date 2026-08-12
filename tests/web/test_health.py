@@ -295,7 +295,7 @@ class TestLLMCallStreakSection:
     def test_a_role_with_no_calls_is_shown_not_hidden(  # type: ignore[no-untyped-def]
         self, storage, tmp_path
     ) -> None:
-        """"No calls in 24h" is information. Hiding it, or painting it
+        """ "No calls in 24h" is information. Hiding it, or painting it
         green, is the false-green this card exists to remove."""
         import sqlite3
 
