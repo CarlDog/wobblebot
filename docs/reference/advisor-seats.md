@@ -18,7 +18,7 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | **quant** (escalation) | `gpt-5-mini` — **but a challenger has FILED, see below** | freejudge `hard` OK 102/120 (85%), **UNSAFE 7**; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano, minimax-m3, deepseek-v4-pro | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
 | **arbitrator** | `gpt-5-mini` — **re-validated, but see below** | 3 rounds: **23/24**; `claude-haiku-4-5` **24/24**; free `voting` 15/24, `weighted_confidence` 3/24 | `probe_arbitrator.py` | 2026-08-10, re-run 2026-08-11 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
 | **news** | **`claude-haiku-4-5`** — recommended, not yet wired | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043** | `probe_news.py` | 2026-08-11 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
-| **risk** | *undecided* | battery was blocked on the input mismatch; **unblocked 2026-08-10** | *(none yet)* | — | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
+| **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH** | `probe_risk.py` | 2026-08-12 | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
 
@@ -362,6 +362,47 @@ the run-to-run noise measured above. Choosing between them needs the
 gen2 treatment (boundary cases per rule), which is queued, not done. The
 seat stays with `gpt-5-mini` — this pass re-validated it, it did not
 replace it.
+
+## Risk seat — SCORED 2026-08-12: `gpt-5-mini`, but it is a coin flip
+
+The register had carried this seat as *undecided* with "battery was
+blocked… unblocked 2026-08-10" and no recorded run — `probe_risk.py`
+shipped but had never been scored. Now it has, at 3 rounds × 18
+fixtures = 54 judgments each.
+
+| model | OK | per round | SUBOPT | **UNSAFE** | severe | $/mo @1094 sweeps |
+|---|---|---|---|---|---|---|
+| **`gpt-5-mini`** | **50/54** | 17, 16, 17 | 4 | **0** | **15/15** | **$2.46** |
+| `claude-haiku-4-5` | 49/54 | 15, 18, 16 | 5 | **0** | **15/15** | $3.06 |
+
+**Fisher p = 0.5 — there is no difference.** The recommendation is
+`gpt-5-mini` purely because it is cheaper; on merit this is a tie and
+either would do.
+
+**The result that matters is the zero.** Neither model made a single
+UNSAFE call in 54 judgments, and both scored **15/15 on the severe
+fixtures in every round** — the compounding-pressure cases where holding
+is the capital-preservation failure the seat exists to prevent. This
+battery grades severity precisely because its answer space is binary
+(DE-RISK vs HOLD) and so floors at 50% for a constant; the discriminator
+was never direction, it was whether a model freezes under pressure.
+Neither does.
+
+**A cross-seat note worth carrying.** gpt-5-mini's bias toward acting —
+the thing that cost it the news seat (10/10 misses were OVERTRADE), the
+arbitrator's `never_emit_a_tighten` fixture, and 216 straight production
+quant calls without one HOLD — is **not a liability here**. On the risk
+seat, acting *is* de-risking, which is the safe direction. Same
+disposition, opposite sign, depending on what the seat's lever does.
+
+**One fixture to watch, not withdraw.** `fresh_drawdown_light_exposure`
+was missed by both models in 5 of 6 runs. Unlike the news set's
+withdrawn `single_denied_rumor`, this one is already graded
+**SUBOPTIMAL rather than UNSAFE** — holding is genuinely defensible
+there (a -4.2% drawdown but exposure at only ~25–35% of caps, so one
+trigger fires and two don't), and the severity axis is doing exactly its
+job by calling it defensible-but-not-ideal. It costs both models the
+same point and does not distort the ranking. Left as-is.
 
 ## Rules for changing a seat
 
