@@ -448,6 +448,74 @@ trigger fires and two don't), and the severity axis is doing exactly its
 job by calling it defensible-but-not-ideal. It costs both models the
 same point and does not distort the ranking. Left as-is.
 
+## Local-model pass — 2026-08-12: local loses all three seats
+
+Operator-raised and correctly so: three of four seats had been decided on
+**cloud-only fields**, and every one of those calls turned on cost — an
+axis local inference deletes. This pass tested it instead of assuming.
+
+**Method.** Scored on the desktop (identical weights + quant → identical
+output distribution; only latency is hardware-dependent), then measured
+real latency on the NAS separately. Scoring on the NAS would have been
+~6 hours *per model* — 130s/call for a 7B q4, of which ~112s is prompt
+evaluation, not generation.
+
+### Screen — arbitrator gen2, 17 fixtures
+
+| model | score | |
+|---|---|---|
+| `gemma4:e4b-it-q8_0` | **15/17 (88%)** | only clear survivor |
+| `llama3.1:8b-instruct-q4_K_M` | 11/17 (65%) | clears the free floor |
+| `qwen2.5:7b-q4` · **`phi4:14b-q4`** · `granite3-dense:8b-q4` · `qwen2.5:3b-q4` · `solar:10.7b-q4` · `falcon3:3b-q8` | **5/17 (29%) each** | — |
+| *free* `voting` / `weighted_confidence` | 8/17 / 6/17 | $0 |
+| constant-EMPTY / constant-ECHO | 6/17 / 5/17 | does nothing |
+
+**Six of eight landed on the do-nothing floor.** They are not
+underperforming the task; they are not attempting it. That includes
+**`phi4:14b-q4_K_M` — the tag the `moe-advisor` profile still names for
+both quant and arbitrator** — at 5/17, below free `voting`, mostly by
+emitting nothing plus one empty-rationale schema error. The configured
+default arbitrator is worse than deleting the LLM and keeping the
+deterministic aggregator.
+
+### Deep run — 3 rounds, the two survivors
+
+| seat | best cloud | `gemma4` (local) | `llama3.1:8b-q4` | verdict |
+|---|---|---|---|---|
+| **news** (66) | haiku **65/66** | **61/66 (92%)** | 51/66 | **p = 0.104** — not significantly worse |
+| **arbitrator** (51) | haiku **51/51** | 44/51 (86%) | 35/51 | **p = 0.0063** — significantly worse |
+| **risk** (54) | gpt-5-mini **50/54, 0 UNSAFE** | 33/54, **10 UNSAFE** | 32/54, 3 UNSAFE | **p = 0.0006** — disqualified |
+
+**Risk: disqualified on the safety axis, not the score.** gemma4's ten
+UNSAFE calls are *all* on severe fixtures, and three of them failed in
+**all three rounds** — `cap_pressure_plus_fresh_drawdown`,
+`deep_drawdown_high_exposure`, `losing_streak_near_caps`. It holds when
+coin exposure is 93%, total 79%, daily 82%, against a fresh -4.5%
+drawdown on a losing book. That is reproducible failure on precisely the
+cases this seat exists to prevent. Both cloud models: 15/15 severe, zero
+UNSAFE, every round.
+
+**News: the one genuinely close call — and latency kills it.** gemma4
+beats gpt-5-mini (61 vs 56) and trails haiku by a statistically
+insignificant margin, at $0 against $3.06/mo. But on the NAS it takes
+**228.7s per call** (4.64 tok/s, and it saturated the 600-token cap, so
+real calls may run longer) against ~25s for a cloud call. The news seat
+fires once per symbol-sweep: 36 calls/day × 228.7s ≈ **2.3 hours/day of
+pegged CPU** on a box that also runs eight other containers. Saving
+$3.06/month does not buy that.
+
+Note gemma4 is 8B at **q8**, which violates this project's own NAS rule
+(7–8B → q4_K_M). A q4 build might roughly halve the latency, but it is
+on neither host and quantization changes output quality, so it would
+need re-scoring, not extrapolation.
+
+**Conclusion: the cloud recommendations stand, now for measured reasons
+rather than absence of evidence.** The seats were never settled by
+cost alone — on risk the local option is dangerous, on arbitrator it is
+significantly worse, and on news it is competitive but unaffordable in
+CPU time. The one thing this did overturn is the *config default*:
+`phi4:14b-q4_K_M` should not hold any seat.
+
 ## Rules for changing a seat
 
 1. **A seat changes on battery evidence, not on vibes or vendor news.**
