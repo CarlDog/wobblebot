@@ -16,7 +16,7 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | Seat | Holder | Evidence | Battery | Decided | Config status |
 |---|---|---|---|---|---|
 | **quant** (escalation) | `gpt-5-mini` — **but a challenger has FILED, see below** | freejudge `hard` OK 102/120 (85%), **UNSAFE 7**; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano, minimax-m3, deepseek-v4-pro | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
-| **arbitrator** | `gpt-5-mini` — **re-validated, but see below** | 3 rounds: **23/24**; `claude-haiku-4-5` **24/24**; free `voting` 15/24, `weighted_confidence` 3/24 | `probe_arbitrator.py` | 2026-08-10, re-run 2026-08-11 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
+| **arbitrator** | **`claude-haiku-4-5`** — weakly; `gpt-5-mini` defensible | v1+gen2, 75 judgments: haiku **75/75**, gpt-5-mini 73/75 (**p=0.248, NOT significant**); gpt-5-mini's only 2 failures are both `never_emit_a_tighten` | `probe_arbitrator.py` | 2026-08-10, re-run 08-11, gen2 08-12 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
 | **news** | **`claude-haiku-4-5`** — recommended, not yet wired | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043** | `probe_news.py` | 2026-08-11 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
 | **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH** | `probe_risk.py` | 2026-08-12 | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
@@ -229,7 +229,8 @@ for seat selection:
 | `freejudge/gen3` | 33% | 95% | +62% | ✅ current instrument |
 | `freejudge/hard` | 33% | 99% | +66% | ✅ (but grok ceilings it) |
 | `quant/core` | 33% | 83% | +50% | ⚠️ off-contract only |
-| `arbitrator` | 50% | 100% | +50% | ⚠️ sound, but 8 fixtures / ONE run |
+| `arbitrator/gen2` | 47% (free `voting`) | 100% | +53% | ⚠️ sound, but CEILINGS both candidates |
+| `arbitrator/v1` | **62%** (free `voting`) | 100% | +38% | ❌ floor too high — superseded |
 | `news/gen2` | 59% | 98% | +39% | ✅ current instrument |
 | `news/v1` | 58% | 100% | +42% | ❌ CEILINGED — 3 models at 12/12 |
 | `freejudge/v1` | **86%** | 83% | **−3%** | ❌ rock beats champion |
@@ -359,9 +360,52 @@ but that is exactly the gap an LLM in the seat is being paid to close.
 **Still ceilinged, and NOT re-decided.** Both candidates sit at 23–24/24,
 so 8 fixtures cannot rank them; `haiku-4-5`'s one-point edge is inside
 the run-to-run noise measured above. Choosing between them needs the
-gen2 treatment (boundary cases per rule), which is queued, not done. The
-seat stays with `gpt-5-mini` — this pass re-validated it, it did not
-replace it.
+gen2 treatment (boundary cases per rule) — built 2026-08-12, results
+immediately below.
+
+### gen2 (2026-08-12): the instrument improved, the tie did NOT break
+
+Nine boundary cases added (17 total), each a rule COLLISION rather than a
+rule restated, plus the first-ever coverage of `order_size_usd` — which
+rule 1 names as a conservative lever and rule 4 names outright, and which
+v1 never tested. 3 rounds × 17 = 51 judgments each.
+
+| | round 1 | round 2 | round 3 | gen2 | **v1 + gen2** |
+|---|---|---|---|---|---|
+| `claude-haiku-4-5` | 17/17 | 17/17 | 17/17 | **51/51** | **75/75** |
+| `gpt-5-mini` | 17/17 | 16/17 | 17/17 | 50/51 | 73/75 |
+| `voting` (free) | 8/17 | — | — | 47% | (was 62% on v1) |
+| `weighted_confidence` (free) | 6/17 | — | — | 35% | (was 12% on v1) |
+
+**Report the failure honestly: gen2 did not do the job it was built for.**
+All nine new boundary cases were passed by both models on every round —
+including `risk_proposes_a_tighten`, the rule-1-versus-constraint
+collision expected to be the sharpest. Both frontier models handle this
+role cleanly, and no amount of boundary-case craft separated them.
+
+**What gen2 *did* achieve** is worth keeping: it dropped the free-voting
+floor from **62% to 47%**. On v1 the entire gap between a role-blind
+aggregator and a competent LLM rested on ~3 fixtures. That is a real
+instrument improvement even though it produced no ranking.
+
+**The one discriminator is narrow and not significant.** Across all 75
+judgments haiku has never failed a single arbitrator fixture; gpt-5-mini
+has failed twice, and **both are the same fixture** —
+`never_emit_a_tighten`, where it emitted 0.9 against a live 3.0. Fisher
+**p = 0.248**. So: a consistent, specific, safety-adjacent weakness
+(it breaches the never-tighten constraint roughly a third of the time on
+that case) that the sample size cannot confirm.
+
+**Recommendation moves to `claude-haiku-4-5`, weakly.** It costs $0.60/mo
+more ($3.06 vs $2.46) and has never breached the constraint. Reasonable
+people could keep the incumbent on p=0.248. What should NOT happen is
+another gen3 — the role appears mechanically easy for frontier models,
+and more fixtures will likely just re-confirm that.
+
+**This strengthens the case for testing local models here** (see the
+pinned local-model pass): if two frontier models are indistinguishable
+at ceiling, the open question is not *which cloud model* but *whether
+this seat needs a cloud model at all*.
 
 ## Risk seat — SCORED 2026-08-12: `gpt-5-mini`, but it is a coin flip
 
