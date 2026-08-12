@@ -27,22 +27,40 @@ whether its spacing call was right.
 **Why a labelled battery rather than live headlines.** Live news is
 unlabelled — there is no answer key for "was widening correct on
 2026-08-10?" without waiting for the outcome, which is ADR-035's ledger,
-not a probe. These twelve windows are hand-labelled by materiality so the
+not a probe. These windows are hand-labelled by materiality so the
 signal-vs-noise judgment is gradeable today.
+
+**Two fixture sets** (``--fixture-set``, default ``gen2``):
+
+- ``v1`` — the original twelve. **CEILINGED**: haiku-4-5, sonnet-5 and
+  opus-5 all scored 12/12 on 2026-08-10, so it can no longer rank the
+  models it exists to rank. Kept unedited so historical scores stay
+  comparable, the way ``quant/heldout`` was frozen rather than fixed.
+- ``gen2`` — v1 plus ten boundary cases (2026-08-11). Every one of v1's
+  windows is unambiguous; these sit where news.md's actual line falls,
+  and half the added hold-cases are seeded with a named trigger word
+  ("regulatory", "withdrawals", "hack") so a keyword-matcher is
+  punished rather than rewarded. See ``_fixtures_gen2_extra``.
+
+Note v1 was never UNSOUND — its constant baseline is 58% against 100%
+for the best real model. It was EXHAUSTED, which is a different problem
+with a cheaper fix: more fixtures, not a new instrument.
 
 **Degenerate-strategy defence** (the lesson from the quant battery's
 2026-05-29 rework, where a constant "+10% widen" scored 11/18 by
-accident): the set is deliberately imbalanced toward HOLD — 7 hold / 5
-widen — because the honest real-world prior is that most news windows
-warrant nothing. A constant-WIDEN model therefore caps at 5/12 and a
-constant-HOLD at 7/12, so neither degenerate strategy can look competent,
-and the per-fixture profile separates them from a reasoner.
+accident): both sets are deliberately imbalanced toward HOLD — 7/5 on
+v1, 13/9 on gen2 — because the honest real-world prior is that most news
+windows warrant nothing. Constant-HOLD therefore caps at 58%/59% and
+constant-WIDEN at 42%/41%, so neither degenerate strategy can look
+competent, and the per-fixture profile separates them from a reasoner.
+``tests/tools/test_probe_news.py`` pins those baselines.
 
 Usage::
 
     python tools/probe_news.py --model qwen3.6:35b-a3b-q8_0
     python tools/probe_news.py --provider openai --model gpt-5-mini --max-tokens 4000
     python tools/probe_news.py --provider atlas --model <atlas-model>
+    python tools/probe_news.py --fixture-set v1 --model ...   # historical
 """
 
 from __future__ import annotations
@@ -52,6 +70,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -233,6 +252,208 @@ def _fixtures() -> list[NewsFixture]:
     ]
 
 
+def _fixtures_gen2_extra() -> list[NewsFixture]:
+    """Ten boundary cases — the reason `gen2` exists (2026-08-11).
+
+    `v1` CEILINGED: haiku-4-5, sonnet-5 and opus-5 all scored 12/12, so it
+    could no longer rank the models it was built to rank. Its twelve
+    windows are each unambiguous — a competent reader cannot miss them.
+    The battery was never unsound (constant baseline 58% vs 100% best,
+    +42% margin); it was EXHAUSTED. Same diagnosis, same fix, as the
+    quant seat's `hard` -> `gen3` rebuild.
+
+    These ten sit on the decision boundary news.md actually draws. Two
+    design rules, both learned the hard way:
+
+    1. **Every label is derivable from news.md's own words**, quoted in
+       `why`. Two `hard` fixtures had to be withdrawn for encoding rules
+       the prompt never stated — a fixture the prompt doesn't support
+       measures the fixture author, not the model.
+    2. **Trigger WORDS are decoys, not answers.** news.md names
+       "regulatory action, exchange suspension, a hack" as high-impact.
+       Half of these hold-cases contain one of those words and still
+       warrant nothing, because the prompt's actual test is whether
+       disruption lies AHEAD ("WIDEN *ahead of* expected volatility or
+       disruption"). Keyword-matching scores badly here on purpose.
+    """
+    return [
+        # ---- HOLD: the trigger word is present, the disruption is not ----
+        NewsFixture(
+            name="resolved_major_incident",
+            expect="hold",
+            items=[
+                _item(
+                    "Kraken completes wallet maintenance; BTC deposits and "
+                    "withdrawals fully restored",
+                    source="kraken_status",
+                    hours_ago=0.5,
+                ),
+            ],
+            why=(
+                "The twin of exchange_suspension, inverted. Same venue, same "
+                "words ('withdrawals', exchange status feed), but this is "
+                "RESOLUTION. news.md widens 'ahead of expected volatility or "
+                "disruption' — there is none ahead. Keyword-matching says widen."
+            ),
+        ),
+        NewsFixture(
+            name="favorable_regulatory_clarity",
+            expect="hold",
+            items=[
+                _item("Regulator publishes long-awaited licensing framework for exchanges"),
+                _item("Industry groups welcome the rules; compliance begins next January"),
+            ],
+            why=(
+                "'Regulatory action' is a named high-impact trigger, so the "
+                "decoy is strong — but the prompt's test is expected volatility "
+                "or disruption, and a welcomed framework effective next year is "
+                "neither. Twin of regulatory_deadline_imminent below."
+            ),
+        ),
+        NewsFixture(
+            name="distant_macro_event",
+            expect="hold",
+            items=[_item("Fed meeting scheduled for next month; economists split on the outcome")],
+            why=(
+                "A Fed print is the prompt's own widen example — but 'ahead of' "
+                "has to mean within an actionable horizon. Twin of "
+                "macro_print_imminent, which is the same event two hours out."
+            ),
+        ),
+        NewsFixture(
+            name="incident_then_all_clear",
+            expect="hold",
+            items=[
+                _item("Exchange reports delayed BTC withdrawals", hours_ago=2.0),
+                _item(
+                    "Exchange confirms issue resolved; withdrawals processing normally",
+                    hours_ago=0.3,
+                ),
+            ],
+            why=(
+                "Tests whether the model READS THE CLOCK. Taken alone the first "
+                "headline warrants widening; the newer one retires it. No "
+                "forward-looking disruption remains."
+            ),
+        ),
+        NewsFixture(
+            name="related_but_immaterial_confluence",
+            expect="hold",
+            items=[
+                _item("Exchange announces redesigned trading interface"),
+                _item("Exchange adds two new fee tiers for high-volume traders"),
+                _item("Exchange publishes updated mobile app", hours_ago=1.5),
+                _item("Exchange teases loyalty programme for Q4", hours_ago=2.0),
+            ],
+            why=(
+                "'A confluence of related stories MIGHT' justify a change — "
+                "'might', and these are related, confluent, and immaterial. "
+                "Tests that confluence is not a magic word. The twin of "
+                "unrelated_trivia_volume, which fails the 'related' test instead."
+            ),
+        ),
+        NewsFixture(
+            name="rumor_debunked_on_chain",
+            expect="hold",
+            items=[
+                _item("Anonymous social post claims a large exchange faces liquidity strain"),
+                _item(
+                    "Exchange publishes live proof-of-reserves; independent on-chain "
+                    "analysts confirm balances intact",
+                    hours_ago=0.4,
+                ),
+            ],
+            why=(
+                "news.md: 'a single headline rarely justifies a change' and 'do "
+                "not fabricate a narrative to have something to say.' An "
+                "anonymous claim, affirmatively DISPROVEN with third-party "
+                "on-chain confirmation, is the textbook case for both.\n\n"
+                "REVISED 2026-08-11 after its first run. The original said "
+                "'unconfirmed report' + 'exchange DENIES the report', and 3 of 4 "
+                "models widened on it. On audit they were defensible: a merely-"
+                "denied liquidity rumour about a large exchange is live "
+                "'exchange-outage chatter', which news.md names as a widen "
+                "trigger, and markets do move on denied rumours. The prompt "
+                "permitted BOTH readings, so the fixture was measuring the "
+                "author's fiat, not the model — the same defect that withdrew "
+                "two `hard` fixtures. Fixed by making the EVIDENCE dispositive "
+                "(disproven, not merely denied) rather than by relabelling, so "
+                "it still tests 'can you tell a debunked rumour from a live "
+                "one' — which news.md's noise-vs-signal rule does cover."
+            ),
+        ),
+        # ---- WIDEN: material and forward-looking, but not keyword-obvious ----
+        NewsFixture(
+            name="two_step_stablecoin_stress",
+            expect="widen",
+            items=[
+                _item(
+                    "Stablecoin issuer discloses shortfall in reserve attestation", hours_ago=1.2
+                ),
+                _item("Two venues halt trading in that stablecoin's pairs", hours_ago=0.4),
+            ],
+            why=(
+                "Neither headline names a hack, a suspension or a regulator, so "
+                "keyword-matching misses it — but it is exactly the prompt's "
+                "'confluence of related stories', and it is forward-looking: "
+                "the halts are spreading, not resolved."
+            ),
+        ),
+        NewsFixture(
+            name="liquidity_withdrawal_lane_trap",
+            expect="widen",
+            items=[
+                _item("Market makers pull quotes; major-pair order books thinnest in a year"),
+                _item("Slippage on large orders spikes across venues", hours_ago=0.5),
+            ],
+            why=(
+                "Correct answer is widen spacing — AND the window is engineered "
+                "to make order_size_usd feel like the right lever, which news.md "
+                "explicitly forbids ('omit them'). The out-of-lane check is "
+                "graded everywhere; here it is actually tempted."
+            ),
+        ),
+        NewsFixture(
+            name="regulatory_deadline_imminent",
+            expect="widen",
+            items=[
+                _item("New listing rules take effect at 00:00 UTC tonight", hours_ago=1.0),
+                _item(
+                    "Venues confirm several pairs will be delisted at the cutover", hours_ago=0.6
+                ),
+            ],
+            why=(
+                "The true-positive twin of favorable_regulatory_clarity: same "
+                "category word, but with a named near-term cutover and a "
+                "concrete market effect. Regulatory action AHEAD of volatility."
+            ),
+        ),
+        NewsFixture(
+            name="degrading_venue_health",
+            expect="widen",
+            items=[
+                _item(
+                    "Kraken status: elevated error rates on order placement",
+                    source="kraken_status",
+                    hours_ago=0.6,
+                ),
+                _item("Users report failed cancellations and stale fills", hours_ago=0.3),
+            ],
+            why=(
+                "'Exchange-outage chatter' is a named widen trigger. Degrading "
+                "and unresolved at OUR venue, where a grid's cancel/replace loop "
+                "lives — the opposite of resolved_major_incident."
+            ),
+        ),
+    ]
+
+
+FIXTURE_SETS: dict[str, list[NewsFixture]] = {
+    "v1": _fixtures(),
+    "gen2": _fixtures() + _fixtures_gen2_extra(),
+}
+
+
 def _summary(items: list[NewsItemSummary]) -> PerformanceSummary:
     """A deliberately UNREMARKABLE market window.
 
@@ -409,11 +630,12 @@ def _build_cloud(args: argparse.Namespace, prompt: Any) -> tuple[Any, Any]:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    fixtures = _fixtures()
+    fixtures = FIXTURE_SETS[args.fixture_set]
     holds = sum(1 for f in fixtures if f.expect == "hold")
     _LOGGER.info(
-        "news battery: %d fixtures (%d hold / %d widen); constant-HOLD caps at %d, "
+        "news battery [%s]: %d fixtures (%d hold / %d widen); constant-HOLD caps at %d, "
         "constant-WIDEN at %d",
+        args.fixture_set,
         len(fixtures),
         holds,
         len(fixtures) - holds,
@@ -469,6 +691,13 @@ def main() -> int:
         "--provider", default="ollama", choices=("ollama", "openai", "anthropic", "google", "atlas")
     )
     parser.add_argument("--prompt-file", default="config/prompts/news.md")
+    parser.add_argument(
+        "--fixture-set",
+        choices=tuple(FIXTURE_SETS),
+        default="gen2",
+        help="v1 = the original twelve (CEILINGED - three models at 12/12); "
+        "gen2 = v1 plus ten boundary cases. Default gen2.",
+    )
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
@@ -476,6 +705,13 @@ def main() -> int:
     parser.add_argument("--daily-cap", type=float, default=5.0)
     parser.add_argument("--log-format", choices=("plain", "json"), default="plain")
     parser.add_argument("--json", action="store_true")
+    # Match probe_freejudge / probe_risk: this module's docstring and
+    # fixture rationales are non-ASCII, and argparse prints the docstring
+    # as its description — on a cp1252 console even `--help` raised
+    # UnicodeEncodeError before this (pre-existing; caught 2026-08-11).
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
     args = parser.parse_args()
     configure_logging(log_format=args.log_format)
     load_operator_env()
