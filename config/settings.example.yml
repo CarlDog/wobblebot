@@ -940,6 +940,23 @@ profiles:
   # confidence), or `arbitrator` (a fourth model reads the three
   # opinions and picks the final call — the arbitrator block must
   # be set when aggregator=arbitrator).
+  #
+  # ⚠️ THE MODEL TAGS BELOW ARE RUNNABLE DEFAULTS, NOT SCORED SEAT
+  # HOLDERS. They are chosen so the profile starts on a stock Ollama
+  # install with no cloud keys — that is ALL they are chosen for. As of
+  # 2026-08-11 every one of them disagrees with the measured evidence:
+  #
+  #   seat         this profile      measured holder (see the register)
+  #   arbitrator   phi4:14b-q8_0     gpt-5-mini (8/8 vs voting 5/8)
+  #   quant        phi4:14b-q8_0     gpt-5-mini (freejudge; challenger filed)
+  #   news         deepseek-r1:8b    undecided — this tag has NEVER been scored
+  #   risk         qwen3:8b          undecided — this tag has NEVER been scored
+  #
+  # Before flipping ANY profile to `type: moe`, reconcile against
+  # docs/reference/advisor-seats.md — the register is the authority on
+  # who holds a seat and what evidence put them there. Shipping an
+  # unscored model into a live seat is how "which model is our risk
+  # expert, and why?" became unanswerable in the first place.
   moe-advisor:
     advisor:
       type: moe

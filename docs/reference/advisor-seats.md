@@ -17,7 +17,7 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 |---|---|---|---|---|---|
 | **quant** (escalation) | `gpt-5-mini` — **but a challenger has FILED, see below** | freejudge `hard` OK 102/120 (85%), **UNSAFE 7**; held vs opus-5, sonnet-5, haiku-4-5, gpt-5.4-mini/nano, minimax-m3, deepseek-v4-pro | `probe_freejudge.py` | 2026-06-04 (ADR-022), reconfirmed 2026-07-31 + 2026-08-10 | ✅ wired — `cpu-only` profile |
 | **arbitrator** | `gpt-5-mini` | 8/8 vs `voting` 5/8 and `weighted_confidence` 1/8 on identical inputs | `probe_arbitrator.py` | 2026-08-10 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
-| **news** | *undecided* | 4 models scored (haiku-4-5 / sonnet-5 / opus-5 12/12, gpt-5-mini 11/12, qwen3.6:35b-a3b 10/12) but no seat chosen | `probe_news.py` | — | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
+| **news** | **`claude-haiku-4-5`** — recommended, not yet wired | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043** | `probe_news.py` | 2026-08-11 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
 | **risk** | *undecided* | battery was blocked on the input mismatch; **unblocked 2026-08-10** | *(none yet)* | — | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
@@ -229,8 +229,9 @@ for seat selection:
 | `freejudge/gen3` | 33% | 95% | +62% | ✅ current instrument |
 | `freejudge/hard` | 33% | 99% | +66% | ✅ (but grok ceilings it) |
 | `quant/core` | 33% | 83% | +50% | ⚠️ off-contract only |
-| `arbitrator` | 50% | 100% | +50% | ✅ sound, but only 8 fixtures |
-| `news` | 58% | 100% | +42% | ✅ sound, but only 12 fixtures |
+| `arbitrator` | 50% | 100% | +50% | ⚠️ sound, but 8 fixtures / ONE run |
+| `news/gen2` | 59% | 98% | +39% | ✅ current instrument |
+| `news/v1` | 58% | 100% | +42% | ❌ CEILINGED — 3 models at 12/12 |
 | `freejudge/v1` | **86%** | 83% | **−3%** | ❌ rock beats champion |
 | **`quant/heldout`** | **75%** | 71% | **−4%** | ❌ **rock beats champion** |
 
@@ -239,10 +240,87 @@ seats rested on rock-passable evidence was wrong. Their weakness is
 SAMPLE SIZE (8 and 12 fixtures, single runs), which is a far cheaper fix
 than a rebuild: more runs and more fixtures, not a new instrument.
 
+**News took that fix on 2026-08-11 and it worked** — see the seat result
+below. Arbitrator has not; its 8-fixture single run is now the weakest
+evidence in the register.
+
+### ⚠️ A SINGLE RUN IS NOT A SCORE (measured 2026-08-11)
+
+Running the same model on the same fixtures twice does not give the same
+answer. Observed on `news/gen2`, identical params:
+
+| model | run-to-run scores |
+|---|---|
+| haiku-4-5 | 21, **22**, 22, **21**, 22 |
+| gpt-5-mini | 17, 18, **19, 19, 18** |
+| sonnet-5 | 21, 21, **22, 22, 22** |
+
+haiku missed `regulatory_deadline_imminent` on 2 of 5 runs and aced it on
+the other 3 — a 1-point swing that, on a single run, would have looked
+like a ranking.
+
+**Consequence: every single-run seat decision in this register is weaker
+than its number suggests**, the arbitrator's 8/8 most of all (8 fixtures
+AND one run). Treat a single run as a smoke test; rank on 3+ rounds.
+
 **`quant/heldout` is degenerate** — constant-HOLD scores 75%, beating
 every model measured on it. Combined with being off-contract (3 of 8
 fixtures escalate), it has two independent disqualifiers. Frozen, not
 fixed, so historical scores stay comparable.
+
+## News seat — RESOLVED 2026-08-11: `claude-haiku-4-5`
+
+`v1` could not rank the models it existed to rank: haiku-4-5, sonnet-5
+and opus-5 all scored 12/12. It was never UNSOUND (constant baseline 58%
+vs 100% best) — it was EXHAUSTED, which has the cheaper fix the audit
+above prescribed. `gen2` adds ten boundary cases to v1's twelve; half the
+new hold-cases are seeded with a named trigger word ("regulatory",
+"withdrawals", "liquidity") so keyword-matching is punished rather than
+rewarded. It broke the tie on the first run.
+
+**3 rounds × 22 fixtures = 66 judgments each.** Constant-HOLD floors at
+59%.
+
+| model | score | % | $/call | $/mo @1094 sweeps |
+|---|---|---|---|---|
+| `claude-sonnet-5` | 66/66 | 100% | $0.01252 | $13.70 |
+| **`claude-haiku-4-5`** | **65/66** | **98%** | **$0.00280** | **$3.06** |
+| `gpt-5-mini` | 56/66 | 85% | $0.00225 | $2.46 |
+| `claude-opus-5` *(2 rounds)* | 42/44 | 95% | $0.02248 | $24.62 |
+
+**Fisher exact:** haiku vs gpt-5-mini **p = 0.0043**; sonnet vs haiku
+**p = 0.5** — literally no evidence of a difference. Buying sonnet's one
+extra judgment out of 66 costs **$10.63/month**.
+
+opus-5 is excluded on MEASURED PARITY, not on price: two independent
+rounds put it at 21/22 — below haiku, tied with sonnet — at 8× haiku's
+cost. That is not the ≤3× pre-filter mistake that nearly cost us grok;
+there is no evidence here that the expensive model is better.
+
+**gpt-5-mini's failure profile is coherent and disqualifying for THIS
+seat.** All 10 of its misses are `OVERTRADE` — widening on a non-event —
+recurring on `bullish_rally_coverage` (3/3 rounds), `stale_resolved_incident`,
+`distant_macro_event` and `favorable_regulatory_clarity`. It cannot
+separate *newsworthy* from *actionable*, and the news role's only lever
+is widen, so its errors all push the grid wider on a quiet tape. That is
+precisely the over-trading news.md warns against — and it is a different
+question from its quant-seat performance, where the same tendency to act
+shows up as never once holding.
+
+**A fixture of mine was withdrawn mid-measurement.** `single_denied_rumor`
+("unconfirmed report… exchange DENIES it" → labelled hold) was missed by
+3 of 4 models. On audit they were defensible and the label was not: a
+denied liquidity rumour about a large exchange is live "exchange-outage
+chatter", which news.md names as a widen trigger, and markets do move on
+denied rumours. The prompt permitted both readings, so the fixture
+measured the author's fiat — the same defect that withdrew two `hard`
+fixtures. Fixed by making the EVIDENCE dispositive (proof-of-reserves
+published, on-chain analysts confirm) rather than by relabelling; it now
+passes 9/9 and still tests debunked-vs-live, which the noise-vs-signal
+rule does cover.
+
+**NOT WIRED.** The `moe-advisor` profile still says `deepseek-r1:8b`,
+which has never been scored. MoE is off, so nothing is live either way.
 
 ## Rules for changing a seat
 
