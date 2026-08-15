@@ -119,6 +119,11 @@ async def _audit_trade_key_scope(adapter: KrakenAdapter) -> int | None:
     ``None`` when the check passes, or when it can't be completed (a
     transient probe error logs a WARNING and lets preflight continue rather
     than blocking a legitimate run on a network blip).
+
+    The probe answers for whatever key ``KRAKEN_TRADER_API_KEY`` currently
+    holds, which is not necessarily the key the operator believes is
+    deployed — so the refusal message names both the scope cause and the
+    wrong-key cause rather than asserting a diagnosis it cannot make.
     """
     try:
         can_withdraw = await adapter.has_withdraw_scope()
@@ -131,14 +136,31 @@ async def _audit_trade_key_scope(adapter: KrakenAdapter) -> int | None:
         )
         return None
     if can_withdraw:
+        # Same probe ambiguity as cli/harvest's mirror gate: Kraken accepted
+        # WithdrawMethods for whatever key this env var holds, which is a
+        # hard stop either way — but the FIX differs by cause, and the
+        # wrong-key cause (a stale deployment env store handing the trade
+        # slot the Harvester key) is the more dangerous one, so name both
+        # rather than sending the operator straight to the Kraken UI.
+        key_var = "KRAKEN_TRADER_API_KEY"
         _LOGGER.error(
-            "ADR-003 VIOLATION: the trade key (KRAKEN_TRADER_API_KEY) has WITHDRAWAL permission. "
-            "The trading key must NOT be able to withdraw funds — only the separate Harvester key "
-            "may. Turn off 'Withdraw Funds' for this key in Kraken Pro -> Settings -> API, or "
-            "mint a withdrawal-disabled trade key. (key_var=%s, exit_code=%s)",
-            "KRAKEN_TRADER_API_KEY",
+            "ADR-003 VIOLATION: Kraken accepted WithdrawMethods for the key in %s — that key "
+            "CAN withdraw funds, and the trading key never may (only the separate Harvester "
+            "key does). Two causes are indistinguishable from here: (a) this key has 'Funds "
+            "permissions - Withdraw' enabled, or (b) %s holds a DIFFERENT key than intended — "
+            "e.g. a stale deployment env store handing the trade slot the Harvester key, which "
+            "collapses financial-power fragmentation outright. The key/secret pair itself IS "
+            "valid — a bad credential fails as EAPI:Invalid key and takes the warn-and-continue "
+            "path instead. Next step: read the key actually stored in %s (Portainer stack env / "
+            ".env / compose — NOT just the Kraken UI), then either turn off 'Withdraw Funds' for "
+            "that key in Kraken Pro -> Settings -> API or point %s at a withdrawal-disabled "
+            "trade key. (exit_code=%s)",
+            key_var,
+            key_var,
+            key_var,
+            key_var,
             3,
-            extra={"key_var": "KRAKEN_TRADER_API_KEY", "exit_code": 3},
+            extra={"key_var": key_var, "exit_code": 3},
         )
         return 3
     _LOGGER.info("trade-key scope OK: no withdrawal permission (ADR-003 invariant holds)")

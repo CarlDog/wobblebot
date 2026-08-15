@@ -323,7 +323,10 @@ async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig)
 
     1. **Withdraw scope present.** The Harvester key's whole job is to
        withdraw; a definitive ``has_withdraw_scope() == False`` means the
-       wrong/misconfigured key — refuse.
+       wrong/misconfigured key — refuse. Note the probe cannot tell
+       *which* of those two it is (see the ERROR below): it sees Kraken's
+       answer for whatever key the env var currently holds, not the key
+       the operator believes is deployed.
     2. **Distinct from the trade key.** If ``KRAKEN_TRADER_API_KEY`` is in
        this process's env AND equals the Harvester key, financial-power
        fragmentation has collapsed (one secret can trade AND withdraw) —
@@ -346,11 +349,38 @@ async def _verify_harvester_key(adapter: KrakenAdapter, config: WobbleBotConfig)
         )
         can_withdraw = None
     if can_withdraw is False:
+        # Kraken answered EGeneral:Permission denied for WithdrawMethods.
+        # That is a definitive "the key behind this env var cannot
+        # withdraw" — it is NOT a definitive "the key the operator
+        # configured lacks the scope". The probe never sees WHICH key the
+        # env var holds, so a stale deployment env store (Portainer stack
+        # env / .env / compose) pointing at an older Harvester key is
+        # exactly as consistent with the evidence as a missing scope — and
+        # in a Portainer deployment it is the likelier of the two. Naming
+        # only the scope cause sent the 2026-08-15 exit-3 investigation
+        # through three dead ends before the env store was checked.
+        #
+        # The auth-validity note in the message is load-bearing, not
+        # colour: a bad key/secret pair raises EAPI:Invalid key (no
+        # "Permission denied" marker), which ``has_withdraw_scope`` re-raises
+        # into the fail-soft branch above. Reaching HERE therefore proves the
+        # credential authenticated — which rules out a truncated/garbled
+        # secret and narrows the operator's search to scope vs identity.
+        key_var = config.harvester.api_key_env_var
         _LOGGER.error(
-            "Harvester key in %s lacks Kraken Withdraw scope — refusing to start "
-            "(ADR-003); mint a key with the Withdraw Funds permission",
-            config.harvester.api_key_env_var,
-            extra={"key_env_var": config.harvester.api_key_env_var},
+            "Kraken denied WithdrawMethods for the key in %s — refusing to start (ADR-003). "
+            "Two causes are indistinguishable from here: (a) that key lacks the "
+            "'Funds permissions - Withdraw' scope, or (b) %s holds a DIFFERENT key than "
+            "intended (a stale value in the deployment's env store). The key/secret pair "
+            "itself IS valid — a bad credential fails as EAPI:Invalid key and takes the "
+            "warn-and-continue path instead — so this is a scope or key-identity problem, "
+            "not an auth one. Next step: read the key actually stored in %s (Portainer "
+            "stack env / .env / compose — NOT just the Kraken UI) and confirm it is the "
+            "same key whose permissions you verified in Kraken Pro -> Settings -> API.",
+            key_var,
+            key_var,
+            key_var,
+            extra={"key_env_var": key_var},
         )
         return 3
 
