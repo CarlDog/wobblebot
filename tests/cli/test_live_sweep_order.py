@@ -34,11 +34,13 @@ from wobblebot.cli.live import (
     _open_observe_storage,
     _refresh_sweep_order,
     _run_one_tick,
+    format_sweep,
 )
 from wobblebot.config.cli import LiveConfig, ScreenerConfig
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
+from wobblebot.services.screener import ScreenerRanking, SymbolMetrics
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -503,6 +505,76 @@ class TestBuildScreenerInputs:
             assert proximity[_BTC] == math.inf
         finally:
             await broken.close()
+
+
+# --------------------------------------------------------------------------- #
+# format_sweep: a reorder must be explainable from the log alone               #
+# --------------------------------------------------------------------------- #
+
+
+def _rank(symbol: Symbol, composite: float) -> ScreenerRanking:
+    return ScreenerRanking(
+        metrics=SymbolMetrics(
+            symbol=symbol, volatility=0.004, flatness=0.9, atr_pct=0.5, bar_count=400
+        ),
+        vol_rank=1,
+        flatness_rank=1,
+        atr_rank=1,
+        composite=composite,
+    )
+
+
+class TestFormatSweep:
+    """Logging the order alone made every reorder unexplainable — working
+    out why one 2026-08-15 change happened took copies of two production
+    DBs and a replay script. Two consecutive log lines should have shown
+    it, so the scores go in the message."""
+
+    async def test_renders_composite_and_proximity_in_order(self) -> None:
+        line = format_sweep(
+            [_SOL, _ETH, _BTC],
+            [_rank(_SOL, 2.6667), _rank(_ETH, 3.3333), _rank(_BTC, 4.0)],
+            {_SOL: 8.315, _ETH: 12.871, _BTC: 2.385},
+        )
+        assert line == "SOL/USD(2.67|8.3) > ETH/USD(3.33|12.9) > BTC/USD(4.00|2.4)"
+
+    async def test_diffing_two_lines_names_the_symbol_that_moved(self) -> None:
+        """The real 2026-08-15 reorder. SOL's composite went 2.67 -> 3.00
+        on one new hourly bar; nothing else changed. That has to be
+        readable by eye from consecutive lines, or the log is decoration."""
+        before = format_sweep(
+            [_SOL, _ETH, _BTC],
+            [_rank(_SOL, 2.6667), _rank(_ETH, 3.3333), _rank(_BTC, 4.0)],
+            {_SOL: 8.3, _ETH: 12.9, _BTC: 2.4},
+        )
+        after = format_sweep(
+            [_ETH, _SOL, _BTC],
+            [_rank(_SOL, 3.0), _rank(_ETH, 3.3333), _rank(_BTC, 4.0)],
+            {_SOL: 8.3, _ETH: 12.9, _BTC: 2.4},
+        )
+        assert "SOL/USD(2.67|" in before
+        assert "SOL/USD(3.00|" in after
+        assert "ETH/USD(3.33|" in before and "ETH/USD(3.33|" in after, "ETH must look unchanged"
+
+    async def test_exact_ties_are_visible_so_the_tiebreak_reads_as_deliberate(self) -> None:
+        """Composite is a mean of three integer ranks, so exact ties are
+        common. Without both numbers a tie-broken order looks like an
+        arbitrary swap between equal scores."""
+        line = format_sweep(
+            [_SOL, _ETH],
+            [_rank(_SOL, 2.6667), _rank(_ETH, 2.6667)],
+            {_SOL: 8.3, _ETH: 87.1},
+        )
+        assert line == "SOL/USD(2.67|8.3) > ETH/USD(2.67|87.1)"
+
+    async def test_unranked_shows_na_not_a_fabricated_score(self) -> None:
+        """It sorted last because it is UNKNOWN. A number here would hide
+        that — the same failure as proximity returning 0 instead of inf."""
+        line = format_sweep([_SOL, _BTC], [_rank(_SOL, 2.0)], {_SOL: 1.0})
+        assert line == "SOL/USD(2.00|1.0) > BTC/USD(n/a|inf)"
+
+    async def test_empty_sweep_is_not_an_error(self) -> None:
+        assert format_sweep([], [], {}) == ""
 
 
 # --------------------------------------------------------------------------- #

@@ -43,8 +43,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import sys
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, get_args
@@ -774,6 +776,42 @@ async def _build_screener_inputs(
     return rankings, proximity
 
 
+def format_sweep(
+    order: Sequence[Symbol],
+    rankings: Sequence[ScreenerRanking],
+    proximity: dict[Symbol, float],
+) -> str:
+    """Render the sweep as ``SYMBOL(composite|proximity)``, order preserved.
+
+    **Why the numbers belong in the message.** Measured 2026-08-15, the
+    tradeable order changes about 13% of hours. Logging the order ALONE
+    made each change unexplainable from the log: reconstructing why one
+    2026-08-15 reorder happened took copies of two production DBs and a
+    replay script, when two consecutive log lines should have shown it.
+    Diffing successive lines now names the symbol whose score moved.
+
+    Both keys are shown because they answer different questions. The
+    composite is the primary sort and drove every reorder measured — it is
+    a mean of three integer ranks, so its resolution is 1/3 and adjacent
+    symbols sit exactly 1/3 apart, which is why one new hourly bar
+    crossing one rank boundary can move a symbol a whole place. Proximity
+    only decides exact composite ties, which are common in a small cohort;
+    printing it means a tie-broken reorder is legible too, instead of
+    looking like an unexplained swap between equal scores.
+
+    An unranked symbol (too few bars, no ATR) shows ``n/a`` rather than a
+    number — it sorted last because it is unknown, and a fabricated score
+    would hide that.
+    """
+    composites = {r.metrics.symbol: r.composite for r in rankings}
+    parts = []
+    for symbol in order:
+        composite = composites.get(symbol)
+        rendered = "n/a" if composite is None else f"{composite:.2f}"
+        parts.append(f"{symbol}({rendered}|{proximity.get(symbol, math.inf):.1f})")
+    return " > ".join(parts)
+
+
 async def _refresh_sweep_order(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     *,
     live: LiveConfig,
@@ -834,9 +872,14 @@ async def _refresh_sweep_order(  # pylint: disable=too-many-arguments,too-many-p
     order = sweep_order("screener", list(live.symbols), rankings=rankings, proximity=proximity)
     if order != current:
         _LOGGER.info(
-            "sweep order updated: %s",
-            " > ".join(str(s) for s in order),
-            extra={"sweep_order": [str(s) for s in order], "strategy": strategy},
+            "sweep order updated (composite|proximity): %s",
+            format_sweep(order, rankings, proximity),
+            extra={
+                "sweep_order": [str(s) for s in order],
+                "strategy": strategy,
+                "composites": {str(r.metrics.symbol): r.composite for r in rankings},
+                "proximity": {str(s): proximity.get(s, math.inf) for s in order},
+            },
         )
     return order, now
 
