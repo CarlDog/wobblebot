@@ -45,7 +45,7 @@ import asyncio
 import logging
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, get_args
 
@@ -66,12 +66,13 @@ from wobblebot.cli._common import (
     run_with_clean_exit,
     safe_shutdown,
 )
-from wobblebot.config.cli import LiveConfig
+from wobblebot.config.cli import LiveConfig, ScreenerConfig
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.engine_state import EngineStateRow
+from wobblebot.domain.grid import compute_grid_levels
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
@@ -89,6 +90,13 @@ from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.operator_service import OperatorService
 from wobblebot.services.reconciler import apply_reconciliation
+from wobblebot.services.screener import (
+    ScreenerRanking,
+    SymbolMetrics,
+    compute_symbol_metrics,
+    rank_candidates,
+)
+from wobblebot.services.symbol_priority import proximity_in_atr, sweep_order
 
 _LOGGER = logging.getLogger("wobblebot.cli.live")
 
@@ -306,16 +314,103 @@ async def _session_portfolio_value_usd(
     return total
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches
+async def _prefetch_trades(
+    adapter: KrakenAdapter,
+    engine: GridEngine,
+    live: LiveConfig,
+    tick: int,
+    tick_open_orders: list[Order] | None,
+) -> list[Trade] | None:
+    """One global TradesHistory fetch per tick, shared across every symbol
+    that has a fill candidate this tick (fleet-review #19 finding 8
+    follow-up).
+
+    TradesHistory is paginated (up to 20 pages) to find a thin symbol's
+    trades among heavy volume on others; without this consolidation, a
+    tick where several symbols fill simultaneously would page that same
+    account-wide history once per filling symbol — the same rate-limit-
+    storm shape the OpenOrders consolidation already fixed once
+    (2026-06-02). Checking candidates is pure storage plus the
+    already-fetched open-orders snapshot, no network call, so this costs
+    nothing on the (typical) no-fill tick.
+
+    ``None`` — from a failed fetch, an absent open-orders snapshot, or no
+    fill candidates — falls each symbol back to its own per-symbol fetch,
+    exactly as before this consolidation existed.
+    """
+    if tick_open_orders is None:
+        return None
+    for symbol in live.symbols:
+        if await engine.has_pending_fill_candidates(symbol, tick_open_orders):
+            break
+    else:
+        return None
+    try:
+        return await adapter.get_trade_history(limit=200 * len(live.symbols))
+    except WobbleBotPortError as exc:
+        _LOGGER.warning(
+            "tick trade-history fetch failed; falling back to per-symbol fetch (tick=%s): %s: %s",
+            tick,
+            type(exc).__name__,
+            exc,
+            extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+        )
+        return None
+
+
+async def _prefetch_tickers(
+    adapter: KrakenAdapter, live: LiveConfig, tick: int
+) -> dict[Symbol, Ticker]:
+    """One ticker fetch per symbol per tick, shared between the engine
+    step (spread guard + current price, ADR-025) and the post-tick
+    loss-cap mark-to-market check (v1.1 backlog "per-tick price-fetch
+    dedup") — both used to independently call ``/0/public/Ticker`` (or
+    ``get_current_price``) for the same symbol in the same tick.
+
+    A per-symbol fetch failure just leaves that symbol out of the dict;
+    both call sites already fall back to fetching for themselves when a
+    symbol has no cached entry.
+    """
+    tickers: dict[Symbol, Ticker] = {}
+    for symbol in live.symbols:
+        try:
+            tickers[symbol] = await adapter.get_ticker(symbol)
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "tick ticker fetch failed; symbol will fetch its own price (tick=%s, symbol=%s): "
+                "%s: %s",
+                tick,
+                symbol,
+                type(exc).__name__,
+                exc,
+                extra={
+                    "tick": tick,
+                    "symbol": str(symbol),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+    return tickers
+
+
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
     tick: int,
     started_value_usd: Decimal,
     notifier: NotifierPort | None = None,
+    sweep: list[Symbol] | None = None,
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
-    check. Returns True when the loss cap tripped (caller stops)."""
+    check. Returns True when the loss cap tripped (caller stops).
+
+    ``sweep`` is the ORDER to step symbols in (live.symbol_priority).
+    ``None`` means config order, which is both the default strategy and
+    the right fallback for callers that don't care. Only the stepping
+    loop is ordered — the ticker and trade-history prefetches above are
+    order-independent by construction.
+    """
     # One global OpenOrders fetch per tick, shared across every symbol.
     # Kraken's OpenOrders returns the whole account in a single call; the
     # engine used to fetch per-symbol, so a 5-coin tick fired it 5x and blew
@@ -336,68 +431,10 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
         )
         tick_open_orders = None
 
-    # One global TradesHistory fetch per tick, shared across every symbol
-    # that has a fill candidate this tick (fleet-review #19 finding 8
-    # follow-up). TradesHistory is now paginated (up to 20 pages) to find
-    # a thin symbol's trades among heavy volume on others; without this
-    # consolidation, a tick where several symbols fill simultaneously
-    # would page that same account-wide history once per filling symbol —
-    # the same rate-limit-storm shape the OpenOrders consolidation above
-    # already fixed once (2026-06-02). Checking candidates is pure
-    # storage + the already-fetched open-orders snapshot, no network call,
-    # so this costs nothing on the (typical) no-fill tick. A shared-fetch
-    # failure falls back to each symbol's own per-symbol fetch, same as
-    # before this consolidation existed.
-    tick_trades: list[Trade] | None = None
-    if tick_open_orders is not None:
-        needs_trades = False
-        for symbol in live.symbols:
-            if await engine.has_pending_fill_candidates(symbol, tick_open_orders):
-                needs_trades = True
-                break
-        if needs_trades:
-            try:
-                tick_trades = await adapter.get_trade_history(limit=200 * len(live.symbols))
-            except WobbleBotPortError as exc:
-                _LOGGER.warning(
-                    "tick trade-history fetch failed; falling back to per-symbol fetch (tick=%s): "
-                    "%s: %s",
-                    tick,
-                    type(exc).__name__,
-                    exc,
-                    extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
-                )
-                tick_trades = None
+    tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
+    tick_tickers = await _prefetch_tickers(adapter, live, tick)
 
-    # One ticker fetch per symbol per tick, shared between the engine
-    # step (spread guard + current price, ADR-025) and the post-tick
-    # loss-cap mark-to-market check below (v1.1 backlog "per-tick
-    # price-fetch dedup") -- both used to independently call
-    # /0/public/Ticker (or get_current_price) for the same symbol in
-    # the same tick. A per-symbol fetch failure just leaves that
-    # symbol out of the dict; both call sites already fall back to
-    # fetching for themselves when a symbol has no cached entry.
-    tick_tickers: dict[Symbol, Ticker] = {}
-    for symbol in live.symbols:
-        try:
-            tick_tickers[symbol] = await adapter.get_ticker(symbol)
-        except WobbleBotPortError as exc:
-            _LOGGER.warning(
-                "tick ticker fetch failed; symbol will fetch its own price (tick=%s, symbol=%s): "
-                "%s: %s",
-                tick,
-                symbol,
-                type(exc).__name__,
-                exc,
-                extra={
-                    "tick": tick,
-                    "symbol": str(symbol),
-                    "error": str(exc),
-                    "error_type": type(exc).__name__,
-                },
-            )
-
-    for symbol in live.symbols:
+    for symbol in sweep if sweep is not None else live.symbols:
         if tick_open_orders is None:
             break
         try:
@@ -635,6 +672,175 @@ async def _process_pending_commands(
     return processed
 
 
+#: How often the screener ranking is rebuilt. Its inputs are 60m bars, so
+#: anything faster spends storage reads to produce an identical answer —
+#: and an order that wobbles tick-to-tick would make "why did SOL get
+#: funded and ADA not" unanswerable after the fact.
+_SWEEP_REFRESH_SECONDS = 3600.0
+
+
+async def _current_price(adapter: KrakenAdapter, symbol: Symbol) -> Decimal | None:
+    """Last trade price, or ``None`` when Kraken won't say.
+
+    One call per symbol per REFRESH (hourly), against the ~720 per symbol
+    the tick loop already makes in that hour — the cost is noise, and a
+    price fetched at ranking time is more honest than a cached one. A
+    failure costs this symbol its tiebreak, never its rank.
+    """
+    try:
+        return (await adapter.get_ticker(symbol)).last
+    except WobbleBotPortError:
+        return None
+
+
+async def _grid_level_prices(storage: StoragePort, symbol: Symbol) -> list[Decimal]:
+    """The symbol's current ladder prices; empty when it has no anchor.
+
+    Empty is the honest answer for a symbol the engine has never stepped:
+    :func:`proximity_in_atr` turns it into ``inf``, which sorts last —
+    "we don't know" must never read as "about to fill".
+    """
+    try:
+        grid_state = await storage.get_grid_state(symbol)
+    except WobbleBotPortError:
+        return []
+    if grid_state is None:
+        return []
+    return [
+        level.price
+        for level in compute_grid_levels(
+            reference_price=grid_state.reference_price,
+            spacing_percentage=grid_state.spacing_percentage,
+            levels_above=grid_state.levels_above,
+            levels_below=grid_state.levels_below,
+        )
+    ]
+
+
+async def _build_screener_inputs(
+    symbols: list[Symbol],
+    storage: StoragePort,
+    observe_storage: StoragePort,
+    adapter: KrakenAdapter,
+    screener: ScreenerConfig,
+) -> tuple[list[ScreenerRanking], dict[Symbol, float]]:
+    """Rank the cohort and measure each symbol's distance to a fill.
+
+    Every read degrades to "no opinion" rather than raising. This runs on
+    the trading path, and an ordering preference must never be able to
+    stop a tick — a symbol whose bars are thin simply goes unranked and
+    sorts last; one whose price won't fetch keeps its composite rank and
+    loses only the tiebreak.
+
+    ``screener.db`` is deliberately ignored: bars are read through
+    ``live.observe_db``, which the caller already opened. Only the
+    lookback / interval / band-center knobs are borrowed, so ``cli/live``
+    and ``cli/screener`` score suitability by one definition rather than
+    two that can drift apart.
+    """
+    since = datetime.now(UTC) - timedelta(days=screener.lookback_days)
+    metrics: list[SymbolMetrics] = []
+    atr_abs: dict[Symbol, float] = {}
+    for symbol in symbols:
+        try:
+            bars = await observe_storage.get_ohlc_bars(
+                symbol, screener.interval_minutes, start_time=since
+            )
+        except WobbleBotPortError:
+            continue
+        computed = compute_symbol_metrics(bars)
+        if computed is None:
+            continue  # too few bars / no ATR -> unranked, sorts last
+        metrics.append(computed)
+        # atr_pct is a percentage OF THE LATEST CLOSE, so converting it
+        # back with that same close is exact and needs no extra fetch.
+        latest_close = float(bars[-1].close)
+        if latest_close > 0:
+            atr_abs[symbol] = latest_close * computed.atr_pct / 100.0
+
+    rankings = rank_candidates(
+        metrics,
+        vol_band_center=screener.vol_band_center,
+        atr_band_center_pct=screener.atr_band_center_pct,
+    )
+    proximity = {
+        symbol: proximity_in_atr(
+            await _current_price(adapter, symbol),
+            await _grid_level_prices(storage, symbol),
+            atr_abs.get(symbol),
+        )
+        for symbol in symbols
+    }
+    return rankings, proximity
+
+
+async def _refresh_sweep_order(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    *,
+    live: LiveConfig,
+    screener: ScreenerConfig,
+    storage: StoragePort,
+    observe_storage: StoragePort | None,
+    adapter: KrakenAdapter,
+    tick: int,
+    current: list[Symbol] | None,
+    computed_at: float | None,
+) -> tuple[list[Symbol] | None, float | None]:
+    """Return ``(sweep_order, computed_at)`` for this tick.
+
+    ``config_order`` returns ``None`` — the caller falls back to
+    ``live.symbols``, so the DEFAULT path allocates nothing and behaves
+    exactly as it did before this function existed.
+
+    ``round_robin`` recomputes every tick; that IS the strategy, and it
+    costs one list rotation.
+
+    ``screener`` rebuilds at most hourly. On any failure it keeps the
+    previous order (or config order) and logs — ordering is a preference,
+    never a reason to stop trading.
+    """
+    strategy = live.symbol_priority
+    if strategy == "config_order":
+        return None, None
+    if strategy == "round_robin":
+        return sweep_order("round_robin", list(live.symbols), tick=tick), None
+
+    now = time.monotonic()
+    if computed_at is not None and (now - computed_at) < _SWEEP_REFRESH_SECONDS:
+        return current, computed_at
+    if observe_storage is None:
+        # Config validation forbids this pairing, so reaching it means the
+        # DB failed to OPEN. Say so (hourly, not per tick) and keep trading.
+        _LOGGER.warning(
+            "symbol_priority=screener but the observe DB is unavailable; sweeping config order"
+        )
+        return None, now
+    try:
+        rankings, proximity = await _build_screener_inputs(
+            list(live.symbols), storage, observe_storage, adapter, screener
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Deliberately broad, same posture as GridEngine.cancel_open_orders:
+        # the port errors are already handled per-symbol inside, so anything
+        # reaching here is a bug in the scoring math — and a bug in a
+        # PREFERENCE must not take down a real-money loop. Keep the previous
+        # order and retry at the next refresh.
+        _LOGGER.warning(
+            "sweep-order refresh failed; keeping the previous order: %s: %s",
+            type(exc).__name__,
+            exc,
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return current, now
+    order = sweep_order("screener", list(live.symbols), rankings=rankings, proximity=proximity)
+    if order != current:
+        _LOGGER.info(
+            "sweep order updated: %s",
+            " > ".join(str(s) for s in order),
+            extra={"sweep_order": [str(s) for s in order], "strategy": strategy},
+        )
+    return order, now
+
+
 async def _restore_paused_symbols(
     engine: GridEngine,
     symbols: list[Symbol],
@@ -755,6 +961,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     *,
     operator_service: OperatorService | None = None,
     operator_storage: StoragePort | None = None,
+    observe_storage: StoragePort | None = None,
+    screener: ScreenerConfig | None = None,
     notifier: NotifierPort | None = None,
 ) -> int:
     """Run the engine loop. Returns the process exit code.
@@ -765,7 +973,13 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     ``engine.is_stop_requested`` is set. When ``notifier`` is provided,
     session-start / session-end / fill / cap-trip events emit
     ``Notification`` rows for the cli/operator forwarder (Stage 5.6).
+
+    ``observe_storage`` + ``screener`` back ``live.symbol_priority:
+    screener`` — the only sweep strategy that needs OHLC history. Both
+    are unused (and legitimately ``None``) under the other two
+    strategies, so the default path opens no second DB.
     """
+    screener_config = screener if screener is not None else ScreenerConfig()
     started_usd = await _session_usd_balance(adapter)
     started_value_usd = await _session_portfolio_value_usd(adapter, tuple(live.symbols))
     started_at = time.monotonic()
@@ -821,6 +1035,13 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     # fires `terminal_heartbeat_seconds` after session-start, not right
     # at boot (where it'd duplicate the session-start INFO line).
     last_terminal_heartbeat_at = time.monotonic()
+    # Sweep order (live.symbol_priority). Recomputed on a SLOW cadence
+    # because the screener's inputs are hourly bars: re-ranking every tick
+    # would spend storage reads to produce an identical answer, and an
+    # order that wobbles tick-to-tick makes "why did SOL get funded and
+    # ADA not" unanswerable after the fact. None => config order.
+    sweep: list[Symbol] | None = None
+    sweep_computed_at: float | None = None
     try:
         while not stop_event.is_set():
             # Stage 8.4.E follow-up — emit a heartbeat at the top of
@@ -881,7 +1102,19 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 break
 
             tick += 1
-            if await _run_one_tick(adapter, engine, live, tick, started_value_usd, notifier):
+            sweep, sweep_computed_at = await _refresh_sweep_order(
+                live=live,
+                screener=screener_config,
+                storage=storage,
+                observe_storage=observe_storage,
+                adapter=adapter,
+                tick=tick,
+                current=sweep,
+                computed_at=sweep_computed_at,
+            )
+            if await _run_one_tick(
+                adapter, engine, live, tick, started_value_usd, notifier, sweep=sweep
+            ):
                 exit_code = 1
                 break
 
@@ -1033,6 +1266,40 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
 # ---------------------------------------------------------------------------
 
 
+async def _open_observe_storage(observe_db: str | None) -> SQLiteStorageAdapter | None:
+    """Open the observe DB for ``symbol_priority: screener``, or ``None``.
+
+    The screener strategy ranks from ``ohlc_bars``, which live in the
+    observe DB — a THIRD adapter on the trading path, opened only when
+    the operator selected that strategy (config validation pairs the two,
+    so a ``None`` path here means they didn't).
+
+    A failure to open degrades the sweep to config order rather than
+    refusing to trade. Ordering is a preference; the money path must not
+    depend on a data-collection DB being reachable.
+    """
+    if observe_db is None:
+        return None
+    storage = SQLiteStorageAdapter(observe_db)
+    try:
+        await storage.connect()
+    except (StorageError, OSError) as exc:
+        _LOGGER.error(
+            "could not open observe_db for sweep ordering; sweeping config order "
+            "(observe_db=%s): %s: %s",
+            observe_db,
+            type(exc).__name__,
+            exc,
+            extra={
+                "observe_db": observe_db,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
+        return None
+    return storage
+
+
 async def _main_async(  # pylint: disable=too-many-locals
     config: WobbleBotConfig, *, ignore_cool_down: bool = False
 ) -> int:
@@ -1179,6 +1446,8 @@ async def _main_async(  # pylint: disable=too-many-locals
         # trading on every paused symbol.
         await _restore_paused_symbols(engine, list(config.live.symbols), operator_storage)
 
+    observe_storage = await _open_observe_storage(config.live.observe_db)
+
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
@@ -1191,6 +1460,8 @@ async def _main_async(  # pylint: disable=too-many-locals
             stop_event=stop_event,
             operator_service=operator_service,
             operator_storage=operator_storage,
+            observe_storage=observe_storage,
+            screener=config.screener,
             notifier=notifier,
         )
     finally:
@@ -1211,6 +1482,8 @@ async def _main_async(  # pylint: disable=too-many-locals
         ]
         if operator_storage is not None:
             phases.append(("close_operator_storage", operator_storage.close))
+        if observe_storage is not None:
+            phases.append(("close_observe_storage", observe_storage.close))
         await safe_shutdown(phases, logger=_LOGGER)
 
 
