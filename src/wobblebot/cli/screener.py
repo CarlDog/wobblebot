@@ -230,11 +230,19 @@ def main() -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
+    # Configure logging BEFORE the missing-section check, defaulting the
+    # format when the section that would carry it is absent — the same
+    # order every sibling CLI uses. Until 2026-08-15 this was the one CLI
+    # of sixteen that reported a missing section via a raw stderr write
+    # instead of the logger, because it read log_format from the section
+    # it was about to find missing.
+    log_format = config.screener.log_format if config.screener is not None else "plain"
+    configure_logging(log_format=log_format)
+
     if config.screener is None:
-        sys.stderr.write("error: settings.yml is missing the `screener:` section\n")
+        _LOGGER.error("settings.yml is missing the `screener:` section")
         return 2
     screener_config = config.screener
-    configure_logging(log_format=screener_config.log_format)
 
     symbols_override: list[Symbol] | None = None
     if args.symbols:
