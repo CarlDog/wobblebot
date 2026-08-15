@@ -39,6 +39,7 @@ from wobblebot.cli._common import (
     collect_overrides,
     identity,
     load_operator_env,
+    missing_section_exit,
     parse_symbol_csv,
 )
 from wobblebot.config.cli import ScreenerConfig
@@ -240,8 +241,7 @@ def main() -> int:
     configure_logging(log_format=log_format)
 
     if config.screener is None:
-        _LOGGER.error("settings.yml is missing the `screener:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "screener")
     screener_config = config.screener
 
     symbols_override: list[Symbol] | None = None

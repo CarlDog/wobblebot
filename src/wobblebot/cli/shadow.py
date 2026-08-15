@@ -68,6 +68,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     parse_symbol_csv,
     partition_or_exit,
     run_with_clean_exit,
@@ -409,8 +410,7 @@ async def _run_loop(  # pylint: disable=too-many-locals
 
 async def _main_async(config: WobbleBotConfig) -> int:
     if config.shadow is None:
-        _LOGGER.error("settings.yml is missing the `shadow:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "shadow")
 
     try:
         kraken_config = KrakenConfig.from_env()  # default vars: KRAKEN_READER_API_KEY (read-only)

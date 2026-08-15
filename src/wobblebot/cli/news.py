@@ -51,6 +51,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     run_poll_loop,
     run_with_clean_exit,
     safe_shutdown,
@@ -301,8 +302,7 @@ async def _close_news_sources(
 
 async def _main_async(config: WobbleBotConfig) -> int:
     if config.news is None:
-        _LOGGER.error("settings.yml is missing the `news:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "news")
 
     try:
         interval = config.schedules.get("news")

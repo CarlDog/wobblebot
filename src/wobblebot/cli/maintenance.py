@@ -60,6 +60,7 @@ from wobblebot.cli._common import (
     emit_heartbeat,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     notify,
     run_poll_loop,
     run_with_clean_exit,
@@ -291,11 +292,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     config: WobbleBotConfig,
 ) -> int:
     if config.maintenance is None:
-        _LOGGER.error(
-            "settings.yml is missing the `maintenance:` section; "
-            "see config/settings.example.yml for the template"
-        )
-        return 2
+        return missing_section_exit(_LOGGER, "maintenance")
 
     maintenance = config.maintenance
     target_dbs = [Path(p) for p in maintenance.target_dbs]

@@ -62,6 +62,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     notify,
     parse_symbol_csv,
     partition_or_exit,
@@ -1347,8 +1348,7 @@ async def _main_async(  # pylint: disable=too-many-locals
     config: WobbleBotConfig, *, ignore_cool_down: bool = False
 ) -> int:
     if config.live is None:
-        _LOGGER.error("settings.yml is missing the `live:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "live")
 
     try:
         kraken_config = KrakenConfig.from_env(

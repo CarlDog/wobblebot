@@ -47,6 +47,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     notify,
     run_poll_loop,
     run_with_clean_exit,
@@ -415,8 +416,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
     execute_proposal_id: str | None = None,
 ) -> int:
     if config.harvester is None:
-        _LOGGER.error("settings.yml is missing the `harvester:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "harvester")
 
     # Stage 4.4: load the Harvester key (Withdraw + Query Funds scopes).
     # Per ADR-003 this MUST be a different key from KRAKEN_TRADER_API_KEY —

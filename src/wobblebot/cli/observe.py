@@ -46,6 +46,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     parse_days_arg,
     parse_interval_arg,
     parse_intervals_arg,
@@ -397,8 +398,7 @@ async def _run_auto_gap_fill(  # pylint: disable=too-many-arguments,too-many-pos
 
 async def _main_async(config: WobbleBotConfig) -> int:
     if config.observe is None:
-        _LOGGER.error("settings.yml is missing the `observe:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "observe")
 
     try:
         price_interval = config.schedules.get("observe_prices")

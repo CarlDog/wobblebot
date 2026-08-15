@@ -37,7 +37,13 @@ from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    missing_section_exit,
+)
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
@@ -146,11 +152,9 @@ async def _run(  # pylint: disable=too-many-return-statements,too-many-branches
     args: argparse.Namespace, config: WobbleBotConfig
 ) -> int:
     if config.advise is None:
-        _LOGGER.error("settings.yml is missing the `advise:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "advise")
     if config.advisor is None:
-        _LOGGER.error("settings.yml is missing the `advisor:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "advisor")
 
     symbol: Symbol
     if args.symbol is not None:

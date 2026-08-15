@@ -33,7 +33,7 @@ from typing import Any
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity
+from wobblebot.cli._common import add_config_args, collect_overrides, identity, missing_section_exit
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
@@ -45,8 +45,7 @@ _LOGGER = logging.getLogger("wobblebot.cli.sandbox")
 
 async def _run(config: WobbleBotConfig) -> int:
     if config.sandbox is None:
-        _LOGGER.error("settings.yml is missing the `sandbox:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "sandbox")
 
     symbol = Symbol(base="BTC", quote="USD")
     exchange = MockExchangeAdapter(

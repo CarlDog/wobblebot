@@ -24,6 +24,7 @@ from datetime import UTC, datetime, timedelta
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    missing_section_exit,
     parse_date_arg,
     partition_or_exit,
     safe_shutdown,
@@ -245,8 +246,7 @@ async def backfill_main(  # pylint: disable=too-many-locals,too-many-branches,to
     on an error; 2 on argument / config / credential failure.
     """
     if config.observe is None:
-        _LOGGER.error("settings.yml is missing the `observe:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "observe")
 
     try:
         since: datetime | None

@@ -54,6 +54,7 @@ from wobblebot.cli._common import (
     identity,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     parse_symbol_csv,
     run_poll_loop,
     run_with_clean_exit,
@@ -607,11 +608,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
     config: WobbleBotConfig,
 ) -> int:
     if config.advise is None:
-        _LOGGER.error("settings.yml is missing the `advise:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "advise")
     if config.advisor is None:
-        _LOGGER.error("settings.yml is missing the `advisor:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "advisor")
 
     try:
         interval = config.schedules.get("advise")

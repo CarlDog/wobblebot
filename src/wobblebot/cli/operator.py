@@ -61,6 +61,7 @@ from wobblebot.cli._common import (
     emit_heartbeat,
     install_signal_handlers,
     load_operator_env,
+    missing_section_exit,
     notify,
     run_poll_loop,
     run_with_clean_exit,
@@ -1251,8 +1252,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     config: WobbleBotConfig,
 ) -> int:
     if config.operator is None:
-        _LOGGER.error("settings.yml is missing the `operator:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "operator")
     operator_cfg = config.operator
 
     if operator_cfg.auth.outbound_channel_id not in operator_cfg.auth.allowed_channel_ids:

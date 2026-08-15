@@ -143,6 +143,36 @@ def identity(value: T) -> T:
     return value
 
 
+def missing_section_exit(logger: logging.Logger, section: str) -> int:
+    """Report a missing per-CLI ``settings.yml`` section; return exit code 2.
+
+    THE deprived-env contract, in one place. Every entry point promises
+    "clean exit 2 on a missing section" (CLAUDE.md's walkthrough checks
+    it), and until 2026-08-15 that promise was enforced by seventeen
+    hand-copied three-line blocks — one of which had already drifted
+    (cli/screener wrote to raw stderr) and only two of which carried the
+    settings.example.yml pointer, the most useful part of the message.
+
+    Callers keep the ``if config.X is None:`` check at the call site —
+    that early return is also what narrows ``config.X`` for the rest of
+    the function — and delegate only the message + code::
+
+        if config.live is None:
+            return missing_section_exit(_LOGGER, "live")
+
+    ``cli/web`` deliberately does NOT use this: its section check feeds
+    two subcommands through a section-returning helper rather than an
+    exit code, and forcing it through this shape would obscure that.
+    """
+    logger.error(
+        "settings.yml is missing the `%s:` section; "
+        "see config/settings.example.yml for the template",
+        section,
+        extra={"section": section},
+    )
+    return 2
+
+
 def parse_date_arg(raw: str) -> datetime:
     """Parse an ISO 8601 date or datetime; default tz to UTC if naive.
 

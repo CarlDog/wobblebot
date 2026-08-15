@@ -48,7 +48,13 @@ from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, load_operator_env
+from wobblebot.cli._common import (
+    add_config_args,
+    collect_overrides,
+    identity,
+    load_operator_env,
+    missing_section_exit,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -171,8 +177,7 @@ async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
     config: WobbleBotConfig,
 ) -> int:
     if config.preflight is None:
-        _LOGGER.error("settings.yml is missing the `preflight:` section")
-        return 2
+        return missing_section_exit(_LOGGER, "preflight")
 
     try:
         kraken_config = KrakenConfig.from_env(
