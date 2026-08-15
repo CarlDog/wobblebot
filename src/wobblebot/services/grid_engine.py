@@ -142,6 +142,10 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
       signal.
     - ``"skipped_disabled"`` — the per-coin config has ``enabled: false``;
       no exchange or storage interaction occurred.
+    - ``"skipped_paused"`` — the operator paused this symbol. NO order is
+      placed, but fill detection still runs and ``fills`` reports what was
+      recorded: a pause does not cancel standing orders, so they can still
+      fill and must still be observed. A fill here gets no counter-order.
     - ``"skipped_wide_spread"`` (ADR-025) — the symbol's bid-ask spread
       exceeded ``safety.max_spread_percentage``; no order placed or
       cancelled this tick, storage untouched.
@@ -289,7 +293,38 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if not coin_cfg.enabled:
             return StepResult(symbol=symbol, action="skipped_disabled")
         if self.is_paused(symbol):
-            return StepResult(symbol=symbol, action="skipped_paused")
+            # A paused symbol still OBSERVES; it just does not ACT.
+            #
+            # Until 2026-08-12 this returned immediately, which meant a
+            # paused symbol's standing orders stayed live on the exchange
+            # (pause deliberately does not cancel them) while the engine
+            # stopped looking at them entirely. Caught in production: BTC
+            # was paused, its buy at 63237.69 filled on 2026-08-11, and
+            # because nothing reconciled, storage still called the order
+            # `open` four days later, no trade row was ever written, the
+            # dashboard showed three open orders when two remained, and
+            # ~$5 of BTC sat with no exit. Worse, every downstream number
+            # computed off that row — exposure, the caps, the advisor's
+            # risk inputs — believed the money was still unspent USD.
+            #
+            # Pause must mean "stop trading", never "stop seeing".
+            #
+            # Counter-orders are deliberately NOT placed here: a counter
+            # is a new order on the exchange, which is exactly what pause
+            # forbids. The fill is now recorded and visible, and the
+            # operator has resume / cancel-open-orders to act on it. The
+            # inventory-with-no-exit consequence is real but it is now a
+            # SHOWN state rather than a silent one.
+            fills, _ = await self._detect_fills(symbol, exchange_open_orders, exchange_trades)
+            if fills:
+                _LOGGER.warning(
+                    "%s is PAUSED but %d order(s) filled on the exchange; recorded, "
+                    "no counter placed — resume or cancel open orders to act",
+                    symbol,
+                    len(fills),
+                    extra={"symbol": str(symbol), "fills": len(fills), "paused": True},
+                )
+            return StepResult(symbol=symbol, action="skipped_paused", fills=len(fills))
 
         # ADR-025: bid/ask ride the same market-data call the engine
         # already made for the current price -- zero extra API cost.
@@ -369,8 +404,15 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """Pause one symbol's grid.
 
         Subsequent ``step(symbol)`` calls return ``action="skipped_paused"``
-        without touching the exchange or storage. Open orders are NOT
-        cancelled — that's a separate operator action (``cancel_open_orders``).
+        and place NO orders. They do still run fill detection, because open
+        orders are NOT cancelled by a pause — they stay live on the
+        exchange and can fill, so the engine must keep recording them
+        (fixed 2026-08-12; see the note at the pause gate in
+        ``_step_unlocked``). Cancelling is a separate operator action
+        (``cancel_open_orders``).
+
+        A fill detected while paused is recorded but gets NO counter-order:
+        placing one would be trading, which is what pause forbids.
 
         Returns:
             ``True`` if the symbol was active and is now paused;

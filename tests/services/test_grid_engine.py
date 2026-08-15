@@ -1149,6 +1149,58 @@ class TestPauseResume:
         assert result.action == "initialized"
         assert result.placed > 0
 
+    async def test_paused_symbol_still_records_a_fill(self, storage: SQLiteStorageAdapter) -> None:
+        """THE 2026-08-11 PRODUCTION BUG, in miniature.
+
+        Pause deliberately leaves standing orders live on the exchange, so
+        they can still fill. Before this was fixed the pause gate returned
+        before fill detection, so the engine stopped LOOKING: BTC's buy at
+        63237.69 filled, storage still called it `open` four days later, no
+        trade row was written, the dashboard showed three open orders when
+        two remained, and every downstream number (exposure, caps, the
+        advisor's risk inputs) believed the money was still unspent USD.
+
+        Pause must mean "stop trading", never "stop seeing".
+        """
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # lay the grid
+        opens_before = await storage.get_open_orders(symbol=BTC_USD)
+        assert any(o.side == "buy" for o in opens_before), "need a standing BUY to fill"
+
+        engine.pause_symbol(BTC_USD)
+        # Price crosses the 49500 BUY *while paused* — the production
+        # scenario exactly: pause left the order live, the market came to it.
+        exchange.set_price(BTC_USD, Decimal("49400"))
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "skipped_paused"
+        assert result.fills >= 1, "a paused symbol must still DETECT the fill"
+        remaining = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(remaining) < len(opens_before), "storage must not still call it open"
+        assert await storage.get_trades(symbol=BTC_USD), "the trade must be recorded"
+
+    async def test_paused_fill_places_no_counter_order(self, storage: SQLiteStorageAdapter) -> None:
+        """Recording is not trading. A counter is a NEW order on the
+        exchange, which is precisely what pause forbids — so the fill is
+        recorded and left for the operator to act on via resume or
+        cancel-open-orders."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        opens_before = await storage.get_open_orders(symbol=BTC_USD)
+
+        engine.pause_symbol(BTC_USD)
+        exchange.set_price(BTC_USD, Decimal("49400"))
+        result = await engine.step(BTC_USD)
+
+        assert result.counters_placed == 0
+        assert result.placed == 0
+        # Strictly fewer open orders: the filled one left, nothing replaced it.
+        remaining = await storage.get_open_orders(symbol=BTC_USD)
+        assert len(remaining) < len(opens_before)
+
     async def test_pause_does_not_cancel_orders(self, storage: SQLiteStorageAdapter) -> None:
         engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
         # Lay the grid first
