@@ -22,6 +22,37 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Changed
+
+- **Money now renders in one dialect everywhere** (repo-quality pass,
+  2026-08-15). One USD value had four costumes: web templates fixed
+  `%.2f`/`%.4f`/`%.8f` with no thousands separators, Discord embeds
+  `:,.2f`/`:,.4f` *with* them, session PnL differing between two embeds,
+  logs adaptive. Fixed 2dp was destructive below $1 — DOGE's grid levels
+  3% apart all rendered "$0.09"; the ladder was illegible on the
+  dashboard. New `fmt_usd` / `fmt_qty` in `domain/value_objects` (beside
+  `fmt_decimal`) back Jinja filters (`usd` / `usd_signed` / `qty`), the
+  Discord renderers, and the operator status text: `$63,237.60`,
+  `$0.0698`, `+$0.13`, quantities zero-stripped at 8dp. The withdrawal
+  confirm dialog deliberately uses `usd_exact` (never rounds — a
+  money-out approval must show the amount that will actually dispatch,
+  and proposal amounts carry Kraken's 4dp). `format_signed_usd`
+  (a local duplicate) is deleted.
+
+- **Repo-quality sweep, same pass:** the missing-section → exit-2
+  contract moved from seventeen hand-copied blocks into
+  `_common.missing_section_exit` (every CLI now also names the
+  settings.example.yml template in the error); `cli/screener` reports a
+  missing section through the logger like its fifteen siblings instead
+  of a raw stderr write; the SQLite schema migrations moved to
+  `adapters/sqlite_migrations.py` with their contract (additive +
+  idempotent, race-tolerant, forensic data never silently destroyed)
+  stated once; `web/dependencies.py`'s eleven `type: ignore`s became
+  typed assignments. Audit verdicts recorded so they aren't re-run:
+  vulture found zero dead code at 80% confidence; all 18
+  `scan_logging --check decimal` hits are false positives (ints,
+  durations, currency codes).
+
 ### Added
 
 - **The MoE risk expert now receives the exposure data its prompt promised.**
