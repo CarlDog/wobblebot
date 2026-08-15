@@ -6,6 +6,12 @@ into ``adapters/`` or compute business logic themselves.
 
 Stage 7.1.B ships the factory functions; Stage 7.1.C adds the
 ``current_user`` dependency that gates auth-protected routes.
+
+``app.state`` is Starlette's untyped attribute bag, so every read here
+crosses an ``Any`` boundary. Each accessor bridges it with a typed
+assignment — the annotation *is* the contract with the app-build wiring
+in ``web/app.py`` — rather than a per-line ``type: ignore``, which this
+file once held eleven of (nearly half the repo's total).
 """
 
 from __future__ import annotations
@@ -19,40 +25,47 @@ from wobblebot.ports.storage import StoragePort
 
 def get_config(request: Request) -> WebConfig:
     """Pull the ``WebConfig`` instance off ``app.state``."""
-    return request.app.state.config  # type: ignore[no-any-return]
+    config: WebConfig = request.app.state.config
+    return config
 
 
 def get_operator_storage(request: Request) -> StoragePort:
     """Pull the operator.db ``StoragePort`` — required everywhere
     (users, pending_commands, notifications, llm_calls all live
     here)."""
-    return request.app.state.operator_storage  # type: ignore[no-any-return]
+    storage: StoragePort = request.app.state.operator_storage
+    return storage
 
 
 def get_advise_storage(request: Request) -> StoragePort | None:
     """Pull the advise.db storage if wired; ``None`` otherwise.
     Routes that need it implement the graceful-degrade card pattern."""
-    return request.app.state.advise_storage  # type: ignore[no-any-return]
+    storage: StoragePort | None = request.app.state.advise_storage
+    return storage
 
 
 def get_harvest_storage(request: Request) -> StoragePort | None:
     """Pull the harvest.db storage if wired; ``None`` otherwise."""
-    return request.app.state.harvest_storage  # type: ignore[no-any-return]
+    storage: StoragePort | None = request.app.state.harvest_storage
+    return storage
 
 
 def get_observe_storage(request: Request) -> StoragePort | None:
     """Pull the observe.db storage if wired; ``None`` otherwise."""
-    return request.app.state.observe_storage  # type: ignore[no-any-return]
+    storage: StoragePort | None = request.app.state.observe_storage
+    return storage
 
 
 def get_news_storage(request: Request) -> StoragePort | None:
     """Pull the news.db storage if wired; ``None`` otherwise."""
-    return request.app.state.news_storage  # type: ignore[no-any-return]
+    storage: StoragePort | None = request.app.state.news_storage
+    return storage
 
 
 def get_live_storage(request: Request) -> StoragePort | None:
     """Pull the live.db storage if wired; ``None`` otherwise."""
-    return request.app.state.live_storage  # type: ignore[no-any-return]
+    storage: StoragePort | None = request.app.state.live_storage
+    return storage
 
 
 def get_cool_down_minutes(request: Request) -> float | None:
@@ -64,7 +77,8 @@ def get_cool_down_minutes(request: Request) -> float | None:
     ``None`` when the operator disabled the gate or didn't give
     ``cli/web`` a ``live:`` config section.
     """
-    return request.app.state.cool_down_minutes  # type: ignore[no-any-return]
+    minutes: float | None = request.app.state.cool_down_minutes
+    return minutes
 
 
 def get_live_tick_seconds(request: Request) -> float | None:
@@ -75,7 +89,8 @@ def get_live_tick_seconds(request: Request) -> float | None:
     ``None`` when ``cli/web`` wasn't given a ``live:`` section — the
     guard falls back to the schema-default tick.
     """
-    return request.app.state.live_tick_seconds  # type: ignore[no-any-return]
+    seconds: float | None = request.app.state.live_tick_seconds
+    return seconds
 
 
 def get_withdrawal_destinations(request: Request) -> dict[str, str]:
@@ -85,10 +100,12 @@ def get_withdrawal_destinations(request: Request) -> dict[str, str]:
     page then renders proposals without an Execute button, since there
     is no destination to approve.
     """
-    return request.app.state.withdrawal_destinations  # type: ignore[no-any-return]
+    destinations: dict[str, str] = request.app.state.withdrawal_destinations
+    return destinations
 
 
 def get_templates(request: Request) -> Jinja2Templates:
     """Pull the shared ``Jinja2Templates`` instance off ``app.state``.
     Routes use this to render HTML responses."""
-    return request.app.state.templates  # type: ignore[no-any-return]
+    templates: Jinja2Templates = request.app.state.templates
+    return templates
