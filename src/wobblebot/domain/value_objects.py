@@ -64,6 +64,59 @@ def fmt_decimal(value: Decimal, *, max_significant: int | None = None) -> str:
     return f"{normalized:f}"
 
 
+def fmt_usd(value: Decimal | float | int, *, signed: bool = False) -> str:
+    """Render a USD amount the one house way, across every surface.
+
+    Before 2026-08-15 each surface had its own dialect: web templates
+    used fixed ``%.2f`` with no thousands separators, Discord embeds used
+    ``:,.2f`` / ``:,.4f`` WITH separators, and the same field could
+    differ between two embeds (session PnL was 2dp in the loss-cap
+    message and 4dp in the session-end one). Worst, fixed 2dp destroyed
+    sub-dollar prices: DOGE at $0.0698 rendered "$0.07", and its grid
+    levels 3% apart all collapsed to "$0.09" — the ladder was illegible
+    on the dashboard. One formatter, used by web filters, Discord
+    renderers, and any operator-facing string, ends the drift:
+
+    - ``>= $1``: two decimals with thousands separators — ``$63,237.60``.
+    - ``< $1``: four significant digits, because cents are the wrong
+      resolution there — ``$0.0698``, ``$0.001296``. Fee-scale values
+      keep their meaning: ``$0.0169``, not ``$0.02``.
+    - ``signed=True`` (PnL): an explicit ``+``/``-`` before the ``$`` —
+      ``+$0.13``, ``-$5.00``. Unsigned negatives still carry the minus.
+    - Exact zero renders ``$0.00`` (or unsigned even when ``signed`` —
+      a zero PnL is neither a gain nor a loss).
+
+    Display only — never feed the output back into arithmetic. Floats
+    are accepted because template/route code hands them over; they pass
+    through ``Decimal(str(...))`` so binary tails don't leak into the
+    rendering.
+    """
+    dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    sign = "-" if dec < 0 else ("+" if signed and dec > 0 else "")
+    magnitude = abs(dec)
+    if magnitude >= 1 or magnitude == 0:
+        body = f"{magnitude.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}"
+    else:
+        # Four significant digits, then strip trailing zeros the same
+        # way fmt_decimal does — "$0.1000" would read as false precision.
+        body = fmt_decimal(magnitude, max_significant=4)
+    return f"{sign}${body}"
+
+
+def fmt_qty(value: Decimal | float | int) -> str:
+    """Render an asset quantity: at most 8 decimals, no trailing zeros.
+
+    The 8-decimal cap matches Kraken's native asset precision (and the
+    fixed ``:.8f`` every surface already used); stripping trailing
+    zeros is the fmt_decimal readability rule applied to quantities —
+    ``0.01`` beats ``0.01000000`` in a table an operator scans. Display
+    only, like its siblings.
+    """
+    dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    quantized = dec.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+    return fmt_decimal(quantized)
+
+
 class Symbol(BaseModel):
     """Trading pair symbol (e.g., BTC/USD, ETH/USD).
 
