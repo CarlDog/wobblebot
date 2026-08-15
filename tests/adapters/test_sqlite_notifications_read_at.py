@@ -4,7 +4,7 @@ The trap this guards: SCHEMA runs via ``executescript`` BEFORE any
 migration, so the unread partial index cannot live in SCHEMA — an
 operator DB written before this slice has no ``read_at`` column and
 ``CREATE INDEX ... ON notifications(read_at)`` would abort the whole
-connect(). The index is created by ``_migrate_notifications_read_at``
+connect(). The index is created by ``migrate_notifications_read_at``
 *after* the ALTER, and these tests pin both halves against a genuinely
 pre-slice table.
 """

@@ -100,7 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_price_snapshots_symbol_time
 -- (symbol_base, symbol_quote, observed_at) intentionally NOT declared
 -- here -- a pre-existing observe.db with duplicate rows would fail
 -- at schema apply before the migration could dedup. The migration
--- function _migrate_price_snapshots_unique in sqlite_storage.py
+-- function migrate_price_snapshots_unique in sqlite_migrations.py
 -- creates the index after dedup; this handles both fresh DBs (no
 -- rows, no dedup, just creates) and legacy DBs (dedup then create).
 
@@ -284,7 +284,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_forwarded
     ON notifications(forwarded, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_timestamp
     ON notifications(timestamp);
--- The unread partial index is created by _migrate_notifications_read_at,
+-- The unread partial index is created by sqlite_migrations.migrate_notifications_read_at,
 -- NOT here: SCHEMA runs via executescript BEFORE the migrations, so an
 -- index over read_at would raise "no such column" on any operator DB
 -- created before this slice. The migration adds the column first, then

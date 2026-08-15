@@ -16,7 +16,8 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter, _add_column_if_missing
+from wobblebot.adapters.sqlite_migrations import add_column_if_missing
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import StorageError
@@ -179,7 +180,7 @@ class TestConnectionLifecycle:
 class _ScriptedCursor:
     """A single scripted response for one ``conn.execute(...)`` call.
 
-    Supports every shape ``_add_column_if_missing`` uses a cursor as:
+    Supports every shape ``add_column_if_missing`` uses a cursor as:
     ``await conn.execute(...)`` (awaitable) and
     ``async with conn.execute(...) as cursor:`` (async context manager),
     plus ``async for row in cursor`` (async iterable) for the PRAGMA
@@ -217,7 +218,7 @@ class _ScriptedCursor:
 class _ScriptedConn:
     """A fake ``aiosqlite.Connection`` that replays a fixed call script.
 
-    ``_add_column_if_missing`` is deterministic in *what* it calls (PRAGMA,
+    ``add_column_if_missing`` is deterministic in *what* it calls (PRAGMA,
     then maybe ALTER, then maybe a recheck PRAGMA) but the property under
     test — recovering from a genuine cross-process TOCTOU race — can't be
     reproduced reliably against a real on-disk DB without either flaky
@@ -236,7 +237,7 @@ class _ScriptedConn:
 
 
 class TestAddColumnIfMissing:
-    """Unit coverage for the ``_add_column_if_missing`` migration helper
+    """Unit coverage for the ``add_column_if_missing`` migration helper
     (2026-08-05 outage fix). See ``_ScriptedConn`` for why this is a
     scripted-double test rather than a real-DB migration test."""
 
@@ -254,7 +255,7 @@ class TestAddColumnIfMissing:
         )
         # No raise -- this is the assertion. A pre-fix implementation that
         # let the ALTER's aiosqlite.Error propagate would fail this test.
-        await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
+        await add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
 
     async def test_reraises_when_column_genuinely_still_missing(self) -> None:
         # Same shape, but the recheck confirms the column is STILL absent —
@@ -269,13 +270,13 @@ class TestAddColumnIfMissing:
             ]
         )
         with pytest.raises(aiosqlite.Error, match="disk I/O error"):
-            await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
+            await add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
 
     async def test_no_op_when_column_already_present(self) -> None:
         # Fast path: the PRAGMA check alone satisfies it -- no ALTER call
         # scripted, so the test fails with StopIteration if one is attempted.
         conn = _ScriptedConn([_ScriptedCursor(rows=((0, "id"), (1, "new_col")))])
-        await _add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
+        await add_column_if_missing(conn, "some_table", "new_col", "TEXT")  # type: ignore[arg-type]
 
 
 class TestStage83Pragmas:
