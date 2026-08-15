@@ -43,10 +43,11 @@ import math
 from collections.abc import Sequence
 from decimal import Decimal
 
+from wobblebot.config.cli import SweepStrategy
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.screener import ScreenerRanking
 
-__all__ = ["order_symbols", "proximity_in_atr"]
+__all__ = ["SweepStrategy", "order_symbols", "proximity_in_atr", "sweep_order"]
 
 
 def proximity_in_atr(
@@ -107,3 +108,44 @@ def order_symbols(
         )
 
     return sorted(configured, key=key)
+
+
+def sweep_order(
+    strategy: SweepStrategy,
+    configured: Sequence[Symbol],
+    *,
+    rankings: Sequence[ScreenerRanking] = (),
+    proximity: dict[Symbol, float] | None = None,
+    tick: int = 0,
+) -> list[Symbol]:
+    """Order one tick's sweep according to the configured strategy.
+
+    - ``config_order`` — as listed in ``live.symbols``. The historical
+      behaviour and the DEFAULT: upgrading changes nothing until the
+      operator opts in. Biased by construction (the first-listed symbol
+      claims the caps every tick) but predictable, which is worth
+      something on a money path.
+    - ``round_robin`` — rotate the start index by tick. Three lines, no
+      inputs, and it provably removes the systematic bias. It optimises
+      NOTHING: it will hand budget to a parked symbol as readily as a
+      cycling one. Use when you want fairness rather than expected value.
+    - ``screener`` — :func:`order_symbols`; suitability first, proximity
+      as tiebreak. Needs OHLC bars, so it degrades to ``config_order``
+      when the caller supplies no rankings (thin bars, observe DB
+      unreachable) rather than inventing an order from nothing.
+
+    Every strategy returns each configured symbol exactly once.
+    """
+    if not configured:
+        return []
+    if strategy == "round_robin":
+        offset = tick % len(configured)
+        return [*configured[offset:], *configured[:offset]]
+    if strategy == "screener":
+        if not rankings:
+            # Honest degrade: no bars means no opinion. Falling back to
+            # the configured order is worse than ranking but better than
+            # a fabricated one, and the caller logs the reason.
+            return list(configured)
+        return order_symbols(configured, rankings, proximity or {})
+    return list(configured)

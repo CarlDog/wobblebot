@@ -175,6 +175,32 @@ live:
   # never applies to cli/shadow. Set ~null~ to disable. The terminal-only
   # `--ignore-cool-down` flag bypasses one deliberate restart.
   cool_down_minutes: 60.0
+  # How the per-tick sweep is ORDERED (2026-08-15). Sweeping in config
+  # order gives the FIRST-LISTED symbol first claim on the exposure and
+  # daily-spend caps every tick. Measured in production, the starvation
+  # gradient ran straight down the list: ETH (2nd) placed 5/6, SOL (3rd)
+  # 2/6, ADA (6th) 0/6 -- and the first-listed symbol had first claim for
+  # months.
+  #
+  # Ordering only redistributes scarcity; it cannot create capacity. If
+  # symbols x levels x order_size exceeds your free USD, something starves
+  # whatever you choose here -- this only decides WHICH.
+  #
+  #   config_order  historical behaviour and the DEFAULT, so upgrading
+  #                 changes nothing until you opt in. Biased, predictable.
+  #   round_robin   rotate the start index by tick. Removes the bias;
+  #                 optimises nothing (funds a parked symbol as readily
+  #                 as a cycling one). Needs no extra config.
+  #   screener      grid-suitability rank (services/screener: volatility
+  #                 and ATR%% as distance from a band centre, flatness
+  #                 descending), tiebroken by proximity to the nearest
+  #                 grid level in ATR. REQUIRES observe_db below.
+  symbol_priority: config_order
+  # Read-only path to the observe DB. Required ONLY by
+  # symbol_priority: screener -- that is where ohlc_bars lives. Left null
+  # otherwise so the trading daemon does not take a third DB dependency
+  # it has no use for.
+  observe_db: null
   log_format: plain                   # plain | json
   # Rotating-file log with daily rotation (7-day retention). Soak-period
   # follow-up (2026-05-25) wired this through every long-running daemon

@@ -21,6 +21,13 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from wobblebot.domain.value_objects import OHLCBar, Symbol
 
+#: How ``cli/live`` orders its per-tick sweep. Declared here rather
+#: than in services/symbol_priority because the established import
+#: direction in this codebase is services -> config (grid_engine,
+#: harvester, calibrator and others already do it); the reverse edge
+#: exists only in config/llm.py.
+SweepStrategy = Literal["config_order", "round_robin", "screener"]
+
 LogFormat = Literal["plain", "json"]
 # The deployment's trading mode — the SINGLE source of truth, set in the
 # `application` config section (NOT per-CLI). Drives the dashboard's
@@ -140,6 +147,24 @@ class LiveConfig(BaseModel):
     # entirely. The terminal-only `--ignore-cool-down` flag bypasses one
     # deliberate restart without changing this config.
     cool_down_minutes: float | None = Field(default=60.0, gt=0)
+    # How the per-tick sweep is ORDERED (2026-08-15). Sweeping in config
+    # order gave the first-listed symbol first claim on the exposure and
+    # daily-spend caps every tick; the measured starvation gradient ran
+    # ETH 5/6 -> SOL 2/6 -> ADA 0/6 straight down the list.
+    #   config_order — historical behaviour, and the DEFAULT so an
+    #                  upgrade changes nothing until you opt in.
+    #   round_robin  — rotate the start index by tick. Removes the bias,
+    #                  optimises nothing (it will fund a parked symbol as
+    #                  readily as a cycling one).
+    #   screener     — grid-suitability rank, proximity-to-fill tiebreak.
+    #                  Needs OHLC bars, hence `observe_db` below.
+    # Ordering only redistributes scarcity; it cannot create capacity.
+    symbol_priority: SweepStrategy = "config_order"
+    # Read-only path to the observe DB, required ONLY by
+    # symbol_priority: screener (that is where ohlc_bars lives). cli/live
+    # otherwise has no business reading it, so it stays None by default
+    # rather than becoming a third mandatory DB on the trading path.
+    observe_db: str | None = None
 
     class Config:
         frozen = True
@@ -148,6 +173,24 @@ class LiveConfig(BaseModel):
     @classmethod
     def _parse_symbols(cls, v: object) -> list[Symbol]:
         return _coerce_symbol_list(v)
+
+    @model_validator(mode="after")
+    def _validate_symbol_priority(self) -> LiveConfig:
+        """``screener`` ordering needs somewhere to read OHLC bars from.
+
+        Caught at CONFIG LOAD with a message naming the fix, rather than
+        silently degrading to config_order at runtime — an operator who
+        selected screener ordering and quietly got the biased order back
+        would have no way to notice.
+        """
+        if self.symbol_priority == "screener" and self.observe_db is None:
+            raise ValueError(
+                "live.symbol_priority='screener' requires live.observe_db "
+                "(the screener ranks from ohlc_bars, which lives in the "
+                "observe DB). Set live.observe_db to the observe database "
+                "path, or choose 'round_robin' / 'config_order'."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_dead_mans_switch(self) -> LiveConfig:

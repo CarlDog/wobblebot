@@ -19,7 +19,7 @@ import pytest
 
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.screener import ScreenerRanking, SymbolMetrics
-from wobblebot.services.symbol_priority import order_symbols, proximity_in_atr
+from wobblebot.services.symbol_priority import order_symbols, proximity_in_atr, sweep_order
 
 pytestmark = pytest.mark.unit
 
@@ -130,3 +130,46 @@ class TestOrdering:
         order = order_symbols([SOL, BTC, ETH], [], {})
         assert len(order) == 3
         assert order == sorted(order, key=str)
+
+
+class TestSweepStrategies:
+    """The operator-selectable modes. `config_order` is the DEFAULT so an
+    upgrade changes nothing until they opt in — a silent reordering of a
+    money path would be the wrong kind of surprise."""
+
+    def test_config_order_is_untouched(self) -> None:
+        assert sweep_order("config_order", [SOL, BTC, ADA]) == [SOL, BTC, ADA]
+
+    def test_round_robin_rotates_by_tick(self) -> None:
+        cohort = [BTC, ETH, SOL]
+        assert sweep_order("round_robin", cohort, tick=0) == [BTC, ETH, SOL]
+        assert sweep_order("round_robin", cohort, tick=1) == [ETH, SOL, BTC]
+        assert sweep_order("round_robin", cohort, tick=3) == [BTC, ETH, SOL]
+
+    def test_round_robin_gives_every_symbol_first_place_equally(self) -> None:
+        """The whole point of the mode: no symbol keeps first claim."""
+        cohort = [BTC, ETH, SOL, ADA]
+        firsts = [sweep_order("round_robin", cohort, tick=t)[0] for t in range(8)]
+        assert {s: firsts.count(s) for s in cohort} == dict.fromkeys(cohort, 2)
+
+    def test_screener_uses_the_ranking(self) -> None:
+        order = sweep_order(
+            "screener", [BTC, ETH], rankings=[_ranking(BTC, 3.0), _ranking(ETH, 1.0)]
+        )
+        assert order == [ETH, BTC]
+
+    def test_screener_degrades_to_config_order_without_rankings(self) -> None:
+        """Thin bars / observe DB unreachable. Falling back to the
+        configured order is worse than ranking but better than inventing
+        one — and it must never raise on a trading path."""
+        assert sweep_order("screener", [SOL, BTC], rankings=[]) == [SOL, BTC]
+
+    @pytest.mark.parametrize("strategy", ["config_order", "round_robin", "screener"])
+    def test_every_strategy_preserves_membership(self, strategy) -> None:  # type: ignore[no-untyped-def]
+        cohort = [BTC, ETH, SOL, ADA]
+        out = sweep_order(strategy, cohort, rankings=[_ranking(ETH, 1.0)], tick=2)
+        assert sorted(str(s) for s in out) == sorted(str(s) for s in cohort)
+
+    @pytest.mark.parametrize("strategy", ["config_order", "round_robin", "screener"])
+    def test_every_strategy_handles_an_empty_cohort(self, strategy) -> None:  # type: ignore[no-untyped-def]
+        assert sweep_order(strategy, [], tick=5) == []
