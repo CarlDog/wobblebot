@@ -10,6 +10,7 @@ total no-op.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -19,7 +20,7 @@ from tests.fixtures import grid_config as _grid_config
 from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.live import _emit_engine_states
+from wobblebot.cli.live import _emit_engine_states, _restore_paused_symbols
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.grid_engine import GridEngine
 
@@ -143,3 +144,78 @@ class TestEmitEngineStates:
             assert row.reference_price is None
         finally:
             await broken.close()
+
+
+class TestRestorePausedSymbols:
+    """Pause used to live only in process memory, so every restart of
+    cli/live silently resumed trading on a symbol the operator had
+    deliberately stopped. The state was already written to engine_state
+    each tick for the dashboard (ADR-030) — nothing read it back.
+
+    These pin the restore, and especially the two judgement calls in it:
+    a STALE row must still restore (a pause is intent, not a cache), and
+    an unconfigured symbol must not.
+    """
+
+    async def test_restores_a_paused_symbol(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        await _emit_engine_states(engine, [BTC_USD, ETH_USD], storage, operator_storage)
+
+        # A fresh process: new engine, nothing paused in memory.
+        restarted = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        assert restarted.is_paused(BTC_USD) is False
+        await _restore_paused_symbols(restarted, [BTC_USD, ETH_USD], operator_storage)
+
+        assert restarted.is_paused(BTC_USD) is True
+        assert restarted.is_paused(ETH_USD) is False
+
+    async def test_a_stale_pause_still_restores(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The load-bearing judgement call. get_engine_states leaves the
+        freshness guard to consumers so the dashboard can't render a dead
+        engine as live — but restore wants the opposite. Expiring a pause
+        silently resumes trading, which is the bug, not the fix."""
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(BTC_USD)
+        await _emit_engine_states(engine, [BTC_USD], storage, operator_storage)
+        # Backdate the row a week — far past any dashboard freshness window.
+        conn = operator_storage._require_conn()  # pylint: disable=protected-access
+        await conn.execute(
+            "UPDATE engine_state SET updated_at = ? WHERE symbol_base = 'BTC'",
+            ((datetime.now(UTC) - timedelta(days=7)).isoformat(),),
+        )
+        await conn.commit()
+
+        restarted = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await _restore_paused_symbols(restarted, [BTC_USD], operator_storage)
+        assert restarted.is_paused(BTC_USD) is True, "a week-old pause is still a pause"
+
+    async def test_ignores_a_symbol_no_longer_configured(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        engine.pause_symbol(ETH_USD)
+        await _emit_engine_states(engine, [BTC_USD, ETH_USD], storage, operator_storage)
+
+        restarted = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await _restore_paused_symbols(restarted, [BTC_USD], operator_storage)  # ETH dropped
+        assert restarted.is_paused(ETH_USD) is False
+
+    async def test_unwired_operator_db_is_a_noop(self, storage: SQLiteStorageAdapter) -> None:
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await _restore_paused_symbols(engine, [BTC_USD], None)
+        assert engine.is_paused(BTC_USD) is False
+
+    async def test_an_active_symbol_is_not_paused_by_restore(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The inverse failure: restore must never INVENT a pause."""
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await _emit_engine_states(engine, [BTC_USD], storage, operator_storage)
+        restarted = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        await _restore_paused_symbols(restarted, [BTC_USD], operator_storage)
+        assert restarted.is_paused(BTC_USD) is False

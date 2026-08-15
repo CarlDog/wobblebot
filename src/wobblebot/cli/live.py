@@ -635,6 +635,72 @@ async def _process_pending_commands(
     return processed
 
 
+async def _restore_paused_symbols(
+    engine: GridEngine,
+    symbols: list[Symbol],
+    operator_storage: StoragePort | None,
+) -> None:
+    """Re-apply the operator's pauses from ``engine_state`` at startup.
+
+    Pause lived only in ``GridEngine._paused_symbols`` — process memory —
+    so every restart silently resumed trading on a symbol the operator had
+    deliberately stopped. The state was already being WRITTEN to disk every
+    tick for dashboard visibility (ADR-030); nothing ever read it back.
+    That is the whole fix: one read, at startup.
+
+    **No freshness guard, deliberately.** ``get_engine_states`` returns
+    rows regardless of age and leaves the guard to each consumer, because
+    the dashboard must not render a dead engine's rows as live. Restore
+    wants the opposite: a pause is operator INTENT, not a cache entry, and
+    expiring it silently resumes trading — precisely the failure being
+    fixed. A pause set a week ago is still a pause.
+
+    Only currently-configured symbols are restored. A row for a symbol
+    since dropped from ``live.symbols`` is logged and left alone rather
+    than deleted: it costs nothing, and it is evidence if that symbol ever
+    comes back.
+    """
+    if operator_storage is None:
+        return
+    try:
+        rows = await operator_storage.get_engine_states()
+    except WobbleBotPortError as exc:
+        # Never block a trading start on a visibility read — but say so
+        # loudly, because the cost of silence here is resumed trading.
+        _LOGGER.error(
+            "could not read engine_state to restore pauses; symbols start ACTIVE: %s: %s",
+            type(exc).__name__,
+            exc,
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        return
+
+    configured = set(symbols)
+    restored: list[str] = []
+    for row in rows:
+        if not row.paused:
+            continue
+        if row.symbol not in configured:
+            _LOGGER.info(
+                "engine_state has a paused row for %s, which is not in live.symbols; ignoring",
+                row.symbol,
+                extra={"symbol": str(row.symbol), "reason": "not_configured"},
+            )
+            continue
+        engine.pause_symbol(row.symbol)
+        age_h = (datetime.now(UTC) - row.updated_at).total_seconds() / 3600
+        restored.append(f"{row.symbol} (paused as of {age_h:.1f}h ago)")
+
+    if restored:
+        _LOGGER.warning(
+            "restored %d paused symbol(s) from engine_state: %s — these will NOT trade "
+            "until resumed",
+            len(restored),
+            ", ".join(restored),
+            extra={"restored_paused": restored},
+        )
+
+
 async def _emit_engine_states(
     engine: GridEngine,
     symbols: list[Symbol],
@@ -1108,6 +1174,10 @@ async def _main_async(  # pylint: disable=too-many-locals
             config.live.operator_db,
             extra={"operator_db": config.live.operator_db},
         )
+        # Before the first tick: re-apply pauses the operator set in a
+        # previous session. Until 2026-08-12 a restart silently resumed
+        # trading on every paused symbol.
+        await _restore_paused_symbols(engine, list(config.live.symbols), operator_storage)
 
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
