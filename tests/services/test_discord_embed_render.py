@@ -35,7 +35,6 @@ from wobblebot.services.discord_embed_render import (
     COLOR_INFO,
     COLOR_SUCCESS,
     COLOR_WARNING,
-    format_signed_usd,
     render_query_embed,
 )
 
@@ -195,7 +194,7 @@ class TestRenderRecentFills:
 
         assert out["color"] == COLOR_INFO
         assert "PnL" in out["fields"][0][1]
-        assert "+0.0500" in out["fields"][0][1]
+        assert "+$0.05" in out["fields"][0][1]  # house fmt_usd, sign before $
 
     def test_fill_without_pnl_omits_pnl_label(self) -> None:
         result = RecentFillsResult(
@@ -406,23 +405,6 @@ class TestRenderHelp:
         commands_value = next(v for n, v in out["fields"] if n == "Commands")
         assert "pause" in commands_value
         assert "resume" in commands_value
-
-
-class TestFormatSignedUsd:
-    def test_positive_value_sign_before_currency(self) -> None:
-        assert format_signed_usd(1.23) == "+$1.23"
-
-    def test_negative_value_sign_before_currency(self) -> None:
-        assert format_signed_usd(-1.23) == "-$1.23"
-
-    def test_zero_value_has_no_sign(self) -> None:
-        assert format_signed_usd(0.0) == "$0.00"
-
-    def test_custom_decimals(self) -> None:
-        assert format_signed_usd(1.23456, decimals=4) == "+$1.2346"
-
-    def test_zero_with_custom_decimals(self) -> None:
-        assert format_signed_usd(0.0, decimals=4) == "$0.0000"
 
 
 class TestRenderStatusReport:

@@ -29,7 +29,7 @@ from typing import Any
 
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
-from wobblebot.domain.value_objects import Symbol, Timestamp
+from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_usd
 from wobblebot.ports.assistant import AssistantPort
 from wobblebot.ports.exceptions import (
     AssistantError,
@@ -81,7 +81,6 @@ from wobblebot.ports.operator import (
 )
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cycle_matcher import match_cycles, today_realized_pnl
-from wobblebot.services.discord_embed_render import format_signed_usd
 from wobblebot.services.grid_engine import GridEngine
 
 # --------------------------------------------------------------------- #
@@ -686,10 +685,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         grid_config = self._answer_grid_config(GridConfigQuery(symbol=None))
 
         tallies = [
-            StatusReportTally(label="Balance", value=f"${status.total_usd_balance:,.2f}"),
-            StatusReportTally(
-                label="Today's PnL", value=format_signed_usd(status.session_pnl, decimals=4)
-            ),
+            StatusReportTally(label="Balance", value=fmt_usd(status.total_usd_balance)),
+            StatusReportTally(label="Today's PnL", value=fmt_usd(status.session_pnl, signed=True)),
             StatusReportTally(label="Open orders", value=str(len(open_orders.orders))),
             StatusReportTally(
                 label=f"Fills (last {lookback_hours}h)", value=str(len(recent_fills.fills))
@@ -776,8 +773,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
     ) -> str:
         """Build the LLM prompt + call summarize; fall back deterministically."""
         deterministic = (
-            f"Last {lookback_hours}h snapshot: balance ${status.total_usd_balance:,.2f}, "
-            f"today's PnL {format_signed_usd(status.session_pnl, decimals=4)}, "
+            f"Last {lookback_hours}h snapshot: balance {fmt_usd(status.total_usd_balance)}, "
+            f"today's PnL {fmt_usd(status.session_pnl, signed=True)}, "
             f"{len(recent_fills.fills)} fills, {len(recent_news.items)} news items, "
             f"harvester band {harvester_status.band}, "
             f"{len(open_orders.orders)} open orders."
@@ -809,8 +806,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             f"  suggestions_in_lookback: {len(recent_suggestions.suggestions)}",
             f"  proposals_in_lookback: {len(recent_proposals.proposals)}",
             f"  harvester_band: {harvester_status.band}",
-            f"  total_usd_balance: {status.total_usd_balance:,.2f}",
-            f"  todays_realized_pnl: " f"{format_signed_usd(status.session_pnl, decimals=4)}",
+            f"  total_usd_balance: {fmt_usd(status.total_usd_balance)}",
+            f"  todays_realized_pnl: " f"{fmt_usd(status.session_pnl, signed=True)}",
         ]
         blob_lines = [
             f"LOOKBACK_HOURS: {lookback_hours}",

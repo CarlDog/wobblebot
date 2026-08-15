@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from wobblebot.domain.value_objects import fmt_usd
 from wobblebot.ports.notification_events import (
     CommandResultEvent,
     FillEvent,
@@ -125,9 +126,9 @@ def _render_session_start(event: SessionStartEvent) -> dict[str, Any]:
         # a formatted dollar figure or a short "5s / unlimited" — all
         # comfortable in a third-width column.
         "fields": [
-            ("Portfolio value", f"${event.starting_value_usd:,.2f}", True),
-            ("Free USD", f"${event.starting_usd:,.2f}", True),
-            ("Loss cap", f"${event.max_session_loss_usd:,.2f}", True),
+            ("Portfolio value", fmt_usd(event.starting_value_usd), True),
+            ("Free USD", fmt_usd(event.starting_usd), True),
+            ("Loss cap", fmt_usd(event.max_session_loss_usd), True),
             ("Tick / runtime", f"{event.tick_seconds:g}s / {runtime}", True),
         ],
     }
@@ -151,8 +152,8 @@ def _render_loss_cap(event: LossCapEvent) -> dict[str, Any]:
     return {
         "title": "🛑 Loss cap tripped — session ending",
         "description": (
-            f"Session PnL **${event.session_pnl_usd:,.2f}** breached the "
-            f"-${event.limit_usd:,.2f} cap at tick {event.tick}. cli/live is "
+            f"Session PnL **{fmt_usd(event.session_pnl_usd, signed=True)}** breached the "
+            f"-{fmt_usd(event.limit_usd)} cap at tick {event.tick}. cli/live is "
             "cancelling open orders and stopping."
         ),
         "color": COLOR_ERROR,
@@ -164,9 +165,13 @@ def _render_session_end(event: SessionEndEvent) -> dict[str, Any]:
     clean = event.exit_code == 0
     hours, rem = divmod(int(event.duration_seconds), 3600)
     minutes, seconds = divmod(rem, 60)
-    pnl = f"${event.session_pnl_usd:,.4f}" if event.session_pnl_usd is not None else "unknown"
+    pnl = (
+        fmt_usd(event.session_pnl_usd, signed=True)
+        if event.session_pnl_usd is not None
+        else "unknown"
+    )
     ending_value = (
-        f"${event.ending_value_usd:,.2f}" if event.ending_value_usd is not None else "unknown"
+        fmt_usd(event.ending_value_usd) if event.ending_value_usd is not None else "unknown"
     )
     cancels = f"{event.open_orders_cancelled} cancelled"
     if event.open_orders_cancel_failed:
@@ -177,7 +182,7 @@ def _render_session_end(event: SessionEndEvent) -> dict[str, Any]:
         "color": COLOR_SUCCESS if clean else COLOR_ERROR,
         "fields": [
             ("Session PnL", pnl),
-            ("Value", f"${event.starting_value_usd:,.2f} → {ending_value}"),
+            ("Value", f"{fmt_usd(event.starting_value_usd)} → {ending_value}"),
             ("Open orders", cancels),
         ],
     }
@@ -195,8 +200,8 @@ def _render_harvest_proposal(event: HarvestProposalEvent) -> dict[str, Any]:
             ("Proposal", event.proposal_id),
             (
                 "Exchange balance",
-                f"${event.current_exchange_balance:,.2f} → "
-                f"${event.target_exchange_balance:,.2f} target",
+                f"{fmt_usd(event.current_exchange_balance)} → "
+                f"{fmt_usd(event.target_exchange_balance)} target",
             ),
         ],
     }

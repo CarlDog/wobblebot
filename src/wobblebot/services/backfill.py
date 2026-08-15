@@ -27,7 +27,7 @@ constraint makes any overlap a no-op.
 
 Both write targets are idempotent: ``ohlc_bars`` via its declared
 UNIQUE constraint, and ``price_snapshots`` via the UNIQUE index added
-by ``_migrate_price_snapshots_unique`` (2026-05-25 backfill follow-up)
+by ``migrate_price_snapshots_unique`` (2026-05-25 backfill follow-up)
 — re-running an overlapping window is a no-op for both.
 """
 

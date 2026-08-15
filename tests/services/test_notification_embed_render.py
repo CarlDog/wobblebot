@@ -95,7 +95,7 @@ class TestPerEventEmbeds:
         )
         assert embed["color"] == COLOR_ERROR
         assert "Loss cap" in embed["title"]
-        assert "-5.12" in embed["description"]
+        assert "-$5.12" in embed["description"]  # house fmt_usd
         assert "5.00" in embed["description"]
 
     def test_session_end_clean_is_green(self) -> None:
@@ -118,7 +118,7 @@ class TestPerEventEmbeds:
         )
         assert embed["color"] == COLOR_SUCCESS
         assert "cleanly" in embed["title"]
-        assert ("Session PnL", "$0.0336") in embed["fields"]
+        assert ("Session PnL", "+$0.0336") in embed["fields"]  # signed PnL, house fmt_usd
         assert ("Open orders", "11 cancelled") in embed["fields"]
 
     def test_session_end_dirty_exit_is_red_with_unknowns(self) -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from wobblebot.domain.value_objects import fmt_qty, fmt_usd
 from wobblebot.ports.operator_results import (
     FillEntry,
     GridConfigResult,
@@ -47,20 +48,6 @@ COLOR_ERROR = 0xE74C3C
 # self-limit lower to keep the embed readable on mobile.
 _MAX_LIST_ENTRIES = 10
 _MAX_FIELD_VALUE_CHARS = 1000
-
-
-def format_signed_usd(value: float, *, decimals: int = 2) -> str:
-    """Format USD with a leading sign — '+$1.23', '-$1.23', '$0.00'.
-
-    Standard convention puts the sign before the currency symbol;
-    Python's ``f"${x:+,.2f}"`` puts it between (``$+1.23``) which
-    reads wrong. Zero is rendered without a sign.
-    """
-    if value > 0:
-        return f"+${value:,.{decimals}f}"
-    if value < 0:
-        return f"-${abs(value):,.{decimals}f}"
-    return f"${0:,.{decimals}f}"
 
 
 def render_query_embed(  # pylint: disable=too-many-return-statements
@@ -106,8 +93,8 @@ def _render_status(result: StatusResult) -> dict[str, Any]:
     runtime_min, runtime_sec = divmod(int(result.session_runtime_seconds), 60)
     runtime_h, runtime_min = divmod(runtime_min, 60)
     desc_lines = [
-        f"**Balance**: ${result.total_usd_balance:,.2f}",
-        f"**Today's PnL**: {format_signed_usd(result.session_pnl, decimals=4)}",
+        f"**Balance**: {fmt_usd(result.total_usd_balance)}",
+        f"**Today's PnL**: {fmt_usd(result.session_pnl, signed=True)}",
         f"**Runtime**: {runtime_h}h {runtime_min:02d}m {runtime_sec:02d}s",
         f"**Recent fills**: {result.recent_fill_count}",
     ]
@@ -152,7 +139,7 @@ def _render_open_orders(result: OpenOrdersResult) -> dict[str, Any]:
 
 def _open_order_value(order: OpenOrderEntry) -> str:
     return (
-        f"price `${order.price:,.4f}` • amount `{order.amount:.8f}`\n"
+        f"price `{fmt_usd(order.price)}` • amount `{fmt_qty(order.amount)}`\n"
         f"id `{order.order_id[:12]}…`\n"
         f"created `{order.created_at.dt.isoformat(timespec='seconds')}`"
     )
@@ -181,9 +168,9 @@ def _render_recent_fills(result: RecentFillsResult) -> dict[str, Any]:
 
 
 def _fill_value(fill: FillEntry) -> str:
-    pnl_str = f" • PnL `${fill.pnl:+,.4f}`" if fill.pnl is not None else ""
+    pnl_str = f" • PnL `{fmt_usd(fill.pnl, signed=True)}`" if fill.pnl is not None else ""
     return (
-        f"price `${fill.price:,.4f}` • amount `{fill.amount:.8f}`{pnl_str}\n"
+        f"price `{fmt_usd(fill.price)}` • amount `{fmt_qty(fill.amount)}`{pnl_str}\n"
         f"filled `{fill.filled_at.dt.isoformat(timespec='seconds')}`"
     )
 
@@ -264,7 +251,7 @@ def _render_harvester_status(result: HarvesterStatusResult) -> dict[str, Any]:
     desc_lines = [
         f"**Enabled**: {'yes' if result.enabled else 'no'}",
         f"**Asset**: {result.asset}",
-        f"**Balance**: `{result.current_balance:,.2f}`",
+        f"**Balance**: `{fmt_usd(result.current_balance)}`",
         f"**Band**: `{result.band}`",
     ]
     fields: list[tuple[str, str]] = []
@@ -310,7 +297,7 @@ def _render_recent_proposals(result: RecentProposalsResult) -> dict[str, Any]:
 
 
 def _proposal_field_name(entry: ProposalEntry) -> str:
-    return f"{entry.direction} • {entry.amount:,.2f} {entry.asset}"
+    return f"{entry.direction} • {fmt_usd(entry.amount)} {entry.asset}"
 
 
 def _proposal_value(entry: ProposalEntry) -> str:
@@ -329,7 +316,7 @@ def _render_grid_config(result: GridConfigResult) -> dict[str, Any]:
         f"**Spacing**: `{result.spacing_percentage}%`",
         f"**Levels above**: {result.levels_above}",
         f"**Levels below**: {result.levels_below}",
-        f"**Order size**: `${result.order_size_usd:,.2f}`",
+        f"**Order size**: `{fmt_usd(result.order_size_usd)}`",
         f"**Counter target**: `{result.counter_target_mode}`",
     ]
     return {
