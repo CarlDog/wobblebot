@@ -25,7 +25,7 @@
          pattern so the decision facts scan instead of read. #}
       <div class="reanchor-stats">
         <div class="reanchor-stat">
-          <strong>${{ "%.2f"|format(rec.current_price) }}</strong>
+          <strong>{{ rec.current_price | usd }}</strong>
           <span>current price</span>
         </div>
         <div class="reanchor-stat reanchor-stat-severity">
@@ -33,7 +33,7 @@
           <span>spacings off grid</span>
         </div>
         <div class="reanchor-stat">
-          <strong>${{ "%.2f"|format(rec.anchor_price) }}</strong>
+          <strong>{{ rec.anchor_price | usd }}</strong>
           <span>grid anchor</span>
         </div>
         <div class="reanchor-stat">
@@ -55,7 +55,7 @@
         </div>
         <div class="reanchor-stat"
              title="Fee-only estimate: 0.40% taker on the cancelled ladder's notional plus the re-laid ladder. Excludes unrealized inventory swings — cancelling doesn't sell anything.">
-          <strong>≈${{ "%.2f"|format(rec.projected_fee_usd) }}</strong>
+          <strong>≈{{ rec.projected_fee_usd | usd }}</strong>
           <span>projected cost (fees)</span>
         </div>
       </div>
@@ -87,7 +87,7 @@
     <div class="session-cap-banner {% if snapshot.cool_down_active %}session-cap-active{% else %}session-cap-cleared{% endif %}" role="status">
       <strong>{% if snapshot.cool_down_active %}⚠ Session-loss cap tripped{% else %}Session-loss cap trip (cleared){% endif %}</strong>
       — {{ snapshot.last_cap_trip_age_seconds | humanize_duration }} ago,
-      session PnL {% if pnl < 0 %}-${{ "%.2f"|format(-pnl) }}{% else %}${{ "%.2f"|format(pnl) }}{% endif %}.
+      session PnL {{ pnl | usd_signed }}.
       {% if snapshot.cool_down_active %}
         Cooling down until {{ snapshot.cool_down_resumes_at | tz_format(operator_tz, "%H:%M %Z") }}
         — no new session may start before then.
@@ -141,22 +141,22 @@
           or snapshot.lifetime_realized_pnl is not none %}
     <div class="scoreboard">
       <div class="metric">
-        <div class="metric-value">{% if snapshot.account_value_usd is not none %}${{ "%.2f"|format(snapshot.account_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-value">{% if snapshot.account_value_usd is not none %}{{ snapshot.account_value_usd | usd }}{% else %}—{% endif %}</div>
         <div class="metric-label">account value{% if snapshot.balance_as_of %} · as of {{ snapshot.balance_as_of | tz_format(operator_tz, "%H:%M %Z") }}{% endif %}</div>
       </div>
       <div class="metric">
-        <div class="metric-value">{% if snapshot.free_usd is not none %}${{ "%.2f"|format(snapshot.free_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-value">{% if snapshot.free_usd is not none %}{{ snapshot.free_usd | usd }}{% else %}—{% endif %}</div>
         <div class="metric-label">free USD</div>
       </div>
       <div class="metric">
-        <div class="metric-value">{% if snapshot.held_value_usd is not none %}${{ "%.2f"|format(snapshot.held_value_usd) }}{% else %}—{% endif %}</div>
+        <div class="metric-value">{% if snapshot.held_value_usd is not none %}{{ snapshot.held_value_usd | usd }}{% else %}—{% endif %}</div>
         <div class="metric-label">in positions</div>
       </div>
       <div class="metric">
         {% if snapshot.today_realized_pnl is not none %}
           {% set t = snapshot.today_realized_pnl %}
           <div class="metric-value{% if t > 0.0001 %} metric-pos{% elif t < -0.0001 %} metric-neg{% endif %}"
-               title="Realized PnL from cycles whose SELL fired today">{% if t < -0.0001 %}-${{ "%.4f"|format(-t) }}{% elif t > 0.0001 %}+${{ "%.4f"|format(t) }}{% else %}$0.0000{% endif %}</div>
+               title="Realized PnL from cycles whose SELL fired today">{{ t | usd_signed }}</div>
         {% else %}<div class="metric-value">—</div>{% endif %}
         <div class="metric-label">today's PnL</div>
       </div>
@@ -164,7 +164,7 @@
         {% if snapshot.lifetime_realized_pnl is not none %}
           {% set l = snapshot.lifetime_realized_pnl %}
           <div class="metric-value{% if l > 0.0001 %} metric-pos{% elif l < -0.0001 %} metric-neg{% endif %}"
-               title="All-time realized PnL across every completed cycle">{% if l < -0.0001 %}-${{ "%.4f"|format(-l) }}{% elif l > 0.0001 %}+${{ "%.4f"|format(l) }}{% else %}$0.0000{% endif %}</div>
+               title="All-time realized PnL across every completed cycle">{{ l | usd_signed }}</div>
         {% else %}<div class="metric-value">—</div>{% endif %}
         <div class="metric-label">lifetime PnL</div>
       </div>
@@ -209,7 +209,7 @@
               {% endif %}
               {% set price = snapshot.current_prices.get(symbol) %}
               {% if price %}
-                <strong class="symbol-price">${{ "%.2f"|format(price) }}</strong>
+                <strong class="symbol-price">{{ price | usd }}</strong>
                 {% set trend = snapshot.current_trends.get(symbol, "flat") %}
                 {% if trend == "up" %}
                   <span class="trend-up" title="trending up over last 15m">▲</span>
@@ -243,7 +243,7 @@
               {% if held %}
                 <span class="symbol-held"
                       title="Held {{ symbol.base }} inventory from the latest observe.db balance snapshot{% if held.value_usd is none %} (no observed price, so it isn't valued here){% endif %}.">
-                  holding {{ "%.8f"|format(held.amount) }} {{ symbol.base }}{% if held.value_usd is not none %} ≈ ${{ "%.2f"|format(held.value_usd) }}{% endif %}
+                  holding {{ held.amount | qty }} {{ symbol.base }}{% if held.value_usd is not none %} ≈ {{ held.value_usd | usd }}{% endif %}
                 </span>
               {% endif %}
             </div>
@@ -315,9 +315,9 @@
                 {% for o in sym_orders %}
                   <tr>
                     <td class="center"><span class="tag {% if o.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ o.side.value }}</span></td>
-                    <td class="num">${{ "%.2f"|format(o.price.amount) }}</td>
+                    <td class="num">{{ o.price.amount | usd }}</td>
                     <td class="num">{% if cur %}{{ "%+.2f"|format((cur - o.price.amount) / o.price.amount * 100) }}%{% else %}—{% endif %}</td>
-                    <td class="num">{{ "%.8f"|format(o.amount.value) }}</td>
+                    <td class="num">{{ o.amount.value | qty }}</td>
                     <td class="num">{{ snapshot.order_ages.get(o.id|string, 0) | humanize_duration }}</td>
                   </tr>
                 {% endfor %}
@@ -340,8 +340,8 @@
           {% endif %}
           {{ snapshot.fills_summary.buys }} buy / {{ snapshot.fills_summary.sells }} sell ·
           <span title="Signed USD flow across the fills below: a SELL adds (cost − fee), a BUY subtracts (cost + fee). Positive means USD came into the account. This is cash flow, not profit — a BUY that will sell later reads as negative here.">net
-          {% if snapshot.fills_summary.net_usd < 0 %}−${{ "%.4f"|format(-snapshot.fills_summary.net_usd) }}{% else %}+${{ "%.4f"|format(snapshot.fills_summary.net_usd) }}{% endif %}</span> ·
-          ${{ "%.4f"|format(snapshot.fills_summary.total_fees) }} fees
+          {{ snapshot.fills_summary.net_usd | usd_signed }}</span> ·
+          {{ snapshot.fills_summary.total_fees | usd }} fees
         </p>
       {% endif %}
       {% if snapshot.recent_trades %}
@@ -387,11 +387,11 @@
                 <td class="num muted">{{ snapshot.trade_ages.get(t.id) | humanize_duration }}</td>
                 <td class="center">{{ t.symbol.base }}/{{ t.symbol.quote }}</td>
                 <td class="center"><span class="tag {% if t.side.value == 'buy' %}ok{% else %}warn{% endif %}">{{ t.side.value }}</span></td>
-                <td class="num">${{ "%.2f"|format(t.price.amount) }}</td>
-                <td class="num">{{ "%.8f"|format(t.amount.value) }}</td>
+                <td class="num">{{ t.price.amount | usd }}</td>
+                <td class="num">{{ t.amount.value | qty }}</td>
                 <td class="num"
-                    title="gross ${{ '%.4f'|format(t.cost) }} {% if t.side.value == 'buy' %}+{% else %}−{% endif %} fee ${{ '%.4f'|format(t.fee) }}">
-                  {% if t.side.value == 'buy' %}<span class="value-buy">▼</span>{% else %}<span class="value-sell">▲</span>{% endif %} ${{ "%.4f"|format(net_usd) }}
+                    title="gross {{ t.cost | usd }} {% if t.side.value == 'buy' %}+{% else %}−{% endif %} fee {{ t.fee | usd }}">
+                  {% if t.side.value == 'buy' %}<span class="value-buy">▼</span>{% else %}<span class="value-sell">▲</span>{% endif %} {{ net_usd | usd }}
                 </td>
               </tr>
             {% endfor %}
@@ -450,17 +450,17 @@
                   {% endif %}
                 </td>
                 <td class="center">{{ c.symbol.base }}/{{ c.symbol.quote }}</td>
-                <td class="num">${{ "%.2f"|format(c.buy_price.amount) }}</td>
-                <td class="num">${{ "%.2f"|format(c.sell_price.amount) }}</td>
-                <td class="num">{{ "%.8f"|format(c.amount.value) }}</td>
+                <td class="num">{{ c.buy_price.amount | usd }}</td>
+                <td class="num">{{ c.sell_price.amount | usd }}</td>
+                <td class="num">{{ c.amount.value | qty }}</td>
                 <td class="num"
-                    title="(${{ '%.2f'|format(c.sell_price.amount - c.buy_price.amount) }} spread × {{ '%.8f'|format(c.amount.value) }}) − ${{ '%.4f'|format(c.buy_fee + c.sell_fee) }} fees">
+                    title="({{ (c.sell_price.amount - c.buy_price.amount) | usd }} spread × {{ c.amount.value | qty }}) − {{ (c.buy_fee + c.sell_fee) | usd }} fees">
                   {% if c.net_pnl > 0.0001 %}
-                    <span class="cycle-pnl-positive">+${{ "%.4f"|format(c.net_pnl) }} <span aria-hidden="true">▲</span></span>
+                    <span class="cycle-pnl-positive">{{ c.net_pnl | usd_signed }} <span aria-hidden="true">▲</span></span>
                   {% elif c.net_pnl < -0.0001 %}
-                    <span class="cycle-pnl-negative">-${{ "%.4f"|format(-c.net_pnl) }} <span aria-hidden="true">▼</span></span>
+                    <span class="cycle-pnl-negative">{{ c.net_pnl | usd_signed }} <span aria-hidden="true">▼</span></span>
                   {% else %}
-                    <span class="cycle-pnl-flat">$0.0000</span>
+                    <span class="cycle-pnl-flat">$0.00</span>
                   {% endif %}
                 </td>
               </tr>

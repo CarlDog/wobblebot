@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -32,6 +34,7 @@ from starlette.types import Scope
 
 from wobblebot import __version__
 from wobblebot.config.cli import TradingMode, WebConfig
+from wobblebot.domain.value_objects import fmt_decimal, fmt_qty, fmt_usd
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
@@ -164,6 +167,17 @@ def _command_label(kind: str) -> str:
 def _is_high_consequence(kind: str) -> bool:
     """True when this command's confirm screen should carry a warning."""
     return kind in _HIGH_CONSEQUENCE_KINDS
+
+
+def _usd_exact(value: Decimal) -> str:
+    """``$`` + the EXACT value — the confirm-dialog money renderer.
+
+    See the filter-registration comment: approval dialogs must show the
+    amount that will actually dispatch, not a cents-rounded reading of
+    it. Positive-only by contract (``TransferProposal.amount`` is
+    ``gt=0``); no sign handling on purpose.
+    """
+    return f"${fmt_decimal(value)}"
 
 
 def _csrf_input(request: Request) -> Markup:
@@ -326,6 +340,25 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # Compact duration formatter for "X ago" displays — turns
     # 40883s into "11h 21m" instead of the raw second count.
     templates.env.filters["humanize_duration"] = _humanize_duration
+    # House money rendering (2026-08-15 display-consistency pass).
+    # Before these, templates hand-rolled "%.2f"/"%.4f"/"%.8f" per
+    # site — no thousands separators anywhere, and fixed 2dp collapsed
+    # sub-dollar prices (DOGE's grid levels 3% apart all rendered
+    # "$0.09"). `usd` includes the $ and sign; `usd_signed` marks PnL
+    # with an explicit +/-; `qty` caps at Kraken's 8 decimals and
+    # strips trailing zeros. Same helpers the Discord embeds use, so
+    # both surfaces show one dialect.
+    templates.env.filters["usd"] = fmt_usd
+    templates.env.filters["usd_signed"] = partial(fmt_usd, signed=True)
+    templates.env.filters["qty"] = fmt_qty
+    # The withdrawal CONFIRM dialog is the one money render that must
+    # never round: `usd` quantizes to cents for readability, and a
+    # proposal amount is balance-minus-midpoint arithmetic on Kraken's
+    # 4dp balances — displaying $108.36 while dispatching $108.3649
+    # would misstate a money-out approval by a fraction of a cent.
+    # fmt_decimal renders the exact value (and still fixes the 1E+2
+    # scientific-notation trap raw Decimal interpolation carries).
+    templates.env.filters["usd_exact"] = _usd_exact
     # Shared command vocabulary — the modal and the full-page confirm
     # render the same decision and must not name it differently.
     templates.env.globals["command_label"] = _command_label

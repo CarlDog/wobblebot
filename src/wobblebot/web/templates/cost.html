@@ -21,7 +21,7 @@
 <div class="card">
   <div class="card-header">
     <div class="card-title">Spend by Day (Last 7 Days)</div>
-    <div class="card-meta">{{ snapshot.call_count_7d }} calls / ${{ "%.6f"|format(snapshot.total_7d_usd) }} total</div>
+    <div class="card-meta">{{ snapshot.call_count_7d }} calls / {{ snapshot.total_7d_usd | usd }} total</div>
   </div>
   {% if snapshot.error %}
     <p class="error">{{ snapshot.error }}</p>
@@ -31,7 +31,7 @@
     {% set max_cost = snapshot.per_day | map(attribute='cost_usd') | max %}
     <div class="bar-chart" role="img" aria-label="Daily LLM spend, last 7 days">
       {% for d in snapshot.per_day | reverse %}
-        <div class="bar-col" title="{{ d.day }}: ${{ '%.6f'|format(d.cost_usd) }} ({{ d.call_count }} calls)">
+        <div class="bar-col" title="{{ d.day }}: {{ d.cost_usd | usd }} ({{ d.call_count }} calls)">
           <div class="bar" style="height: {% if max_cost > 0 %}{{ (d.cost_usd / max_cost * 100) | round(1) }}{% else %}0{% endif %}%"></div>
           <div class="bar-label">{{ d.day[-5:] }}</div>
         </div>
@@ -46,7 +46,7 @@
           <tr>
             <td>{{ d.day }}</td>
             <td class="num">{{ d.call_count }}</td>
-            <td class="num">${{ "%.6f"|format(d.cost_usd) }}</td>
+            <td class="num">{{ d.cost_usd | usd }}</td>
           </tr>
         {% endfor %}
       </tbody>

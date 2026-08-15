@@ -22,7 +22,7 @@
          against the stored proposal and refuses on mismatch. Amount
          leads: it is the fact the decision actually turns on. #}
       <dt>Amount</dt>
-      <dd class="modal-amount">${{ pending.command.amount_usd }}</dd>
+      <dd class="modal-amount">{{ pending.command.amount_usd | usd_exact }}</dd>
       <dt>Destination</dt>
       <dd>{{ pending.command.destination }}</dd>
       {% if proposal is defined and proposal is not none %}

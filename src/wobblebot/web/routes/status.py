@@ -46,7 +46,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
-from wobblebot.domain.value_objects import Symbol
+from wobblebot.domain.value_objects import Symbol, fmt_qty, fmt_usd
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
@@ -826,8 +826,11 @@ async def recent_fills_json(
                     "id": t.id,
                     "symbol": f"{t.symbol.base}/{t.symbol.quote}",
                     "side": t.side.value,
-                    "price": f"{t.price.amount:.2f}",
-                    "amount": f"{t.amount.value:.8f}",
+                    # Pre-rendered display strings (the toast shows them
+                    # verbatim): house formatters, so a DOGE fill reads
+                    # "$0.0698", not the "$0.07" that fixed 2dp made of it.
+                    "price": fmt_usd(t.price.amount),
+                    "amount": fmt_qty(t.amount.value),
                 }
                 for t in trades
             ]

@@ -56,9 +56,9 @@
                 </span>
               </td>
               <td>{{ p.asset }}</td>
-              <td class="num">${{ "%.2f"|format(p.amount) }}</td>
-              <td class="num">${{ "%.2f"|format(p.current_exchange_balance) }}</td>
-              <td class="num">${{ "%.2f"|format(p.target_exchange_balance) }}</td>
+              <td class="num">{{ p.amount | usd }}</td>
+              <td class="num">{{ p.current_exchange_balance | usd }}</td>
+              <td class="num">{{ p.target_exchange_balance | usd }}</td>
               <td class="muted">{{ p.rationale }}</td>
               <td class="row-action">
                 {% if p.proposal_id in snapshot.executable_ids %}
@@ -116,7 +116,7 @@
               </td>
               <td>{{ r.direction }}</td>
               <td>{{ r.asset }}</td>
-              <td class="num">${{ "%.2f"|format(r.executed_amount) }}</td>
+              <td class="num">{{ r.executed_amount | usd }}</td>
               <td><code>{{ r.transaction_id }}</code></td>
             </tr>
           {% endfor %}

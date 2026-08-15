@@ -25,7 +25,7 @@
       <p class="error">{{ snapshot.error }}</p>
     {% else %}
       <div class="metric">
-        <div class="metric-value">${{ "%.6f"|format(snapshot.total_24h_usd) }}</div>
+        <div class="metric-value">{{ snapshot.total_24h_usd | usd }}</div>
         <div class="metric-label">spent in the last 24 hours</div>
       </div>
       {% if snapshot.per_provider_role %}
@@ -38,7 +38,7 @@
               <tr>
                 <td>{{ g.key }}</td>
                 <td class="num">{{ g.call_count }}</td>
-                <td class="num">${{ "%.6f"|format(g.cost_usd) }}</td>
+                <td class="num">{{ g.cost_usd | usd }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -78,22 +78,22 @@
           <tr>
             <td>last 24h</td>
             <td class="num">{{ fees_snapshot.trade_count_24h }}</td>
-            <td class="num">${{ "%.2f"|format(fees_snapshot.total_24h_usd) }}</td>
+            <td class="num">{{ fees_snapshot.total_24h_usd | usd }}</td>
           </tr>
           <tr>
             <td>last 7d</td>
             <td class="num">{{ fees_snapshot.trade_count_7d }}</td>
-            <td class="num">${{ "%.2f"|format(fees_snapshot.total_7d_usd) }}</td>
+            <td class="num">{{ fees_snapshot.total_7d_usd | usd }}</td>
           </tr>
           <tr>
             <td>last 30d</td>
             <td class="num">{{ fees_snapshot.trade_count_30d }}</td>
-            <td class="num">${{ "%.2f"|format(fees_snapshot.total_30d_usd) }}</td>
+            <td class="num">{{ fees_snapshot.total_30d_usd | usd }}</td>
           </tr>
           <tr>
             <td>all time</td>
             <td class="num">{{ fees_snapshot.trade_count_all_time }}</td>
-            <td class="num">${{ "%.2f"|format(fees_snapshot.total_all_time_usd) }}</td>
+            <td class="num">{{ fees_snapshot.total_all_time_usd | usd }}</td>
           </tr>
         </tbody>
       </table>

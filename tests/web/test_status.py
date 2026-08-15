@@ -211,7 +211,7 @@ class TestScoreboard:
                 assert "account value" in resp.text
                 assert "159.95" in resp.text  # account value == free USD (no held)
                 assert "lifetime PnL" in resp.text
-                assert "0.8000" in resp.text  # cycle net
+                assert "+$0.80" in resp.text  # cycle net (house usd_signed rendering)
         finally:
             await observe.close()
 
@@ -280,7 +280,7 @@ class TestScoreboard:
                 assert "ETH/USD" in resp.text
                 assert "No open orders for this symbol." in resp.text  # parked
                 assert "symbol-price" in resp.text  # price rendered on the card
-                assert "1800.00" in resp.text  # the fetched price
+                assert "$1,800.00" in resp.text  # the fetched price (house usd rendering)
         finally:
             await observe.close()
 
@@ -510,7 +510,7 @@ class TestDashboardRoute:
             login_as(client)
             resp = client.get("/dashboard")
             assert resp.status_code == 200
-            assert "30100" in resp.text
+            assert "$30,100.00" in resp.text  # house usd rendering, separators included
             # Per-symbol section header carries the symbol name; the
             # aggregate "Open orders (N)" subtitle from the previous
             # layout is gone with the restructure.

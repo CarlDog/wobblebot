@@ -270,7 +270,7 @@ class TestExecuteSubmit:
             )
             assert resp.status_code == 200
             assert "modal-card" in resp.text
-            assert "42.00" in resp.text
+            assert "$42" in resp.text  # usd_exact: the exact value, zeros stripped — never rounded
             assert "test-bank-label" in resp.text
             # The money warning, not the engine-firewall note.
             assert "real money" in resp.text

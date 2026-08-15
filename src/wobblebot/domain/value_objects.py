@@ -80,7 +80,9 @@ def fmt_usd(value: Decimal | float | int, *, signed: bool = False) -> str:
     - ``>= $1``: two decimals with thousands separators — ``$63,237.60``.
     - ``< $1``: four significant digits, because cents are the wrong
       resolution there — ``$0.0698``, ``$0.001296``. Fee-scale values
-      keep their meaning: ``$0.0169``, not ``$0.02``.
+      keep their meaning: ``$0.0169``, not ``$0.02``. Never fewer than
+      two decimals, though — a PnL of exactly 80 cents must read
+      ``$0.80``, not the strip-happy ``$0.8``.
     - ``signed=True`` (PnL): an explicit ``+``/``-`` before the ``$`` —
       ``+$0.13``, ``-$5.00``. Unsigned negatives still carry the minus.
     - Exact zero renders ``$0.00`` (or unsigned even when ``signed`` —
@@ -98,8 +100,12 @@ def fmt_usd(value: Decimal | float | int, *, signed: bool = False) -> str:
         body = f"{magnitude.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f}"
     else:
         # Four significant digits, then strip trailing zeros the same
-        # way fmt_decimal does — "$0.1000" would read as false precision.
+        # way fmt_decimal does — "$0.1000" would read as false precision
+        # — but never below two decimals: money reads "$0.80", not "$0.8".
         body = fmt_decimal(magnitude, max_significant=4)
+        decimals = len(body.partition(".")[2])
+        if decimals < 2:
+            body = f"{magnitude.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
     return f"{sign}${body}"
 
 

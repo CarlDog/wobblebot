@@ -96,9 +96,12 @@ class TestFmtUsd:
         assert fmt_usd(0.0698) == "$0.0698"
         assert fmt_usd(63237.6) == "$63,237.60"
 
-    def test_sub_dollar_strips_false_precision(self) -> None:
-        assert fmt_usd(Decimal("0.1")) == "$0.1"
+    def test_sub_dollar_never_drops_below_two_decimals(self) -> None:
+        """Strip false precision, but money still reads as money: a PnL
+        of exactly 80 cents is "$0.80", never "$0.8"."""
+        assert fmt_usd(Decimal("0.1")) == "$0.10"
         assert fmt_usd(Decimal("0.25")) == "$0.25"
+        assert fmt_usd(Decimal("0.8"), signed=True) == "+$0.80"
 
 
 class TestFmtQty:

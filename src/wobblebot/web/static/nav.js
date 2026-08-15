@@ -71,7 +71,9 @@ setInterval(window.updateHealthBadge, 30000);
     const el = document.createElement('div');
     el.className = 'toast toast-' + (f.side === 'buy' ? 'buy' : 'sell');
     // textContent (not innerHTML) — XSS-safe even though the data is ours.
-    el.textContent = f.side.toUpperCase() + ' ' + f.symbol + '  ' + f.amount + ' @ $' + f.price;
+    // price arrives pre-formatted with its $ (house fmt_usd) — do not
+    // prepend another one here.
+    el.textContent = f.side.toUpperCase() + ' ' + f.symbol + '  ' + f.amount + ' @ ' + f.price;
     stack.appendChild(el);
     requestAnimationFrame(function () { el.classList.add('toast-show'); });
     setTimeout(function () {
