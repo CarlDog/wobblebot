@@ -15,6 +15,7 @@ existing test.
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -55,6 +56,43 @@ async def test_withdraw_scope_is_a_violation_exit_3() -> None:
     # The trade key having withdrawal permission is a hard ADR-003 stop.
     adapter = _FakeAdapter(can_withdraw=True)
     assert await _audit_trade_key_scope(adapter) == 3  # type: ignore[arg-type]
+
+
+async def test_violation_message_names_both_causes(caplog: pytest.LogCaptureFixture) -> None:
+    """Mirrors cli/harvest's gate: the probe answers for whatever key the
+    env var holds, so the refusal must offer both the scope cause and the
+    wrong-key cause (a stale deployment env store handing the trade slot
+    the Harvester key) instead of sending the operator to the Kraken UI
+    with a single diagnosis the probe cannot actually support.
+    """
+    adapter = _FakeAdapter(can_withdraw=True)
+    with caplog.at_level(logging.ERROR, logger="wobblebot.cli.preflight"):
+        assert await _audit_trade_key_scope(adapter) == 3  # type: ignore[arg-type]
+    message = "\n".join(r.getMessage() for r in caplog.records)
+    assert "ADR-003 VIOLATION" in message
+    assert "Funds permissions - Withdraw" in message  # cause (a)
+    assert "DIFFERENT key" in message  # cause (b)
+    assert "NOT just the Kraken UI" in message  # the discriminating step
+    assert "EAPI:Invalid key" in message  # the narrowing auth-validity fact
+    assert "KRAKEN_TRADER_API_KEY" in message
+
+
+async def test_violation_message_logs_no_credential_material(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Names the env VAR, never any part of its value — not even a fragment.
+
+    Sentinel is low-entropy on purpose: a realistic ``sk-…`` fixture trips
+    the pre-commit gitleaks scan, and an allowlist entry to keep a prettier
+    fixture would weaken a load-bearing check.
+    """
+    monkeypatch.setenv("KRAKEN_TRADER_API_KEY", "placeholder-trader-do-not-log")
+    adapter = _FakeAdapter(can_withdraw=True)
+    with caplog.at_level(logging.ERROR, logger="wobblebot.cli.preflight"):
+        await _audit_trade_key_scope(adapter)  # type: ignore[arg-type]
+    emitted = "\n".join(f"{r.getMessage()} {getattr(r, 'key_var', '')}" for r in caplog.records)
+    assert "placeholder-trader" not in emitted
+    assert "do-not-log" not in emitted
 
 
 async def test_probe_error_warns_and_continues() -> None:

@@ -169,6 +169,58 @@ class TestVerifyHarvesterKey:
         result = await _verify_harvester_key(_WithdrawProbeStub(scope=False), _full_config())  # type: ignore[arg-type]
         assert result == 3
 
+    async def test_refusal_message_names_both_causes(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A permission-denied probe is consistent with BOTH "this key
+        lacks the scope" and "the env var holds a different key than
+        intended" — the 2026-08-15 production exit-3 was the latter, and
+        a message asserting only the former burned three hypotheses. The
+        message must name both, plus the auth-validity fact that narrows
+        the search, and point at the deployment's env store.
+        """
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvest-secret")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "trade-secret")
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+            result = await _verify_harvester_key(_WithdrawProbeStub(scope=False), _full_config())  # type: ignore[arg-type]
+        assert result == 3
+        message = "\n".join(r.getMessage() for r in caplog.records)
+        # Cause (a): the scope really is off — named with Kraken's own
+        # UI wording so the operator can match it against the checkbox.
+        assert "Funds permissions - Withdraw" in message
+        # Cause (b): the env var may hold a key the operator didn't mean.
+        assert "DIFFERENT key" in message
+        # The discriminating next step is the deployment env store, which
+        # the exchange UI cannot show.
+        assert "NOT just the Kraken UI" in message
+        # The narrowing fact: reaching this branch proves the credential
+        # authenticated (a bad pair fails EAPI:Invalid key, fail-soft).
+        assert "EAPI:Invalid key" in message
+        # The env var is named so the operator knows which store to read.
+        assert "KRAKEN_HARVESTER_API_KEY" in message
+
+    async def test_refusal_never_logs_credential_material(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The message names the env VAR, never any part of its value.
+
+        The sentinel values are deliberately low-entropy hyphenated words:
+        a realistic-looking ``sk-…`` fixture trips the pre-commit
+        gitleaks scan, and silencing that with an allowlist entry to keep
+        a prettier fixture would weaken a load-bearing check.
+        """
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "placeholder-harvester-do-not-log")
+        monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "placeholder-trader-do-not-log")
+        with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
+            await _verify_harvester_key(_WithdrawProbeStub(scope=False), _full_config())  # type: ignore[arg-type]
+        emitted = "\n".join(
+            f"{r.getMessage()} {getattr(r, 'key_env_var', '')}" for r in caplog.records
+        )
+        assert "placeholder-harvester" not in emitted
+        assert "placeholder-trader" not in emitted
+        # Not even a fragment — a partial value is still credential material.
+        assert "do-not-log" not in emitted
+
     async def test_identical_to_trade_key_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "same-secret")
         monkeypatch.setenv(_TRADE_KEY_ENV_VAR, "same-secret")
