@@ -1521,6 +1521,74 @@ the detail; the full backlog index is
    an axis local inference deletes. A rigorous Ollama pass across news /
    risk / arbitrator is owed before any of these are treated as settled.
 
+   **Post-P3 — the paused-fill bug, pause persistence, and the sweep-order
+   arc** ✅ **2026-08-15** (operator-driven; receipts written 08-15 after
+   the fact — this entry pays down a three-day violation of the
+   same-commit status discipline, noted so the miss itself is on record).
+
+   **A real-money production bug, found by the operator from the webui.**
+   A BTC BUY filled on Kraken 2026-08-11 18:33 UTC *while the symbol was
+   paused* and the engine never saw it: `GridEngine.step` returned
+   `skipped_paused` before fill detection, so the order sat `open` in
+   storage for four days — no trade row, no counter order, dashboard
+   showing three phantom open orders. Confirmed three independent ways
+   (order row vs Kraken, 4413 price ticks at-or-below the limit, balance
+   delta matching to 8 significant figures). Fixed in `652de27`: **a
+   paused symbol still OBSERVES; it just does not ACT** — fills are
+   recorded and WARNed, counters wait for resume. The stale row was
+   repaired with the real execution data (63237.60, $0.02 fee, exact
+   timestamp), not synthetic values.
+
+   **Pause now survives a restart** (`4f32ae6`). Pause lived only in
+   `GridEngine._paused_symbols` — process memory — so every deploy
+   silently resumed trading on symbols the operator had deliberately
+   stopped; engine_state rows were written each tick (ADR-030) and never
+   read back. One read at startup fixes it. Deliberately **no freshness
+   guard**: a pause is operator intent, not a cache entry — a week-old
+   pause is still a pause. Verified across three production restarts
+   same day (BTC restored paused each time).
+
+   **The sweep-order arc** (`af2907d` scoring → `7f800d2` config →
+   `c8ce723` wiring). Cause: `cli/live` swept `live.symbols` in config
+   order, so the first-listed symbol claimed the exposure/daily caps
+   every tick — measured starvation gradient exact and monotonic down
+   the list (ETH 5/6 placed, SOL 2/6, ADA 0/6; BTC first for months).
+   `live.symbol_priority` ships three strategies (`config_order` the
+   default = no behavior change; `round_robin`; `screener` = suitability
+   composite + proximity-in-ATR tiebreak, requires `live.observe_db`).
+   Ordering **redistributes scarcity, it cannot create capacity** — and
+   it will not rescue ADA, which ranks last on merit (too-hot vol, low
+   flatness). Every failure path degrades to config order, never to a
+   stopped tick. Deployed `sha-c8ce723`; operator switched production to
+   `screener`; on the first re-layout SOL (the only symbol with a
+   completed 30-day round trip — a fact the ranking does not see) took
+   first claim, 4/6 orders.
+
+   **Churn measured before it could be called a bug:** replaying 168
+   hourly re-ranks over a week of production bars, the tradeable order
+   changes **13% of hours** (38% counting parked symbols), first place is
+   SOL 74% / ETH 26%, and **BTC and ADA never lead**. Cause is composite
+   coarseness (mean of three integer ranks ⇒ resolution 1/3), not the
+   proximity tiebreak; churn flattens by ~14d lookback, so 13% is the
+   floor, not a transient. Recorded so it is never re-opened as a defect.
+
+   **Harvester ran in production for the first time.** The daemon had
+   been exiting 3 on the ADR-003 withdraw-scope probe. Diagnosis burned
+   three wrong hypotheses before landing: the env var held a *valid*
+   Kraken key that genuinely lacked Withdraw (the probe's fail-soft
+   design proves validity — an invalid key errors down the transient
+   path). Operator minted a fresh key; harvest came up clean
+   (`harvester_enabled=True`). The over-confident error message that
+   asserted "lacks scope" when it cannot distinguish "wrong key" was
+   fixed in `ee9ceda` (PR #98, spawned to a background session).
+
+   **Queued, deliberately undeployed:** `b9ec699` annotates the
+   `sweep order updated:` log line with each symbol's
+   `(composite|proximity)` so a reorder is explainable from two
+   consecutive log lines — reconstructing one 08-15 reorder without it
+   took two production DB copies and a replay script. Production runs
+   `sha-c8ce723`; `b9ec699` + `ee9ceda` ship with the next deploy.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

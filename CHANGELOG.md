@@ -40,7 +40,51 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   "time-to-recovery from the last loss" is **removed** — no such metric
   exists, and inventing one to match prose was the wrong direction.
 
+- **`live.symbol_priority` — the per-tick sweep is now an operator choice.**
+  `cli/live` swept `live.symbols` in config order, so the first-listed
+  symbol claimed the exposure and daily-spend caps every tick; the measured
+  production starvation gradient ran exactly down the list (ETH 5/6 orders
+  placed, SOL 2/6, ADA 0/6 — BTC, listed first, had first claim for
+  months). Three strategies: `config_order` (the default — upgrading
+  changes nothing), `round_robin` (rotates first claim; removes the bias,
+  optimises nothing), and `screener` (grid-suitability composite from
+  `services/screener`, tiebroken by proximity to the nearest grid level in
+  ATR; requires the new `live.observe_db`, enforced at config load).
+  Ordering redistributes scarcity — it cannot create capacity — and every
+  failure path (unopenable observe DB, thin bars, a bug in the scoring
+  math) degrades to config order rather than stopping a tick. The
+  `sweep order updated:` log line names each symbol's
+  `(composite|proximity)` so a reorder is explainable by diffing two
+  consecutive lines. (`af2907d`, `7f800d2`, `c8ce723`, `b9ec699`)
+
 ### Fixed
+
+- **A paused symbol was blind to its own fills** — a real-money production
+  bug. `GridEngine.step` returned `skipped_paused` *before* fill
+  detection, so a BTC BUY that executed on Kraken 2026-08-11 while the
+  symbol was paused sat `open` in storage for four days: no trade row, no
+  counter order, three phantom "open" orders on the dashboard. A paused
+  symbol now still observes — fills are detected, recorded, and WARNed —
+  it just places nothing until resumed. The stale production row was
+  repaired from the real Kraken execution data, not synthesized.
+  (`652de27`)
+
+- **A restart silently resumed trading on paused symbols.** Pause state
+  lived only in engine process memory; the `engine_state` rows written
+  every tick for the dashboard (ADR-030) were never read back. `cli/live`
+  now restores pauses from `engine_state` at startup — deliberately with
+  no freshness window, because a pause is operator intent, not a cache
+  entry, and expiring it re-creates exactly the failure being fixed.
+  (`4f32ae6`)
+
+- **The harvester's withdraw-scope refusal named a cause the probe can't
+  know.** `has_withdraw_scope() == False` proves Kraken denied
+  `WithdrawMethods` for a *valid* key — it cannot distinguish "this key
+  lacks the permission" from "this env var holds a different key than
+  intended" (the second is what actually happened in production: the
+  fix was minting/re-pasting the key in the Portainer stack env, and the
+  harvest daemon then started clean for the first time). The message now
+  names both causes and the discriminating next step. (`ee9ceda`, PR #98)
 
 - **Anthropic adapters 400'd on every Claude 5 call.** Anthropic deprecated
   the `temperature` field starting with the Claude 5 generation; both
