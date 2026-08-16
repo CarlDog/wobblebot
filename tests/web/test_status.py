@@ -1361,9 +1361,7 @@ class TestReanchorViabilityStat:
         """
         from wobblebot.domain.value_objects import OHLCBar
 
-        base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(
-            hours=count
-        )
+        base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=count)
         span = Decimal(bar_range)
         bars = [
             OHLCBar(
