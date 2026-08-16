@@ -39,8 +39,20 @@ async def _seed(
     storage: SQLiteStorageAdapter,
     symbol: Symbol,
     closes: list[float],
+    *,
+    base: datetime = _NOW,
 ) -> None:
-    start = _NOW - timedelta(hours=len(closes))
+    """Seed hourly bars ending at ``base``.
+
+    The fixed ``_NOW`` default is CORRECT for the ``TestScreen`` cases —
+    they pass ``now=_NOW`` into ``_screen``, so fixture and window share
+    one clock and never drift. A test that exercises the real-clock path
+    (``_run`` has no ``now=`` parameter) must seed ``base=datetime.now``
+    instead: the 2026-08-16 time-bomb audit found the discovery test
+    seeding at fixed dates against a real-clock 30d lookback, which
+    would have started failing ~2026-09-07 on nothing but the calendar.
+    """
+    start = base - timedelta(hours=len(closes))
     await storage.save_ohlc_bars(bars_from_closes(closes, symbol=symbol, start=start, spread=0.5))
 
 
@@ -105,7 +117,9 @@ class TestRun:
         db_path = str(tmp_path / "screener-test.db")
         seed_storage = SQLiteStorageAdapter(db_path)
         await seed_storage.connect()
-        await _seed(seed_storage, _BTC, _wavy(120))
+        # _run uses the REAL clock (no now= parameter), so the bars must
+        # be seeded relative to it — see _seed's docstring.
+        await _seed(seed_storage, _BTC, _wavy(120), base=datetime.now(UTC))
         await seed_storage.close()
         config = ScreenerConfig(db=db_path)
         assert await _run(config, symbols_override=None, held=[]) == 0
