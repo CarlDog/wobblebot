@@ -1349,10 +1349,21 @@ class TestReanchorViabilityStat:
         bar_range: str,
         count: int = 40,
     ) -> None:
-        """`count` hourly BTC bars, each with a true range of `bar_range`."""
+        """`count` hourly BTC bars, each with a true range of `bar_range`.
+
+        Seeded relative to NOW, ending an hour ago — the loader windows
+        bars to ``now - _VIABILITY_LOOKBACK_DAYS``, so a fixed base date
+        gives the suite an expiry: the original ``2026-08-01`` seeding
+        aged out of the 14-day window at 2026-08-16T00:00 UTC and all
+        three viability tests started failing on a clock tick, first
+        seen as a CI-only "failure" that had nothing to do with the
+        change under test.
+        """
         from wobblebot.domain.value_objects import OHLCBar
 
-        base = datetime(2026, 8, 1, tzinfo=UTC)
+        base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(
+            hours=count
+        )
         span = Decimal(bar_range)
         bars = [
             OHLCBar(
