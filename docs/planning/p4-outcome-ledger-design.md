@@ -75,6 +75,40 @@ One row per (suggestion, granularity, evaluator_version):
   change writes new rows at the new version; old rows are audit
   history, never overwritten.
 
+## P4.2 implementation notes (2026-08-17, from the first live probe)
+
+Two behaviors the design left implicit were settled by running the
+evaluator against the real corpus, not by argument:
+
+1. **The spacing-vs-fees floor is the WINDOW's, not today's.** Arms
+   validate against `2 × maker` at the window-start fee schedule
+   (0.5% before the 2026-07-09 doubling, 0.8% after), matching the
+   fees the replay charges. `GridConfig`'s own validator hardcodes
+   today's constant, so arms build via `model_construct` — the one
+   sanctioned bypass, with the floor re-applied at the window rate.
+   Without this, the May-era heuristic's 0.65% first-order-curve recs
+   (legal in their era) would be censored as "invalid config" —
+   1,300+ rows, the corpus's most opinionated stretch. Post-cutover
+   0.65% recs ARE floor-blocked, with the floor in the reason: the
+   old curve kept emitting them for ten weeks after they became
+   unprofitable, which is itself a finding the ledger now records.
+2. **Bars-missing leaves the suggestion in the queue.** A written
+   unscoreable row is permanent at its evaluator version; bar absence
+   is a fact about the scoring machine's imports, not the suggestion.
+   The driver tallies `bars-missing` loudly and writes nothing, so
+   importing the dump and re-running scores the same rows at the SAME
+   version. Permanent facts (empty rec, foreign keys, missing/invalid
+   `current_grid`, below-window-floor spacing) still write rows.
+
+Data logistics for the full 60m pass: 1,230 suggestions wait on the
+**Q2 2026 OHLCVT dump** (Apr–Jun; local 60m history ends at the Q1
+dump, and the live endpoint's ~720-bar retention only reaches back to
+~Jul 9). Jul 1–8 windows stay bars-missing until the **Q3 dump**
+(published ~October). The canonical ledger lives in the NAS
+`wobblebot-advise.db`; where the canonical scoring run executes (NAS
+tools container vs desktop against a synced copy) is an open operator
+call — every verification run so far used scratch copies only.
+
 ## Honest bounds (restated from ADR-035, binding on P4.3's copy)
 
 The first scoreboard measures **the cascade's escalated branch against

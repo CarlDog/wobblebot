@@ -44,6 +44,14 @@ from wobblebot.ports.exchange import ExchangePort
 # Sensible Kraken-ish defaults; override per-instance if needed.
 _DEFAULT_FEE_RATE = Decimal("0.0026")
 
+# Long replays accumulate Decimal division dust in base-asset totals
+# (each buy fill credits a cost/price quotient at 28 significant
+# digits) while locked re-sums exact order amounts — available can land
+# a hair below zero (-3E-32 observed replaying real bars, P4.2). Any
+# |negative| below this is arithmetic dust, clamped to zero; anything
+# beyond it is a real accounting bug and still trips Balance's ge=0.
+_BALANCE_DUST = Decimal("1E-18")
+
 # ADR-025: a tight, healthy default spread (comfortably under any
 # sensible max_spread_percentage) so existing engine tests that never
 # call set_spread don't trip the guard now that GridEngine calls
@@ -302,16 +310,28 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
 
     # ----------------------------------------------------------------- internals
 
+    def _snap_dust(self, asset: str) -> None:
+        """Snap a dust-negative stored balance to exact zero.
+
+        Only within ``_BALANCE_DUST`` of zero — a genuine overdraw stays
+        negative and fails loudly at the next ``Balance`` construction.
+        """
+        if -_BALANCE_DUST < self._balances.get(asset, Decimal("0")) < 0:
+            self._balances[asset] = Decimal("0")
+
     def _balance_for(self, asset: str) -> Balance:
         total = self._balances[asset]
         locked = sum(
             (self._locked_for_order(o, asset) for o in self._open_orders.values()),
             Decimal("0"),
         )
+        available = total - locked
+        if -_BALANCE_DUST < available < 0:
+            available = Decimal("0")
         return Balance(
             asset=asset,
             total=total,
-            available=total - locked,
+            available=available,
             locked=locked,
         )
 
@@ -365,6 +385,12 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         else:  # SELL
             self._balances[base] = self._balances.get(base, Decimal("0")) - order.amount.value
             self._balances[quote] = self._balances.get(quote, Decimal("0")) + cost - fee
+        # A sell sized from a different price quotient than the buys
+        # that funded it can overdraw the base total by division dust
+        # (-4E-29 seen replaying real bars, P4.2) — snap it, at the one
+        # place balances mutate on a fill.
+        self._snap_dust(base)
+        self._snap_dust(quote)
 
         order.record_fill(filled_amount=order.amount.value)
         self._open_orders.pop(order.exchange_id, None)  # type: ignore[arg-type]

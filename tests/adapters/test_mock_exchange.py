@@ -362,3 +362,49 @@ class TestTradeHistory:
         # Second fill (lower price) is newest.
         assert history[0].price.amount == Decimal("47000")
         assert history[1].price.amount == Decimal("49000")
+
+
+class TestBalanceDustClamp:
+    async def test_dust_negative_available_clamps_to_zero(self) -> None:
+        """P4.2 regression: replays over real bars accumulate Decimal
+        division dust in the base total, so ``total - locked`` can land
+        at e.g. -3E-32 — arithmetic noise, not insolvency. get_balance
+        must clamp it rather than trip Balance's ge=0 validator."""
+        exch = MockExchangeAdapter(
+            starting_balances={"BTC": Decimal("0.1"), "USD": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        await exch.place_order(_sell_order(amount="0.1"))
+        # Simulate the accumulated quotient dust the replay produces.
+        exch._balances["BTC"] -= Decimal("3E-32")  # pylint: disable=protected-access
+        balance = await exch.get_balance("BTC")
+        assert balance is not None
+        assert balance.available == Decimal("0")
+        assert balance.locked == Decimal("0.1")
+
+    async def test_real_negative_available_still_raises(self) -> None:
+        """Beyond dust is a genuine accounting bug — keep failing loudly."""
+        exch = MockExchangeAdapter(
+            starting_balances={"BTC": Decimal("0.1"), "USD": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        await exch.place_order(_sell_order(amount="0.1"))
+        exch._balances["BTC"] -= Decimal("0.01")  # pylint: disable=protected-access
+        with pytest.raises(Exception, match="greater than or equal to 0"):
+            await exch.get_balance("BTC")
+
+    async def test_fill_dust_overdraw_snaps_total_to_zero(self) -> None:
+        """P4.2 regression, mutation-site half: a sell fill that
+        overdraws the base total by division dust must leave an exact
+        zero, not a -4E-29 that poisons every later Balance read."""
+        exch = MockExchangeAdapter(
+            starting_balances={"BTC": Decimal("0.1"), "USD": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        await exch.place_order(_sell_order(price="55000", amount="0.1"))
+        exch._balances["BTC"] -= Decimal("3E-32")  # pylint: disable=protected-access
+        exch.set_price(BTC_USD, Decimal("55000"))  # crosses the limit -> fills
+        balance = await exch.get_balance("BTC")
+        assert balance is not None
+        assert balance.total == Decimal("0")
+        assert balance.available == Decimal("0")

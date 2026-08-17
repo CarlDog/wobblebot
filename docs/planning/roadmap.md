@@ -1712,7 +1712,41 @@ the detail; the full backlog index is
    surface (`save_recommendation_outcome`, `get_recommendation_outcomes`,
    `get_unscored_suggestions` — an oldest-first resumable work queue
    with per-granularity/per-version independence, NULL-safe for
-   directional calls). Next: P4.2 the evaluator, P4.3 the scoreboard.
+   directional calls). **P4.2 SHIPPED same day — the evaluator**:
+   `services/advisor_evaluator.py` (pure logic: classify, arm-build,
+   window fee schedule, outcome sign; adapter-free per hexagonal rules)
+   + `tools/score_recommendations.py` (resumable batch driver over the
+   unscored queue; replay via the promoted-public `tools/auditor.py`
+   `replay_symbol`, `max_daily_spend_usd` neutered in BOTH arms). Two
+   decisions came FROM the first live probe against the real corpus
+   rather than the design: (1) the spacing-vs-fees floor is enforced at
+   the WINDOW's maker rate (pre-2026-07-09 windows validate against the
+   0.5% floor their era had — judging May's 0.65% first-order-curve recs
+   by today's 0.8% floor would have censored 1,300+ rows as "invalid
+   config"; arms build via the one sanctioned `model_construct` bypass);
+   (2) bars-missing leaves a suggestion IN THE QUEUE (a fact about this
+   machine's imports, not the suggestion — a written row would block
+   rescoring at the same evaluator version once the dump lands).
+   Replays use the fee schedule in force at window start (0.25/0.40
+   before the doubling, 0.40/0.80 after), engine sell-guard included;
+   the auditor's stale 0.26% `--fee-rate` default (missed by ADR-038)
+   fixed to the maker constant in passing. Real-bars replay also
+   surfaced a latent `MockExchangeAdapter` defect no synthetic test hit:
+   Decimal division dust drives balances a hair below zero (−3E-32
+   available, −4E-29 total) and trips `Balance`'s ge=0 — fixed with a
+   dust-only clamp at both the read and fill-mutation sites (regression
+   tests pin dust-clamps-to-zero AND beyond-dust-still-raises). Live
+   verification on scratch COPIES of the NAS corpus (production DBs
+   untouched): full 60m pass over 2,862 suggestions → **109 scored
+   (quant: 27 better / 81 worse / 1 tie, windows 08-08→08-10, all six
+   symbols), 1,199 unscoreable with recorded reasons (959 = the
+   ten-week 0.65%-era heuristic post-cutover, correctly floor-blocked),
+   324 pending, 1,230 bars-missing awaiting the Q2 OHLCVT dump import**
+   (local + NAS 60m history: Q1-dump end → ~Jul 9 gap; Jul 1–8 needs
+   the Q3 dump in October). No dollars anywhere in the ledger surface.
+   3,365 tests, pylint 10.00, mypy clean. Next: P4.3 the scoreboard
+   (after the Q2 dump import + an operator call on where the canonical
+   ledger run executes — the NAS advise.db is the ledger's home).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

@@ -23,7 +23,7 @@ import pytest_asyncio
 
 from tests.fixtures import grid_config as shared_grid_config
 from tests.fixtures import safety_config as shared_safety_config
-from tools.auditor import AuditorExchangeAdapter, _replay_symbol
+from tools.auditor import AuditorExchangeAdapter, replay_symbol
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig
@@ -134,7 +134,7 @@ _CYCLE_BARS = [
 
 class TestReplaySymbol:
     async def test_full_cycle_end_to_end(self) -> None:
-        result = await _replay_symbol(
+        result = await replay_symbol(
             _CYCLE_BARS,
             _BTC,
             grid_config=_grid_config(),
@@ -152,7 +152,7 @@ class TestReplaySymbol:
         assert result.realized_pnl > 0
 
     async def test_daily_cap_is_neutered_upstream(self) -> None:
-        """Correction 1 pin: _replay_symbol itself honors whatever
+        """Correction 1 pin: replay_symbol itself honors whatever
         safety config it is given — a tight daily cap DOES suppress
         placements (this is the wall-clock poisoning ADR-028 warns
         about). The neutering therefore lives in _run; this documents
@@ -162,7 +162,7 @@ class TestReplaySymbol:
         can't pollute the count."""
         two_below = shared_grid_config(spacing_pct="1.0", above=1, below=2)
         flat = [_bar(0, "100", "100.2", "99.8", "100")]
-        tight = await _replay_symbol(
+        tight = await replay_symbol(
             flat,
             _BTC,
             grid_config=two_below,
@@ -171,7 +171,7 @@ class TestReplaySymbol:
             seed_base=Decimal("1"),
             fee_rate=Decimal("0.0026"),
         )
-        neutered = await _replay_symbol(
+        neutered = await replay_symbol(
             flat,
             _BTC,
             grid_config=two_below,
@@ -194,7 +194,7 @@ class TestReplaySymbol:
             _bar(0, "100", "105.5", "99.9", "105"),
             _bar(1, "105", "105.2", "98.0", "99.0"),
         ]
-        await _replay_symbol(
+        await replay_symbol(
             bars,
             _BTC,
             grid_config=_grid_config(),
@@ -213,7 +213,7 @@ class TestReplaySymbol:
         """A dead-flat replay places orders but fills nothing: net PnL
         exactly 0, no fees, no drawdown."""
         flat = [_bar(i, "100", "100.4", "99.6", "100") for i in range(5)]
-        result = await _replay_symbol(
+        result = await replay_symbol(
             flat,
             _BTC,
             grid_config=_grid_config(),

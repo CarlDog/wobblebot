@@ -65,7 +65,11 @@ from wobblebot.cli._common import (
     parse_interval_arg,
     parse_symbol_csv,
 )
-from wobblebot.config.grid import GridConfig
+from wobblebot.config.grid import (
+    KRAKEN_MAKER_FEE_RATE,
+    KRAKEN_TAKER_FEE_RATE,
+    GridConfig,
+)
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.config.safety import SafetyConfig
@@ -80,7 +84,9 @@ _DEFAULT_DB = Path("data") / "wobblebot-observe.db"
 
 # Correction 1: effectively-unlimited daily spend for the replay. The
 # field validates gt=0, so "neutered" is a huge Decimal, never zero.
-_NEUTERED_DAILY_SPEND = Decimal("1000000000")
+# Public: the P4.2 evaluator (tools/score_recommendations.py) neuters
+# BOTH of its replay arms with this same value (ADR-035).
+NEUTERED_DAILY_SPEND = Decimal("1000000000")
 
 # Progress cadence for long 1m replays (4 engine steps per bar).
 _PROGRESS_EVERY_BARS = 10_000
@@ -152,7 +158,7 @@ class SymbolAuditResult:  # pylint: disable=too-many-instance-attributes
     sells_deferred: int
 
 
-async def _replay_symbol(  # pylint: disable=too-many-locals,too-many-arguments
+async def replay_symbol(  # pylint: disable=too-many-locals,too-many-arguments
     bars: list[OHLCBar],
     symbol: Symbol,
     *,
@@ -161,6 +167,8 @@ async def _replay_symbol(  # pylint: disable=too-many-locals,too-many-arguments
     seed_usd: Decimal,
     seed_base: Decimal,
     fee_rate: Decimal,
+    maker_fee_rate: Decimal = KRAKEN_MAKER_FEE_RATE,
+    taker_fee_rate: Decimal = KRAKEN_TAKER_FEE_RATE,
     replay_storage: SQLiteStorageAdapter | None = None,
 ) -> SymbolAuditResult:
     """Drive one symbol's bars through a fresh engine + adapter.
@@ -168,6 +176,13 @@ async def _replay_symbol(  # pylint: disable=too-many-locals,too-many-arguments
     ``replay_storage`` is the test seam — when provided the caller owns
     its lifecycle (and can inspect replayed orders/trades afterwards);
     when ``None`` a throwaway ``:memory:`` store is used.
+
+    ``maker_fee_rate`` / ``taker_fee_rate`` feed the ENGINE (the ADR-032
+    sell guard's profitability check); ``fee_rate`` is what the exchange
+    adapter charges per fill. Callers replaying a historical window
+    should pass the schedule in force DURING that window for all three,
+    or the guard reasons about fees the fills aren't paying (the P4.2
+    evaluator does this; Kraken doubled the schedule 2026-07-09).
     """
     adapter = AuditorExchangeAdapter(
         starting_balances={symbol.quote: seed_usd, symbol.base: seed_base},
@@ -183,7 +198,14 @@ async def _replay_symbol(  # pylint: disable=too-many-locals,too-many-arguments
     sells_deferred = 0
     portfolio_values: list[Decimal] = []
     try:
-        engine = GridEngine(adapter, storage, grid_config, safety_config)
+        engine = GridEngine(
+            adapter,
+            storage,
+            grid_config,
+            safety_config,
+            maker_fee_rate=maker_fee_rate,
+            taker_fee_rate=taker_fee_rate,
+        )
         for index, ohlc_bar in enumerate(bars):
             # Correction 3 by construction: bar-0 open is the first
             # price the engine sees, so _initialize anchors there.
@@ -309,7 +331,7 @@ async def _run(
         return 2
 
     # Correction 1: neuter ONLY the wall-clock-poisoned daily cap.
-    safety_config = config.safety.model_copy(update={"max_daily_spend_usd": _NEUTERED_DAILY_SPEND})
+    safety_config = config.safety.model_copy(update={"max_daily_spend_usd": NEUTERED_DAILY_SPEND})
     _LOGGER.info(
         "replaying with max_daily_spend_usd neutered (wall-clock window is "
         "meaningless in replay); all other caps + sell guard as configured"
@@ -336,7 +358,7 @@ async def _run(
                 )
                 any_error = True
                 continue
-            result = await _replay_symbol(
+            result = await replay_symbol(
                 bars,
                 symbol,
                 grid_config=config.grid,
@@ -384,8 +406,12 @@ def main() -> int:
     parser.add_argument(
         "--fee-rate",
         type=Decimal,
-        default=Decimal("0.0026"),
-        help="Flat fee fraction per fill (default Kraken maker 0.26%%).",
+        default=KRAKEN_MAKER_FEE_RATE,
+        help=(
+            "Flat fee fraction per fill (default: the current Kraken "
+            "Tier-1 maker constant — 0.40%% since the 2026-07-09 doubling; "
+            "the pre-ADR-038 default here was the retired 0.26%%)."
+        ),
     )
     parser.add_argument("--log-format", choices=("plain", "json"), default="plain")
     args = parser.parse_args()
