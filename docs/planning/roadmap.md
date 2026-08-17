@@ -1696,6 +1696,24 @@ the detail; the full backlog index is
    ETH freeze for new buys until their inventory turns over — the
    intended posture, consistent with the stranded-capital HOLD.
 
+   **P4 KICKOFF — the advisor outcome ledger** ⏳ **started 2026-08-17**
+   (design ratified same day: `docs/planning/p4-outcome-ledger-design.md`
+   — 7-day replay windows recorded per-row; all symbols @60m with a BTC
+   @1m fidelity cross-check; the in-force arm derives from each
+   suggestion's own `input_summary.current_grid`). Corpus at kickoff:
+   **2,862 suggestions** (heuristic 2,413 / quant 449 — the escalated
+   branch has more than doubled since ADR-035's census). **P4.1 SHIPPED
+   same day**: `recommendation_outcomes` (kind discriminator so the
+   Gremlin's directional-call shape is first-class from day one;
+   scoreable/unscoreable with reason; UNIQUE(suggestion, granularity,
+   evaluator_version) makes the evaluator idempotent and re-scoring
+   append-only) + `llm_calls.trace_id` (the per-cycle-tracing column,
+   sharing the migration per the v1.1 register) + the StoragePort
+   surface (`save_recommendation_outcome`, `get_recommendation_outcomes`,
+   `get_unscored_suggestions` — an oldest-first resumable work queue
+   with per-granularity/per-version independence, NULL-safe for
+   directional calls). Next: P4.2 the evaluator, P4.3 the scoreboard.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

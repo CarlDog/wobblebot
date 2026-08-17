@@ -35,6 +35,7 @@ from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_suggestions_expert_opinions,
     migrate_advisor_suggestions_news_materially_drove,
     migrate_llm_calls_cache_token_columns,
+    migrate_llm_calls_trace_id,
     migrate_news_items_publisher_url,
     migrate_notifications_read_at,
     migrate_price_snapshots_unique,
@@ -51,6 +52,7 @@ from wobblebot.adapters.sqlite_storage_rowmap import (
     row_to_order,
     row_to_pending_command,
     row_to_price_snapshot,
+    row_to_recommendation_outcome,
     row_to_trade,
     row_to_transfer_proposal,
     row_to_transfer_result,
@@ -64,7 +66,11 @@ from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.advisor import (
+    AdvisorSuggestion,
+    AppliedSuggestion,
+    RecommendationOutcome,
+)
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.harvester import TransferProposal, TransferResult
@@ -138,6 +144,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_advisor_suggestions_news_materially_drove(self._conn)
             await migrate_news_items_publisher_url(self._conn)
             await migrate_llm_calls_cache_token_columns(self._conn)
+            await migrate_llm_calls_trace_id(self._conn)
             await migrate_price_snapshots_unique(self._conn)
             await migrate_transfer_results_unique_proposal_id(self._conn)
             await migrate_notifications_read_at(self._conn)
@@ -706,6 +713,109 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             return [row_to_advisor_suggestion(row) for row in rows]
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load advisor suggestions: {exc}") from exc
+
+    async def save_recommendation_outcome(self, outcome: RecommendationOutcome) -> int:
+        conn = self._require_conn()
+        try:
+            cursor = await conn.execute(
+                """
+                INSERT INTO recommendation_outcomes (
+                    suggestion_id, kind, scoreable, unscoreable_reason,
+                    window_start, window_end, granularity_minutes,
+                    proposed_arm_json, inforce_arm_json, outcome,
+                    evaluator_version, scored_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome.suggestion_id,
+                    outcome.kind,
+                    1 if outcome.scoreable else 0,
+                    outcome.unscoreable_reason,
+                    outcome.window_start.dt.isoformat(),
+                    outcome.window_end.dt.isoformat(),
+                    outcome.granularity_minutes,
+                    (
+                        None
+                        if outcome.proposed_arm_json is None
+                        else json.dumps(outcome.proposed_arm_json)
+                    ),
+                    (
+                        None
+                        if outcome.inforce_arm_json is None
+                        else json.dumps(outcome.inforce_arm_json)
+                    ),
+                    outcome.outcome,
+                    outcome.evaluator_version,
+                    outcome.scored_at.dt.isoformat(),
+                ),
+            )
+            await conn.commit()
+            row_id = cursor.lastrowid
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save recommendation outcome: {exc}") from exc
+        if row_id is None:
+            raise StorageError("recommendation_outcomes insert returned no lastrowid")
+        return int(row_id)
+
+    async def get_recommendation_outcomes(
+        self,
+        suggestion_id: int | None = None,
+        scoreable: bool | None = None,
+        evaluator_version: int | None = None,
+        limit: int | None = None,
+    ) -> list[RecommendationOutcome]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[int] = []
+        if suggestion_id is not None:
+            clauses.append("suggestion_id = ?")
+            params.append(suggestion_id)
+        if scoreable is not None:
+            clauses.append("scoreable = ?")
+            params.append(1 if scoreable else 0)
+        if evaluator_version is not None:
+            clauses.append("evaluator_version = ?")
+            params.append(evaluator_version)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM recommendation_outcomes{where} ORDER BY scored_at DESC"
+        bound: tuple[int, ...] = tuple(params)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound = (*bound, limit)
+        try:
+            async with conn.execute(sql, bound) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_recommendation_outcome(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load recommendation outcomes: {exc}") from exc
+
+    async def get_unscored_suggestions(
+        self,
+        granularity_minutes: int | None,
+        evaluator_version: int,
+        limit: int | None = None,
+    ) -> list[tuple[int, AdvisorSuggestion]]:
+        conn = self._require_conn()
+        # ``IS ?`` (not ``= ?``) so a NULL granularity — the
+        # directional-call shape — matches its own NULL rows.
+        sql = (
+            "SELECT s.* FROM advisor_suggestions s "
+            "LEFT JOIN recommendation_outcomes o ON o.suggestion_id = s.id "
+            "AND o.granularity_minutes IS ? AND o.evaluator_version = ? "
+            "WHERE o.id IS NULL ORDER BY s.created_at ASC"
+        )
+        bound: tuple[int | None, ...] = (granularity_minutes, evaluator_version)
+        if limit is not None:
+            sql += " LIMIT ?"
+            bound = (*bound, limit)
+        try:
+            async with conn.execute(sql, bound) as cursor:
+                rows = await cursor.fetchall()
+            return [(int(row["id"]), row_to_advisor_suggestion(row)) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load unscored suggestions: {exc}") from exc
 
     async def save_applied_suggestion(self, applied: AppliedSuggestion) -> None:
         conn = self._require_conn()

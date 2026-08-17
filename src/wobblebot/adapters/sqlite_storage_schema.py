@@ -191,6 +191,35 @@ CREATE INDEX IF NOT EXISTS idx_applied_suggestions_applied
 CREATE INDEX IF NOT EXISTS idx_applied_suggestions_symbol
     ON applied_suggestions(symbol, applied_at);
 
+-- P4.1 (ADR-035): the advisor outcome ledger. One row per
+-- (suggestion, granularity, evaluator_version); the UNIQUE makes the
+-- evaluator idempotent and re-scoring append-only — a new evaluator
+-- version writes NEW rows, old rows are audit history. kind
+-- discriminates the two scoreable shapes (config recs replay two
+-- arms; directional calls score against realized direction, no
+-- replay). scoreable=0 rows carry the reason — never silently
+-- neutral (ADR-035 decision 5). Arm summaries are JSON; no dollar
+-- figure is ever surfaced from them (decision 3).
+CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    suggestion_id       INTEGER NOT NULL,
+    kind                TEXT NOT NULL CHECK (kind IN ('config_rec', 'directional_call')),
+    scoreable           INTEGER NOT NULL CHECK (scoreable IN (0, 1)),
+    unscoreable_reason  TEXT,
+    window_start        TEXT NOT NULL,
+    window_end          TEXT NOT NULL,
+    granularity_minutes INTEGER,
+    proposed_arm_json   TEXT,
+    inforce_arm_json    TEXT,
+    outcome             TEXT CHECK (outcome IN ('better', 'worse', 'tie')),
+    evaluator_version   INTEGER NOT NULL,
+    scored_at           TEXT NOT NULL,
+    UNIQUE (suggestion_id, granularity_minutes, evaluator_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recommendation_outcomes_suggestion
+    ON recommendation_outcomes(suggestion_id);
+
 CREATE TABLE IF NOT EXISTS transfer_proposals (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
     proposal_id                 TEXT NOT NULL UNIQUE,
@@ -341,7 +370,10 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     cost_usd            TEXT NOT NULL,
     request_id          TEXT,
     success             INTEGER NOT NULL CHECK (success IN (0, 1)),
-    error_kind          TEXT
+    error_kind          TEXT,
+    -- P4.1 per-cycle tracing: correlates the LLM calls of one advisor
+    -- cycle (rides the outcome-ledger migration per the v1.1 register).
+    trace_id            TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp

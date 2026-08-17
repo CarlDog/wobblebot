@@ -25,7 +25,12 @@ from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User
 from wobblebot.domain.value_objects import Amount, OHLCBar, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.advisor import (
+    AdvisorRecommendation,
+    AdvisorSuggestion,
+    AppliedSuggestion,
+    RecommendationOutcome,
+)
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notification_events import NotificationEvent
@@ -143,6 +148,28 @@ def row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         input_summary=json.loads(row["input_summary"]),
         model_name=row["model_name"],
+    )
+
+
+def row_to_recommendation_outcome(row: aiosqlite.Row) -> RecommendationOutcome:
+    """P4.1 (ADR-035): rebuild an outcome-ledger row."""
+    return RecommendationOutcome(
+        suggestion_id=int(row["suggestion_id"]),
+        kind=row["kind"],
+        scoreable=bool(row["scoreable"]),
+        unscoreable_reason=row["unscoreable_reason"],
+        window_start=Timestamp(dt=datetime.fromisoformat(row["window_start"])),
+        window_end=Timestamp(dt=datetime.fromisoformat(row["window_end"])),
+        granularity_minutes=row["granularity_minutes"],
+        proposed_arm_json=(
+            None if row["proposed_arm_json"] is None else json.loads(row["proposed_arm_json"])
+        ),
+        inforce_arm_json=(
+            None if row["inforce_arm_json"] is None else json.loads(row["inforce_arm_json"])
+        ),
+        outcome=row["outcome"],
+        evaluator_version=int(row["evaluator_version"]),
+        scored_at=Timestamp(dt=datetime.fromisoformat(row["scored_at"])),
     )
 
 

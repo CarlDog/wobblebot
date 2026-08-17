@@ -22,7 +22,11 @@ from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
-from wobblebot.ports.advisor import AdvisorSuggestion, AppliedSuggestion
+from wobblebot.ports.advisor import (
+    AdvisorSuggestion,
+    AppliedSuggestion,
+    RecommendationOutcome,
+)
 from wobblebot.ports.assistant import ConversationTurn
 from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
@@ -486,6 +490,56 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         Returns:
             Matching audit rows ordered by ``applied_at`` DESC.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def save_recommendation_outcome(self, outcome: RecommendationOutcome) -> int:
+        """Persist one counterfactual scoring row (ADR-035, P4.1).
+
+        The table enforces UNIQUE(suggestion_id, granularity_minutes,
+        evaluator_version) — a duplicate save raises rather than
+        silently overwriting; re-scoring uses a new evaluator_version.
+
+        Returns:
+            The new row's id.
+
+        Raises:
+            StorageError: On failure, including the UNIQUE violation.
+        """
+
+    @abstractmethod
+    async def get_recommendation_outcomes(
+        self,
+        suggestion_id: int | None = None,
+        scoreable: bool | None = None,
+        evaluator_version: int | None = None,
+        limit: int | None = None,
+    ) -> list[RecommendationOutcome]:
+        """Query outcome rows with optional filters.
+
+        Returns:
+            Matching rows ordered by ``scored_at`` DESC.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
+    async def get_unscored_suggestions(
+        self,
+        granularity_minutes: int | None,
+        evaluator_version: int,
+        limit: int | None = None,
+    ) -> list[tuple[int, AdvisorSuggestion]]:
+        """Suggestions with NO outcome row at this (granularity, version).
+
+        The evaluator's work queue: ``(row_id, suggestion)`` pairs,
+        oldest first, so a resumable batch walks the corpus in
+        chronological order. ``granularity_minutes`` may be ``None``
+        (matches the directional-call rows' NULL granularity).
 
         Raises:
             StorageError: If retrieval fails.

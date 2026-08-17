@@ -129,6 +129,17 @@ async def migrate_llm_calls_cache_token_columns(conn: aiosqlite.Connection) -> N
     )
 
 
+async def migrate_llm_calls_trace_id(conn: aiosqlite.Connection) -> None:
+    """Add ``trace_id`` to pre-P4.1 llm_calls tables (per-cycle tracing).
+
+    SCHEMA declares the column for fresh DBs; existing ledgers lack it.
+    Nullable TEXT — rows written before tracing existed honestly have
+    no trace, and NULL says so. Rides the outcome-ledger migration
+    event per the v1.1 register ("ship together").
+    """
+    await add_column_if_missing(conn, "llm_calls", "trace_id", "TEXT")
+
+
 async def migrate_notifications_read_at(conn: aiosqlite.Connection) -> None:
     """Add ``read_at`` + the unread partial index (P3 slice 19).
 

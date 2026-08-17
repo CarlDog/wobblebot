@@ -102,6 +102,19 @@ class _FailingStorage(StoragePort):
     async def save_order(self, order: Order) -> None:
         raise NotImplementedError
 
+    async def save_recommendation_outcome(self, outcome):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_recommendation_outcomes(  # type: ignore[no-untyped-def]
+        self, suggestion_id=None, scoreable=None, evaluator_version=None, limit=None
+    ):
+        raise NotImplementedError
+
+    async def get_unscored_suggestions(  # type: ignore[no-untyped-def]
+        self, granularity_minutes, evaluator_version, limit=None
+    ):
+        raise NotImplementedError
+
     async def get_order(self, order_id):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

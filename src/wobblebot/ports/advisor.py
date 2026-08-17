@@ -261,6 +261,56 @@ class AdvisorSuggestion(BaseModel):
         frozen = True
 
 
+class RecommendationOutcome(BaseModel):
+    """One counterfactual scoring of one advisor suggestion (ADR-035, P4.1).
+
+    Lives in storage's ``recommendation_outcomes`` table, beside its
+    subject. One row per (suggestion, granularity, evaluator version);
+    re-scoring after an evaluator change appends rows at the new
+    version — prior rows are audit history, never overwritten.
+
+    Attributes:
+        suggestion_id: The ``advisor_suggestions`` row this scores.
+        kind: ``config_rec`` (two-arm replay via the ADR-028 auditor)
+            or ``directional_call`` (scored against realized direction,
+            no replay — the Gremlin's shape, first-class from day one).
+        scoreable: False rows carry ``unscoreable_reason`` and are
+            never silently neutral (ADR-035 decision 5).
+        unscoreable_reason: Why scoring was impossible (non-numeric
+            keys, missing ``current_grid``, no bars for the window, …).
+        window_start / window_end: The 7-day forward window the score
+            covers (ratified 2026-08-17; recorded per-row so window
+            variants can coexist).
+        granularity_minutes: Bar granularity of the replay (60 for the
+            corpus-wide arm, 1 for the BTC cross-check). ``None`` for
+            directional calls.
+        proposed_arm_json / inforce_arm_json: Replay summaries of the
+            two arms. Never surfaced as dollars (decision 3).
+        outcome: The sign of the difference — ``better`` / ``worse`` /
+            ``tie``. ``None`` while unscored or unscoreable.
+        evaluator_version: Which evaluator produced this row.
+        scored_at: When.
+    """
+
+    suggestion_id: int = Field(ge=1)
+    kind: Literal["config_rec", "directional_call"]
+    scoreable: bool
+    unscoreable_reason: str | None = None
+    window_start: Timestamp
+    window_end: Timestamp
+    granularity_minutes: int | None = None
+    proposed_arm_json: dict[str, Any] | None = None
+    inforce_arm_json: dict[str, Any] | None = None
+    outcome: Literal["better", "worse", "tie"] | None = None
+    evaluator_version: int = Field(ge=1)
+    scored_at: Timestamp
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 class AppliedSuggestion(BaseModel):
     """Audit row for a Stage 3.4b auto-applied advisor suggestion.
 
