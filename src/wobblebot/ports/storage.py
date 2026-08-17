@@ -546,6 +546,30 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def get_advisor_suggestions_by_ids(
+        self, ids: list[int]
+    ) -> list[tuple[int, AdvisorSuggestion]]:
+        """Load specific suggestions by their storage row ids.
+
+        The P4.3 scoreboard's join primitive: ``recommendation_outcomes``
+        rows reference their subject by row id, and ``AdvisorSuggestion``
+        itself carries no id, so cross-referencing an outcome back to its
+        suggestion (role, symbol, ``input_summary``) needs this keyed
+        read.
+
+        Args:
+            ids: Row ids to load. An empty list is a valid no-op.
+
+        Returns:
+            ``(row_id, suggestion)`` pairs for the ids that exist,
+            oldest first. Missing ids are simply absent from the result
+            — a partial hit is a domain-data miss, not an error.
+
+        Raises:
+            StorageError: If retrieval fails.
+        """
+
+    @abstractmethod
     async def save_transfer_proposal(self, proposal: TransferProposal) -> None:
         """Persist a Stage 4.3 transfer proposal for operator review.
 

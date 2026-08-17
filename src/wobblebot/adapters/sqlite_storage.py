@@ -817,6 +817,24 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load unscored suggestions: {exc}") from exc
 
+    async def get_advisor_suggestions_by_ids(
+        self, ids: list[int]
+    ) -> list[tuple[int, AdvisorSuggestion]]:
+        if not ids:
+            return []
+        conn = self._require_conn()
+        placeholders = ", ".join("?" for _ in ids)
+        sql = (
+            f"SELECT * FROM advisor_suggestions WHERE id IN ({placeholders}) "
+            "ORDER BY created_at ASC"
+        )
+        try:
+            async with conn.execute(sql, tuple(ids)) as cursor:
+                rows = await cursor.fetchall()
+            return [(int(row["id"]), row_to_advisor_suggestion(row)) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load suggestions by ids: {exc}") from exc
+
     async def save_applied_suggestion(self, applied: AppliedSuggestion) -> None:
         conn = self._require_conn()
         try:

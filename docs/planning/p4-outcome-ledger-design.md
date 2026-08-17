@@ -109,6 +109,33 @@ dump, and the live endpoint's ~720-bar retention only reaches back to
 tools container vs desktop against a synced copy) is an open operator
 call — every verification run so far used scratch copies only.
 
+## P4.3 implementation notes (2026-08-17)
+
+- `services/outcome_scoreboard.py` (pure aggregation — the future web
+  card reuses it so framing can't drift between surfaces) +
+  `tools/score_report.py` (the log-table renderer, read-only; refuses
+  to connect-and-create a DB at a mistyped ``--db`` path).
+- **Hit-rate = better / (better + worse)**, ties reported beside and
+  never folded in; the rate is withheld under 30 decisive rows (counts
+  still print). Fidelity note rendered with every scored table: 60m
+  rows are directional, 1m rows `_Sim`-equivalent.
+- **The decision-7 pairing resolved to something simpler than the ADR
+  imagined.** On an input the cascade escalated, the guard layer's
+  would-have-said is HOLD *by construction* — that is what escalation
+  means — and a hold keeps the in-force config, which is exactly the
+  counterfactual's in-force arm. So the paired quant-vs-heuristic
+  result on the escalated subset is the outcome sign re-labeled; no
+  second replay exists to run. The report still VERIFIES the premise
+  per row instead of assuming it: the current guard spec re-runs over
+  each scored quant row's stored `input_summary`, and rows where a
+  guard fires on re-run (spec drift since emission) or the summary no
+  longer parses are excluded and counted. First live run against the
+  scratch corpus: premise held on **109/109** re-run inputs under the
+  shipped `config/heuristic/quant.yml`.
+- `--heuristic-file` overrides the settings' spec — the desktop
+  reporting on a NAS corpus copy doesn't run the cascade locally
+  (found on the first live run, not in design).
+
 ## Honest bounds (restated from ADR-035, binding on P4.3's copy)
 
 The first scoreboard measures **the cascade's escalated branch against

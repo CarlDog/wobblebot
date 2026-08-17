@@ -115,6 +115,9 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def get_advisor_suggestions_by_ids(self, ids):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def get_order(self, order_id):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

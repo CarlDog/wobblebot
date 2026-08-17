@@ -1744,9 +1744,33 @@ the detail; the full backlog index is
    324 pending, 1,230 bars-missing awaiting the Q2 OHLCVT dump import**
    (local + NAS 60m history: Q1-dump end → ~Jul 9 gap; Jul 1–8 needs
    the Q3 dump in October). No dollars anywhere in the ledger surface.
-   3,365 tests, pylint 10.00, mypy clean. Next: P4.3 the scoreboard
-   (after the Q2 dump import + an operator call on where the canonical
-   ledger run executes — the NAS advise.db is the ledger's home).
+   3,365 tests, pylint 10.00, mypy clean. **P4.3 SHIPPED same day — the
+   scoreboard**: `services/outcome_scoreboard.py` (pure aggregation the
+   future web card reuses: hit-rate = better/decisive with ties beside,
+   rate withheld under 30 decisive rows, unscoreable taxonomy, the
+   pairing compare rule) + `tools/score_report.py` (read-only log-table
+   report; refuses to connect-and-create at a mistyped --db) + one new
+   StoragePort primitive (`get_advisor_suggestions_by_ids` — outcomes
+   reference suggestions by row id and the model carries none). The
+   ADR-035 decision-7 pairing resolved concretely: escalation means the
+   guard layer held, and a hold IS the in-force arm, so the paired
+   quant-vs-heuristic result on the escalated subset is the outcome
+   sign re-labeled — verified per row (current guard spec re-run over
+   each stored input_summary; guard-fired/unparseable rows excluded and
+   counted), never assumed. Live run against the scratch corpus:
+   premise held 109/109 under the shipped `config/heuristic/quant.yml`;
+   scoreboard renders quant @60m 109 scored — better 27 / worse 81 /
+   tie 1 (25% of 108 decisive) with the sample, the fee-floor-era
+   taxonomy, and both queue remainders. Sub-30-sample and single-regime
+   caveats apply until the Q2 dump drains the queue (weekly
+   `kraken-q2-dump-watch` scheduled task watches for it, with a
+   control-file guard so a Google rendering change reads as "watcher
+   broke," not "not published"). 3,379 tests, pylint 10.00, mypy clean.
+   Remaining before the scoreboard means anything: the Q2 dump import +
+   the operator call on where the canonical ledger run executes (the
+   NAS advise.db is the ledger's home; every run so far used scratch
+   copies). P4.4+ (weather_report, daily summary, historian) per the
+   register's ordering.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

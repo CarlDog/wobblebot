@@ -138,6 +138,18 @@ async def test_unscored_returns_reconstructed_suggestion(
     assert suggestion.input_summary["current_grid"] == {"spacing_percentage": 3.0}
 
 
+async def test_get_advisor_suggestions_by_ids(storage: SQLiteStorageAdapter) -> None:
+    """The P4.3 scoreboard's join primitive: keyed reads, misses absent."""
+    for _ in range(3):
+        await storage.save_advisor_suggestion(_suggestion())
+    rows = await storage.get_advisor_suggestions_by_ids([3, 1])
+    assert sorted(row_id for row_id, _ in rows) == [1, 3]
+    assert all(s.recommendation.role == "quant" for _, s in rows)
+    assert await storage.get_advisor_suggestions_by_ids([]) == []
+    # A missing id is a domain-data miss, not an error.
+    assert await storage.get_advisor_suggestions_by_ids([99]) == []
+
+
 async def test_llm_calls_trace_id_column_exists(storage: SQLiteStorageAdapter) -> None:
     """The per-cycle-tracing half of the P4.1 migration."""
     conn = storage._require_conn()  # pylint: disable=protected-access
