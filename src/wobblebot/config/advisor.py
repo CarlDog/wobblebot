@@ -119,6 +119,44 @@ class ArbitratorConfig(BaseModel):
         frozen = True
 
 
+class GremlinConfig(BaseModel):
+    """The Chaos Gremlin — a standalone loose-reasoning voice (P4.4c).
+
+    Off by default. When enabled, ``cli/advise`` runs the gremlin
+    BESIDE the main advisor: it reads the same ``PerformanceSummary``
+    and emits a falsifiable DIRECTIONAL call
+    (``{"direction": up|down|chop, "horizon_hours": N}``) persisted
+    with ``role="gremlin"`` and graded by the outcome ledger against
+    the realized move (ADR-035 decision 4, P4.4b). Firewall, per the
+    ratified design: the role sits in
+    ``services/auto_apply._BLOCKED_ROLES`` (never applied), and it is
+    deliberately NOT an MoE expert — feeding the arbitrator would
+    launder its whimsy through ``role="aggregated"``.
+
+    ``min_interval_minutes`` cooldown-gates emission per symbol so a
+    15-minute advise cadence doesn't flood a 24h horizon with
+    near-duplicate overlapping calls. The default (240 = 4h) yields
+    ~6 calls/day/symbol. Cooldown state is in-memory; a daemon
+    restart resets it, same posture as pause state.
+
+    The default temperature runs hot on purpose (the design's
+    ``temperature_hint``) — the gremlin's charter is the leap the
+    evidence-bound experts won't make.
+    """
+
+    enabled: bool = False
+    provider: LLMProvider = "ollama"
+    model: str = Field(default="qwen2.5:3b-instruct-q4_K_M", min_length=1)
+    prompt_file: str = Field(default="config/prompts/gremlin.md", min_length=1)
+    inference_params: InferenceParams = Field(
+        default_factory=lambda: InferenceParams(temperature=Decimal("1.0"))
+    )
+    min_interval_minutes: int = Field(default=240, gt=0)
+
+    class Config:
+        frozen = True
+
+
 class AutoApplyConfig(BaseModel):
     """Bounded auto-tuning gate. Off by default.
 
@@ -186,6 +224,7 @@ class AdvisorConfig(BaseModel):
     arbitrator: ArbitratorConfig | None = None
     experts: list[ExpertConfig] = Field(default_factory=list)
     auto_apply: AutoApplyConfig = Field(default_factory=AutoApplyConfig)
+    gremlin: GremlinConfig = Field(default_factory=GremlinConfig)
 
     class Config:
         frozen = True

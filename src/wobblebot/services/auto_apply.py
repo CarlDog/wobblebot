@@ -65,8 +65,12 @@ _LEVEL_KEYS = ("levels_above", "levels_below")
 # case where news specifically drove the reconciled value is caught
 # below via ``recommendation.news_materially_drove`` (ADR-007
 # amendment, structural news firewall), not by blocking the role
-# wholesale.
-_BLOCKED_ROLES: frozenset[str] = frozenset({"news"})
+# wholesale. ``"gremlin"`` (P4.4c) is blocked by the same mechanism
+# and for a stricter reason: a confident hunch dressed up as a number
+# must never reach a live value — the gremlin is scored, not applied,
+# and it is deliberately NOT an MoE expert either (feeding the
+# arbitrator would launder its output through role="aggregated").
+_BLOCKED_ROLES: frozenset[str] = frozenset({"news", "gremlin"})
 
 
 class AppliedKey(BaseModel):

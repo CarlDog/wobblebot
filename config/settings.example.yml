@@ -566,6 +566,24 @@ advisor:
     max_spacing_change_percentage: 20.0
     max_order_size_change_percentage: 15.0
 
+  # Chaos Gremlin (P4.4c) — a standalone loose-reasoning voice that rides
+  # beside the main advisor: same metrics, but it emits a falsifiable
+  # DIRECTIONAL call ({direction: up|down|chop, horizon_hours}) that the
+  # outcome ledger grades against the realized move (ADR-035). Its role is
+  # firewalled: never auto-applied, never fed to the MoE arbitrator. Off by
+  # default; free when provider is ollama. min_interval_minutes cooldown-gates
+  # emission per symbol (240 = ~6 calls/day/symbol at any advise cadence).
+  gremlin:
+    enabled: false
+    provider: ollama
+    model: "qwen2.5:3b-instruct-q4_K_M"
+    prompt_file: "config/prompts/gremlin.md"
+    inference_params:
+      temperature: 1.0                # runs hot on purpose — the leap is the charter
+      max_tokens: 512
+      timeout_seconds: 60.0
+    min_interval_minutes: 240
+
 # ============================================================================
 # Per-CLI: harvest (cli/harvest — Stage 4.2 read-only treasury monitor)
 # ============================================================================

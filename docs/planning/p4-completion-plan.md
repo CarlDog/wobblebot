@@ -72,25 +72,33 @@ today) keep writing NULL, exactly the pre-P4.4a shape.
   NULL-granularity queue namespace; each pass skips the other kind's
   suggestions without writing, so the namespaces stay independent.
 
-**c. The Chaos Gremlin (M).** Per the ratified design in
-`docs/release/v1.1/adaptive-grid.md`: a standalone loose-reasoning
-voice reading the same `PerformanceSummary`, emitting a falsifiable
-directional/regime call. Load-bearing constraints from that design:
+**c. The Chaos Gremlin (M).** ✅ **Shipped 2026-08-17, disabled by
+default.** The operator's June-4 prompt draft became the live prompt
+with three surgical patches (role `custom`→`gremlin`; the P4.4b
+grading contract — ±1% band semantics, horizon 4–72h guidance; the
+exact-values constraint clause for small models). Implementation
+settled:
 
-- `gremlin` joins `_BLOCKED_ROLES` — never auto-applies.
-- **Standalone observer, never MoE/arbitrator-fed** (the
-  `role="aggregated"` laundering hole). It rides beside the cascade;
-  it does NOT need MoE enabled — the register's "with MoE-on" note is
-  an ideal, not a dependency, and the design's own argument is to
-  turn it on early so its track record accumulates.
+- One new `GremlinConfig` (`advisor.gremlin`: enabled false, provider
+  ollama, model `qwen2.5:3b-instruct-q4_K_M`, temp 1.0 by default —
+  the leap is the charter, `min_interval_minutes` 240 ≈ 6
+  calls/day/symbol). The role reuses `_build_advisor_adapter`
+  wholesale — no new adapter.
+- `gremlin` is in `_BLOCKED_ROLES` (never applies) and in the
+  `LLMRole`/`PromptRole` registries; it rides beside the cascade in
+  `cli/advise`'s sweep, cooldown-gated per symbol (in-memory,
+  restart-resets; marked on SUCCESS only so flaky calls retry next
+  tick). NOT MoE-fed, per the ratified firewall.
+- Cross-slice contract pinned by test: a gremlin emission persisted
+  through the normal cycle path classifies as a SCOREABLE
+  directional call under the P4.4b evaluator.
 - Discipline note carries over verbatim: "loose intuition loses to
   rigor here" is a finding, not a failure — do not tune the Gremlin
-  until its scoreboard flatters it.
-- In-slice decisions: the call schema (direction + horizon +
-  conviction, persisted in the suggestion's `recommendations` dict),
-  emission cadence, and the seat's model (deliberately
-  un-batteriable — the outcome ledger IS its battery; pick something
-  cheap and leap-prone, note it in the seat register).
+  until its ledger sample is real.
+- **Enabling it in production is the operator's flip**:
+  `advisor.gremlin.enabled: true` in the NAS settings.yml + an advise
+  restart (the model is already resident on the NAS Ollama — 12.7
+  tok/s hot, benchmarked 2026-05-27).
 
 ### P4.5 — `weather_report` (M–L)
 

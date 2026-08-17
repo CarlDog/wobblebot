@@ -1789,8 +1789,20 @@ the detail; the full backlog index is
    record in `proposed_arm_json`, `--directional` third scorer pass
    over the NULL-granularity namespace. No-version-bump pin test:
    every existing-corpus shape classifies exactly as v1 — evaluator
-   stays v1. 3,416 tests, pylint 10.00, mypy clean. The Gremlin
-   (P4.4c) may now emit safely.
+   stays v1. 3,416 tests, pylint 10.00, mypy clean. **P4.4c SHIPPED
+   same day — the Chaos Gremlin, disabled by default**: the operator's
+   June-4 prompt draft went live with three surgical patches (role
+   promotion, the P4.4b grading contract, the exact-values constraint
+   clause); `advisor.gremlin` config block (ollama /
+   `qwen2.5:3b-instruct-q4_K_M` / temp 1.0 / 240m per-symbol
+   cooldown); `gremlin` in `_BLOCKED_ROLES` + `LLMRole`/`PromptRole`;
+   rides beside the cascade via the existing adapter builder — no new
+   adapter; cross-slice contract pinned (a persisted gremlin emission
+   classifies scoreable-directional under P4.4b). Enabling = the
+   operator flips `enabled: true` in the NAS settings.yml + advise
+   restart. **P4.4 (start the clocks) COMPLETE** — 3,424 tests, pylint
+   10.00, mypy clean; the whole slice rides the next push/deploy, and
+   the trace + gremlin clocks start in production when it lands.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

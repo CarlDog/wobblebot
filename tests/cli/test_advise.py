@@ -16,6 +16,7 @@ from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.advise import (
     _build_advisor,
+    _gremlin_due,
     _moe_model_label,
     _run_cycle,
     _run_loop,
@@ -182,6 +183,45 @@ class TestRunCycleHappyPath:
         assert all(trace is not None for trace in seen)
         assert seen[0] != seen[1]  # a FRESH id per evaluation
         assert current_trace_id() is None  # scope closed after the cycle
+
+    async def test_gremlin_cycle_persists_a_gradeable_directional_call(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """P4.4c cross-slice contract: a gremlin emission persisted via
+        the normal cycle path must classify as a SCOREABLE directional
+        call under the P4.4b evaluator — the exact shape the prompt's
+        output contract promises."""
+        from wobblebot.services.advisor_evaluator import classify
+
+        rec = AdvisorRecommendation(
+            recommendation_id="rec-gremlin",
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role="gremlin",
+            recommendations={"direction": "down", "horizon_hours": 24},
+            rationale="The tape feels toppy; calling the pullback.",
+            confidence="medium",
+        )
+        await _seed_prices(storage)
+        advisor = _CannedAdvisor(recommendation=rec)
+        builder = SummaryBuilder(storage)
+        ok = await _run_cycle(
+            advisor,
+            builder,
+            storage,
+            symbol=BTC_USD,
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grid=_default_grid(),
+            model_name="qwen2.5:3b-instruct-q4_K_M",
+        )
+        assert ok is True
+        [persisted] = await storage.get_advisor_suggestions()
+        assert persisted.recommendation.role == "gremlin"
+        classification = classify(persisted)
+        assert classification.kind == "directional_call"
+        assert classification.unscoreable_reason is None
 
     async def test_grid_carried_into_audit_record(self, storage: SQLiteStorageAdapter) -> None:
         await _seed_prices(storage)
@@ -858,3 +898,27 @@ class TestMultiSymbolSweep:
         suggestions = await storage.get_advisor_suggestions()
         eth_suggestions = [s for s in suggestions if s.input_summary["symbol"] == "ETH/USD"]
         assert eth_suggestions, "ETH suggestion must persist despite BTC failure"
+
+
+class TestGremlinCooldown:
+    """P4.4c: per-symbol emission gating for the standalone gremlin."""
+
+    def test_first_emission_is_always_due(self) -> None:
+        assert _gremlin_due({}, BTC_USD, timedelta(hours=4)) is True
+
+    def test_within_cooldown_is_not_due(self) -> None:
+        now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+        last = {str(BTC_USD): now - timedelta(hours=3)}
+        assert _gremlin_due(last, BTC_USD, timedelta(hours=4), now=now) is False
+
+    def test_after_cooldown_is_due_again(self) -> None:
+        now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+        last = {str(BTC_USD): now - timedelta(hours=4)}
+        assert _gremlin_due(last, BTC_USD, timedelta(hours=4), now=now) is True
+
+    def test_cooldown_is_per_symbol(self) -> None:
+        now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+        eth = Symbol(base="ETH", quote="USD")
+        last = {str(BTC_USD): now}  # BTC just emitted; ETH never has
+        assert _gremlin_due(last, BTC_USD, timedelta(hours=4), now=now) is False
+        assert _gremlin_due(last, eth, timedelta(hours=4), now=now) is True

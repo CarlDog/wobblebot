@@ -392,6 +392,54 @@ def _build_advisor(
     return CascadingAdvisorAdapter(heuristic=heuristic, llm=llm)
 
 
+def _build_gremlin_advisor(
+    advisor: AdvisorConfig, cloud_wiring: _CloudWiring | None
+) -> AdvisorPort | None:
+    """The P4.4c standalone gremlin adapter, when enabled (else None).
+
+    Same construction path as every other seat; the role string is the
+    firewall hook (``_BLOCKED_ROLES``, directional classification).
+    """
+    gremlin = advisor.gremlin
+    if not gremlin.enabled:
+        return None
+    adapter = _build_advisor_adapter(
+        provider=gremlin.provider,
+        model=gremlin.model,
+        prompt_file=gremlin.prompt_file,
+        inference_params=gremlin.inference_params,
+        role="gremlin",
+        cloud_wiring=cloud_wiring,
+    )
+    _LOGGER.info(
+        "chaos gremlin enabled (provider=%s, model=%s, min_interval_minutes=%d) — "
+        "directional calls, scored by the outcome ledger, never applied",
+        gremlin.provider,
+        gremlin.model,
+        gremlin.min_interval_minutes,
+    )
+    return adapter
+
+
+def _gremlin_due(
+    last_emit: dict[str, datetime],
+    symbol: Symbol,
+    min_interval: timedelta,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Whether the gremlin's per-symbol cooldown has elapsed (P4.4c).
+
+    In-memory state — a daemon restart resets it, same posture as
+    pause state. Successful emissions call ``mark`` via the caller;
+    failures don't, so a flaky call retries next tick instead of
+    silently skipping a whole cooldown window.
+    """
+    current = now if now is not None else datetime.now(UTC)
+    last = last_emit.get(str(symbol))
+    return last is None or current - last >= min_interval
+
+
 def _moe_model_label(advisor: AdvisorConfig) -> str:
     """Compact, operator-facing summary of a MoE lineup.
 
@@ -541,8 +589,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     current_grids: dict[str, CurrentGridParams],
     model_name: str,
     stop_event: asyncio.Event,
+    gremlin_advisor: AdvisorPort | None = None,
+    gremlin_model: str = "",
+    gremlin_min_interval: timedelta = timedelta(minutes=240),
 ) -> int:
     started_at = time.monotonic()
+    gremlin_last_emit: dict[str, datetime] = {}
     cycles_run = 0  # one cycle = one symbol's pass
     cycles_succeeded = 0
     sweeps_run = 0  # one sweep = one tick across every symbol
@@ -589,6 +641,28 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
             )
             if ok:
                 cycles_succeeded += 1
+            # P4.4c: the gremlin rides beside the main advisor — same
+            # summary inputs, its own persisted suggestion
+            # (role="gremlin", graded by the outcome ledger, never
+            # applied). Cooldown-gated per symbol; marked only on
+            # success so a flaky call retries next tick.
+            if gremlin_advisor is not None and _gremlin_due(
+                gremlin_last_emit, symbol, gremlin_min_interval
+            ):
+                gremlin_ok = await _run_cycle(
+                    gremlin_advisor,
+                    summary_builder,
+                    advise_storage,
+                    symbol=symbol,
+                    metrics_lookback=metrics_lookback,
+                    news_lookback=news_lookback,
+                    news_limit=news_limit,
+                    news_match_coin=news_match_coin,
+                    current_grid=current_grids[symbol.base],
+                    model_name=gremlin_model,
+                )
+                if gremlin_ok:
+                    gremlin_last_emit[str(symbol)] = datetime.now(UTC)
 
     try:
         await run_poll_loop(
@@ -654,8 +728,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
         )
 
     model_name_holder: list[str] = []
+    gremlin_advisor: AdvisorPort | None = None
     try:
         advisor = _build_advisor(config.advisor, model_name_holder, cloud_wiring=cloud_wiring)
+        gremlin_advisor = _build_gremlin_advisor(config.advisor, cloud_wiring)
     except (ValueError, FileNotFoundError) as exc:
         _LOGGER.error(
             "advisor setup failed: %s",
@@ -719,16 +795,22 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
             current_grids=current_grids,
             model_name=model_name,
             stop_event=stop_event,
+            gremlin_advisor=gremlin_advisor,
+            gremlin_model=config.advisor.gremlin.model,
+            gremlin_min_interval=timedelta(minutes=config.advisor.gremlin.min_interval_minutes),
         )
     finally:
 
-        async def _close_advisor() -> None:
-            aclose = getattr(advisor, "aclose", None)
-            if aclose is not None:
-                await aclose()
+        async def _close_advisors() -> None:
+            # The main advisor and (when enabled) the gremlin each hold
+            # their own HTTP client.
+            for adapter in (advisor, gremlin_advisor):
+                aclose = getattr(adapter, "aclose", None) if adapter is not None else None
+                if aclose is not None:
+                    await aclose()
 
         phases: list[tuple[str, Any]] = [
-            ("close_advisor", _close_advisor),
+            ("close_advisors", _close_advisors),
             ("close_observe_storage", observe_storage.close),
             ("close_news_storage", news_storage.close),
             ("close_advise_storage", advise_storage.close),

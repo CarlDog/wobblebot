@@ -12,6 +12,7 @@ from wobblebot.config.advisor import (
     ArbitratorConfig,
     AutoApplyConfig,
     ExpertConfig,
+    GremlinConfig,
     InferenceParams,
 )
 
@@ -247,3 +248,19 @@ class TestSubConfigDefaults:
         p = AutoApplyConfig()
         assert p.enabled is False
         assert p.max_spacing_change_percentage == Decimal("20")
+
+    def test_gremlin_off_by_default_and_runs_hot(self) -> None:
+        """P4.4c: disabled unless the operator opts in; the default
+        temperature is deliberately above the panel's (the leap is the
+        charter), and the cooldown default yields ~6 calls/day/symbol."""
+        g = GremlinConfig()
+        assert g.enabled is False
+        assert g.provider == "ollama"
+        assert g.inference_params.temperature == Decimal("1.0")
+        assert g.min_interval_minutes == 240
+        assert g.prompt_file == "config/prompts/gremlin.md"
+
+    def test_gremlin_is_frozen(self) -> None:
+        g = GremlinConfig()
+        with pytest.raises(ValidationError):
+            g.enabled = True  # type: ignore[misc]

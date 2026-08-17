@@ -138,11 +138,10 @@ class TestShippedPrompts:
             ("news.md", "news", "advisor_recommendation_v1"),
             ("arbitrator.md", "arbitrator", "advisor_recommendation_v1"),
             ("operator.md", "operator", "operator_intent_v1"),
-            # gremlin.md ships with role "custom" until the v1.1 build promotes
-            # a first-class "gremlin" role into PromptRole + ExpertRole (so it
-            # can be named specifically in _BLOCKED_ROLES). It's a design
-            # artifact for now; see docs/release/v1.1/adaptive-grid.md.
-            ("gremlin.md", "custom", "advisor_recommendation_v1"),
+            # P4.4c promoted the first-class "gremlin" role (PromptRole +
+            # _BLOCKED_ROLES + the cli/advise standalone observer); the
+            # design artifact became the live prompt.
+            ("gremlin.md", "gremlin", "advisor_recommendation_v1"),
         ],
     )
     def test_shipped_prompt_loads(

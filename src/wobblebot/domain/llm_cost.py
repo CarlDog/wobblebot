@@ -28,6 +28,7 @@ LLMRole = Literal[
     "news",  # MoE expert
     "arbitrator",  # MoE arbitrator
     "single",  # single-LLM advisor (non-MoE path)
+    "gremlin",  # the Chaos Gremlin's directional calls (P4.4c)
     "unknown",  # fallback for adapter contexts that can't classify
 ]
 

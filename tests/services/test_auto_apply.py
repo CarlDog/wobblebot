@@ -188,6 +188,19 @@ class TestRoleEligibility:
         assert "role='news'" in reason
         assert "ADR-007" in reason
 
+    def test_gremlin_role_blanket_rejects(self) -> None:
+        """P4.4c: the gremlin is scored, never applied — even if its
+        recommendations dict somehow carried a whitelisted numeric key,
+        the role gate refuses before any bounds check."""
+        suggestion = _suggestion(
+            role="gremlin",
+            recommendations={"spacing_percentage": 1.1},
+        )
+        result = evaluate_auto_apply(suggestion, _grid(), _auto_apply(), symbol="BTC")
+        assert result.role_eligible is False
+        assert result.applied_keys == []
+        assert "role='gremlin'" in result.rejected_keys[0].reason
+
     def test_aggregated_role_with_news_in_opinions_still_applies(self) -> None:
         """An MoE-aggregated recommendation that included a news expert
         in expert_opinions still applies for whitelisted keys when
