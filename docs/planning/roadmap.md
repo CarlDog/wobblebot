@@ -1767,10 +1767,15 @@ the detail; the full backlog index is
    control-file guard so a Google rendering change reads as "watcher
    broke," not "not published"). 3,379 tests, pylint 10.00, mypy clean.
    Remaining before the scoreboard means anything: the Q2 dump import +
-   the operator call on where the canonical ledger run executes (the
-   NAS advise.db is the ledger's home; every run so far used scratch
-   copies). P4.4+ (weather_report, daily summary, historian) per the
-   register's ordering.
+   the canonical scoring run. **P4.4+ plan ratified same day**
+   (`docs/planning/p4-completion-plan.md`, four operator decisions):
+   clocks first — P4.4 trace_id write-side → directional evaluator
+   dispatch (MUST precede the Gremlin's first emission) → the Chaos
+   Gremlin (standalone, `_BLOCKED_ROLES`, no MoE dependency) — then
+   P4.5 weather_report (NAS Ollama), P4.6 Historian (after the
+   Q2-dump scoring; data gate matured 2026-08-16), P4.7 cost-honesty
+   dashboard. Daily summary parked; canonical scoring runs execute in
+   the NAS tools container.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
