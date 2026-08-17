@@ -51,6 +51,10 @@ x-wobblebot-defaults: &wobblebot-defaults
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    # Atlas Cloud (OpenAI-compatible gateway; the quant seat's
+    # xai/grok-4.5 is reachable only through it). NOTE the exact
+    # name — cli/advise reads ATLASCLOUD_API_KEY, not ATLAS_API_KEY.
+    ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
     # ---- News ingestion (CryptoCompare — retired upstream; key only
     # matters with a paid CoinDesk Data plan + enabled: true) -------
     CRYPTOCOMPARE_API_KEY: ${CRYPTOCOMPARE_API_KEY:-}
