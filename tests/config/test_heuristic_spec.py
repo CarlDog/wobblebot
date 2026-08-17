@@ -25,12 +25,13 @@ class TestLoadShippedSpec:
     def test_committed_default_loads_and_validates(self) -> None:
         spec = load_heuristic_spec(_SHIPPED_SPEC)
         assert len(spec.curve) == 8
-        assert spec.fee_floor == pytest.approx(0.52)
+        # 2 x the 0.40% maker rate (Kraken's post-2026-07-09 schedule).
+        assert spec.fee_floor == pytest.approx(0.80)
         # All four guards present and enabled by default.
         assert spec.guards.directional_runaway.enabled
         assert spec.guards.defensive_drawdown.widen_factor == pytest.approx(1.5)
         assert spec.guards.dont_fix_working.cycles_min == 8
-        assert spec.guards.fee_floor_calm.near_floor_spacing == pytest.approx(0.68)
+        assert spec.guards.fee_floor_calm.near_floor_spacing == pytest.approx(1.05)
 
 
 class TestLoaderErrors:
@@ -55,7 +56,7 @@ class TestLoaderErrors:
         f.write_text(_MINIMAL, encoding="utf-8")
         spec = load_heuristic_spec(f)
         assert len(spec.curve) == 2
-        assert spec.fee_floor == pytest.approx(0.52)  # code default
+        assert spec.fee_floor == pytest.approx(0.80)  # code default
         assert spec.guards.defensive_drawdown.enabled is True  # code default
 
 

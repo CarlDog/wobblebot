@@ -23,12 +23,12 @@ File format (``config/heuristic/quant.yml``)::
       - {vol: 0.0008, spacing: 0.65}
       - {vol: 0.002,  spacing: 0.90}
       ...
-    fee_floor: 0.52
+    fee_floor: 0.80
     guards:
       directional_runaway: {enabled: true, threshold: -0.05}
       defensive_drawdown:  {enabled: true, threshold: -0.05, widen_factor: 1.5}
       dont_fix_working:    {enabled: true, win_rate_min: 0.85, cycles_min: 8, drawdown_max: -0.02}
-      fee_floor_calm:      {enabled: true, calm_vol: 0.001, near_floor_spacing: 0.68}
+      fee_floor_calm:      {enabled: true, calm_vol: 0.001, near_floor_spacing: 1.05}
 
 ``curve`` is required (≥2 points) — it feeds the ``defensive_drawdown``
 guard's widen floor and has no sensible default. Every scalar / guard
@@ -124,7 +124,7 @@ class FeeFloorCalmGuard(BaseModel):
 
     enabled: bool = True
     calm_vol: float = Field(default=0.001, ge=0)
-    near_floor_spacing: float = Field(default=0.68, gt=0)
+    near_floor_spacing: float = Field(default=1.05, gt=0)
 
     class Config:
         frozen = True
@@ -151,7 +151,8 @@ class HeuristicSpec(BaseModel):
     """
 
     curve: list[CurvePoint] = Field(min_length=2)
-    fee_floor: float = Field(default=0.52, gt=0)
+    # 2 x the 0.40% Kraken maker rate (post-2026-07-09 schedule).
+    fee_floor: float = Field(default=0.80, gt=0)
     guards: HeuristicGuards = Field(default_factory=HeuristicGuards)
 
     class Config:

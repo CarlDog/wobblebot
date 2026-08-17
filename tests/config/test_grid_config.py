@@ -228,10 +228,10 @@ class TestSpacingCoversFees:
     """Soak-surfaced finding 2026-05-20: GridConfig now rejects spacing
     settings that can't possibly profit after 2 × maker fee.
 
-    Kraken base-tier maker fee is 0.26%, so each completed cycle pays
-    0.52% in fees. Spacing must STRICTLY EXCEED that to leave any
-    profit on the cycle. Validation applies to the always-active
-    ``default`` and to every enabled per-coin entry.
+    Kraken Tier-1 maker fee is 0.40% (doubled 2026-07-09, ADR-038), so
+    each completed cycle pays 0.80% in fees. Spacing must STRICTLY
+    EXCEED that to leave any profit on the cycle. Validation applies to
+    the always-active ``default`` and to every enabled per-coin entry.
     """
 
     def _levels(self, spacing_pct: str) -> GridLevels:
@@ -256,11 +256,11 @@ class TestSpacingCoversFees:
         GridConfig(default=self._levels("1.0"))
 
     def test_default_at_breakeven_fails(self) -> None:
-        # Exactly 0.52% spacing = at the fees floor (break-even).
+        # Exactly 0.80% spacing = at the fees floor (break-even).
         # Validation refuses at-or-below threshold; profit must be strictly
         # positive.
         with pytest.raises(ValidationError, match="grid.default"):
-            GridConfig(default=self._levels("0.52"))
+            GridConfig(default=self._levels("0.80"))
 
     def test_default_below_breakeven_fails(self) -> None:
         with pytest.raises(ValidationError, match="grid.default"):

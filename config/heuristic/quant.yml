@@ -33,9 +33,10 @@ curve:
   - {vol: 0.012,  spacing: 2.50}   # whipsaw
   - {vol: 0.014,  spacing: 2.70}   # extreme whipsaw
 
-# Never recommend spacing below 2x the 0.26% maker fee — a tighter grid
-# can't clear fees on a round-trip. Clamps the drawdown guard's floor.
-fee_floor: 0.52
+# Never recommend spacing below 2x the 0.40% maker fee (Kraken doubled
+# the schedule 2026-07-09) — a tighter grid can't clear fees on a
+# round-trip. Clamps the drawdown guard's floor.
+fee_floor: 0.80
 
 # ---------------------------------------------------------------------------
 # Override guards — the heuristic's only opinions. Checked in priority
@@ -85,4 +86,6 @@ guards:
   fee_floor_calm:
     enabled: true
     calm_vol: 0.001
-    near_floor_spacing: 0.68
+    # Scaled with the 2026-07-09 fee doubling (was 0.68 against the
+    # 0.52 floor — same ~1.31x margin over the new 0.80 floor).
+    near_floor_spacing: 1.05

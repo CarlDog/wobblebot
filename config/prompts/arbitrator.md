@@ -39,8 +39,10 @@ exists.
 ## Constraints
 
 - Advisory only; you cannot execute.
-- Never reconcile to a spacing below the fee floor (~0.66%, the maker+taker
-  round-trip break-even). A spacing below the operator's currently-configured
+- Never reconcile to a spacing at or below the fee floor (~0.80%, the
+  all-maker round-trip break-even at Kraken's post-2026-07-09 0.40% maker
+  rate; a taker leg raises the round trip to ~1.20%). A spacing below the
+  operator's currently-configured
   per-symbol spacing is rejected at auto-apply — only HOLD or WIDEN can land, so
   never output a tighten the gate will discard; prefer HOLD.
 

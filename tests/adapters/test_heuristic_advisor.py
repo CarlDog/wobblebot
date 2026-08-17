@@ -152,7 +152,9 @@ def test_ideal_interpolates_between_points(adapter: HeuristicAdvisorAdapter) -> 
 
 
 def test_ideal_flat_clamps_outside_the_range(adapter: HeuristicAdvisorAdapter) -> None:
-    assert adapter._ideal(0.00001) == pytest.approx(0.65)  # below first point
+    # The curve's dead-quiet end (0.65) sits below the post-doubling
+    # 0.80 fee floor, so the floor wins at the low clamp.
+    assert adapter._ideal(0.00001) == pytest.approx(0.80)  # below first point
     assert adapter._ideal(0.5) == pytest.approx(2.70)  # above last point
 
 
