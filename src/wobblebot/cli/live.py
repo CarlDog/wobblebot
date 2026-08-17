@@ -51,7 +51,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, get_args
 
-from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.kraken_exchange import (
+    KrakenAdapter,
+    is_permanent_auth_error,
+    is_temporary_lockout,
+)
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
@@ -78,7 +82,12 @@ from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.grid import compute_grid_levels
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Ticker, Timestamp, fmt_decimal
-from wobblebot.ports.exceptions import OperatorError, StorageError, WobbleBotPortError
+from wobblebot.ports.exceptions import (
+    ExchangeError,
+    OperatorError,
+    StorageError,
+    WobbleBotPortError,
+)
 from wobblebot.ports.notification_events import (
     CommandResultEvent,
     FillEvent,
@@ -257,6 +266,125 @@ def _log_dms_confirmation(
     return unconfirmed_ticks
 
 
+# ADR-037 decision 3: lockout backoff window bounds. 30s doubling to a
+# 10-minute cap — retrying a locked account at tick cadence adds
+# pressure to exactly the counter that is locked (10,500+ lockout
+# errors in one day's log during the 2026-08-15→17 incident).
+_LOCKOUT_BACKOFF_INITIAL_SECONDS = 30.0
+_LOCKOUT_BACKOFF_MAX_SECONDS = 600.0
+# ADR-037 decisions 1 + 6: consecutive permanent-auth failures before
+# the trader key is declared dead and placement pauses.
+_PERMANENT_AUTH_STRIKES = 3
+# ADR-037 decision 3: consecutive DMS reset failures before the
+# "your book is about to die server-side" critical page.
+_DMS_FAILURE_STREAK_ALERT = 3
+
+
+class _AuthEscalation:
+    """ADR-037 per-session escalation state for cli/live's private calls.
+
+    Tracks three independent signals the 2026-08-15→17 incident proved
+    need different handling: Kraken temporary lockout (back off hard),
+    permanent trader-key auth death (pause all placement, decision 6),
+    and a dead-man's-switch reset failure streak (page the operator
+    before Kraken retires the book). All state is per-session; fixing a
+    credential requires a container recreate anyway, so a restart
+    clearing this is the designed recovery path.
+    """
+
+    def __init__(self) -> None:
+        self.backoff_until = 0.0
+        self.backoff_seconds = 0.0
+        self.dms_failure_streak = 0
+        self.permanent_auth_strikes = 0
+        self.auth_paused = False
+
+    def note_success(self) -> bool:
+        """Record any successful private call. Returns True exactly when
+        this ends a DMS-failure episode (caller emits the recovered
+        notice)."""
+        recovered = self.dms_failure_streak >= _DMS_FAILURE_STREAK_ALERT
+        self.dms_failure_streak = 0
+        self.permanent_auth_strikes = 0
+        self.backoff_seconds = 0.0
+        self.backoff_until = 0.0
+        return recovered
+
+    def note_lockout(self) -> float:
+        """Extend the lockout backoff window. Returns the window chosen."""
+        if self.backoff_seconds:
+            self.backoff_seconds = min(_LOCKOUT_BACKOFF_MAX_SECONDS, self.backoff_seconds * 2)
+        else:
+            self.backoff_seconds = _LOCKOUT_BACKOFF_INITIAL_SECONDS
+        self.backoff_until = time.monotonic() + self.backoff_seconds
+        return self.backoff_seconds
+
+    def in_backoff(self) -> bool:
+        return time.monotonic() < self.backoff_until
+
+    def note_permanent_auth(self) -> bool:
+        """Count a permanent-auth failure. Returns True exactly once —
+        on the strike that trips decision 6's all-placement pause."""
+        self.permanent_auth_strikes += 1
+        if self.permanent_auth_strikes >= _PERMANENT_AUTH_STRIKES and not self.auth_paused:
+            self.auth_paused = True
+            return True
+        return False
+
+    def note_dms_failure(self) -> bool:
+        """Count a DMS reset failure. Returns True exactly when the
+        streak reaches the alert threshold."""
+        self.dms_failure_streak += 1
+        return self.dms_failure_streak == _DMS_FAILURE_STREAK_ALERT
+
+
+async def _note_private_call_failure(
+    exc: WobbleBotPortError,
+    escalation: _AuthEscalation,
+    engine: GridEngine,
+    live: LiveConfig,
+    notifier: NotifierPort | None,
+) -> None:
+    """Classify a failed private Kraken call per ADR-037 and escalate.
+
+    Temporary lockout → extend the backoff window (decision 3).
+    Permanent auth → count a strike; on the third, pause ALL placement
+    (decision 6) and page the operator. Anything else is left to the
+    caller's existing per-site warning log.
+    """
+    if not isinstance(exc, ExchangeError):
+        return
+    if is_temporary_lockout(exc):
+        window = escalation.note_lockout()
+        _LOGGER.warning(
+            "Kraken temporary lockout; backing off private calls %.0fs (DMS ping continues)",
+            window,
+            extra={"backoff_seconds": window},
+        )
+        return
+    if is_permanent_auth_error(exc) and escalation.note_permanent_auth():
+        for symbol in live.symbols:
+            engine.pause_symbol(symbol)
+        _LOGGER.error(
+            "trader key permanent auth failure x%d — ALL placement paused (ADR-037 decision 6); "
+            "fix the key and redeploy",
+            _PERMANENT_AUTH_STRIKES,
+            extra={"strikes": _PERMANENT_AUTH_STRIKES},
+        )
+        await notify(
+            notifier,
+            level="critical",
+            title="Trader key dead — all placement paused",
+            message=(
+                f"{_PERMANENT_AUTH_STRIKES} consecutive permanent auth failures on the "
+                "trader key. All symbol placement is paused and private calls stop; "
+                "Kraken's dead-man's-switch will retire any open orders server-side. "
+                "Fix KRAKEN_TRADER_API_KEY/_SECRET and redeploy the stack."
+            ),
+            context={"strikes": _PERMANENT_AUTH_STRIKES, "reason": "auth_failure"},
+        )
+
+
 async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
     bal = await adapter.get_balance("USD")
     return bal.total if bal else Decimal("0")
@@ -396,7 +524,7 @@ async def _prefetch_tickers(
     return tickers
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -404,6 +532,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     started_value_usd: Decimal,
     notifier: NotifierPort | None = None,
     sweep: list[Symbol] | None = None,
+    escalation: _AuthEscalation | None = None,
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
     check. Returns True when the loss cap tripped (caller stops).
@@ -413,7 +542,22 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     the right fallback for callers that don't care. Only the stepping
     loop is ordered — the ticker and trade-history prefetches above are
     order-independent by construction.
+
+    ``escalation`` (ADR-037) carries the session's auth-failure state;
+    ``None`` (tests / callers that don't care) disables escalation.
     """
+    # ADR-037 decisions 3 + 6: inside a lockout backoff window, or with
+    # the trader key declared dead, skip this tick's private-call work
+    # entirely. The DMS ping in _run_loop is governed separately.
+    if escalation is not None and (escalation.auth_paused or escalation.in_backoff()):
+        _LOGGER.debug(
+            "tick %s skipped (auth_paused=%s, in_backoff=%s)",
+            tick,
+            escalation.auth_paused,
+            escalation.in_backoff(),
+            extra={"tick": tick, "auth_paused": escalation.auth_paused},
+        )
+        return False
     # One global OpenOrders fetch per tick, shared across every symbol.
     # Kraken's OpenOrders returns the whole account in a single call; the
     # engine used to fetch per-symbol, so a 5-coin tick fired it 5x and blew
@@ -424,6 +568,14 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     tick_open_orders: list[Order] | None
     try:
         tick_open_orders = await adapter.get_open_orders()
+        if escalation is not None and escalation.note_success():
+            await notify(
+                notifier,
+                level="info",
+                title="Kraken API recovered",
+                message="Private API calls are succeeding again after a failure episode.",
+                context={"tick": tick},
+            )
     except WobbleBotPortError as exc:
         _LOGGER.warning(
             "tick open-orders fetch failed; skipping this tick's steps (tick=%s): %s: %s",
@@ -432,6 +584,8 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             exc,
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
+        if escalation is not None:
+            await _note_private_call_failure(exc, escalation, engine, live, notifier)
         tick_open_orders = None
 
     tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
@@ -470,6 +624,23 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                     "offside": result.offside,
                 },
             )
+            # ADR-037 decision 2: the engine held this symbol because
+            # its book vanished externally. The engine returns this
+            # action exactly once (subsequent ticks read skipped_paused)
+            # so this page cannot spam.
+            if result.action == "held_book_vanish":
+                await notify(
+                    notifier,
+                    level="critical",
+                    title=f"Book vanished: {symbol} — trading held",
+                    message=(
+                        f"{symbol}'s open orders left the exchange without the engine "
+                        "cancelling them (DMS purge or manual cancel). Placement is "
+                        f"HELD for {symbol} until you resume it (Discord: "
+                        f"'resume {symbol}'). Investigate before resuming."
+                    ),
+                    context={"symbol": str(symbol), "reason": "book_vanish", "tick": tick},
+                )
             # Stage 5.5: emit a notification on fills so the operator
             # sees activity in Discord without tailing logs.
             if result.fills > 0:
@@ -523,6 +694,8 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             exc,
             extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
         )
+        if escalation is not None:
+            await _note_private_call_failure(exc, escalation, engine, live, notifier)
         return False  # No cap trip; loop continues.
     session_pnl = current_value_usd - started_value_usd
     if session_pnl < -live.max_session_loss_usd:
@@ -1072,6 +1245,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     exit_code = 0
     tick = 0
     dms_unconfirmed_ticks = 0
+    # ADR-037: per-session auth-failure escalation state (lockout
+    # backoff, permanent-auth strikes, DMS-failure streak).
+    escalation = _AuthEscalation()
     # Terminal-visible periodic heartbeat (separate from the operator.db
     # daemon_heartbeats row). After the 2026-05-23 logging-audit demoted
     # per-tick "tick complete" from INFO to DEBUG, a long quiet period
@@ -1102,12 +1278,30 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # host is gone. Log-and-continue: never crash a tick over the
             # switch, and a failed ping just leaves the timer at its prior
             # (still-protective) value until the next tick re-pings.
-            if live.dead_mans_switch_seconds is not None:
+            # ADR-037 decision 6: with the trader key declared dead the
+            # DMS ping stops too — every ping would be another invalid
+            # auth attempt feeding the lockout counter, and the switch
+            # retiring the book server-side is the designed outcome.
+            # During a LOCKOUT backoff the ping deliberately continues:
+            # its success is worth more than the marginal lockout-
+            # extension risk, since failing it for 120s costs the book.
+            if live.dead_mans_switch_seconds is not None and not escalation.auth_paused:
                 try:
                     trigger_at = await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
                     dms_unconfirmed_ticks = _log_dms_confirmation(
                         trigger_at, live.dead_mans_switch_seconds, dms_unconfirmed_ticks
                     )
+                    if escalation.note_success():
+                        await notify(
+                            notifier,
+                            level="info",
+                            title="Kraken API recovered",
+                            message=(
+                                "Dead-man's-switch resets are succeeding again after a "
+                                "failure episode."
+                            ),
+                            context={"tick": tick},
+                        )
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "dead man's switch reset failed; continuing (timer retains prior value): "
@@ -1116,6 +1310,24 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                         exc,
                         extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
+                    await _note_private_call_failure(exc, escalation, engine, live, notifier)
+                    if escalation.note_dms_failure():
+                        await notify(
+                            notifier,
+                            level="critical",
+                            title="Dead-man's-switch resets failing",
+                            message=(
+                                f"{_DMS_FAILURE_STREAK_ALERT} consecutive DMS reset failures. "
+                                f"If this persists past {live.dead_mans_switch_seconds}s, Kraken "
+                                "cancels ALL open orders server-side. Likely causes: account "
+                                "lockout (check for another daemon retrying a bad key) or "
+                                "network partition."
+                            ),
+                            context={
+                                "streak": escalation.dms_failure_streak,
+                                "dms_seconds": live.dead_mans_switch_seconds,
+                            },
+                        )
 
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
@@ -1157,7 +1369,14 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 computed_at=sweep_computed_at,
             )
             if await _run_one_tick(
-                adapter, engine, live, tick, started_value_usd, notifier, sweep=sweep
+                adapter,
+                engine,
+                live,
+                tick,
+                started_value_usd,
+                notifier,
+                sweep=sweep,
+                escalation=escalation,
             ):
                 exit_code = 1
                 break

@@ -44,9 +44,10 @@ from typing import Any, NoReturn, Protocol, TypeVar
 
 from dotenv import find_dotenv, load_dotenv
 
+from wobblebot.adapters.kraken_exchange import is_permanent_auth_error
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
-from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.ports.exceptions import ExchangeError, WobbleBotPortError
 from wobblebot.ports.notification_events import NotificationEvent
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
@@ -374,6 +375,46 @@ async def notify(  # pylint: disable=too-many-arguments
             exc,
             extra={"title": title, "error": str(exc)},
         )
+
+
+class PermanentAuthHalt:
+    """ADR-037 decision 1: 3-strike halt for a task retrying dead credentials.
+
+    Shared by the daemons whose scheduled tasks make credentialed
+    Kraken calls (cli/observe's balance poll, cli/harvest's balance
+    read). Retrying a permanently-invalid key is harmful, not
+    resilient — during the 2026-08-15→17 incident each retry re-armed
+    Kraken's ACCOUNT-WIDE temporary lockout and disrupted the trading
+    key. After three consecutive permanent-auth failures the task
+    halts until process restart (fixing a credential requires a
+    container recreate anyway, so restart-clears-halt is the designed
+    recovery path). Transient failures reset the strike count.
+    """
+
+    STRIKES = 3
+
+    def __init__(self, task_name: str) -> None:
+        self.task_name = task_name
+        self.strikes = 0
+        self.halted = False
+
+    def note_success(self) -> None:
+        self.strikes = 0
+
+    def note_failure(self, exc: WobbleBotPortError) -> bool:
+        """Count a failure. Returns True exactly once — on the strike
+        that halts the task (the caller pages the operator then)."""
+        if isinstance(exc, ExchangeError) and is_permanent_auth_error(exc):
+            self.strikes += 1
+            if self.strikes >= self.STRIKES and not self.halted:
+                self.halted = True
+                return True
+        else:
+            # A transient failure (lockout, timeout, 5xx) breaks the
+            # consecutive-permanent chain; only an unbroken run of
+            # credential errors proves the key is dead.
+            self.strikes = 0
+        return False
 
 
 async def run_poll_loop(

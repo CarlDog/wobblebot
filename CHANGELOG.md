@@ -60,6 +60,21 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   `journal_size_limit`. Steady-state footprint lands ~2.3 GB with the
   archive dir growing ~90 MB/year. Unblocks the P3-gated disk-space
   awareness item.
+- **ADR-037 auth-failure escalation** (2026-08-17, from the reader-key
+  incident). Kraken errors now classify (`ExchangeError.codes` +
+  `is_permanent_auth_error` / `is_temporary_lockout`); a shared
+  3-strike `PermanentAuthHalt` stops observe's balance poll and
+  harvest's hourly balance read from retrying a dead key (each retry
+  re-armed the account-wide lockout) with one critical page;
+  `cli/live` gains lockout backoff (30s→10min, DMS ping exempt), a
+  DMS-failure-streak critical alert, and the decision-6 trader-key
+  pause (3 permanent-auth strikes pause ALL placement); and the grid
+  engine holds a symbol whose book vanished externally
+  (`held_book_vanish` → paused, operator resume only) instead of
+  silently re-laying at a stale anchor — the incident's ~40 churn
+  cycles become one page and one Discord resume. New optional
+  `observe.operator_db` wires the pages; recovery notices emit when
+  an episode ends.
 
 ### Changed
 

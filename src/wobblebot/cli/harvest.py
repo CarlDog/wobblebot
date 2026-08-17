@@ -41,6 +41,7 @@ from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    PermanentAuthHalt,
     add_config_args,
     collect_overrides,
     emit_heartbeat,
@@ -79,6 +80,7 @@ async def _run_cycle(
     config: WobbleBotConfig,
     storage: SQLiteStorageAdapter | None,
     notifier: NotifierPort | None = None,
+    halt: PermanentAuthHalt | None = None,
 ) -> bool:
     """One harvest tick: read balance → decide → log → persist if there's
     a proposal. Returns True on a successful read (proposal or no-op),
@@ -91,7 +93,7 @@ async def _run_cycle(
     less bad than killing the loop.
     """
     assert config.harvester is not None  # caller-enforced
-    balance_usd = await _read_usd_balance(adapter)
+    balance_usd = await _read_usd_balance(adapter, halt, notifier)
     if balance_usd is None:
         return False
 
@@ -251,6 +253,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments
         },
     )
 
+    # ADR-037 decision 1: 3-strike halt for the hourly credentialed read.
+    balance_halt = PermanentAuthHalt("harvest.balance_read")
+
     async def _one_cycle() -> None:
         nonlocal ticks_run, ticks_succeeded
         # Stage 8.4.E follow-up — heartbeat at the top of each poll
@@ -259,7 +264,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments
         # balances).
         await emit_heartbeat(operator_storage, "cli/harvest")
         ticks_run += 1
-        ok = await _run_cycle(adapter, config=config, storage=storage, notifier=notifier)
+        ok = await _run_cycle(
+            adapter, config=config, storage=storage, notifier=notifier, halt=balance_halt
+        )
         if ok:
             ticks_succeeded += 1
 

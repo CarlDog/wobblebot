@@ -290,6 +290,12 @@ observe:
   # per hour; completed bars only.
   bar_topup_enabled: true
 
+  # ADR-037: when set, the balance poll's permanent-auth halt pages
+  # the operator (critical notification -> Discord) instead of
+  # retrying a dead reader key silently. Null disables the pages;
+  # the halt itself still applies.
+  operator_db: "data/wobblebot-operator.db"
+
 # ============================================================================
 # Per-CLI: screener (cli/screener)
 # ============================================================================

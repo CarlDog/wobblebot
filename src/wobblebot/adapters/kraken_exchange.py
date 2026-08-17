@@ -147,6 +147,34 @@ _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_INITIAL_BACKOFF_SECONDS = 1.0
 _RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 
+# ADR-037 error classification. Kraken signals credential death and
+# account lockout via specific codes in the envelope's error array;
+# the 2026-08-15→17 incident proved the two classes need opposite
+# handling — permanent-auth must STOP being retried (each retry
+# re-arms the account-wide lockout), while a lockout wants hard
+# backoff. Codes ride on ``ExchangeError.codes``; the message-substring
+# fallback covers errors wrapped/re-raised without codes.
+PERMANENT_AUTH_CODES = frozenset(
+    {
+        "EAPI:Invalid key",
+        "EAPI:Invalid signature",
+        "EGeneral:Permission denied",
+    }
+)
+TEMPORARY_LOCKOUT_CODE = "EGeneral:Temporary lockout"
+
+
+def is_permanent_auth_error(exc: ExchangeError) -> bool:
+    """True iff ``exc`` carries a credential error no retry can fix."""
+    if any(code in PERMANENT_AUTH_CODES for code in exc.codes):
+        return True
+    return any(code in str(exc) for code in PERMANENT_AUTH_CODES)
+
+
+def is_temporary_lockout(exc: ExchangeError) -> bool:
+    """True iff ``exc`` is Kraken's account-wide temporary lockout."""
+    return TEMPORARY_LOCKOUT_CODE in exc.codes or TEMPORARY_LOCKOUT_CODE in str(exc)
+
 
 class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
     """Concrete ``ExchangePort`` for the Kraken REST API.
@@ -968,7 +996,10 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             raise ExchangeError(f"Kraken {path} returned non-object JSON envelope")
         errors = envelope.get("error", [])
         if errors:
-            raise ExchangeError(f"Kraken {path} returned errors: {errors}")
+            raise ExchangeError(
+                f"Kraken {path} returned errors: {errors}",
+                codes=[str(e) for e in errors],
+            )
         result = envelope.get("result")
         if isinstance(result, dict):
             return result

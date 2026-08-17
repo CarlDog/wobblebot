@@ -296,6 +296,14 @@ class ObserveConfig(BaseModel):
     # hour; completed bars only.
     bar_topup_enabled: bool = True
 
+    # ADR-037 decision 1: when set, cli/observe opens operator.db so
+    # the balance poll's permanent-auth halt can write a critical
+    # notification (Discord via cli/operator's forwarder) instead of
+    # failing silently — the 2026-08-15→17 incident retried a dead
+    # reader key every 10 minutes for ~30 hours with zero pages.
+    # None (the default) keeps the pre-ADR-037 quiet behavior.
+    operator_db: str | None = None
+
     class Config:
         frozen = True
 

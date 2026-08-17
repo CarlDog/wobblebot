@@ -589,6 +589,83 @@ class TestAutoReLayout:
         assert result.placed == 6
         assert not any("stale anchor" in r.message for r in caplog.records)
 
+
+class TestBookVanishHold:
+    """ADR-037 decision 2 — a book that vanished EXTERNALLY (exchange
+    cancels the engine didn't perform: DMS purge, manual UI cancel)
+    holds instead of silently re-laying at a stale anchor. The
+    discriminator: an engine cancel updates storage first, so it never
+    surfaces as a fill-detection candidate; a tick-time clean-cancel
+    candidate is external by construction."""
+
+    async def test_external_cancel_holds_instead_of_relayout(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize: 6 orders
+        # Cancel every order on the EXCHANGE ONLY — storage still
+        # believes they are open. This is exactly what a DMS purge
+        # looks like to the next tick.
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            exchange.inject_partial_cancel(order, filled_amount=Decimal("0"))
+
+        result = await engine.step(BTC_USD)
+
+        assert result.action == "held_book_vanish"
+        assert engine.is_paused(BTC_USD)
+        assert engine.hold_reason(BTC_USD) == "book_vanish"
+        # No re-layout happened — the 2026-08-15→17 incident's ~40
+        # silent re-lays are exactly what this pins against.
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 0
+        # Exactly-once contract: the next tick is a plain paused skip.
+        result2 = await engine.step(BTC_USD)
+        assert result2.action == "skipped_paused"
+
+    async def test_resume_clears_hold_and_relays(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            exchange.inject_partial_cancel(order, filled_amount=Decimal("0"))
+        await engine.step(BTC_USD)
+        assert engine.hold_reason(BTC_USD) == "book_vanish"
+
+        assert engine.resume_symbol(BTC_USD)
+
+        assert engine.hold_reason(BTC_USD) is None
+        result = await engine.step(BTC_USD)
+        assert result.action == "stepped"
+        assert result.placed == 6
+
+    async def test_partial_external_cancel_does_not_hold(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """One manual cancel with the rest of the book intact is not a
+        vanish — and it must not arm a permanent hair-trigger for a
+        LATER engine-initiated empty book."""
+        exchange = _exchange()
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        first = (await storage.get_open_orders(symbol=BTC_USD))[0]
+        exchange.inject_partial_cancel(first, filled_amount=Decimal("0"))
+
+        result = await engine.step(BTC_USD)
+        assert result.action == "stepped"
+        assert not engine.is_paused(BTC_USD)
+
+        # Now the ENGINE-cancel shape (storage updated too, the
+        # cap-trip/restart flow): must still re-lay, not hold — the
+        # partial external cancel above was forgiven when the book
+        # was seen non-empty.
+        for order in await storage.get_open_orders(symbol=BTC_USD):
+            await exchange.cancel_order(order)
+            await storage.save_order(order.model_copy(update={"status": "canceled"}))
+        result2 = await engine.step(BTC_USD)
+        assert result2.action == "stepped"
+        assert result2.placed == 6
+        assert not engine.is_paused(BTC_USD)
+
     async def test_normal_tick_with_open_orders_does_not_re_layout(
         self, storage: SQLiteStorageAdapter
     ) -> None:

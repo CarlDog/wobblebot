@@ -117,7 +117,12 @@ _STALE_ANCHOR_AGE = timedelta(hours=24)
 
 
 StepAction = Literal[
-    "initialized", "stepped", "skipped_disabled", "skipped_paused", "skipped_wide_spread"
+    "initialized",
+    "stepped",
+    "skipped_disabled",
+    "skipped_paused",
+    "skipped_wide_spread",
+    "held_book_vanish",
 ]
 
 
@@ -149,6 +154,14 @@ class StepResult:  # pylint: disable=too-many-instance-attributes
     - ``"skipped_wide_spread"`` (ADR-025) — the symbol's bid-ask spread
       exceeded ``safety.max_spread_percentage``; no order placed or
       cancelled this tick, storage untouched.
+    - ``"held_book_vanish"`` (ADR-037 decision 2) — this symbol's open
+      orders left the exchange mid-session with zero fill and without
+      the engine cancelling them (DMS purge, manual cancel on the
+      exchange UI). Returned exactly ONCE, on the transition tick; the
+      symbol is now paused (``reason=book_vanish``) and subsequent
+      ticks return ``"skipped_paused"`` until an operator resume. The
+      caller (cli/live) maps this transition to a critical
+      notification.
 
     ``sells_deferred`` (ADR-032) counts SELL placements the cost-basis
     sell guard deferred — deliberately separate from ``refusals``, whose
@@ -218,6 +231,18 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # rebuilds context on restart" mental model. Persist to storage
         # later if operators report surprise.
         self._paused_symbols: set[Symbol] = set()
+        # ADR-037: why a symbol is paused, when the ENGINE paused it
+        # (reason="book_vanish"). Operator pauses carry no entry.
+        # Per-session like _paused_symbols — a restart clears the hold,
+        # which is fine: session-start re-layout after a deliberate
+        # restart is the ADR's documented "expected empty" case.
+        self._hold_reasons: dict[Symbol, str] = {}
+        # ADR-037: count of orders that left the exchange's open set
+        # this session with ZERO fill and WITHOUT an engine cancel
+        # (engine cancels update storage first, so they never surface
+        # as fill-detection candidates). Non-zero + an empty book =
+        # the book vanished externally — hold, don't re-lay.
+        self._external_cancels: dict[Symbol, int] = {}
         self._stop_requested = False
         # Per-symbol count of consecutive offside ticks. Drives transition +
         # heartbeat logging (log once on entry, periodic summary while
@@ -434,12 +459,23 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if symbol not in self._paused_symbols:
             return False
         self._paused_symbols.discard(symbol)
+        # ADR-037: an operator resume also clears an engine-initiated
+        # hold and its external-cancel evidence — the operator has seen
+        # the page and decided trading may continue; the next tick's
+        # empty book re-lays normally.
+        self._hold_reasons.pop(symbol, None)
+        self._external_cancels.pop(symbol, None)
         _LOGGER.info("%s resumed by operator", symbol, extra={"symbol": str(symbol)})
         return True
 
     def is_paused(self, symbol: Symbol) -> bool:
         """Return ``True`` if ``symbol`` is currently paused."""
         return symbol in self._paused_symbols
+
+    def hold_reason(self, symbol: Symbol) -> str | None:
+        """ADR-037: why the ENGINE paused ``symbol`` (``"book_vanish"``),
+        or ``None`` for an active symbol / a plain operator pause."""
+        return self._hold_reasons.get(symbol)
 
     def paused_symbols(self) -> frozenset[Symbol]:
         """Snapshot of currently paused symbols (immutable copy)."""
@@ -852,6 +888,43 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             if remaining_open:
                 # Orders exist again by any path — starvation (if any) is over.
                 self._starved_ticks.pop(symbol, None)
+                # ADR-037: a lone external cancel with the rest of the
+                # book intact (e.g. one manual cancel on the exchange
+                # UI) must not arm a permanent hair-trigger — the hold
+                # is for the book VANISHING, judged at this same gate.
+                self._external_cancels.pop(symbol, None)
+            if not remaining_open and self._external_cancels.get(symbol, 0) > 0:
+                # ADR-037 decision 2: the book vanished mid-session
+                # without the engine cancelling it (DMS purge after a
+                # lockout, a manual cancel on the exchange UI). During
+                # the 2026-08-15→17 incident this exact state was
+                # re-laid silently ~40 times at stale anchors. Hold
+                # instead: pause the symbol (operator resume only,
+                # option A) and surface the transition to the caller
+                # exactly once via action="held_book_vanish".
+                self._paused_symbols.add(symbol)
+                self._hold_reasons[symbol] = "book_vanish"
+                _LOGGER.error(
+                    "%s book vanished externally (%d order(s) cancelled outside the engine); "
+                    "HOLDING — no re-layout until operator resume",
+                    symbol,
+                    self._external_cancels[symbol],
+                    extra={
+                        "symbol": str(symbol),
+                        "external_cancels": self._external_cancels[symbol],
+                        "hold_reason": "book_vanish",
+                    },
+                )
+                return StepResult(
+                    symbol=symbol,
+                    action="held_book_vanish",
+                    fills=len(fills),
+                    counters_placed=counters_placed,
+                    placed=placed,
+                    refusals=refusals,
+                    sells_deferred=sells_deferred,
+                    trade_ids=trade_ids,
+                )
             if not remaining_open and self._starved_should_attempt(symbol):
                 anchor_age = datetime.now(UTC) - state.created_at.dt
                 drift_percentage = (
@@ -1123,6 +1196,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         for candidate in candidates:
             resolution = await _resolve_terminal_order(self._exchange, candidate, trades_by_order)
             await self._storage.save_order(resolution.order)
+            if not resolution.needs_counter and resolution.order.filled_amount == 0:
+                # ADR-037: a clean cancel/expire the engine did not
+                # perform (its own cancels update storage before this
+                # diff runs, so they never appear as candidates). This
+                # is the book-vanish discriminator — see the re-layout
+                # gate in _step_unlocked.
+                self._external_cancels[symbol] = self._external_cancels.get(symbol, 0) + 1
             if resolution.needs_counter:
                 filled.append(resolution.order)
                 for trade in resolution.trades:
