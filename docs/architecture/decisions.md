@@ -2290,6 +2290,36 @@ extractors stay in adapters, pricing/gating in services, the record in domain.
   command — inherits the guard), ADR-005 (Position model stays deferred; the trades ledger is
   the basis source).
 
+**Amendment (2026-08-16) — the sending half ships; the deferral narrows to the assistant.**
+At operator request, `AnthropicAdvisorAdapter` now sends `cache_control` on its system
+prompt (`prompt_caching: bool = True` constructor knob). Decision 5's deferral is
+*partially* lifted: the capability exists and defaults on, while everything the original
+arithmetic worried about still holds — no deployed config path reaches Anthropic, so
+production behavior is unchanged, and the workloads that DO reach Anthropic (probe
+batteries, seat matrices, `tools/run_cloud_check.py`, any future multi-symbol sweep) fire
+many calls sharing one system prompt within minutes and read the cache immediately. The
+losing case (a deployed single-symbol 4h/12h advisor paying 1.25× writes with zero reads)
+remains exactly the operator decision it was; flipping such a deployment's knob off is one
+constructor argument.
+
+Constraints carried by the implementation, not just this note:
+
+1. **5-minute TTL only.** Bare `{"type": "ephemeral"}` is always sent; a `ttl: "1h"` key
+   would bill 2× against the single `cache_write_per_million_usd` column that models the 5m
+   1.25× premium — silent ledger under-pricing. A test pins the absence of the `ttl` key.
+   Adding a TTL knob requires a second pricing column first (decision 2's constraint,
+   unchanged).
+2. **The cacheable floor is model-dependent and NOT monotonic** (verified 2026-08-16):
+   512 tokens on opus-5, 1024 on sonnet-5/opus-4.8, **4096 on haiku-4-5**. An under-floor
+   prefix silently doesn't cache — normal rate, no write premium,
+   `cache_creation_input_tokens: 0` — so the flag can never lose money on small prompts,
+   but it also means every current role prompt (~620–1,050 tokens) is a no-op on haiku-4-5
+   by arithmetic. Don't debug a zero cache column as a failure before checking the floor.
+3. **The assistant adapter still never sends `cache_control`.** Its system string embeds
+   the per-call engine-state snapshot, so its prefix never repeats; trigger (a)'s
+   prerequisite (split the volatile snapshot out of the system string) stands unchanged and
+   is documented at the build site.
+
 ## ADR-034 — Execute a Transfer Proposal from the Web, via `pending_commands`
 
 **Status:** Accepted (P3, v1.1)
