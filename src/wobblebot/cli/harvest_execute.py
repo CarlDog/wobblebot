@@ -31,7 +31,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import notify
+from wobblebot.cli._common import PermanentAuthHalt, notify
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.domain.value_objects import Timestamp, fmt_decimal
 from wobblebot.ports.exceptions import ExchangeError, StorageError, WobbleBotPortError
@@ -75,7 +75,11 @@ class ExecuteOutcome:
     message: str
 
 
-async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
+async def _read_usd_balance(
+    adapter: ExchangePort,
+    halt: PermanentAuthHalt | None = None,
+    notifier: NotifierPort | None = None,
+) -> Decimal | None:
     """Read the operator's current Kraken USD balance.
 
     Returns ``None`` on transport / parse failure (logged); the
@@ -84,10 +88,19 @@ async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
     has no USD) returns ``0``, not ``None`` — the deficit branch in
     the decision logic handles it correctly.
 
+    ``halt`` (ADR-037 decision 1): the DAEMON cycle passes its 3-strike
+    halt so a dead harvester key stops being retried hourly and pages
+    the operator once. The ``--execute`` money path passes ``None`` —
+    a one-shot has no retry loop to halt, and it already refuses on a
+    failed read.
+
     Lives here rather than in ``cli/harvest`` because it is an input to
     defense layer 6 and the dependency runs one way (harvest imports
     harvest_execute, never the reverse).
     """
+    if halt is not None and halt.halted:
+        _LOGGER.debug("balance read halted (permanent auth failure); skipping")
+        return None
     try:
         balance = await adapter.get_balance("USD")
     except ExchangeError as exc:
@@ -97,7 +110,28 @@ async def _read_usd_balance(adapter: ExchangePort) -> Decimal | None:
             exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
+        if halt is not None and halt.note_failure(exc):
+            _LOGGER.error(
+                "harvest balance read HALTED after %d consecutive permanent auth failures; "
+                "fix KRAKEN_HARVESTER_API_KEY/_SECRET and redeploy",
+                halt.STRIKES,
+                extra={"strikes": halt.STRIKES},
+            )
+            await notify(
+                notifier,
+                level="critical",
+                title="Harvester key dead — balance reads halted",
+                message=(
+                    f"{halt.STRIKES} consecutive permanent auth failures on the "
+                    "harvester key. The hourly harvest cycle is halted; approved "
+                    "withdrawals will refuse until the key works. Fix "
+                    "KRAKEN_HARVESTER_API_KEY/_SECRET and redeploy."
+                ),
+                context={"strikes": halt.STRIKES, "task": halt.task_name},
+            )
         return None
+    if halt is not None:
+        halt.note_success()
     if balance is None:
         return Decimal("0")
     return balance.total

@@ -39,14 +39,18 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    PermanentAuthHalt,
+    ShutdownPhase,
     add_config_args,
     collect_overrides,
     identity,
     install_signal_handlers,
     load_operator_env,
     missing_section_exit,
+    notify,
     parse_days_arg,
     parse_interval_arg,
     parse_intervals_arg,
@@ -63,7 +67,8 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
-from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
+from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.backfill import DEFAULT_RATE_LIMIT_SECONDS, backfill_range
 
 _LOGGER = logging.getLogger("wobblebot.cli.observe")
@@ -106,10 +111,27 @@ async def _poll_prices(
     return persisted
 
 
-async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) -> int:
-    """Persist a balance snapshot. Returns count of entries (or 0 on error)."""
+async def _poll_balances(
+    adapter: KrakenAdapter,
+    storage: SQLiteStorageAdapter,
+    halt: PermanentAuthHalt | None = None,
+    notifier: NotifierPort | None = None,
+) -> int:
+    """Persist a balance snapshot. Returns count of entries (or 0 on error).
+
+    ADR-037 decision 1: after three consecutive permanent-auth
+    failures (dead reader key) the poll HALTS until restart instead of
+    re-arming Kraken's account-wide lockout every cadence — the exact
+    mechanism of the 2026-08-15→17 incident (~136 silent retries,
+    30 hours, zero pages).
+    """
+    if halt is not None and halt.halted:
+        _LOGGER.debug("balance poll halted (permanent auth failure); skipping")
+        return 0
     try:
         balances = await adapter.get_balances()
+        if halt is not None:
+            halt.note_success()
         if not balances:
             _LOGGER.debug("balance poll: account empty; skipping snapshot")
             return 0
@@ -127,6 +149,26 @@ async def _poll_balances(adapter: KrakenAdapter, storage: SQLiteStorageAdapter) 
             exc,
             extra={"error": str(exc), "error_type": type(exc).__name__},
         )
+        if halt is not None and halt.note_failure(exc):
+            _LOGGER.error(
+                "balance poll HALTED after %d consecutive permanent auth failures; "
+                "fix KRAKEN_READER_API_KEY/_SECRET and redeploy",
+                halt.STRIKES,
+                extra={"strikes": halt.STRIKES},
+            )
+            await notify(
+                notifier,
+                level="critical",
+                title="Reader key dead — balance polling halted",
+                message=(
+                    f"{halt.STRIKES} consecutive permanent auth failures on the reader "
+                    "key. Balance polling is halted (price collection continues). "
+                    "Fix KRAKEN_READER_API_KEY/_SECRET in the deployment env and "
+                    "redeploy. Continuing to retry would re-arm Kraken's "
+                    "account-wide lockout."
+                ),
+                context={"strikes": halt.STRIKES, "task": halt.task_name},
+            )
         return 0
 
 
@@ -199,15 +241,18 @@ async def _top_up_bars(
             )
 
 
-async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     adapter: KrakenAdapter,
     storage: SQLiteStorageAdapter,
     observe: ObserveConfig,
     price_interval: timedelta,
     balance_interval: timedelta,
     stop_event: asyncio.Event,
+    notifier: NotifierPort | None = None,
 ) -> int:
     started_at = time.monotonic()
+    # ADR-037 decision 1: 3-strike halt for the credentialed poll.
+    balance_halt = PermanentAuthHalt("observe.balance_poll")
     last_balance_poll = 0.0
     last_bar_topup = 0.0
     price_polls = 0
@@ -237,7 +282,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
         if balance_interval_seconds > 0:
             elapsed_since_balance = time.monotonic() - last_balance_poll
             if elapsed_since_balance >= balance_interval_seconds:
-                persisted_b = await _poll_balances(adapter, storage)
+                persisted_b = await _poll_balances(adapter, storage, balance_halt, notifier)
                 if persisted_b > 0:
                     balance_polls += 1
                 last_balance_poll = time.monotonic()
@@ -449,18 +494,47 @@ async def _main_async(config: WobbleBotConfig) -> int:
     stop_event = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
+    # ADR-037: when operator_db is configured, open it so the balance
+    # poll's permanent-auth halt can page the operator instead of
+    # failing silently for 30 hours (the 2026-08-15→17 incident).
+    # Failure to open is a warning, not fatal — same posture as
+    # cli/maintenance's heartbeat wiring.
+    operator_storage: SQLiteStorageAdapter | None = None
+    notifier: SqliteNotifierAdapter | None = None
+    if config.observe.operator_db is not None:
+        operator_storage = SQLiteStorageAdapter(config.observe.operator_db)
+        try:
+            await operator_storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "failed to open operator.db for notifications; auth-failure pages disabled "
+                "(path=%s): %s",
+                config.observe.operator_db,
+                exc,
+                extra={"path": config.observe.operator_db, "error": str(exc)},
+            )
+            operator_storage = None
+        else:
+            notifier = SqliteNotifierAdapter(operator_storage)
+
     try:
         return await _run_loop(
-            adapter, storage, config.observe, price_interval, balance_interval, stop_event
+            adapter,
+            storage,
+            config.observe,
+            price_interval,
+            balance_interval,
+            stop_event,
+            notifier=notifier,
         )
     finally:
-        await safe_shutdown(
-            [
-                ("close_kraken_adapter", adapter.aclose),
-                ("close_observe_storage", storage.close),
-            ],
-            logger=_LOGGER,
-        )
+        cleanups: list[ShutdownPhase] = [
+            ("close_kraken_adapter", adapter.aclose),
+            ("close_observe_storage", storage.close),
+        ]
+        if operator_storage is not None:
+            cleanups.append(("close_operator_storage", operator_storage.close))
+        await safe_shutdown(cleanups, logger=_LOGGER)
 
 
 def _build_overrides(args: argparse.Namespace) -> dict[str, Any]:

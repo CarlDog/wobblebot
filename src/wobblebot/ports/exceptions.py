@@ -33,7 +33,18 @@ class ExchangeError(WobbleBotPortError):
     Examples: Kraken returns 5xx, request times out, response is
     malformed. Insufficient-funds responses are *not* this error —
     they raise ``InsufficientBalance`` (a domain exception) instead.
+
+    ``codes`` (ADR-037) carries the provider's machine-readable error
+    codes when the adapter has them (e.g. Kraken's ``EAPI:Invalid
+    key``), so callers can classify permanent-auth vs transient
+    without parsing the human message. Adapters that have no code
+    concept leave it empty; classification helpers live with the
+    adapter that defines the codes (``adapters.kraken_exchange``).
     """
+
+    def __init__(self, message: str, *, codes: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.codes: list[str] = list(codes) if codes else []
 
 
 class StorageError(WobbleBotPortError):
