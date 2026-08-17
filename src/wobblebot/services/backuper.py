@@ -33,6 +33,7 @@ Per ``stage-8.2-design.md`` decisions 4 + 5:
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -213,6 +214,26 @@ def prune_old_backups(
     return len(to_delete)
 
 
+_BACKUP_STAMP_RE = re.compile(r"-(\d{8}-\d{4})\.db$")
+
+
+def parse_backup_timestamp(path: Path) -> datetime | None:
+    """UTC timestamp encoded in a backup filename, or ``None``.
+
+    Backups are named ``<stem>-<YYYYMMDD-HHMM>.db``
+    (:func:`backup_database_locally`); the embedded stamp is the
+    authoritative backup time. File mtime deliberately is NOT used as
+    a fallback — an rsync/copy refreshes mtime and would make an old
+    backup look brand new (ADR-036 decision 6's dedupe would then skip
+    a backup that's actually due). A non-conforming name returns
+    ``None`` and the caller treats the age as unknown.
+    """
+    match = _BACKUP_STAMP_RE.search(path.name)
+    if match is None:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%d-%H%M").replace(tzinfo=UTC)
+
+
 def find_latest_backup(dest_dir: Path, *, db_stem: str) -> Path | None:
     """Return the most recent backup file for ``db_stem``, or ``None``.
 
@@ -344,6 +365,7 @@ __all__ = (
     "BackupVerificationResult",
     "backup_database_locally",
     "find_latest_backup",
+    "parse_backup_timestamp",
     "prune_old_backups",
     "verify_backup_restoration",
 )

@@ -870,6 +870,37 @@ class MaintenanceConfig(BaseModel):
     # Destination directory for archive CSVs.
     archive_dir: str = "data/archive"
 
+    # ---- Retention (ADR-036) ---- #
+
+    # Per-table retention horizons in days: rows older than the horizon
+    # are archived (gzipped CSV in archive_dir) then deleted, on the
+    # same maintenance_prune cadence as the price-snapshots prune.
+    # Table names MUST come from the code-side prunable registry
+    # (services/retention.PRUNABLE_TABLES — news_items /
+    # conversation_turns / notifications); an unknown name is a boot
+    # error, and forensic tables (orders, trades, transfer_*, ...) are
+    # not in the registry at all, so no config value can name them.
+    # Empty map (the default) prunes nothing beyond price_snapshots.
+    retention: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("retention")
+    @classmethod
+    def _retention_days_in_range(cls, value: dict[str, int]) -> dict[str, int]:
+        """Horizons must be 1..3650 days. Key names are validated at
+        daemon boot against the prunable registry (config/ can't import
+        services/ without inverting the layer order)."""
+        for table, days in value.items():
+            if not 1 <= days <= 3650:
+                raise ValueError(
+                    f"retention horizon for {table!r} must be 1..3650 days, got {days}"
+                )
+        return value
+
+    # Home DB for the news_items retention entry. Same
+    # explicit-over-inferred rule as prune_source_db; operator.db
+    # tables resolve via operator_db below.
+    news_db: str | None = None
+
     # ---- Backup ---- #
 
     # Destination directory for SQLite .backup output.
@@ -878,6 +909,14 @@ class MaintenanceConfig(BaseModel):
     # How many newest daily backups to keep per source DB. Older
     # backups are deleted after each backup write.
     keep_n_daily_backups: int = Field(default=7, ge=0, le=365)
+
+    # ADR-036 decision 6 — same-day dedupe: skip a DB's backup when its
+    # newest existing backup is younger than this. The backup cycle
+    # fires on daemon start, so without this a bouncy deploy day burns
+    # several of the keep_n_daily slots on near-identical copies
+    # (observed 2026-08-15: four same-day backups, real depth ~3 days).
+    # 0 disables the dedupe (every cycle backs up unconditionally).
+    min_backup_interval_hours: float = Field(default=20.0, ge=0.0, le=168.0)
 
     # ---- Logging ---- #
 

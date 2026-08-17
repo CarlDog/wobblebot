@@ -884,8 +884,26 @@ maintenance:
   prune_source_db: "data/wobblebot-observe.db"
 
   # Where pruned snapshots are archived BEFORE delete. Created if
-  # missing. CSV format with stable header.
+  # missing. CSV format with stable header; new archives write
+  # gzipped (.csv.gz) since ADR-036.
   archive_dir: "data/archive"
+
+  # ADR-036 per-table retention horizons (days). Rows older than the
+  # horizon are archived (gzipped CSV in archive_dir) then deleted, on
+  # the maintenance_prune cadence. Only tables in the code-side
+  # prunable registry may appear here (news_items / conversation_turns
+  # / notifications); an unknown name refuses to boot, and forensic
+  # tables (orders, trades, transfer_*, pending_commands, ...) are not
+  # prunable at all. Remove a line (or the whole block) to keep that
+  # table forever. 90 is the ADR-036 ratified default for all three.
+  retention:
+    news_items: 90
+    conversation_turns: 90
+    notifications: 90
+
+  # Home DB for the news_items retention entry (conversation_turns +
+  # notifications resolve via operator_db below).
+  news_db: "data/wobblebot-news.db"
 
   # Where SQLite .backup output goes. Created if missing.
   backup_dir: "data/backups"
@@ -893,6 +911,13 @@ maintenance:
   # Newest N backups per source DB are kept; older ones are deleted
   # after each successful backup write.
   keep_n_daily_backups: 7
+
+  # ADR-036 same-day dedupe: skip a DB's backup when its newest backup
+  # is younger than this many hours. The backup task fires on daemon
+  # start, so restart-heavy days would otherwise burn several
+  # keep_n_daily slots on near-identical copies. 0 = back up every
+  # cycle unconditionally.
+  min_backup_interval_hours: 20.0
 
   log_format: plain                       # plain | json
   log_file_path: "data/logs/maintenance.log"  # daily rotation, 7-day retention. null = stderr only.

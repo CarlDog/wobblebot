@@ -11,9 +11,12 @@ Pure-ish service helpers consumed by ``cli/maintenance``:
 
 Per ``stage-8.2-design.md`` decisions 2, 3, 6:
 
-- CSV format (zero new deps; readable everywhere).
-- Only ``price_snapshots`` gets pruned in v1.0. Audit tables stay
-  forever per the design doc.
+- CSV format (zero new deps; readable everywhere). Since ADR-036 a
+  ``.gz`` destination writes gzipped.
+- ``price_snapshots`` was the ONLY pruned table in v1.0; ADR-036
+  extended retention to the chatty tables via the registry in
+  :mod:`wobblebot.services.retention` (forensic tables stay forever,
+  denylisted in code).
 - VACUUM uses a raw ``sqlite3.Connection.execute("VACUUM")`` because
   the command can't run inside ``aiosqlite``'s deferred-transaction
   wrapper. The brief sync call is fine — VACUUM is a maintenance
@@ -23,6 +26,7 @@ Per ``stage-8.2-design.md`` decisions 2, 3, 6:
 from __future__ import annotations
 
 import csv
+import gzip
 import logging
 import sqlite3
 from datetime import UTC, datetime
@@ -70,6 +74,12 @@ def vacuum_database(db_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute("VACUUM")
+        # ADR-036 decision 7 — reclaim the WAL file too. VACUUM
+        # checkpoints WAL content but leaves the -wal file at its
+        # high-water size; TRUNCATE resets it to zero (measured
+        # 2026-08-16: ~200 MB of idle WAL across the production DBs).
+        # No-op on non-WAL databases.
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.commit()
     except sqlite3.Error as exc:
         raise StorageError(f"VACUUM failed on {db_path}: {exc}") from exc
@@ -114,7 +124,15 @@ def archive_price_snapshots_to_csv(snapshots: list[PriceSnapshot], dest_path: Pa
     if dest_path.exists():
         raise FileExistsError(f"archive target already exists; refusing to overwrite: {dest_path}")
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    with dest_path.open("w", newline="", encoding="utf-8") as f:
+    # ADR-036 decision 5 — a ``.gz`` destination writes gzipped
+    # (~6-8x smaller); any other suffix keeps the v1.0 plain CSV so
+    # existing callers and tests are untouched.
+    opener = (
+        gzip.open(dest_path, "wt", newline="", encoding="utf-8")
+        if dest_path.suffix == ".gz"
+        else dest_path.open("w", newline="", encoding="utf-8")
+    )
+    with opener as f:
         writer = csv.writer(f)
         writer.writerow(_CSV_HEADER)
         for snap in snapshots:

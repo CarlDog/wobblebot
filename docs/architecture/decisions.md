@@ -2597,14 +2597,18 @@ burned the "7 daily" slots down to ~3 calendar days of real depth.
 2. **Protected keeps.** `advisor_suggestions` (the 2,586-row P4 counterfactual-scoring corpus,
    ADR-035) keeps forever while P4 is live. `llm_calls` keeps forever (operator call: it is
    the cost-forensics record and small). `ohlc_bars` (canonical compact price history),
-   `balance_snapshots`/`balance_entries` (the equity curve), and the tiny identity/state
-   tables (`users`, `user_preferences`, `reanchor_snoozes`, `daemon_heartbeats` — an upsert,
-   4 rows) all keep.
-3. **New 90-day archive-then-delete horizons** for the chatty tables: `news_items` (news DB),
-   `conversation_turns`, `notifications`, `status_report_history` (operator DB). Operator
-   config sets only the horizon days under `maintenance.retention:`; absent key = no pruning
-   (safe default). The advisor reads a 24h news lookback and a 10-turn Discord context, so 90d
-   is generous for every live consumer.
+   `balance_snapshots`/`balance_entries` (the equity curve), and the bounded upserts
+   (`users`, `user_preferences`, `reanchor_snoozes`, `daemon_heartbeats`,
+   `status_report_history` — keyed rows that update in place, they don't grow) all keep.
+3. **New 90-day archive-then-delete horizons** for the chatty tables: `news_items` (news DB,
+   pruned by `fetched_at` so every row gets its full residence regardless of publish date),
+   `conversation_turns`, `notifications` (operator DB). Implementation note (2026-08-16):
+   `status_report_history` was in this list when the ADR was drafted, but its schema is a
+   `PRIMARY KEY (channel_id, user_id)` upsert — bounded, nothing to prune — so it moved to
+   the keeps in decision 2. The v1 registry archives always; a straight-delete mode waits
+   until a table actually wants one. Operator config sets only the horizon days under
+   `maintenance.retention:`; absent key = no pruning (safe default). The advisor reads a 24h
+   news lookback and a 10-turn Discord context, so 90d is generous for every live consumer.
 4. **`price_snapshots` keeps its existing dedicated knob** (`prune_price_snapshots_older_than_days`,
    30d, shipped v1.0). Folding it into the retention map was considered and skipped — config
    churn with zero behavior change.
