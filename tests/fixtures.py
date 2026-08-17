@@ -65,13 +65,19 @@ def safety_config(
     max_orders: int = 100,
     sell_guard_enabled: bool = True,
     max_loss_pct: str = "1.0",
+    max_coin_inventory: str = "100000",
+    max_total_inventory: str = "100000",
 ) -> SafetyConfig:
-    """Permissive default — individual tests tighten one cap to test it."""
+    """Permissive default — individual tests tighten one cap to test it.
+    The ADR-039 inventory caps are permissive here too (their schema
+    defaults, 40/300, would trip unrelated tests placing $40+ books)."""
     return SafetyConfig(
         max_total_exposure_usd=Decimal(max_total),
         max_daily_spend_usd=Decimal(max_daily),
         max_per_coin_exposure_usd=Decimal(max_per_coin),
         max_orders_per_coin=max_orders,
+        max_per_coin_inventory_usd=Decimal(max_coin_inventory),
+        max_total_inventory_usd=Decimal(max_total_inventory),
         sell_guard=SellGuardConfig(
             enabled=sell_guard_enabled,
             max_loss_percentage=Decimal(max_loss_pct),

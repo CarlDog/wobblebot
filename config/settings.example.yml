@@ -105,6 +105,16 @@ safety:
   max_per_coin_exposure_usd: 100.0    # per-coin cap
   max_orders_per_coin: 20             # count cap, per-coin
 
+  # ADR-039 inventory caps: the caps above bound the ORDER BOOK; these
+  # bound the POSITION — held inventory at average COST basis plus open
+  # BUY notional. Cost, not mark-to-market (an MTM cap re-opens buying
+  # as price falls). BUY placement only; a SELL releases headroom and
+  # is never blocked. Sells that the ADR-032 guard defers keep their
+  # inventory counted here — that pairing is the point: a coin whose
+  # sells cannot fire stops accumulating instead of ratcheting.
+  max_per_coin_inventory_usd: 40.0
+  max_total_inventory_usd: 300.0
+
   # ADR-032 cost-basis sell guard: defers (never cancels) a SELL whose
   # net-of-fees proceeds fall more than max_loss_percentage below the
   # symbol's replayed average cost basis. Enforced (unlike the retired

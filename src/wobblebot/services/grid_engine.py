@@ -83,9 +83,12 @@ from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cost_basis import SellGuard
 from wobblebot.services.exposure import (
+    buy_notional_usd,
+    coin_inventory_cost_usd,
     daily_spend_usd,
     notional_usd,
     total_exposure_usd,
+    total_inventory_cost_usd,
 )
 from wobblebot.services.reconciler import _resolve_terminal_order
 
@@ -1433,7 +1436,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     # ------------------------------------------------------------------ safety caps
 
-    async def _check_safety(
+    async def _check_safety(  # pylint: disable=too-many-return-statements
         self,
         symbol: Symbol,
         level: GridLevel,
@@ -1468,5 +1471,23 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # 2026-05-22 incident behind it.
             if await daily_spend_usd(self._storage) + proposed > cap.max_daily_spend_usd:
                 return _SafetyDecision(ok=False, reason="max_daily_spend_usd")
+
+            # ADR-039 inventory caps: the four caps above bound the
+            # order BOOK; these bound the POSITION — held inventory at
+            # average cost plus open BUY notional. BUY-side only by
+            # construction: a SELL (counter-orders included) releases
+            # headroom and must never be refused here. Cost basis, not
+            # MTM — see the config comment for why.
+            coin_inventory = await coin_inventory_cost_usd(self._storage, symbol)
+            if (
+                coin_inventory + buy_notional_usd(coin_open) + proposed
+                > cap.max_per_coin_inventory_usd
+            ):
+                return _SafetyDecision(ok=False, reason="max_per_coin_inventory_usd")
+
+            total_inventory = await total_inventory_cost_usd(self._storage)
+            all_open_buys = buy_notional_usd(await self._storage.get_open_orders())
+            if total_inventory + all_open_buys + proposed > cap.max_total_inventory_usd:
+                return _SafetyDecision(ok=False, reason="max_total_inventory_usd")
 
         return _SafetyDecision(ok=True)

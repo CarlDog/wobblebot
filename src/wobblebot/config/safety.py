@@ -41,6 +41,18 @@ class SafetyConfig(BaseModel):
     max_daily_spend_usd: Decimal = Field(gt=Decimal("0"))
     max_per_coin_exposure_usd: Decimal = Field(gt=Decimal("0"))
     max_orders_per_coin: int = Field(gt=0)
+
+    # ADR-039 inventory caps (2026-08-17). The four caps above bound the
+    # ORDER BOOK; these bound the POSITION — held inventory at average
+    # COST basis plus open BUY notional. Cost, not mark-to-market: an
+    # MTM figure shrinks as price falls and would re-open buying into a
+    # falling market. Gates BUY placement only — a SELL releases
+    # headroom and is never blocked by these. Born from the 2026-08
+    # reader-key incident's churn-buys ($55 of BTC the commitment caps
+    # could not see) plus the restart-ratchet (each deploy's boot
+    # re-layout buys ~$5 the sell guard then defers below basis).
+    max_per_coin_inventory_usd: Decimal = Field(default=Decimal("40"), gt=Decimal("0"))
+    max_total_inventory_usd: Decimal = Field(default=Decimal("300"), gt=Decimal("0"))
     sell_guard: SellGuardConfig = Field(default_factory=SellGuardConfig)
     # ADR-025 pre-placement spread guard: skip the whole tick (not a
     # per-order safety-cap arm) when the symbol's bid-ask spread is too

@@ -1023,6 +1023,84 @@ def _multi_exchange(
     )
 
 
+class TestInventoryCaps:
+    """ADR-039 — the caps that bound the POSITION, not the book."""
+
+    @staticmethod
+    async def _seed_btc_inventory(storage: SQLiteStorageAdapter, cost_usd: str) -> None:
+        """One BUY trade putting cost_usd of BTC inventory on the books."""
+        from wobblebot.domain.models import Trade
+
+        px = Decimal("50000")
+        amt = Decimal(cost_usd) / px
+        await storage.save_trade(
+            Trade(
+                id=f"T-{uuid4()}",
+                order_id=f"O-{uuid4()}",
+                symbol=BTC_USD,
+                side=OrderSide.BUY,
+                price=Price(amount=px, currency="USD"),
+                amount=Amount(value=amt, asset="BTC"),
+                fee=Decimal("0"),
+                cost=Decimal(cost_usd),
+                executed_at=Timestamp(dt=datetime.now(UTC) - timedelta(hours=1)),
+            )
+        )
+
+    async def test_per_coin_inventory_blocks_buys_not_sells(
+        self,
+        storage: SQLiteStorageAdapter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # $50 of held BTC at cost vs a $55 inventory cap: the first $10
+        # BUY would land at 50+10 > 55 -> ALL buys refused; the sell
+        # side must place untouched (sells release headroom).
+        await self._seed_btc_inventory(storage, "50")
+        engine = GridEngine(
+            _exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_coin_inventory="55"),
+        )
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+        assert result.placed == 3  # the 3 SELL levels
+        assert result.refusals == 3  # the 3 BUY levels
+        reasons = [
+            getattr(r, "reason", None)
+            for r in caplog.records
+            if "refused by safety cap" in r.getMessage()
+        ]
+        assert reasons.count("max_per_coin_inventory_usd") == 3
+
+    async def test_total_inventory_backstop(self, storage: SQLiteStorageAdapter) -> None:
+        # Per-coin permissive; total cap of $55 against $50 held -> BUYs
+        # refused on the account-wide axis.
+        await self._seed_btc_inventory(storage, "50")
+        engine = GridEngine(
+            _exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_total_inventory="55"),
+        )
+        result = await engine.step(BTC_USD)
+        assert result.placed == 3
+        assert result.refusals == 3
+
+    async def test_under_cap_places_full_grid(self, storage: SQLiteStorageAdapter) -> None:
+        # $10 held vs $55 cap: 10 + 3x$10 buys = $40 <= 55 -> nothing refused.
+        await self._seed_btc_inventory(storage, "10")
+        engine = GridEngine(
+            _exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_coin_inventory="55", max_total_inventory="55"),
+        )
+        result = await engine.step(BTC_USD)
+        assert result.placed == 6
+        assert result.refusals == 0
+
+
 class TestMultiSymbol:
     async def test_independent_grid_state_per_symbol(self, storage: SQLiteStorageAdapter) -> None:
         engine = GridEngine(

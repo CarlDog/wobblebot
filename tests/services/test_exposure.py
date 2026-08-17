@@ -19,14 +19,17 @@ import pytest
 import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.services.exposure import (
     SPEND_COMMITTED_STATUSES,
+    buy_notional_usd,
     coin_exposure_usd,
+    coin_inventory_cost_usd,
     daily_spend_usd,
     notional_usd,
     total_exposure_usd,
+    total_inventory_cost_usd,
 )
 
 pytestmark = pytest.mark.unit
@@ -128,3 +131,69 @@ class TestDailySpend:
         midnight = datetime(2026, 8, 10, 0, 0, 1, tzinfo=UTC)
         await storage.save_order(_order(price="100", amount="0.2", created=midnight))
         assert await daily_spend_usd(storage, now=_NOW) == Decimal("20")
+
+
+def _trade(
+    *,
+    symbol: str = "BTC/USD",
+    side: OrderSide = OrderSide.BUY,
+    price: str = "50000",
+    amount: str = "0.0002",
+    fee: str = "0",
+    minutes_ago: int = 0,
+) -> Trade:
+    sym = Symbol.from_string(symbol)
+    px = Decimal(price)
+    amt = Decimal(amount)
+    return Trade(
+        id=f"T-{uuid4()}",
+        order_id=f"O-{uuid4()}",
+        symbol=sym,
+        side=side,
+        price=Price(amount=px, currency="USD"),
+        amount=Amount(value=amt, asset=sym.base),
+        fee=Decimal(fee),
+        cost=px * amt,
+        executed_at=Timestamp(dt=_NOW - timedelta(minutes=minutes_ago)),
+    )
+
+
+class TestBuyNotional:
+    def test_filters_to_buys_only(self) -> None:
+        orders = [
+            _order(side=OrderSide.BUY, price="100", amount="0.1"),
+            _order(side=OrderSide.SELL, price="200", amount="0.1"),
+        ]
+        assert buy_notional_usd(orders) == Decimal("10")
+
+
+class TestInventoryCost:
+    """ADR-039 — inventory at average cost basis, via the sell guard's replay."""
+
+    @pytest.mark.asyncio
+    async def test_buys_accumulate_at_cost_with_fees(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_trade(_trade(price="50000", amount="0.0002", fee="0.04", minutes_ago=2))
+        await storage.save_trade(_trade(price="60000", amount="0.0002", fee="0.05", minutes_ago=1))
+        # replay capitalizes fees: (10 + 0.04) + (12 + 0.05) = 22.09
+        inv = await coin_inventory_cost_usd(storage, Symbol.from_string("BTC/USD"))
+        assert inv == Decimal("22.09")
+
+    @pytest.mark.asyncio
+    async def test_sells_release_headroom_at_average(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_trade(_trade(price="50000", amount="0.0004", minutes_ago=2))  # $20
+        await storage.save_trade(
+            _trade(side=OrderSide.SELL, price="55000", amount="0.0002", minutes_ago=1)
+        )
+        # Half the quantity sold -> half the cost basis remains.
+        inv = await coin_inventory_cost_usd(storage, Symbol.from_string("BTC/USD"))
+        assert inv == Decimal("10")
+
+    @pytest.mark.asyncio
+    async def test_no_trades_is_zero(self, storage: SQLiteStorageAdapter) -> None:
+        assert await coin_inventory_cost_usd(storage, Symbol.from_string("BTC/USD")) == Decimal("0")
+
+    @pytest.mark.asyncio
+    async def test_total_spans_symbols(self, storage: SQLiteStorageAdapter) -> None:
+        await storage.save_trade(_trade(symbol="BTC/USD", price="50000", amount="0.0002"))
+        await storage.save_trade(_trade(symbol="ETH/USD", price="2000", amount="0.005"))
+        assert await total_inventory_cost_usd(storage) == Decimal("20")

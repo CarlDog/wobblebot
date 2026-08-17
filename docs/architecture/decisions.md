@@ -2858,6 +2858,84 @@ method, adapters implement it, the engine takes rates by injection.
 entry (discovery receipts), CLAUDE.md quarterly audit item (now the backstop, not the
 detector — the tripwire is).
 
-<!-- ADR-038 is the last in this file; new ADRs append below. -->
+## ADR-039 — Inventory Caps: Bound the Position, Not Just the Book
+
+**Status:** Accepted (operator ratified 2026-08-17: per-coin $40, total backstop $300)
+**Date:** 2026-08-17
+
+**Context:** The four safety caps bound the ORDER BOOK — open-order notional and committed
+daily spend. Held inventory appears nowhere in their math. The 2026-08 reader-key incident
+exposed the gap ($55 of BTC churn-buys the caps could not see, because every cancel-all
+reset the open-order ledger), and the follow-up analysis quantified the steady state:
+**$262.65 of inventory at cost against a $150 total-exposure cap that saw $90 of open
+orders** — BTC alone at $111 (2.8× the $40 per-coin cap), ETH at $54. The analysis also
+found the ratchet still turning after ADR-037: every deliberate restart's boot re-layout
+buys near price within seconds, the ADR-032 sell guard defers the counter-SELL below cost
+basis, and inventory steps up ~$5 per deploy (BTC: stable ~$50 for ten weeks, then
+$50→$110 across six days of incident churn plus three deploys). The mechanism is a one-way
+valve: buys fill freely while the sell side is guard-deferred, and no cap watches the
+accumulating result.
+
+**Decision:**
+
+1. **Two additive inventory caps, at average COST basis:** `max_per_coin_inventory_usd`
+   (ratified $40) and `max_total_inventory_usd` (ratified $300, a backstop). A BUY
+   placement requires `inventory@cost + open BUY notional + proposed ≤ cap`. The four
+   existing caps keep their exact semantics — the book caps bound what the engine commits;
+   the inventory caps bound what it holds.
+2. **Cost basis, deliberately not mark-to-market.** An MTM figure shrinks as price falls,
+   re-opening buying into a falling market — authorizing exactly the averaging-down the cap
+   exists to prevent. Cost is monotonic under buys; only completed SELLs release headroom,
+   so an over-cap coin resumes buying only after its inventory actually turns over. Basis
+   comes from the sell guard's own `replay_average_cost` (fees capitalized, pre-history
+   clamped) — the two money-path consumers of basis cannot disagree.
+3. **BUY-side only, by construction.** A SELL — counter-orders included — releases headroom
+   and is never refused by these caps. The pairing with the ADR-032 guard is the point: a
+   coin whose sells cannot fire (below basis) stops accumulating instead of ratcheting.
+4. **Open SELLs are excluded from the inventory sum** (new `buy_notional_usd` helper): a
+   resting sell is capital coming back, and counting it would double-charge the position.
+
+**Expected production effect at ratified values, stated before deploy:** BTC ($111) and ETH
+($54) freeze for new buys immediately — their re-layouts place the sell side only until
+inventory turns over. DOGE ($29.85) and ADA ($29.79) sit one fill from their line; SOL and
+XRP have headroom. This is the intended posture, not a side effect. The stranded-capital
+HOLD (2026-08-16) is untouched: nothing is sold, existing positions ride; only future
+accumulation is capped.
+
+**Alternatives considered:**
+- **Fold holdings into the existing caps (MTM).** Rejected for the falling-price
+  perversity above.
+- **Fold holdings into the existing caps (cost).** Rejected: it silently changes four
+  ratified knobs' meanings and their operator-tuned values at once; additive caps leave
+  the book caps meaning what they always meant.
+- **Fix the loops instead (rely on ADR-037 + restart hygiene).** Rejected as sufficient:
+  ADR-037 closed the mid-session external-cancel loop, but the deliberate-restart path is
+  "expected empty" by design, and normal downtrend operation (buys fill, sells defer) is
+  the same valve with no loop at all.
+- **Also count SELL notional** (symmetry with the book caps). Rejected — see decision 4.
+
+**Consequences:**
+- The one-way valve is bounded: worst-case per-coin inventory is the cap, worst-case
+  account inventory is the backstop.
+- A refusal reason (`max_per_coin_inventory_usd` / `max_total_inventory_usd`) joins the
+  refusals count in `StepResult` — visible in layout summaries as placed-N-refused-M.
+- Two storage reads + a trades replay per BUY placement attempt (~120-row ledger today) —
+  negligible at tick cadence; revisit with a basis cache only if the ledger grows into
+  the tens of thousands.
+- The risk advisor's `PerformanceSummary` does not yet carry the inventory figures — its
+  prompt-field contract is stable (ADR-022 lineage). Queued as a follow-up, not smuggled
+  in here.
+
+**Compliance:** Caps stay inside Bot Core (`GridEngine._check_safety`), per the
+financial-power-fragmentation invariant; the math lives in `services/exposure.py` beside
+its siblings so the engine and any future reporter read one implementation. No layer
+boundaries move.
+
+**References:** the caps-split analysis (2026-08-17, this session's roadmap entry);
+ADR-032 (the sell guard whose deferrals are half of the valve); ADR-037 decision 5 (the
+explicit follow-up this ADR discharges); ratified-decisions "caps split" (scoping — global
+vs per-symbol — which this ADR leaves untouched).
+
+<!-- ADR-039 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

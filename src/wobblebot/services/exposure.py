@@ -28,9 +28,16 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, time
 from decimal import Decimal
 
+from wobblebot.domain.cost_basis import replay_average_cost
 from wobblebot.domain.models import Order, OrderSide
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.storage import StoragePort
+
+# ADR-039: enough to cover every trade the deployment has ever recorded
+# (the ledger is ~120 rows after 3 months); mirrors the sell guard's
+# fetch-everything posture — an inventory figure computed from a
+# truncated ledger would silently understate the position.
+_INVENTORY_TRADE_FETCH_LIMIT = 100_000
 
 # Order statuses that represent committed funds for the
 # max_daily_spend_usd cap: "open" = funds locked at the exchange,
@@ -58,6 +65,47 @@ async def coin_exposure_usd(storage: StoragePort, symbol: Symbol) -> Decimal:
 async def total_exposure_usd(storage: StoragePort) -> Decimal:
     """Open-order notional across every symbol (the total exposure cap)."""
     return notional_usd(await storage.get_open_orders())
+
+
+def buy_notional_usd(orders: Iterable[Order]) -> Decimal:
+    """Sum ``price × amount`` over the BUY orders only (ADR-039).
+
+    The inventory caps count open BUYs as imminent inventory; open
+    SELLs are excluded — a sell *releases* capital, and blocking buys
+    because sells are resting would double-count the position.
+    """
+    return notional_usd(o for o in orders if o.side is OrderSide.BUY)
+
+
+async def coin_inventory_cost_usd(storage: StoragePort, symbol: Symbol) -> Decimal:
+    """Held inventory for one symbol at average COST basis (ADR-039).
+
+    Cost basis, deliberately not mark-to-market: an MTM figure shrinks
+    as price falls, which would re-open buying into a falling market —
+    the exact averaging-down the inventory cap exists to prevent. Cost
+    is monotonic under buys; only completed sells release headroom.
+    Reuses the sell guard's ``replay_average_cost`` so the two
+    money-path consumers of basis can never disagree.
+    """
+    trades = await storage.get_trades(symbol=symbol, limit=_INVENTORY_TRADE_FETCH_LIMIT)
+    basis = replay_average_cost(trades)
+    if basis.average_cost is None:
+        return Decimal("0")
+    return basis.quantity * basis.average_cost
+
+
+async def total_inventory_cost_usd(storage: StoragePort) -> Decimal:
+    """Held inventory across every symbol at cost basis (ADR-039)."""
+    trades = await storage.get_trades(limit=_INVENTORY_TRADE_FETCH_LIMIT)
+    by_symbol: dict[Symbol, list] = {}
+    for trade in trades:
+        by_symbol.setdefault(trade.symbol, []).append(trade)
+    total = Decimal("0")
+    for symbol_trades in by_symbol.values():
+        basis = replay_average_cost(symbol_trades)
+        if basis.average_cost is not None:
+            total += basis.quantity * basis.average_cost
+    return total
 
 
 async def daily_spend_usd(storage: StoragePort, *, now: datetime | None = None) -> Decimal:

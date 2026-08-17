@@ -1678,6 +1678,24 @@ the detail; the full backlog index is
    one cancel, one page, one Discord resume. The caps-split churn
    blind spot is an explicit follow-up, deliberately not smuggled in.
 
+   **The caps-split analysis → ADR-039 inventory caps** ✅ **2026-08-17**
+   (the follow-up ADR-037 decision 5 explicitly queued, with the incident
+   as its dataset). Quantified from the full trades ledger: **$262.65 of
+   inventory at cost against the $150 total-exposure cap, which saw only
+   $90 of open orders** — BTC $111 (2.8× its $40 per-coin cap), ETH $54.
+   New finding: the ratchet outlived ADR-037 — every deliberate restart's
+   boot re-layout buys near price, the ADR-032 guard defers the
+   counter-sell below basis, and inventory steps ~$5/deploy (BTC stable
+   ~$50 for ten weeks, then $50→$110 across the incident + three
+   deploys). Operator ratified option B: two additive caps at average
+   COST basis (`max_per_coin_inventory_usd` $40,
+   `max_total_inventory_usd` $300 backstop) gating BUY placement only —
+   sells always release headroom; MTM rejected because it re-opens
+   buying as price falls. Reuses the sell guard's `replay_average_cost`
+   so the two basis consumers cannot disagree. Expected on deploy: BTC +
+   ETH freeze for new buys until their inventory turns over — the
+   intended posture, consistent with the stranded-capital HOLD.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

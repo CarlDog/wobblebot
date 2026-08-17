@@ -60,6 +60,19 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   `journal_size_limit`. Steady-state footprint lands ~2.3 GB with the
   archive dir growing ~90 MB/year. Unblocks the P3-gated disk-space
   awareness item.
+- **ADR-039 inventory caps** (2026-08-17). The four safety caps bound
+  the order book; production held $262.65 of inventory at cost against
+  a $150 total cap that saw $90 of open orders (BTC $111 vs the $40
+  per-coin cap — 2.8×), accumulated through a one-way valve: buys fill
+  while the ADR-032 sell guard defers the counter-sells below basis.
+  Two additive caps now bound the POSITION at average cost basis
+  (`max_per_coin_inventory_usd` $40, `max_total_inventory_usd` $300):
+  BUY placement requires inventory@cost + open BUY notional + proposed
+  ≤ cap; sells are never blocked (they release headroom); cost basis
+  not MTM (an MTM cap re-opens buying as price falls). Reuses the sell
+  guard's `replay_average_cost`. At current holdings BTC and ETH
+  freeze for new buys immediately — the intended posture.
+
 - **ADR-038 live fee rates** (2026-08-17). Kraken doubled Tier-1 spot
   fees effective 2026-07-09 (0.25/0.40 → **0.40% maker / 0.80% taker**)
   and the copied constants drifted silently for five weeks. Now:
