@@ -2558,6 +2558,103 @@ rec-scoring as the deferred P4 half of the same tool.
 - Operator decision 2026-06-04 (auto-apply off during soak to preserve the learning signal),
   confirmed still in force by `advisor.auto_apply.enabled: false` in the live config.
 
-<!-- ADR-035 is the last in this file; new ADRs append below. -->
+## ADR-036 — Data Retention: Forensic Denylist, Per-Table Horizons, and the Multipliers
+
+**Status:** Accepted
+**Date:** 2026-08-16
+
+**Context:** v1.0 deliberately pruned exactly one table — `price_snapshots`, 30-day
+archive-then-delete from the observe DB (stage-8.2 decision 3); everything else grows forever.
+The v1.1 register deferred the full policy until retention windows could be "set against real
+growth curves." Measured against the live NAS deployment at ~91 days of soak (2026-08-16):
+
+| Consumer | Size | Trend |
+|---|---|---|
+| observe.db | 170 MB (+167 MB WAL) | ~capped — snapshots roll at 30d |
+| news.db | 29 MB (+31 MB WAL) | unbounded, ~0.65 MB/day |
+| advise.db | 15 MB (+16 MB WAL) | growing — P4 scoring corpus |
+| live + operator + harvest | ~5 MB | slow, unbounded |
+| `data/backups/` | ~1.5 GB | 7 × everything, dominated by 7 × 170 MB observe copies |
+| `data/archive/` | 82 MB / 52 CSVs | unbounded forever, ~620 MB/yr, no rotation |
+
+The finding that reframed the work: **the tables are mostly fine; the multipliers are not.**
+77% of live data already rolls at 30 days. The unbounded growth is (a) the archive dir — the
+only path with no rotation at all, (b) the backup rotation multiplying every retained byte by
+7, and (c) ~200 MB of WAL files nothing ever truncates. Plus one behavioral bug: the backup
+cycle fires on daemon start, so the 2026-08-15 deploy day wrote **four** same-day backups and
+burned the "7 daily" slots down to ~3 calendar days of real depth.
+
+**Decision:** (operator ratified the four open calls 2026-08-16)
+
+1. **Forensic denylist lives in code, not config.** `orders`, `trades` (ADR-032's cost-basis
+   replay requires full history), `transfer_proposals`, `transfer_results`,
+   `pending_commands` (the ADR-002 approval audit trail), `applied_suggestions`, `cap_trips`,
+   `grid_state`, and `engine_state` are never prunable. Mechanism: a code-side registry of
+   PRUNABLE tables (name → home-DB config field, timestamp column, archive-vs-delete) is the
+   allowlist; a config key naming any table outside it is a validation error. A test pins
+   that the forensic tables are absent from the registry. Config can therefore never be
+   miswritten into deleting the money ledger.
+2. **Protected keeps.** `advisor_suggestions` (the 2,586-row P4 counterfactual-scoring corpus,
+   ADR-035) keeps forever while P4 is live. `llm_calls` keeps forever (operator call: it is
+   the cost-forensics record and small). `ohlc_bars` (canonical compact price history),
+   `balance_snapshots`/`balance_entries` (the equity curve), and the tiny identity/state
+   tables (`users`, `user_preferences`, `reanchor_snoozes`, `daemon_heartbeats` — an upsert,
+   4 rows) all keep.
+3. **New 90-day archive-then-delete horizons** for the chatty tables: `news_items` (news DB),
+   `conversation_turns`, `notifications`, `status_report_history` (operator DB). Operator
+   config sets only the horizon days under `maintenance.retention:`; absent key = no pruning
+   (safe default). The advisor reads a 24h news lookback and a 10-turn Discord context, so 90d
+   is generous for every live consumer.
+4. **`price_snapshots` keeps its existing dedicated knob** (`prune_price_snapshots_older_than_days`,
+   30d, shipped v1.0). Folding it into the retention map was considered and skipped — config
+   churn with zero behavior change.
+5. **Archives gzip on write, keep forever.** New archive CSVs (all tables, including the
+   price-snapshot dailies) write `.csv.gz` (~6-8× smaller → ~90 MB/yr). Existing raw CSVs
+   stay untouched. The archive remains the only copy of sub-hourly price action older than
+   30d — nothing is discarded.
+6. **Backup rotation: 7 daily + same-day dedupe.** The backup cycle skips a DB whose newest
+   backup is younger than `min_backup_interval_hours` (default 20), restoring true 7-day
+   depth under restart churn. No tiered (weekly/monthly) rotation — rejected as
+   over-engineering for a hobby deployment on a NAS.
+7. **WAL hygiene.** `PRAGMA journal_size_limit` on storage connect plus
+   `wal_checkpoint(TRUNCATE)` after the maintenance VACUUM cycle, reclaiming the ~200 MB of
+   idle WAL. First prune of `news_items` deletes roughly half the table; the space returns at
+   the next weekly VACUUM (not immediately) — expected, not a bug.
+8. **This unblocks P3's disk-space awareness.** With retention live, steady state is a
+   ~2.3 GB envelope with slow drift; the future anomaly-daemon thresholds can be simple
+   absolute free-space floors.
+
+**Alternatives considered:**
+- **Tiered backup rotation (daily/weekly/monthly).** Rejected (operator call): deeper history
+  nobody has ever needed, ~2.4 GB steady state, more rotation code.
+- **Compressing backups.** Rejected: the verify cycle (restoration smoke test) would need a
+  decompress step, and disk is cheap on the NAS; simplicity of restore wins.
+- **Pruning by config alone (no code registry).** Rejected as a foot-gun — a typo'd config
+  could name `trades`. The registry makes home-DB, timestamp column, and archive semantics
+  correctness facts in code, and the operator surface is only "how many days."
+- **Deleting archives after 12 months.** Rejected: at ~90 MB/yr gzipped there is no pressure;
+  the tick archive is irreplaceable.
+
+**Consequences:**
+- news.db halves at first prune; operator.db chatter stops accumulating; the archive dir's
+  growth drops ~7×; backup depth becomes honest again. Total steady-state footprint
+  (data + WAL + backups + archive) lands ~2.3 GB.
+- New `MaintenanceConfig` keys: `retention:` map + `min_backup_interval_hours` + a `news_db`
+  target field (the retention registry resolves each table's home DB via existing config
+  fields; news was the only DB maintenance couldn't already name).
+- Restores from archive are `gunzip | import` instead of raw CSV reads — documented in the
+  runbook.
+
+**Compliance:** archive-then-delete keeps the Stage 8.2 discipline (write + verify the export
+before any DELETE). No layer boundaries move — retention stays in `services/maintenance`,
+config in `config/cli.py`, the registry beside the pruners it drives. Schema-drift tests
+cover the new example-file keys; the denylist pin test guards the forensic set.
+
+**References:** stage-8.2-design.md (decisions 3-4, the v1.0 single-table scope);
+`docs/release/v1.1/observability.md` § Data retention policy (the deferred sketch this
+implements); ADR-032 (why `trades` is untouchable); ADR-035 (why `advisor_suggestions` is);
+ADR-002 (why `pending_commands` is). Implementation lands as its own slice after this ADR.
+
+<!-- ADR-036 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
