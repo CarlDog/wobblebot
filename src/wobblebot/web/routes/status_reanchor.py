@@ -18,12 +18,26 @@ transparent guardrail), a heuristic that silently withholds
 information the operator would have acted on is exactly the failure
 mode this project designs against. Show the number; let the operator
 weigh it.
+
+The execution-feedback annotation (2026-08-17 defect) lives under the
+same rule. When the operator's recent re-anchor click executed but the
+engine's safety layers vetoed the near levels, the banner used to
+re-render identically — still urging "consider re-anchoring" while the
+anchor sat at the click-time price, and the honest result tally went
+only to the notifications bell. Now the banner carries the engine's
+own result message verbatim, and when that result demonstrates another
+re-anchor structurally cannot reduce drift (anchor already at price,
+near levels vetoed), the *recommended action* switches to the honest
+levers (snooze / pause / wait for recovery). The banner's presence and
+severity are untouched in every state: drift is still a fact about
+misplaced capital, and downgrading it because the fix is unavailable
+would hide exactly what the operator needs to weigh.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -32,6 +46,7 @@ from wobblebot.config.grid import KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.models import Order
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.ports.operator import PendingCommand, ReanchorCommand
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.ta_metrics import compute_atr
 
@@ -56,6 +71,17 @@ _DRIFT_STRONG_SPACINGS = 4.0
 _AGE_MILD_HOURS = 24
 _AGE_MODERATE_HOURS = 48
 _AGE_STRONG_HOURS = 72
+
+# Execution feedback (2026-08-17 defect). A successful re-anchor of the
+# banner's symbol within this window is surfaced ON the banner — the
+# result used to reach only the notifications bell, so a click whose
+# near levels the guards vetoed looked like it "did nothing".
+_RECENT_REANCHOR_WINDOW_MINUTES = 60
+# "Anchor already at price" threshold, in spacings. A re-anchor moves
+# the anchor to the current price; if it's already within one spacing,
+# another click re-lays essentially the same ladder — and the same
+# guards that vetoed the near levels last time veto them again.
+_ANCHOR_NEAR_SPACINGS = 1.0
 
 
 @dataclass(frozen=True)
@@ -102,6 +128,30 @@ class ReanchorRecommendation:  # pylint: disable=too-many-instance-attributes
     # note on why "not worth re-anchoring" and "fine as-is" are
     # different states). None when stored bars are too thin.
     atr_spacings_per_hour: float | None = None
+    # Distance from the current price to the grid ANCHOR, in spacings.
+    # Deliberately distinct from ``drift_in_spacings``, which measures
+    # to the nearest open ORDER: when the guards veto the near levels
+    # the two diverge (2026-08-17: anchor at the click price, drift
+    # still 2.0), and the divergence is what decides whether another
+    # re-anchor can help at all. Always set by the loader; the default
+    # exists only for dataclass field ordering.
+    anchor_distance_spacings: float | None = None
+    # The engine's own result message from the most recent successful
+    # operator re-anchor of this symbol (pending_commands row,
+    # kind=reanchor, status=dispatched) inside the recency window —
+    # rendered verbatim so the tally has ONE source of truth (that
+    # message is already the audit record; a re-derived phrasing here
+    # would drift). None when no such row exists.
+    recent_reanchor_message: str | None = None
+    recent_reanchor_age_seconds: int | None = None
+    # True when a recent re-anchor already moved the anchor to within
+    # ~one spacing of the current price and drift STILL trips this
+    # banner: the near levels are absent because safety layers vetoed
+    # them, so another re-anchor structurally cannot reduce drift. The
+    # template switches the RECOMMENDED ACTION (snooze / pause / wait
+    # for recovery) on this flag — never the banner's presence or its
+    # severity, per the module invariant.
+    reanchor_wont_help: bool = False
 
 
 def _classify_reanchor_severity(drift_spacings: float, age_seconds: int) -> ReanchorSeverity | None:
@@ -218,6 +268,7 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
     snoozed: set[Symbol],
     price_series: dict[Symbol, list[Decimal]],
     observe_storage: StoragePort | None = None,
+    operator_storage: StoragePort | None = None,
 ) -> tuple[ReanchorRecommendation, ...]:
     """Per-symbol re-anchor recommendations from drift + age heuristic.
 
@@ -227,7 +278,10 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
     tiers; symbols in ``snoozed`` are suppressed entirely;
     per-symbol storage failures are logged + skipped.
     ``price_series`` (the sparkline window) feeds the banner's
-    activity stat — recent range in spacings.
+    activity stat — recent range in spacings. ``operator_storage``
+    feeds the execution-feedback annotation (recent re-anchor
+    results from ``pending_commands``); ``None`` degrades to no
+    annotation, never to no banner.
     """
     if not open_orders:
         return ()
@@ -285,9 +339,92 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
                 projected_fee_usd=projected_fee,
                 recent_range_spacings=recent_range,
                 atr_spacings_per_hour=atr_spacings,
+                anchor_distance_spacings=float(abs(current - state.reference_price) / spacing),
             )
         )
-    return tuple(recommendations)
+    return await _annotate_recent_reanchors(operator_storage, recommendations)
+
+
+def _newest_reanchor_results(
+    rows: list[PendingCommand],
+    banner_symbols: set[Symbol],
+) -> dict[Symbol, tuple[str, int]]:
+    """Newest in-window successful ``(message, age_seconds)`` per symbol.
+
+    Rows arrive oldest-first (the port's ordering), so later matches
+    overwrite earlier ones and each symbol keeps its newest result.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=_RECENT_REANCHOR_WINDOW_MINUTES)
+    latest: dict[Symbol, tuple[str, int]] = {}
+    for row in rows:
+        command = row.command
+        if not isinstance(command, ReanchorCommand) or command.symbol not in banner_symbols:
+            continue
+        result = row.result
+        if result is None or not result.success or result.executed_at.dt < cutoff:
+            continue
+        latest[command.symbol] = (
+            result.message,
+            int((now - result.executed_at.dt).total_seconds()),
+        )
+    return latest
+
+
+async def _annotate_recent_reanchors(
+    operator_storage: StoragePort | None,
+    recommendations: list[ReanchorRecommendation],
+) -> tuple[ReanchorRecommendation, ...]:
+    """Attach execution feedback to banners whose symbol was recently
+    re-anchored; presence and severity are untouched in every branch.
+
+    Runs only when at least one banner passed the severity gate (the
+    zero-banner steady state costs zero extra queries) and does ONE
+    ``pending_commands`` fetch for every banner symbol at once, never
+    per symbol. The fetch is unfiltered by symbol/time because the
+    port offers neither — and its oldest-first ordering means a LIMIT
+    would truncate exactly the newest rows this exists to find, so the
+    whole dispatched+reanchor slice is fetched and filtered here. That
+    slice stays small forever: rows exist only when an operator
+    clicked Re-anchor (or asked the Discord daemon to).
+    """
+    if not recommendations or operator_storage is None:
+        return tuple(recommendations)
+    try:
+        rows = await operator_storage.get_pending_commands(status="dispatched", kinds=("reanchor",))
+    except StorageError as exc:
+        _LOGGER.warning(
+            "recent-reanchor lookup failed; banners render without execution feedback: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
+        return tuple(recommendations)
+    latest = _newest_reanchor_results(rows, {rec.symbol for rec in recommendations})
+    if not latest:
+        return tuple(recommendations)
+    annotated: list[ReanchorRecommendation] = []
+    for rec in recommendations:
+        recent = latest.get(rec.symbol)
+        if recent is None:
+            annotated.append(rec)
+            continue
+        message, age_seconds = recent
+        annotated.append(
+            replace(
+                rec,
+                recent_reanchor_message=message,
+                recent_reanchor_age_seconds=age_seconds,
+                # The guidance switch needs BOTH a demonstrated recent
+                # attempt and an anchor already at price — anchor-near
+                # alone can be a price that wandered back, where a
+                # re-anchor genuinely re-lays the near levels.
+                reanchor_wont_help=(
+                    rec.anchor_distance_spacings is not None
+                    and rec.anchor_distance_spacings <= _ANCHOR_NEAR_SPACINGS
+                ),
+            )
+        )
+    return tuple(annotated)
 
 
 __all__ = (

@@ -18,7 +18,13 @@
   {% for rec in snapshot.reanchor_recommendations %}
     <div class="reanchor-banner reanchor-{{ rec.severity }}" role="status">
       <div class="reanchor-head">
-        <span class="reanchor-title"><span class="reanchor-icon">⚠</span> Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}</span>
+        {# The heading is the RECOMMENDATION; the chip is the SEVERITY.
+           When a just-executed re-anchor left the anchor at price yet
+           drift persists (guards vetoed the near levels, 2026-08-17),
+           urging another re-anchor would be self-contradictory — the
+           heading switches, the severity does not (drift is still a
+           fact about misplaced capital). #}
+        <span class="reanchor-title"><span class="reanchor-icon">⚠</span> {% if rec.reanchor_wont_help %}{{ rec.symbol.base }}/{{ rec.symbol.quote }} still off-grid after re-anchoring{% else %}Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}{% endif %}</span>
         <span class="reanchor-chip">{{ rec.severity }}</span>
       </div>
       {# The stat row mirrors the scoreboard's big-number/small-label
@@ -32,7 +38,8 @@
           <strong>{{ "%.1f"|format(rec.drift_in_spacings) }}</strong>
           <span>spacings off grid</span>
         </div>
-        <div class="reanchor-stat">
+        <div class="reanchor-stat"{% if rec.anchor_distance_spacings is not none %}
+             title="The anchor sits {{ "%.1f"|format(rec.anchor_distance_spacings) }} spacings from the current price. The big drift number is measured to the nearest open ORDER, not the anchor — when safety layers keep re-laid near levels off the book, the two diverge."{% endif %}>
           <strong>{{ rec.anchor_price | usd }}</strong>
           <span>grid anchor</span>
         </div>
@@ -59,8 +66,25 @@
           <span>projected cost (fees)</span>
         </div>
       </div>
+      {# Execution feedback (2026-08-17 defect): what the operator's
+         recent Re-anchor click actually DID, on the very card that
+         solicited it — previously the tally reached only the bell +
+         Discord. The engine's own result message renders verbatim: it
+         is already the audit record, and a re-derived phrasing here
+         would drift from it. Annotation only — never hides or
+         re-tiers the banner (module docstring invariant). #}
+      {% if rec.recent_reanchor_message %}
+        <div class="reanchor-recent">
+          <span class="reanchor-recent-age">↻ ran {{ rec.recent_reanchor_age_seconds | humanize_duration }} ago</span>
+          — {{ rec.recent_reanchor_message }}
+        </div>
+      {% endif %}
       <div class="reanchor-foot">
-        <span class="reanchor-note">Re-anchoring cancels this ladder and re-places it around the current price.</span>
+        {% if rec.reanchor_wont_help %}
+          <span class="reanchor-note">The anchor already sits at the current price — the engine's safety layers refused or deferred the nearest re-laid levels (see the result above), so re-anchoring again can't reduce this drift. The honest levers are snooze, pause, or waiting for price / inventory to recover.</span>
+        {% else %}
+          <span class="reanchor-note">Re-anchoring cancels this ladder and re-places it around the current price.</span>
+        {% endif %}
         <span class="reanchor-actions">
           <form method="post" action="/commands/snooze-reanchor">
             {{ csrf_input(request) }}

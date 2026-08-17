@@ -982,6 +982,22 @@ h2 {
   margin-top: 2px;
 }
 
+/* Execution feedback (2026-08-17): the engine's result message from a
+   recent re-anchor of this symbol, verbatim, on the banner that
+   solicited the click. Secondary text — it annotates the decision
+   facts above it, it doesn't compete with them. */
+.reanchor-recent {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.reanchor-recent-age {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .reanchor-foot {
   display: flex;
   align-items: center;

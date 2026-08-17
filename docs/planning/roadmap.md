@@ -1854,6 +1854,31 @@ the detail; the full backlog index is
    IMAGE_TAG to a stale sha (stale UI form state); caught pre-redeploy
    and repinned to `sha-2e21884`.
 
+   **Re-anchor banner execution feedback** ✅ **2026-08-17** (web UX
+   defect, diagnosed live same day). The operator re-anchored BTC/USD
+   twice; both commands executed end-to-end (anchor moved to the
+   click-time price) but the ADR-039 inventory cap refused the 3 BUYs
+   and the cost-basis guard deferred the nearest SELL — only the +2/+3
+   sells placed, drift-to-nearest-order stayed 2.0 spacings, and the
+   banner re-rendered identically ("did nothing" from the operator's
+   chair; the honest tally reached only the bell + Discord). Fix, per
+   the banner's annotate-never-suppress invariant: the banner now
+   renders the most recent successful dispatched `reanchor` result for
+   its symbol (≤1h old, the engine's audit message verbatim — one
+   source of truth for the tally), and when that result left the
+   anchor within ~1 spacing of price while drift persists (= the
+   guards vetoed the near levels, so another re-anchor structurally
+   cannot reduce drift) the heading + foot note switch the
+   *recommendation* to the honest levers (snooze / pause / wait for
+   recovery). Severity, presence, and both action buttons are
+   untouched in every state — drift is still a fact about misplaced
+   capital. The grid-anchor stat gained a tooltip naming the
+   drift-vs-anchor divergence. Zero-banner steady state does zero
+   extra queries; annotation degrades to absent on any storage
+   failure, never to a missing banner. Nine new tests pin the
+   annotation, the never-suppress invariant, the guidance switch (and
+   its absence without a recent execution), and the degrade paths.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

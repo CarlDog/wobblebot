@@ -27,7 +27,9 @@ symbol*, not *leave it drifted and say nothing*. Second, per the
 advisor philosophy (ADR-002, transparent guardrail), a heuristic that
 silently withholds information the operator would have acted on is
 exactly the failure mode this project designs against. Show the
-number; let the operator weigh it.
+number; let the operator weigh it. The execution-feedback annotation
+(a recent re-anchor's result tally, 2026-08-17) follows the same rule
+— see the ``status_reanchor`` module docstring for the full argument.
 """
 
 from __future__ import annotations
@@ -623,6 +625,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         snoozed,
         price_series,
         observe_storage,
+        operator_storage,
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(

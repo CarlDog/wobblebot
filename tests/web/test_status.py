@@ -16,6 +16,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
+from wobblebot.ports.operator import CommandResult, PendingCommand, ReanchorCommand
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 from wobblebot.web.routes.status import (
@@ -1470,6 +1471,251 @@ class TestReanchorViabilityStat:
             body = client.get("/dashboard").text
         assert "activity: 2h · ATR/hr" in body
         assert "reanchor-stat-sep" in body
+
+
+# --------------------------------------------------------------------- #
+# Re-anchor banner: execution feedback (2026-08-17 defect)              #
+# --------------------------------------------------------------------- #
+
+
+_REANCHOR_TALLY = (
+    "re-anchored BTC/USD: 30000 -> 30600; cancelled 2, " "placed 2/6 (3 refused) (1 sells deferred)"
+)
+
+
+def _dispatched_reanchor(
+    *,
+    symbol: str = "BTC/USD",
+    message: str = _REANCHOR_TALLY,
+    age_minutes: float = 4,
+    status: str = "dispatched",
+) -> PendingCommand:
+    """A pending_commands row shaped like a web-button re-anchor that ran."""
+    base, quote = symbol.split("/")
+    executed = datetime.now(UTC) - timedelta(minutes=age_minutes)
+    return PendingCommand(
+        id=uuid4(),
+        command=ReanchorCommand(symbol=Symbol(base=base, quote=quote)),
+        status=status,  # type: ignore[arg-type]
+        channel_id="web",
+        requesting_user_id="operator",
+        dispatched_at=Timestamp(dt=executed),
+        result=CommandResult(
+            success=status == "dispatched",
+            command_kind="reanchor",
+            message=message,
+            executed_at=Timestamp(dt=executed),
+            side_effects={"symbol": symbol},
+        ),
+        ttl_expires_at=Timestamp(dt=executed + timedelta(minutes=5)),
+        created_at=Timestamp(dt=executed - timedelta(seconds=6)),
+    )
+
+
+async def _seed_vetoed_reanchor_grid(live_storage: SQLiteStorageAdapter) -> Order:
+    """The 2026-08-17 live incident shape: anchor AT the current price
+    (a re-anchor just moved it there) but the nearest open order 2
+    spacings away, because the safety layers vetoed the near levels.
+    With a current price of 30600: drift 2.0 (mild), anchor distance 0.
+    """
+    from wobblebot.domain.grid import GridState
+
+    await live_storage.save_grid_state(
+        GridState(
+            symbol=Symbol(base="BTC", quote="USD"),
+            reference_price=Decimal("30600"),
+            spacing_percentage=Decimal("1.0"),
+            levels_above=3,
+            levels_below=3,
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+    )
+    return _make_order(side="sell", price="31212")
+
+
+@pytest.mark.asyncio
+class TestReanchorExecutionFeedback:
+    """A recent executed re-anchor is visible ON the banner that
+    solicited it (2026-08-17 defect: the honest result tally reached
+    only the notifications bell + Discord, so a click whose near
+    levels the guards vetoed looked like it "did nothing") — and when
+    that result demonstrates another re-anchor cannot reduce drift,
+    the recommended action switches. Annotation only: the banner's
+    presence and severity never change.
+    """
+
+    async def _recs(
+        self,
+        live_storage: SQLiteStorageAdapter,
+        operator_storage: SQLiteStorageAdapter | None,
+        order: Order,
+    ):  # type: ignore[no-untyped-def]
+        from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
+
+        return await load_reanchor_recommendations(
+            live_storage,
+            [order],
+            {Symbol(base="BTC", quote="USD"): Decimal("30600")},
+            {str(order.id): 0},
+            set(),
+            {},
+            None,
+            operator_storage,
+        )
+
+    async def test_recent_executed_reanchor_annotates_banner(
+        self, live_storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The engine's result message lands on the banner, verbatim."""
+        order = await _seed_drifted_grid(live_storage)
+        await operator_storage.save_pending_command(_dispatched_reanchor())
+        recs = await self._recs(live_storage, operator_storage, order)
+        assert len(recs) == 1
+        assert recs[0].recent_reanchor_message == _REANCHOR_TALLY
+        assert recs[0].recent_reanchor_age_seconds == pytest.approx(240, abs=30)
+        # Anchor 30000 vs price 30600 = 2.0 spacings apart: a re-anchor
+        # would genuinely move the ladder, so the guidance stays default.
+        assert recs[0].reanchor_wont_help is False
+
+    async def test_annotation_never_suppresses_or_downgrades(
+        self, live_storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Load-bearing (module docstring invariant): execution feedback
+        changes the recommendation, never the banner's tier or presence."""
+        order = await _seed_drifted_grid(live_storage)
+        bare = await self._recs(live_storage, operator_storage, order)
+        await operator_storage.save_pending_command(_dispatched_reanchor())
+        annotated = await self._recs(live_storage, operator_storage, order)
+        assert len(bare) == len(annotated) == 1
+        assert annotated[0].severity == bare[0].severity == "mild"
+        assert annotated[0].drift_in_spacings == bare[0].drift_in_spacings
+
+    async def test_vetoed_state_switches_guidance(
+        self, live_storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Anchor at price + recent execution = another re-anchor cannot
+        reduce drift; the flag flips while severity stays put."""
+        order = await _seed_vetoed_reanchor_grid(live_storage)
+        await operator_storage.save_pending_command(_dispatched_reanchor())
+        recs = await self._recs(live_storage, operator_storage, order)
+        assert len(recs) == 1
+        assert recs[0].anchor_distance_spacings == pytest.approx(0.0)
+        assert recs[0].reanchor_wont_help is True
+        assert recs[0].severity == "mild"  # NOT downgraded
+        assert recs[0].drift_in_spacings == pytest.approx(2.0)
+
+    async def test_anchor_near_without_recent_execution_keeps_default_guidance(
+        self, live_storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Anchor-near alone can be a price that wandered back — without
+        a demonstrated recent attempt, re-anchor stays the recommendation
+        (it would genuinely re-lay the missing near levels)."""
+        order = await _seed_vetoed_reanchor_grid(live_storage)
+        recs = await self._recs(live_storage, operator_storage, order)
+        assert len(recs) == 1
+        assert recs[0].reanchor_wont_help is False
+        assert recs[0].recent_reanchor_message is None
+
+    async def test_stale_failed_and_other_symbol_rows_do_not_annotate(
+        self, live_storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        order = await _seed_drifted_grid(live_storage)
+        await operator_storage.save_pending_command(
+            _dispatched_reanchor(age_minutes=61)  # outside the 1h window
+        )
+        await operator_storage.save_pending_command(
+            _dispatched_reanchor(status="failed")  # engine refused/aborted
+        )
+        await operator_storage.save_pending_command(
+            _dispatched_reanchor(symbol="ETH/USD")  # someone else's banner
+        )
+        recs = await self._recs(live_storage, operator_storage, order)
+        assert len(recs) == 1
+        assert recs[0].recent_reanchor_message is None
+        assert recs[0].reanchor_wont_help is False
+
+    async def test_lookup_failure_degrades_to_no_annotation(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The annotation must never break the banner it annotates —
+        same posture as the viability stats."""
+        from wobblebot.ports.exceptions import StorageError
+
+        class _Broken(SQLiteStorageAdapter):
+            async def get_pending_commands(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                raise StorageError("boom")
+
+        order = await _seed_drifted_grid(live_storage)
+        broken = _Broken(":memory:")
+        await broken.connect()
+        try:
+            recs = await self._recs(live_storage, broken, order)
+        finally:
+            await broken.close()
+        assert len(recs) == 1
+        assert recs[0].recent_reanchor_message is None
+
+    async def test_unwired_operator_db_degrades_to_no_annotation(
+        self, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        order = await _seed_drifted_grid(live_storage)
+        recs = await self._recs(live_storage, None, order)
+        assert len(recs) == 1
+        assert recs[0].recent_reanchor_message is None
+        assert recs[0].reanchor_wont_help is False
+
+    async def test_render_feedback_and_alternative_guidance(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+        observe_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """Full pipeline, incident shape: the tally renders on the
+        banner, the heading stops urging re-anchor, and the banner +
+        severity chip + BOTH action levers survive untouched."""
+        order = await _seed_vetoed_reanchor_grid(live_storage)
+        await live_storage.save_order(order)
+        await operator_storage.save_pending_command(_dispatched_reanchor())
+        await observe_storage.save_price_snapshot(
+            Symbol(base="BTC", quote="USD"),
+            Price(amount=Decimal("30600"), currency="USD"),
+            Timestamp(dt=datetime.now(UTC)),
+        )
+        with _build_client(operator_storage, live_storage, observe=observe_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "reanchor-banner" in body
+        assert "reanchor-recent" in body
+        assert "placed 2/6" in body  # the engine tally, verbatim
+        assert "still off-grid after re-anchoring" in body
+        assert "Consider re-anchoring" not in body
+        assert 'reanchor-chip">mild' in body  # severity chip untouched
+        # The recommendation switches; the levers never disappear.
+        assert 'action="/commands/reanchor"' in body
+        assert 'action="/commands/snooze-reanchor"' in body
+
+    async def test_render_default_guidance_when_anchor_far(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        live_storage: SQLiteStorageAdapter,
+        observe_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """Feedback without futility: price ran away again after the
+        re-anchor, so the banner shows the result AND still recommends
+        re-anchoring."""
+        order = await _seed_drifted_grid(live_storage)
+        await live_storage.save_order(order)
+        await operator_storage.save_pending_command(_dispatched_reanchor())
+        await observe_storage.save_price_snapshot(
+            Symbol(base="BTC", quote="USD"),
+            Price(amount=Decimal("30600"), currency="USD"),
+            Timestamp(dt=datetime.now(UTC)),
+        )
+        with _build_client(operator_storage, live_storage, observe=observe_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert "reanchor-recent" in body
+        assert "Consider re-anchoring" in body
 
 
 class TestFillFlash:

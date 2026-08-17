@@ -168,6 +168,23 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ### Fixed
 
+- **The re-anchor banner contradicted itself after a guard-vetoed
+  re-anchor** (2026-08-17, diagnosed live). A re-anchor that executed
+  cleanly but had its near levels vetoed (ADR-039 inventory cap on the
+  BUYs, cost-basis guard on the nearest SELL) left drift-to-nearest-order
+  at 2.0 spacings, so the banner re-rendered identically — still urging
+  "consider re-anchoring" while showing the anchor AT the current price,
+  with the honest result tally visible only in the notifications bell.
+  The banner now renders the most recent successful `reanchor` command
+  result for its symbol (≤1h, the engine's audit message verbatim), and
+  when that result proves another re-anchor structurally cannot reduce
+  drift (anchor within ~1 spacing of price, drift persisting) the
+  heading and foot note switch the recommendation to snooze / pause /
+  wait for recovery. Annotation only, per the banner's standing
+  invariant: severity, presence, and both action buttons never change.
+  The grid-anchor stat gained a tooltip explaining that drift is
+  measured to the nearest open order, not the anchor.
+
 - **A paused symbol was blind to its own fills** — a real-money production
   bug. `GridEngine.step` returned `skipped_paused` *before* fill
   detection, so a BTC BUY that executed on Kraken 2026-08-11 while the
