@@ -2657,7 +2657,8 @@ ADR-002 (why `pending_commands` is). Implementation lands as its own slice after
 
 ## ADR-037 — Auth-Failure Escalation: Halt the Task, Hold the Vanished Book, Back Off the Lockout
 
-**Status:** Proposed (operator to ratify — decision 2's resume semantics carry an option set)
+**Status:** Accepted (ratified 2026-08-17: decision 2 = option A; decision 6 added at
+operator request)
 **Date:** 2026-08-17
 
 **Context:** The 2026-08-15→17 reader-key incident. At 2026-08-15 ~20:40 UTC the deployed
@@ -2699,20 +2700,16 @@ taking effect at the evening redeploy). What followed, reconstructed from logs:
    grid was laid out this session, the engine did not cancel it, and OpenOrders comes back
    empty — the engine enters a **book-vanish hold** for that symbol: no re-layout, no new
    placement, one critical notification. Session-start emptiness stays normal (clean
-   shutdown cancels by design; Phase 8.1 reconciliation covers crash recovery). Resume
-   semantics — operator option set:
-   - **(A) Operator resume only** *(recommended)*: the hold reuses the P3 state-aware
-     pause/resume machinery (`pause reason=book_vanish`); the notification names the resume
-     command. An idle grid bot is safe — it only misses fills; ADR-024's philosophy
-     (a deliberate human restart after an abnormal stop) applies exactly.
-   - **(B) Cool-down auto-resume**: re-lay automatically after a configured quiet period
-     (no API errors for N minutes). Less friction, but the incident's lockout pattern —
-     calm minutes between bursts — would have auto-resumed into every cycle.
-   - **(C) A or timeout**: operator resume, else auto-resume after a long ceiling (e.g.
-     6h). Protects an away operator from indefinite idling at the cost of (B)'s failure
-     mode, delayed.
-   Applied to this incident, (A) turns ~40 churn cycles into: one cancel, one page, an idle
-   bot awaiting one Discord command.
+   shutdown cancels by design; Phase 8.1 reconciliation covers crash recovery).
+   **Resume semantics: operator resume only (option A, RATIFIED 2026-08-17).** The hold
+   reuses the P3 state-aware pause/resume machinery (`pause reason=book_vanish`); the
+   notification names the resume command. An idle grid bot is safe — it only misses
+   fills; ADR-024's philosophy (a deliberate human restart after an abnormal stop)
+   applies exactly. Applied to this incident, this turns ~40 churn cycles into: one
+   cancel, one page, an idle bot awaiting one Discord command. (Rejected: (B) cool-down
+   auto-resume — the incident's calm-between-bursts lockout pattern would have
+   auto-resumed into every cycle; (C) operator-resume-or-6h-timeout — (B)'s failure mode,
+   delayed.)
 3. **`EGeneral:Temporary lockout` gets hard backoff and a loud streak alarm.** Non-DMS
    private calls back off exponentially (30s doubling to a 10-minute cap) instead of
    hammering the locked counter at tick cadence. The DMS reset ping alone keeps trying
@@ -2727,14 +2724,24 @@ taking effect at the evening redeploy). What followed, reconstructed from logs:
    commitment-based caps have a churn blind spot, but holdings-aware caps interact with
    the sell guard and offside parks in ways that deserve their own analysis. Recorded as a
    follow-up with this incident as its dataset — not smuggled in here.
+6. **Trading-key permanent-auth failures pause `cli/live` placement entirely**
+   (RATIFIED 2026-08-17, operator addition). When the *trader* key itself hits the
+   decision-1 three-strike permanent-auth threshold, `cli/live` enters an all-symbols
+   placement pause (`pause reason=auth_failure`, same P3 machinery and operator-resume
+   semantics as decision 2) with one critical page, instead of ticking into endless
+   failing calls. Placement is impossible with a dead trader key anyway — the pause makes
+   the state explicit, stops the retry storm from feeding Kraken's lockout counter, and
+   leaves the DMS to retire the book server-side as designed. This is the narrow, correct
+   form of "auth failure shuts down activity": scoped to the one credential whose death
+   actually means trading cannot continue.
 
 **Alternatives considered:**
 - **Global kill-switch on any key failure** (the operator's first instinct, examined at
   their request). Rejected as the *default*: it couples live trading to the least
   important credential, and the fail-safe floor it would rebuild (orders die when control
   is lost) already exists in the DMS. The targeted levers above address the actual harm
-  mechanisms observed. A narrower variant — trading-key auth failures pause `cli/live`
-  placement — is compatible with decision 1 + 2 and can be ratified alongside (A).
+  mechanisms observed; its defensible narrow form — trading-key failures pause `cli/live`
+  — was ratified as decision 6.
 - **Status quo (fail-soft WARNINGs).** Rejected: 30 hours, 11,000 log lines, zero pages,
   $55 of cap-invisible buys is the receipt.
 - **Alert-only (no behavior change).** Rejected for decision 2's case specifically: an
