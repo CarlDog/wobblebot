@@ -1588,6 +1588,95 @@ the detail; the full backlog index is
    consecutive log lines — reconstructing one 08-15 reorder without it
    took two production DB copies and a replay script. Production runs
    `sha-c8ce723`; `b9ec699` + `ee9ceda` ship with the next deploy.
+   *(Superseded 08-16: the repo-quality batch deployed as `sha-f6f3f04`
+   carrying both.)*
+
+   **Post-P3 — prompt caching, data retention, the reader-key incident,
+   and ADR-037** ✅ **2026-08-17** (all three code arcs developed in
+   isolated git worktrees while the seat-matrix Phase B run owned the
+   main tree; merge order caching → retention → ADR-037 once the matrix
+   sentinel drops).
+
+   **Anthropic prompt caching, the sending half** (branch
+   `feat/anthropic-prompt-caching`; ADR-033 amendment). The advisor
+   adapter ships its system prompt as a `cache_control` content block
+   (5-minute TTL only — the ledger's single cache-write column models
+   the 5m 1.25× premium, and a `ttl: "1h"` would silently under-price;
+   a test pins the key's absence). Live-verified against claude-opus-5:
+   call 1 wrote the 1,830-token quant prompt to cache ($0.031898),
+   call 2 read it back at ~0.1× ($0.018725) — **the ledger's math
+   reproduces Anthropic's bill to the mill**. Bonus finds: quant.md is
+   1,830 Anthropic-tokenizer tokens (the ~1,050 chars÷4 estimate was
+   low), and the cacheable floor is non-monotonic across models
+   (opus-5 512 / sonnet-5 1024 / haiku-4-5 4096).
+
+   **ADR-036 data retention, accepted + implemented** (branch
+   `feat/data-retention`). Measured against ~91 days of production: the
+   tables were mostly fine (77% already rolling at 30d); the growth was
+   the **multipliers** — a rotation-less archive dir (~620 MB/yr), a 7×
+   backup rotation (1.5 GB, and fire-on-start burned 4 of 7 "daily"
+   slots on deploy day), ~200 MB of never-truncated WAL. Shipped:
+   90-day archive-then-delete for news_items / conversation_turns /
+   notifications via a code-side registry (forensic tables are not in
+   it — config can never name the money ledger), gzipped archives,
+   same-day backup dedupe aged by filename stamp, WAL
+   checkpoint-truncate + `journal_size_limit`. NAS settings.yml
+   pre-positioned (retention block + `news_db` +
+   `min_backup_interval_hours`).
+
+   **The reader-key incident** (2026-08-15 20:40 UTC → 08-17 02:26 UTC,
+   ~30h; OC memory `54b34bd9`, pinned). The Portainer env session that
+   added the harvester key left the READER key invalid; observe retried
+   it every 10 minutes (~136 failures, WARNING-only, zero pages,
+   `balance_snapshots_saved=0` for a full day). Kraken answered with
+   rolling **account-wide** temporary lockouts (10,500+ errors in
+   live's logs); bursts >120s let the DMS expire → Kraken canceled the
+   whole book → the engine silently re-laid at stale anchors (~40
+   cycles) → **11 BTC churn-fills, $54.79 notional, $0.438290 in fees,
+   that the commitment-based caps could not see** (BTC holdings $81.66
+   vs the $40 cap; fees are P&L drag, not a ledger line — trading fees
+   live in P&L, and the running real-money ledger stays $0.085018).
+   Floors that held: DMS, the ADR-032 sell guard (zero loss-sells),
+   fail-soft ticks. Operator minted a fresh key; verified clean same
+   night. Found by the operator eyeballing the dashboard — which is
+   the finding.
+
+   **Bundled-audit discovery — Kraken DOUBLED the fee schedule
+   2026-07-09 and the code still assumes the old rates.** Computing
+   the incident's exact fees exposed a uniform 0.800% rate — double
+   the documented taker. The full trades history is four clean
+   buckets: 0.25% fills end 2026-07-13, then only 0.40% and 0.80%
+   ever after. Kraken's published schedule + support article confirm:
+   cross-platform fee tiers effective **2026-07-09**, Tier 1
+   ($0+ volume) = **0.40% maker / 0.80% taker** (was 0.25/0.40; the
+   Stage 2.3 measurement recorded 0.26). It hid for five weeks
+   because a new-schedule MAKER fill bills exactly what an
+   old-schedule TAKER did. Every fee assumption in the project is now
+   stale: `KRAKEN_MAKER_FEE_RATE = 0.0026` (feeds the ADR-032 sell
+   guard's net-of-proceeds math — it under-counts fees ~0.3%/round
+   trip), the spacing-vs-fees validator's 0.52% floor (real floor is
+   now **0.80%**, so the aggressive profile's 0.6% spacing would
+   validate and then structurally lose money), the shadow adapter's
+   0.0026/0.0040 defaults (simulations underprice 2×), and the
+   quarterly-audit doctrine text. At the production 3% spacing a
+   maker-maker cycle still clears (~2.2% net, was ~2.5%) — the wide
+   spacing decision gets MORE right, not relitigated. Queued as its
+   own money-path slice (sell guard + validator + shadow defaults +
+   docs); not bundled into tonight's branches.
+
+   **ADR-037 auth-failure escalation, accepted + implemented same
+   night** (branch `feat/adr-037-auth-escalation`). Permanent-auth
+   errors halt the failing TASK after 3 strikes + one critical page
+   (never a global kill — that would couple trading to the flakiest
+   key); a mid-session book-vanish becomes a HOLD via the P3
+   pause/resume machinery (operator resume only — option A ratified;
+   the engine discriminates external cancels structurally, since its
+   own cancels update storage before the fill diff runs); lockout gets
+   30s→10min backoff with the DMS ping exempt + a DMS-failure-streak
+   page; and (decision 6, operator addition) trader-key auth death
+   pauses ALL placement. Applied retroactively, the incident becomes
+   one cancel, one page, one Discord resume. The caps-split churn
+   blind spot is an explicit follow-up, deliberately not smuggled in.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
