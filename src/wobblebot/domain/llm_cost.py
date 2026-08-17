@@ -77,6 +77,12 @@ class LLMCallRecord(BaseModel):
         error_kind: Short label classifying the failure
             (``rate_limited``, ``timeout``, ``server_error``, etc.).
             ``None`` on success.
+        trace_id: Correlation id grouping the calls of one advisory
+            evaluation (P4.4a — set ambiently via
+            ``services/llm_trace.py``; ``cli/advise`` opens one scope
+            per symbol-evaluation). ``None`` for calls made outside any
+            trace scope, including every row written before this
+            shipped.
     """
 
     id: UUID = Field(default_factory=uuid4)
@@ -93,6 +99,7 @@ class LLMCallRecord(BaseModel):
     request_id: str | None = None
     success: bool
     error_kind: str | None = None
+    trace_id: str | None = None
 
     class Config:
         frozen = True

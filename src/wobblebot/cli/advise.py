@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
 from wobblebot.adapters.cascading_advisor import CascadingAdvisorAdapter
@@ -83,6 +84,7 @@ from wobblebot.ports.advisor import (
 from wobblebot.ports.exceptions import AdvisorError, StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cost_gate import SessionCostTracker
+from wobblebot.services.llm_trace import llm_trace
 from wobblebot.services.summary_builder import SummaryBuilder
 
 _LOGGER = logging.getLogger("wobblebot.cli.advise")
@@ -443,8 +445,13 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         )
         return False
 
+    # P4.4a: one trace scope per symbol-evaluation — every cloud call
+    # this evaluation makes (escalation, retries) lands in llm_calls
+    # with the same trace_id, the /cost by-cycle grouping key.
+    trace_id = str(uuid4())
     try:
-        recommendation = await advisor.get_recommendation(summary)
+        with llm_trace(trace_id):
+            recommendation = await advisor.get_recommendation(summary)
     except AdvisorError as exc:
         _LOGGER.error(
             "advisor call failed: %s: %s",
@@ -490,11 +497,13 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         return False
 
     _LOGGER.info(
-        "advise cycle complete (symbol=%s, recommendation_id=%s, model_name=%s, role=%s)",
+        "advise cycle complete (symbol=%s, recommendation_id=%s, model_name=%s, role=%s, "
+        "trace_id=%s)",
         symbol,
         recommendation.recommendation_id,
         model_name,
         recommendation.role,
+        trace_id,
         extra={
             "symbol": str(symbol),
             "recommendation_id": recommendation.recommendation_id,
@@ -503,6 +512,7 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
             "confidence": recommendation.confidence,
             "recommendations": recommendation.recommendations,
             "rationale": recommendation.rationale[:200],
+            "trace_id": trace_id,
         },
     )
     return True

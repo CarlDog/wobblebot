@@ -1775,7 +1775,12 @@ the detail; the full backlog index is
    P4.5 weather_report (NAS Ollama), P4.6 Historian (after the
    Q2-dump scoring; data gate matured 2026-08-16), P4.7 cost-honesty
    dashboard. Daily summary parked; canonical scoring runs execute in
-   the NAS tools container.
+   the NAS tools container. **P4.4a SHIPPED same day** — the trace
+   clock runs: `services/llm_trace.py` ContextVar scope, one per
+   advise symbol-evaluation, stamped into every success/failure
+   `LLMCallRecord` at the `llm_cloud_call` chokepoint (no port
+   signature changes; out-of-scope callers keep writing NULL). 3,389
+   tests, pylint 10.00, mypy clean.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

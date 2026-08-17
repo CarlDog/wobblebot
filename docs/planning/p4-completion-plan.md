@@ -33,11 +33,16 @@ work).
 
 ### P4.4 — start the clocks
 
-**a. `trace_id` write-side (S).** The P4.1 migration shipped the
-column; nothing writes it. Stamp a per-cycle trace id through
-`cli/advise`'s LLM calls so the `llm_calls` ledger becomes groupable
-by cycle. Every day unwired is a day of untraceable calls — this goes
-first.
+**a. `trace_id` write-side (S).** ✅ **Shipped 2026-08-17.** The P4.1
+migration shipped the column; nothing wrote it. Now: an ambient
+`ContextVar` scope (`services/llm_trace.py`) set by `cli/advise` once
+per symbol-evaluation (`llm_trace(uuid4())` around the advisor call),
+read at record-build time in the `services/llm_cloud_call.py`
+chokepoint — success AND failure records — so no `AdvisorPort`
+signature changed. asyncio task-isolation pinned by test; the
+"advise cycle complete" log line carries the trace id for
+log↔ledger correlation. Callers outside any scope (cli/operator
+today) keep writing NULL, exactly the pre-P4.4a shape.
 
 **b. Directional evaluator dispatch (M).** `kind=directional_call`
 scoring: grade a call against realized price direction over its

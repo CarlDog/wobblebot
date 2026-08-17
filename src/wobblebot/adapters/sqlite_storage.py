@@ -1430,8 +1430,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     id, timestamp, role, provider, model,
                     tokens_in, tokens_out, tokens_reasoning,
                     tokens_cache_read, tokens_cache_write,
-                    cost_usd, request_id, success, error_kind
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cost_usd, request_id, success, error_kind, trace_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(record.id),
@@ -1448,6 +1448,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     record.request_id,
                     1 if record.success else 0,
                     record.error_kind,
+                    record.trace_id,
                 ),
             )
             await conn.commit()

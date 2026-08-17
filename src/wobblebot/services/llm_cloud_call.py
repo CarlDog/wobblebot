@@ -58,6 +58,7 @@ from wobblebot.services.llm_cost_gate import (
 )
 from wobblebot.services.llm_pricing import PricingLookupError, cost_for
 from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
+from wobblebot.services.llm_trace import current_trace_id
 
 _LOGGER = logging.getLogger("wobblebot.services.llm_cloud_call")
 
@@ -142,6 +143,7 @@ def _make_failure_record(ctx: CloudCallContext, exc: Exception) -> LLMCallRecord
         request_id=None,
         success=False,
         error_kind=classify_error(exc),
+        trace_id=current_trace_id(),
     )
 
 
@@ -173,6 +175,7 @@ def _make_success_record(
         request_id=tokens.request_id,
         success=True,
         error_kind=None,
+        trace_id=current_trace_id(),
     )
 
 

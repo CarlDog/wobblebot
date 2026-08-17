@@ -29,6 +29,7 @@ from wobblebot.services.llm_cloud_call import (
 )
 from wobblebot.services.llm_cost_gate import LLMCostConfig, SessionCostTracker
 from wobblebot.services.llm_retry import LLMRetryConfig
+from wobblebot.services.llm_trace import llm_trace
 
 pytestmark = pytest.mark.unit
 
@@ -280,6 +281,62 @@ class TestCostGate:
                 extract_tokens=_simple_extract,
             )
         assert exc_info.value.cap_kind == "session"
+
+
+# --------------------------------------------------------------------- #
+# Trace stamping (P4.4a)                                                #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestTraceStamping:
+    async def test_success_record_carries_ambient_trace(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        async def call_fn() -> dict[str, Any]:
+            return {"id": "x", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+        with llm_trace("cycle-42"):
+            await execute_cloud_call(
+                ctx=_ctx(storage),
+                estimated_cost_usd=Decimal("0.005"),
+                call_fn=call_fn,
+                extract_tokens=_simple_extract,
+            )
+        assert (await storage.get_llm_calls())[0].trace_id == "cycle-42"
+
+    async def test_failure_record_carries_ambient_trace(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        async def call_fn() -> dict[str, Any]:
+            raise _http_status_error(401)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            with llm_trace("cycle-43"):
+                await execute_cloud_call(
+                    ctx=_ctx(storage),
+                    estimated_cost_usd=Decimal("0.01"),
+                    call_fn=call_fn,
+                    extract_tokens=_simple_extract,
+                )
+        row = (await storage.get_llm_calls())[0]
+        assert row.success is False
+        assert row.trace_id == "cycle-43"
+
+    async def test_no_scope_records_null_trace(self, storage: SQLiteStorageAdapter) -> None:
+        """Callers outside any scope (cli/operator today) keep the
+        pre-P4.4a behavior exactly: an untraced row."""
+
+        async def call_fn() -> dict[str, Any]:
+            return {"id": "x", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+        await execute_cloud_call(
+            ctx=_ctx(storage),
+            estimated_cost_usd=Decimal("0.005"),
+            call_fn=call_fn,
+            extract_tokens=_simple_extract,
+        )
+        assert (await storage.get_llm_calls())[0].trace_id is None
 
 
 # --------------------------------------------------------------------- #

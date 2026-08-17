@@ -143,6 +143,46 @@ class TestRunCycleHappyPath:
         assert persisted.input_summary["symbol"] == "BTC/USD"
         assert persisted.input_summary["snapshot_count"] == 3
 
+    async def test_advisor_runs_inside_a_fresh_trace_scope(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """P4.4a: each symbol-evaluation opens its own llm_trace scope,
+        so every cloud call the advisor makes lands in llm_calls with a
+        per-evaluation trace_id. The stub observes the ambient id the
+        way services/llm_cloud_call.py does."""
+        from wobblebot.services.llm_trace import current_trace_id
+
+        seen: list[str | None] = []
+
+        class _TracingAdvisor(_CannedAdvisor):
+            async def get_recommendation(
+                self, summary: PerformanceSummary
+            ) -> AdvisorRecommendation:
+                seen.append(current_trace_id())
+                return await super().get_recommendation(summary)
+
+        await _seed_prices(storage)
+        advisor = _TracingAdvisor(recommendation=_make_recommendation())
+        builder = SummaryBuilder(storage)
+        for _ in range(2):
+            ok = await _run_cycle(
+                advisor,
+                builder,
+                storage,
+                symbol=BTC_USD,
+                metrics_lookback=timedelta(hours=1),
+                news_lookback=None,
+                news_limit=20,
+                news_match_coin=False,
+                current_grid=_default_grid(),
+                model_name="phi4:14b",
+            )
+            assert ok is True
+        assert len(seen) == 2
+        assert all(trace is not None for trace in seen)
+        assert seen[0] != seen[1]  # a FRESH id per evaluation
+        assert current_trace_id() is None  # scope closed after the cycle
+
     async def test_grid_carried_into_audit_record(self, storage: SQLiteStorageAdapter) -> None:
         await _seed_prices(storage)
         advisor = _CannedAdvisor(recommendation=_make_recommendation())

@@ -391,6 +391,7 @@ def row_to_llm_call_record(row: aiosqlite.Row) -> LLMCallRecord:
         request_id=row["request_id"],
         success=bool(row["success"]),
         error_kind=row["error_kind"],
+        trace_id=row["trace_id"],
     )
 
 

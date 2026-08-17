@@ -38,6 +38,7 @@ def _record(
     success: bool = True,
     error_kind: str | None = None,
     request_id: str | None = None,
+    trace_id: str | None = None,
     offset_seconds: int = 0,
 ) -> LLMCallRecord:
     return LLMCallRecord(
@@ -52,6 +53,7 @@ def _record(
         request_id=request_id,
         success=success,
         error_kind=error_kind,
+        trace_id=trace_id,
     )
 
 
@@ -68,6 +70,12 @@ class TestRoundTrip:
         assert len(rows) == 1
         loaded = rows[0]
         assert loaded == rec
+
+    async def test_round_trips_trace_id(self, storage: SQLiteStorageAdapter) -> None:
+        """P4.4a: the per-evaluation correlation id survives the ledger."""
+        await storage.save_llm_call(_record(trace_id="cycle-abc123"))
+        loaded = (await storage.get_llm_calls())[0]
+        assert loaded.trace_id == "cycle-abc123"
 
     async def test_round_trips_thinking_tokens(self, storage: SQLiteStorageAdapter) -> None:
         rec = _record(tokens_reasoning=500, request_id="req-xyz")
