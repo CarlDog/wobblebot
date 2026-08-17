@@ -121,6 +121,7 @@ def _build_adapter(
     tracker: SessionCostTracker | None = None,
     model: str = "claude-sonnet-4-6",
     role: str = "quant",
+    prompt_caching: bool = True,
 ) -> AnthropicAdvisorAdapter:
     client = httpx.AsyncClient(transport=transport)
     return AnthropicAdvisorAdapter(
@@ -133,6 +134,7 @@ def _build_adapter(
         cost_config=cost_config or LLMCostConfig(),
         retry_config=retry_config or LLMRetryConfig(max_retries=2, initial_backoff_seconds=0.01),
         client=client,
+        prompt_caching=prompt_caching,
     )
 
 
@@ -593,3 +595,57 @@ class TestTemperatureFieldByGeneration:
         adapter, seen = self._capture(storage, "claude-haiku-4-5")
         await adapter.get_recommendation(_make_summary())
         assert "temperature" in seen[0]
+
+
+# --------------------------------------------------------------------- #
+# prompt caching (ADR-033 amendment, 2026-08-16)                        #
+# --------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestPromptCachingRequestShape:
+    """The system prompt ships as a ``cache_control``-annotated content
+    block by default (5-minute TTL only — the single
+    ``cache_write_per_million_usd`` pricing column models the 5m 1.25x
+    premium, so a ``ttl`` key would silently under-price the ledger).
+    Asserted against the real outbound request body, same rationale as
+    the temperature class above.
+    """
+
+    @staticmethod
+    def _capture(
+        storage: SQLiteStorageAdapter, *, prompt_caching: bool
+    ) -> tuple[AnthropicAdvisorAdapter, list[dict[str, object]]]:
+        seen: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json=_anthropic_envelope(inner=_valid_recommendation_dict()))
+
+        adapter = _build_adapter(
+            httpx.MockTransport(handler), storage, prompt_caching=prompt_caching
+        )
+        return adapter, seen
+
+    async def test_default_sends_cached_system_block(self, storage: SQLiteStorageAdapter) -> None:
+        adapter, seen = self._capture(storage, prompt_caching=True)
+        await adapter.get_recommendation(_make_summary())
+        system = seen[0]["system"]
+        assert isinstance(system, list) and len(system) == 1
+        block = system[0]
+        assert block["type"] == "text"
+        assert block["text"] == _make_prompt().body
+        assert block["cache_control"] == {"type": "ephemeral"}
+
+    async def test_cache_control_never_carries_ttl(self, storage: SQLiteStorageAdapter) -> None:
+        """Bare ``ephemeral`` = 5m TTL. ``ttl: "1h"`` bills 2x against a
+        pricing column that models 1.25x — pin its absence."""
+        adapter, seen = self._capture(storage, prompt_caching=True)
+        await adapter.get_recommendation(_make_summary())
+        cache_control = seen[0]["system"][0]["cache_control"]  # type: ignore[index]
+        assert "ttl" not in cache_control
+
+    async def test_disabled_sends_plain_string(self, storage: SQLiteStorageAdapter) -> None:
+        adapter, seen = self._capture(storage, prompt_caching=False)
+        await adapter.get_recommendation(_make_summary())
+        assert seen[0]["system"] == _make_prompt().body

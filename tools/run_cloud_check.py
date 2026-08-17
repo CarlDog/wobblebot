@@ -316,6 +316,8 @@ async def _print_latest_record_via_get(storage: SQLiteStorageAdapter) -> None:
             "tokens_in": rec.tokens_in,
             "tokens_out": rec.tokens_out,
             "tokens_reasoning": rec.tokens_reasoning,
+            "tokens_cache_read": rec.tokens_cache_read,
+            "tokens_cache_write": rec.tokens_cache_write,
             "cost_usd": str(rec.cost_usd),
             "request_id": rec.request_id,
             "success": rec.success,

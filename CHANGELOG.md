@@ -22,6 +22,27 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ## [Unreleased]
 
+### Added
+
+- **Anthropic prompt caching, sending half** (2026-08-16, ADR-033
+  amendment — the accounting half shipped 2026-08-02).
+  `AnthropicAdvisorAdapter` now ships its system prompt as a
+  `cache_control: {"type": "ephemeral"}` content block (5-minute TTL
+  only — the ledger's single cache-write pricing column models the 5m
+  1.25× premium, and a `ttl: "1h"` key would silently under-price;
+  a test pins its absence). New `prompt_caching: bool = True`
+  constructor knob; default ON because no deployed config path reaches
+  Anthropic (inert in production) while probe batteries and cloud
+  checks — many calls sharing one system prompt within minutes — read
+  the cache immediately at ~0.1× input rate. Caveat documented in code
+  and ADR: the cacheable floor is model-dependent and non-monotonic
+  (opus-5 512 / sonnet-5 1024 / **haiku-4-5 4096** tokens), and
+  under-floor prefixes silently don't cache, so current ~620–1,050-token
+  role prompts are a no-op on haiku-4-5. The assistant adapter
+  deliberately does not cache (its system string embeds the volatile
+  engine-state snapshot; restructuring first is ADR-033 trigger (a)'s
+  prerequisite, documented at the build site).
+
 ### Changed
 
 - **Money now renders in one dialect everywhere** (repo-quality pass,

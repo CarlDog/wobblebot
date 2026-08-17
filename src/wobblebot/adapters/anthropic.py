@@ -179,6 +179,34 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         client: Optional pre-constructed ``httpx.AsyncClient`` (test
             seam). When ``None`` the adapter creates and owns one;
             ``aclose()`` releases it.
+        prompt_caching: Send ``cache_control`` on the system prompt so
+            calls sharing it within Anthropic's cache TTL bill the
+            prefix at ~0.1x instead of 1x (ADR-033 amendment,
+            2026-08-16 — ADR-033 shipped the accounting half; this is
+            the sending half). Default ON: no deployed config path
+            reaches Anthropic today, so in production the flag is
+            inert, while the workloads that DO reach Anthropic — probe
+            batteries and multi-symbol sweeps, both firing many calls
+            sharing one system prompt within minutes — read the cache
+            immediately. The losing case (single-call-per-TTL cadence
+            paying the 1.25x write premium with no reads) applies only
+            to a deployed 4h/12h single-symbol advisor, which is
+            exactly the decision ADR-033 reserves for the operator.
+
+            Two silent constraints, documented so nobody debugs them as
+            failures: (1) the cacheable MINIMUM is model-dependent and
+            not monotonic — 512 tokens on opus-5, 1024 on
+            sonnet-5/opus-4.8, 4096 on haiku-4-5 — and a prefix under
+            the floor silently doesn't cache (normal rate, no premium,
+            ``cache_creation_input_tokens: 0``). wobblebot's role
+            prompts run ~620-1050 tokens, so on haiku-4-5 this flag is
+            currently a no-op by arithmetic. (2) Only the 5-minute TTL
+            is ever sent: ADR-033's single
+            ``cache_write_per_million_usd`` column models the 5m 1.25x
+            premium, and the 1h TTL bills 2x — a ``ttl: "1h"`` would
+            silently under-price every cache write in the ledger. Do
+            not add a TTL knob without first adding a second pricing
+            column.
     """
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -198,6 +226,7 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         max_tokens: int = 1024,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
+        prompt_caching: bool = True,
     ) -> None:
         if not api_key:
             raise ValueError("AnthropicAdvisorAdapter requires non-empty api_key")
@@ -213,6 +242,7 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         self._api_version = api_version
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._prompt_caching = prompt_caching
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
@@ -235,9 +265,25 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         if extra_context:
             user_message = f"{user_message}\n\n{extra_context}"
 
+        # With caching on, the system prompt goes as a content block carrying
+        # cache_control (bare "ephemeral" = the 5-minute TTL; never send
+        # ttl="1h" — see the prompt_caching docstring). Prefixes under the
+        # model's cacheable minimum are silently ignored by Anthropic, so
+        # this is safe to send unconditionally.
+        system: str | list[dict[str, Any]]
+        if self._prompt_caching:
+            system = [
+                {
+                    "type": "text",
+                    "text": self._prompt.body,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            system = self._prompt.body
         body: dict[str, Any] = {
             "model": self._model,
-            "system": self._prompt.body,
+            "system": system,
             "messages": [{"role": "user", "content": user_message}],
             "max_tokens": self._max_tokens,
         }
@@ -306,9 +352,10 @@ def extract_anthropic_tokens(envelope: dict[str, Any]) -> TokenUsage:
 
     Unlike OpenAI/Gemini, ``input_tokens`` already EXCLUDES the cache
     fields — the three are disjoint on the wire, so all pass through
-    unchanged. The cache fields stay 0 while wobblebot never sends
-    ``cache_control`` (ADR-033 defers that), but capturing them means
-    enabling caching later can't silently under-report input.
+    unchanged. ``AnthropicAdvisorAdapter`` sends ``cache_control`` on its
+    system prompt by default (2026-08-16 ADR-033 amendment), so the cache
+    fields are live for advisor calls; the assistant adapter still never
+    sends it (volatile system prefix), so its rows keep reading 0.
 
     Anthropic lumps extended-thinking tokens into ``output_tokens`` and
     bills them at the regular output rate, so v1 records

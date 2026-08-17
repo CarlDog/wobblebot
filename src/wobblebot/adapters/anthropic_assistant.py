@@ -206,6 +206,15 @@ class AnthropicAssistantAdapter(AssistantPort):  # pylint: disable=too-many-inst
 
         Same shape as the Ollama assistant adapter so the operator's
         prompt file remains provider-agnostic.
+
+        Deliberately NOT cache_control-annotated (unlike the advisor
+        adapter, 2026-08-16): the engine-state snapshot baked in here
+        changes every call, so the system prefix never repeats — every
+        call would pay the 1.25x cache-write premium and nothing would
+        ever read it back. ADR-033's trigger (a) names the prerequisite:
+        restructure so the static prompt body is its own block and the
+        volatile snapshot rides in the user turn. Do that restructuring
+        first; don't just wrap this string in a cached block.
         """
         return (
             f"{self._prompt.body}\n\n"
