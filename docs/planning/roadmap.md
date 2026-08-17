@@ -1829,6 +1829,30 @@ the detail; the full backlog index is
    3,442 tests, pylint 10.00, mypy clean. **P4's buildable scope is
    now COMPLETE except P4.6 (Historian)**, which is deliberately gated
    behind the Q2-dump canonical scoring (its own design doc first).
+   **Same day (ops): the Gremlin + MoE panel went LIVE on the NAS**
+   (operator-ratified observe-only run; auto-apply stays off). The
+   cpu-only profile's cascade now escalates to the seat register's
+   scored holders — quant=`xai/grok-4.5` via Atlas (`ATLASCLOUD_API_KEY`;
+   compose threading landed in `8bebced`), risk=`gpt-5-mini`,
+   news=`claude-haiku-4-5`, arbitrator=`claude-haiku-4-5` — with LLM
+   caps raised to $2/day + $10/session (enforce on) and
+   `advisor.gremlin.enabled: true` (qwen2.5:3b on NAS Ollama, 240m
+   cooldown). NAS settings.yml edited with backup (`.bak-20260817e`);
+   the stale NAS `risk.md` was synced to repo HEAD first (the config
+   mount overrides the image — it had drifted since 07-31). First-cycle
+   receipts in the advise boot log: the gremlin-enabled line plus a
+   real aggregated recommendation labeled
+   `cascade[heuristic+moe[arbitrator:quant:xai/grok-4.5/risk:gpt-5-mini/news:claude-haiku-4-5|arb=claude-haiku-4-5]]`
+   carrying a live trace_id — all three cloud keys authenticated on the
+   first panel run. Two watch items: (a) `advise.orders_db` is unset in
+   production, so the live risk seat judges with null exposure fields
+   (wiring it is a one-line settings edit + advise bounce); (b) at the
+   4h advise cadence with structurally-100% escalation the panel may
+   brush the $2/day cap — at cap the cascade falls back to the
+   heuristic by design and /cost shows the denials. Deploy footnote:
+   the operator's env-var save in Portainer had silently regressed
+   IMAGE_TAG to a stale sha (stale UI form state); caught pre-redeploy
+   and repinned to `sha-2e21884`.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
