@@ -286,8 +286,14 @@ to every project. The wobblebot-specific items below extend it:
 - **Live taker fee re-verification.** The live Kraken fee schedule
   could shift over time. If a tiny live trade (`tools/first_real_trade.py`)
   runs during the audit window, capture the actual fee rate from
-  the receipt and confirm it still matches the **0.40% taker / 0.26%
-  maker** assumption documented in Stage 2.3 design decisions.
+  the receipt and confirm it still matches the **0.80% taker / 0.40%
+  maker** Tier-1 rates (Kraken doubled the schedule 2026-07-09 —
+  caught by this exact audit item 2026-08-17, five weeks late). Since
+  ADR-038 the authoritative check is one `TradeVolume` call (the
+  account's own rates; `scratchpad` probe or `cli/live`'s session-start
+  receipt logs them), and the per-fill fee-drift tripwire pages on the
+  first deviating fill — this item is now the backstop, not the
+  detector.
 - **Cloud LLM pricing + model re-verification.** Cloud-provider pricing,
   model availability, and API shapes drift often. Re-confirm each priced
   `(provider, model)` in `services/llm_pricing.py` against the provider's

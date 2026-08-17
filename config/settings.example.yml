@@ -72,8 +72,8 @@ grid:
   # Multi-coin runs put every configured alt on the uniform `default` above —
   # no per-coin spacing overrides. Add an entry here only to shadow `default`
   # for one coin; an entry with `enabled: false` SKIPS that coin even if it's
-  # listed in a `symbols:` list. (Spacing must exceed 0.52% = 2 × Kraken's
-  # 0.26% maker fee, or a cycle loses money on every round trip — the engine
+  # listed in a `symbols:` list. (Spacing must exceed 0.80% = 2 × Kraken's
+  # 0.40% maker fee, or a cycle loses money on every round trip — the engine
   # validator rejects anything tighter at load.)
   coins:
     DOGE:
@@ -111,7 +111,7 @@ safety:
   # emergency_stop block) -- every key here is actually read.
   sell_guard:
     enabled: true
-    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.52%
+    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.80% (Tier-1 doubled 2026-07-09)
 
   # ADR-025 pre-placement spread guard: skip the whole tick (no order
   # placement attempted) when the symbol's bid-ask spread exceeds this.
@@ -236,10 +236,10 @@ shadow:
     ETH: 0
 
   # Per-fill fee model. Default rates match Kraken's published
-  # base-tier (0.26% maker / 0.40% taker), confirmed by the live
+  # Tier-1 (0.40% maker / 0.80% taker, doubled 2026-07-09), confirmed
   # measurement in Phase 2's first-trade receipt.
-  maker_fee_rate: 0.0026
-  taker_fee_rate: 0.0040
+  maker_fee_rate: 0.0040
+  taker_fee_rate: 0.0080
 
 # ============================================================================
 # Per-CLI: observe (cli/observe)
@@ -978,7 +978,7 @@ profiles:
   aggressive:
     grid:
       default:
-        spacing_percentage: 0.6        # must clear the 0.52% fee floor (2x maker fee)
+        spacing_percentage: 1.8        # must clear the 0.80% fee floor (2x maker; Kraken Tier-1 doubled 2026-07-09)
         levels_above: 5
         levels_below: 5
         order_size_usd: 20.0

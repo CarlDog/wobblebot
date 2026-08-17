@@ -2798,6 +2798,66 @@ ADR-034/P3 pause-resume (the machinery decision 2 reuses), ratified caps split (
 follow-up's subject). Incident logs: `live.log.2026-08-16`, `observe.log.2026-08-15/16`
 (NAS), summarized above.
 
-<!-- ADR-037 is the last in this file; new ADRs append below. -->
+## ADR-038 — Fee Rates Come From the Account, Not a Copied Schedule
+
+**Status:** Accepted
+**Date:** 2026-08-17
+
+**Context:** Kraken's cross-platform fee tiers (effective 2026-07-09, accounts
+auto-migrated) doubled Tier-1 spot fees to 0.40% maker / 0.80% taker. wobblebot's copied
+constants (`KRAKEN_MAKER_FEE_RATE = 0.0026`, taker 0.0040 — a Stage 2.3 live measurement)
+drifted silently for **five weeks**: a new-schedule maker fill bills exactly what an
+old-schedule taker did, so nothing looked wrong until the reader-key incident's churn
+produced true taker fills at 0.80%. Consequences of the stale copy: the ADR-032 sell
+guard under-counted fees ~0.3%/round trip (approving sells that lose more than computed),
+the spacing-vs-fees validator enforced a 0.52% floor when the real floor was 0.80% (the
+aggressive profile's 0.6% spacing validated and would have structurally lost money), and
+shadow simulations underpriced fees 2×. Confirmed four ways: the trades table's own fee
+buckets (0.25% fills end 2026-07-13, only 0.40/0.80 since), Kraken's published schedule,
+the support article, and the account's live `TradeVolume` response.
+
+**Decision:**
+
+1. **The account's own answer is the source.** New `ExchangePort.get_fee_rates(symbol)`
+   (Kraken: private `TradeVolume` — the exact per-pair maker/taker this account pays;
+   mock: its flat rate; shadow: its configured fee model). `cli/live` fetches per symbol
+   at session start, logs the rates in the session-start receipts, and injects the MAX
+   across symbols into the engine (conservative: overestimating a fee only defers more
+   sells). Fetch failure falls back to the constants with a WARNING — never silently.
+2. **The constants become the documented fallback** and are corrected to Tier-1
+   (0.0040/0.0080) so even the fallback is current. The config-load spacing validator
+   keeps using them (config validates before any API call); `cli/live` re-checks spacing
+   against the LIVE maker rate at session start and WARNs (advisory, never fatal) if a
+   validated spacing sits under the real floor.
+3. **A per-fill fee-drift tripwire.** The engine compares every saved trade's realized
+   `fee/cost` against the believed maker AND taker rates (tolerance 5 bps); a fill
+   matching neither logs a WARNING and pages the operator once per symbol per session.
+   Applied retroactively this pages on 2026-07-13 — the first fill after the change —
+   instead of five weeks later. It also guards against what decision 1 cannot imagine
+   (fee-currency changes, a TradeVolume reporting bug): trust, then verify the bills.
+4. **The aggressive profile's spacing moves 0.6% → 1.8%** (operator-ratified): above the
+   new floor with margin, still meaningfully tighter than the 3% default. Letting the
+   validator refuse it was the alternative; a shipped template that fails when selected
+   is a booby trap.
+
+**Alternatives considered:**
+- **Just update the constants.** Rejected as the whole fix — the next schedule change
+  hides the same way. The constants stay only as the fallback layer.
+- **Periodic re-fetch during the session.** Rejected for v1: sessions restart on every
+  deploy and the tripwire catches mid-session changes; a timer adds surface for no
+  observed need.
+- **Fatal spacing check against live rates.** Rejected: config validity cannot depend on
+  a network call; advisory WARNING preserves the operator's call.
+
+**Compliance:** The four-homes carve-out ("pricing/fees stay code") bends but holds — the
+*fallback* stays code-resident; the live value is fetched, logged, and injected through
+constructors, never persisted as config. No layer boundaries move: the port grows one
+method, adapters implement it, the engine takes rates by injection.
+
+**References:** ADR-032 (the guard the stale rate was corrupting), the 08-17 roadmap
+entry (discovery receipts), CLAUDE.md quarterly audit item (now the backstop, not the
+detector — the tripwire is).
+
+<!-- ADR-038 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

@@ -222,6 +222,28 @@ class Ticker(BaseModel):
         frozen = True
 
 
+class FeeRates(BaseModel):
+    """The maker/taker rates an account actually pays for one pair (ADR-038).
+
+    Fractions, not percentages: Kraken's 0.40% maker is
+    ``Decimal("0.0040")``. Sourced from the private TradeVolume
+    endpoint at session start; the code constants
+    (``config.grid.KRAKEN_*_FEE_RATE``) are the fallback when the
+    fetch fails. Kraken's 2026-07-09 fee doubling hid for five weeks
+    because the code trusted a copied schedule — this type exists so
+    the account's own answer is the source.
+    """
+
+    symbol: Symbol
+    maker: Decimal = Field(..., ge=0, lt=Decimal("0.1"))
+    taker: Decimal = Field(..., ge=0, lt=Decimal("0.1"))
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 class Amount(BaseModel):
     """Quantity/amount value with validation.
 

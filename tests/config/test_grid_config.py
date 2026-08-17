@@ -305,5 +305,5 @@ class TestSpacingCoversFees:
             )
         msg = str(exc_info.value)
         assert "ETH" in msg
-        assert "0.52" in msg  # the calculated minimum
+        assert "0.80" in msg  # the calculated minimum (Tier-1 doubled 2026-07-09)
         assert "maker fee" in msg.lower()

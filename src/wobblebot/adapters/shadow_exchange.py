@@ -42,11 +42,18 @@ from decimal import Decimal
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OHLCBar, OrderSide, Price, Symbol, Ticker
+from wobblebot.domain.value_objects import (
+    FeeRates,
+    OHLCBar,
+    OrderSide,
+    Price,
+    Symbol,
+    Ticker,
+)
 from wobblebot.ports.exchange import ExchangePort
 
-_DEFAULT_MAKER_FEE_RATE = Decimal("0.0026")
-_DEFAULT_TAKER_FEE_RATE = Decimal("0.0040")
+_DEFAULT_MAKER_FEE_RATE = Decimal("0.0040")  # Kraken Tier-1 since 2026-07-09
+_DEFAULT_TAKER_FEE_RATE = Decimal("0.0080")  # Kraken Tier-1 since 2026-07-09
 
 
 class ShadowExchangeAdapter(ExchangePort):
@@ -134,6 +141,10 @@ class ShadowExchangeAdapter(ExchangePort):
         always real-market via the wrapped live adapter.
         """
         return await self._live.get_ohlc(symbol, interval_minutes, since)
+
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        """ADR-038: the shadow's configured fee model, echoed back."""
+        return FeeRates(symbol=symbol, maker=self._maker_fee_rate, taker=self._taker_fee_rate)
 
     async def get_balances(self) -> list[Balance]:
         return await self._mock.get_balances()

@@ -893,8 +893,9 @@ class TestReanchorBannerSnoozeAndFee:
     async def test_projected_fee_is_double_taker_on_open_notional(
         self, live_storage: SQLiteStorageAdapter
     ) -> None:
-        """$30 open notional -> $0.24 projected: 0.40% taker on the
-        cancelled ladder plus the same again for the re-laid one."""
+        """$30 open notional -> $0.48 projected: 0.80% taker on the
+        cancelled ladder plus the same again for the re-laid one
+        (Kraken Tier-1 doubled 2026-07-09, ADR-038)."""
         from wobblebot.web.routes.status_reanchor import load_reanchor_recommendations
 
         order = await _seed_drifted_grid(live_storage)
@@ -908,7 +909,7 @@ class TestReanchorBannerSnoozeAndFee:
         )
         assert len(recs) == 1
         assert recs[0].severity == "mild"
-        assert recs[0].projected_fee_usd == Decimal("0.24")
+        assert recs[0].projected_fee_usd == Decimal("0.48")
         assert recs[0].recent_range_spacings is None  # no series -> no claim
 
     async def test_snoozed_symbol_suppresses_banner(
