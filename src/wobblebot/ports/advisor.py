@@ -285,7 +285,11 @@ class RecommendationOutcome(BaseModel):
             corpus-wide arm, 1 for the BTC cross-check). ``None`` for
             directional calls.
         proposed_arm_json / inforce_arm_json: Replay summaries of the
-            two arms. Never surfaced as dollars (decision 3).
+            two arms. Never surfaced as dollars (decision 3). For
+            directional calls there are no arms: ``proposed_arm_json``
+            carries the grading record (the call, the realized prices,
+            the chop band and grading interval) and
+            ``inforce_arm_json`` is NULL (P4.4b).
         outcome: The sign of the difference — ``better`` / ``worse`` /
             ``tie``. ``None`` while unscored or unscoreable.
         evaluator_version: Which evaluator produced this row.

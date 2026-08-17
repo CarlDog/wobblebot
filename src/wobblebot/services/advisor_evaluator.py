@@ -17,10 +17,11 @@ Evaluator version 1 semantics, pinned so a change forces a version bump
 (re-scoring appends rows at the new version; old rows are audit
 history):
 
-- Every suggestion is a ``config_rec``. The ``directional_call`` shape
-  (ADR-035 decision 4) ships with its producer — nothing in the corpus
-  emits one yet, and classifying by guesswork would be worse than
-  waiting.
+- Kind is ROLE-gated (P4.4b): suggestions from ``DIRECTIONAL_ROLES``
+  are ``directional_call`` — graded against the realized move over
+  their own stated horizon (no replay, no arms, NULL granularity);
+  everything else is a ``config_rec``, classified exactly as v1 did
+  (pinned by test, which is why this stayed evaluator version 1).
 - The in-force arm comes from the suggestion's own
   ``input_summary.current_grid`` (ratified 2026-08-17); the proposed
   arm is that config with the recommendation's replayable keys applied.
@@ -99,6 +100,30 @@ _MAX_EDGE_GAP_BARS = 2
 _GRID_FIELDS = ("spacing_percentage", "levels_above", "levels_below", "order_size_usd")
 _INT_FIELDS = frozenset({"levels_above", "levels_below"})
 
+# --- Directional calls (P4.4b, ADR-035 decision 4) -------------------
+# Classification is ROLE-gated, not shape-gated: only roles registered
+# here emit directional calls. A config role hallucinating a
+# "direction" key keeps v1's exact treatment (unscoreable, "keys
+# outside the replayable surface") — pinned by test, which is why
+# EVALUATOR_VERSION stays 1: no existing-corpus row classifies
+# differently.
+DIRECTIONAL_ROLES = frozenset({"gremlin"})
+DIRECTIONAL_DIRECTIONS = frozenset({"up", "down", "chop"})
+
+# Realized |move| at or below this fraction over the horizon is
+# "chop". Grading: an up/down call is right beyond the band the called
+# way, wrong beyond it the other way, and a TIE inside it (the market
+# didn't rule); a chop call is right inside the band, wrong outside —
+# no tie case. Changing this band changes every future grade =
+# EVALUATOR_VERSION bump.
+DIRECTIONAL_CHOP_BAND = Decimal("0.01")
+
+# Directional grades read last-known closes from bars at this
+# interval; the outcome row's granularity_minutes stays NULL (the
+# schema's directional marker) and the interval is recorded in the
+# grading record instead.
+DIRECTIONAL_GRADING_INTERVAL_MINUTES = 60
+
 
 class ArmBuildError(Exception):
     """An arm could not be built; ``str(exc)`` is the unscoreable reason."""
@@ -121,21 +146,64 @@ class Classification:
     unscoreable_reason: str | None
 
 
-def classify(suggestion: AdvisorSuggestion) -> Classification:
-    """Triage a suggestion: window, symbol, and replayability of its keys."""
-    window_start = suggestion.created_at.dt
-    window_end = window_start + REPLAY_WINDOW
-    symbol: Symbol | None = None
-    reason: str | None = None
-
+def _parse_symbol(suggestion: AdvisorSuggestion) -> tuple[Symbol | None, str | None]:
+    """(symbol, reason) — reason set exactly when symbol is None."""
     raw_symbol = suggestion.input_summary.get("symbol")
     if not isinstance(raw_symbol, str) or not raw_symbol:
-        reason = "input_summary has no symbol"
-    else:
-        try:
-            symbol = Symbol.from_string(raw_symbol)
-        except ValueError:
-            reason = f"unparseable symbol {raw_symbol!r}"
+        return None, "input_summary has no symbol"
+    try:
+        return Symbol.from_string(raw_symbol), None
+    except ValueError:
+        return None, f"unparseable symbol {raw_symbol!r}"
+
+
+def _classify_directional(suggestion: AdvisorSuggestion) -> Classification:
+    """Triage one directional call (a DIRECTIONAL_ROLES emission).
+
+    The call carries its OWN horizon — ``window_end`` is
+    ``created_at + horizon_hours``, not the 7-day config window. A
+    malformed call gets a zero-length window so it surfaces as an
+    unscoreable row immediately instead of sitting "pending" behind a
+    horizon that will never grade.
+    """
+    window_start = suggestion.created_at.dt
+    symbol, reason = _parse_symbol(suggestion)
+    recs = suggestion.recommendation.recommendations
+    horizon: float | None = None
+    if reason is None:
+        direction = recs.get("direction")
+        raw_horizon = recs.get("horizon_hours")
+        if direction not in DIRECTIONAL_DIRECTIONS:
+            reason = (
+                f"malformed directional call: direction {direction!r} "
+                f"(expected one of {sorted(DIRECTIONAL_DIRECTIONS)})"
+            )
+        elif (
+            isinstance(raw_horizon, bool)
+            or not isinstance(raw_horizon, (int, float))
+            or raw_horizon <= 0
+        ):
+            reason = f"malformed directional call: horizon_hours {raw_horizon!r}"
+        else:
+            horizon = float(raw_horizon)
+    window_end = window_start + timedelta(hours=horizon) if horizon is not None else window_start
+    return Classification(
+        kind="directional_call",
+        symbol=symbol,
+        window_start=window_start,
+        window_end=window_end,
+        unscoreable_reason=reason,
+    )
+
+
+def classify(suggestion: AdvisorSuggestion) -> Classification:
+    """Triage a suggestion: kind, window, symbol, and scoreability."""
+    if suggestion.recommendation.role in DIRECTIONAL_ROLES:
+        return _classify_directional(suggestion)
+
+    window_start = suggestion.created_at.dt
+    window_end = window_start + REPLAY_WINDOW
+    symbol, reason = _parse_symbol(suggestion)
 
     if reason is None:
         keys = suggestion.recommendation.recommendations
@@ -282,11 +350,81 @@ def outcome_sign(
     return "better" if delta > 0 else "worse"
 
 
+def grade_directional(  # pylint: disable=too-many-return-statements
+    direction: str, start_price: Decimal, end_price: Decimal
+) -> Literal["better", "worse", "tie"]:
+    """Grade one directional call against the realized move.
+
+    ``better`` = the call was right, ``worse`` = wrong, ``tie`` = the
+    market stayed inside the chop band so an up/down call was neither
+    confirmed nor refuted. A ``chop`` call has no tie case — any move
+    beyond the band falsifies it, which is the falsifiability the
+    Gremlin design demands.
+    """
+    move = (end_price - start_price) / start_price
+    if direction == "chop":
+        return "better" if abs(move) <= DIRECTIONAL_CHOP_BAND else "worse"
+    if direction == "up":
+        if move > DIRECTIONAL_CHOP_BAND:
+            return "better"
+        if move < -DIRECTIONAL_CHOP_BAND:
+            return "worse"
+        return "tie"
+    # "down" — classify() guarantees the vocabulary.
+    if move < -DIRECTIONAL_CHOP_BAND:
+        return "better"
+    if move > DIRECTIONAL_CHOP_BAND:
+        return "worse"
+    return "tie"
+
+
+def directional_prices(
+    bars: list[OHLCBar],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    interval_minutes: int = DIRECTIONAL_GRADING_INTERVAL_MINUTES,
+) -> tuple[Decimal, Decimal] | str:
+    """Last-known closes at call time and horizon end, or a reason string.
+
+    "Last known" means the close of the most recent bar that CLOSED at
+    or before the moment — the price an observer had in hand, never a
+    bar still forming (no lookahead into the call's own hour). A
+    ``str`` return is a bars-missing reason: the caller leaves the
+    suggestion in the queue, same contract as config-rec coverage.
+    """
+    interval = timedelta(minutes=interval_minutes)
+    freshness = _MAX_EDGE_GAP_BARS * interval
+
+    def last_close_before(moment: datetime) -> Decimal | None:
+        closed = [b for b in bars if b.opened_at + interval <= moment]
+        if not closed:
+            return None
+        latest = closed[-1]  # get_ohlc_bars returns oldest-first
+        if latest.opened_at + interval < moment - freshness:
+            return None  # stale: a gap sits right where the price is read
+        return latest.close
+
+    start = last_close_before(window_start)
+    if start is None:
+        return (
+            f"no {interval_minutes}m bar closed within {_MAX_EDGE_GAP_BARS} "
+            f"intervals before the call ({window_start.isoformat()})"
+        )
+    end = last_close_before(window_end)
+    if end is None:
+        return (
+            f"no {interval_minutes}m bar closed within {_MAX_EDGE_GAP_BARS} "
+            f"intervals before horizon end ({window_end.isoformat()})"
+        )
+    return start, end
+
+
 def build_unscoreable(
     suggestion_id: int,
     classification: Classification,
     *,
-    granularity_minutes: int,
+    granularity_minutes: int | None,
     reason: str,
     scored_at: datetime | None = None,
 ) -> RecommendationOutcome:
@@ -302,6 +440,50 @@ def build_unscoreable(
         proposed_arm_json=None,
         inforce_arm_json=None,
         outcome=None,
+        evaluator_version=EVALUATOR_VERSION,
+        scored_at=Timestamp(dt=scored_at or datetime.now(UTC)),
+    )
+
+
+def build_directional_scored(  # pylint: disable=too-many-arguments
+    suggestion_id: int,
+    classification: Classification,
+    *,
+    direction: str,
+    horizon_hours: float,
+    start_price: Decimal,
+    end_price: Decimal,
+    outcome: Literal["better", "worse", "tie"],
+    scored_at: datetime | None = None,
+) -> RecommendationOutcome:
+    """A graded directional row: the call + realized prices, no arms.
+
+    Directional rows have no replay arms — ``proposed_arm_json``
+    carries the grading record (the call and what the market did)
+    and ``inforce_arm_json`` stays NULL. ``granularity_minutes`` is
+    NULL by schema design; the bar interval the grade read from is in
+    the grading record instead.
+    """
+    grading = {
+        "direction": direction,
+        "horizon_hours": horizon_hours,
+        "start_price": float(start_price),
+        "end_price": float(end_price),
+        "move_fraction": float((end_price - start_price) / start_price),
+        "chop_band_fraction": float(DIRECTIONAL_CHOP_BAND),
+        "grading_interval_minutes": DIRECTIONAL_GRADING_INTERVAL_MINUTES,
+    }
+    return RecommendationOutcome(
+        suggestion_id=suggestion_id,
+        kind="directional_call",
+        scoreable=True,
+        unscoreable_reason=None,
+        window_start=Timestamp(dt=classification.window_start),
+        window_end=Timestamp(dt=classification.window_end),
+        granularity_minutes=None,
+        proposed_arm_json=grading,
+        inforce_arm_json=None,
+        outcome=outcome,
         evaluator_version=EVALUATOR_VERSION,
         scored_at=Timestamp(dt=scored_at or datetime.now(UTC)),
     )

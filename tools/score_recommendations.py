@@ -24,12 +24,16 @@ Resumable + idempotent: the queue is ``get_unscored_suggestions``, and
 a re-run a no-op for every already-written row.
 
 The ratified scoring policy (docs/planning/p4-outcome-ledger-design.md)
-is two passes::
+is two config-rec passes plus the directional pass (P4.4b)::
 
     python tools/score_recommendations.py --interval 60m
     python tools/score_recommendations.py --interval 1m --symbols BTC/USD
+    python tools/score_recommendations.py --directional
 
-Bounded probe / smoke run::
+Each pass owns one granularity namespace in the ledger (60 / 1 / NULL)
+and SKIPS suggestions of the other kind without writing anything, so a
+directional call never consumes a config slot and vice versa. Bounded
+probe / smoke run::
 
     python tools/score_recommendations.py --interval 60m --limit 25
 """
@@ -42,7 +46,7 @@ import logging
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -70,15 +74,19 @@ from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.advisor import AdvisorSuggestion, RecommendationOutcome
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.advisor_evaluator import (
+    DIRECTIONAL_GRADING_INTERVAL_MINUTES,
     EVALUATOR_VERSION,
     ArmBuildError,
     Classification,
     bar_coverage_reason,
     build_arms,
+    build_directional_scored,
     build_scored,
     build_unscoreable,
     classify,
+    directional_prices,
     fee_rates_for,
+    grade_directional,
     outcome_sign,
 )
 
@@ -98,6 +106,7 @@ class RunStats:
     filtered: int = 0
     bars_missing: int = 0
     errors: int = 0
+    skipped_other_kind: int = 0
 
     @property
     def processed(self) -> int:
@@ -145,6 +154,53 @@ def _arm_json(
     }
 
 
+async def _evaluate_directional(
+    bars_storage: SQLiteStorageAdapter,
+    row_id: int,
+    suggestion: AdvisorSuggestion,
+    classification: Classification,
+) -> RecommendationOutcome | str:
+    """Grade one directional call (P4.4b). ``str`` = bars-missing."""
+    if classification.unscoreable_reason is not None:
+        return build_unscoreable(
+            row_id,
+            classification,
+            granularity_minutes=None,
+            reason=classification.unscoreable_reason,
+        )
+    symbol = classification.symbol
+    if symbol is None:  # classify() sets a reason whenever symbol is None
+        return build_unscoreable(
+            row_id, classification, granularity_minutes=None, reason="input_summary has no symbol"
+        )
+    interval = timedelta(minutes=DIRECTIONAL_GRADING_INTERVAL_MINUTES)
+    bars = await bars_storage.get_ohlc_bars(
+        symbol,
+        DIRECTIONAL_GRADING_INTERVAL_MINUTES,
+        start_time=classification.window_start - 4 * interval,
+        end_time=classification.window_end,
+    )
+    prices = directional_prices(
+        bars,
+        window_start=classification.window_start,
+        window_end=classification.window_end,
+    )
+    if isinstance(prices, str):
+        return prices
+    start_price, end_price = prices
+    recs = suggestion.recommendation.recommendations
+    direction = str(recs["direction"])
+    return build_directional_scored(
+        row_id,
+        classification,
+        direction=direction,
+        horizon_hours=float(recs["horizon_hours"]),
+        start_price=start_price,
+        end_price=end_price,
+        outcome=grade_directional(direction, start_price, end_price),
+    )
+
+
 async def _evaluate_one(  # pylint: disable=too-many-arguments,too-many-locals
     bars_storage: SQLiteStorageAdapter,
     row_id: int,
@@ -156,7 +212,7 @@ async def _evaluate_one(  # pylint: disable=too-many-arguments,too-many-locals
     seed_usd: Decimal,
     seed_base: Decimal,
 ) -> RecommendationOutcome | str:
-    """Turn one queue entry into its outcome row (scored or unscoreable).
+    """Turn one CONFIG-REC queue entry into its outcome row.
 
     A plain ``str`` return is the bars-missing signal: the reason the
     window's bars don't cover it, meaning "write nothing, leave it in
@@ -240,11 +296,15 @@ async def _evaluate_one(  # pylint: disable=too-many-arguments,too-many-locals
     )
 
 
-async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals
+def _pass_label(interval_minutes: int | None) -> str:
+    return "directional" if interval_minutes is None else f"{interval_minutes}m"
+
+
+async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     advise_storage: SQLiteStorageAdapter,
     bars_storage: SQLiteStorageAdapter,
     *,
-    interval_minutes: int,
+    interval_minutes: int | None,
     safety_config: SafetyConfig,
     symbols: set[Symbol] | None = None,
     limit: int | None = None,
@@ -254,19 +314,22 @@ async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals
 ) -> RunStats:
     """Drain the unscored queue at one granularity. The driver's core.
 
-    ``symbols`` filters the queue (e.g. the BTC-only 1m pass);
-    ``limit`` caps rows WRITTEN this run (pending/filtered entries
-    don't consume it); ``now`` is the pending-window cutoff, injectable
-    for tests.
+    ``interval_minutes=None`` is the DIRECTIONAL pass (the ledger's
+    NULL-granularity namespace); an int is a config-rec pass. Each pass
+    skips the other kind's suggestions without writing, so the two
+    namespaces stay independent. ``symbols`` filters the queue (e.g.
+    the BTC-only 1m pass); ``limit`` caps rows WRITTEN this run
+    (pending/filtered/skipped entries don't consume it); ``now`` is the
+    pending-window cutoff, injectable for tests.
     """
     current_time = now if now is not None else datetime.now(UTC)
     neutered = safety_config.model_copy(update={"max_daily_spend_usd": NEUTERED_DAILY_SPEND})
     queue = await advise_storage.get_unscored_suggestions(interval_minutes, EVALUATOR_VERSION)
     _LOGGER.info(
-        "scoring queue: %d unscored suggestions at %dm, evaluator v%d "
-        "(max_daily_spend_usd neutered in BOTH arms per ADR-028 correction 1)",
+        "scoring queue: %d unscored suggestions at %s, evaluator v%d "
+        "(config-rec arms neutered per ADR-028 correction 1; directional rows replay nothing)",
         len(queue),
-        interval_minutes,
+        _pass_label(interval_minutes),
         EVALUATOR_VERSION,
     )
     stats = RunStats()
@@ -274,6 +337,9 @@ async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals
         if limit is not None and stats.processed >= limit:
             break
         classification = classify(suggestion)
+        if (classification.kind == "directional_call") != (interval_minutes is None):
+            stats.skipped_other_kind += 1
+            continue
         if symbols is not None and (
             classification.symbol is None or classification.symbol not in symbols
         ):
@@ -283,16 +349,21 @@ async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals
             stats.pending += 1
             continue
         try:
-            outcome_row = await _evaluate_one(
-                bars_storage,
-                row_id,
-                suggestion,
-                classification,
-                interval_minutes=interval_minutes,
-                safety_config=neutered,
-                seed_usd=seed_usd,
-                seed_base=seed_base,
-            )
+            if interval_minutes is None:
+                outcome_row = await _evaluate_directional(
+                    bars_storage, row_id, suggestion, classification
+                )
+            else:
+                outcome_row = await _evaluate_one(
+                    bars_storage,
+                    row_id,
+                    suggestion,
+                    classification,
+                    interval_minutes=interval_minutes,
+                    safety_config=neutered,
+                    seed_usd=seed_usd,
+                    seed_base=seed_base,
+                )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # A 2,862-item batch must not wedge on one poisoned row —
             # but the failure stays LOUD: per-row ERROR here, a nonzero
@@ -314,11 +385,11 @@ async def score_corpus(  # pylint: disable=too-many-arguments,too-many-locals
         if outcome_row.outcome is not None:
             stats.scored[outcome_row.outcome] += 1
             _LOGGER.info(
-                "scored #%d role=%s %s @%dm window %s -> %s: %s",
+                "scored #%d role=%s %s @%s window %s -> %s: %s",
                 row_id,
                 suggestion.recommendation.role,
                 classification.symbol,
-                interval_minutes,
+                _pass_label(interval_minutes),
                 classification.window_start.date().isoformat(),
                 classification.window_end.date().isoformat(),
                 outcome_row.outcome,
@@ -336,7 +407,8 @@ def _log_summary(stats: RunStats, queue_size: int) -> None:
     _LOGGER.info(
         "run complete: %d scored (better %d / worse %d / tie %d); %d unscoreable; "
         "%d pending (window not yet elapsed); %d bars-missing (left in queue — "
-        "import bars and re-run); %d errors; %d filtered by --symbols; queue was %d",
+        "import bars and re-run); %d errors; %d filtered by --symbols; "
+        "%d skipped (other kind — scored by their own pass); queue was %d",
         sum(stats.scored.values()),
         stats.scored["better"],
         stats.scored["worse"],
@@ -346,6 +418,7 @@ def _log_summary(stats: RunStats, queue_size: int) -> None:
         stats.bars_missing,
         stats.errors,
         stats.filtered,
+        stats.skipped_other_kind,
         queue_size,
     )
     for reason, count in stats.unscoreable.most_common():
@@ -379,7 +452,7 @@ async def _run(args: argparse.Namespace) -> int:
             stats = await score_corpus(
                 advise_storage,
                 bars_storage,
-                interval_minutes=args.interval,
+                interval_minutes=None if args.directional else args.interval,
                 safety_config=config.safety,
                 symbols=symbols,
                 limit=args.limit,
@@ -412,6 +485,14 @@ def main() -> int:
         type=parse_interval_arg,
         default=60,
         help="Replay granularity. Ratified policy: 60m corpus-wide, 1m for the BTC cross-check.",
+    )
+    parser.add_argument(
+        "--directional",
+        action="store_true",
+        help=(
+            "Run the directional-call pass (the ledger's NULL-granularity "
+            "namespace) instead of a config-rec pass; --interval is ignored."
+        ),
     )
     parser.add_argument(
         "--symbols",

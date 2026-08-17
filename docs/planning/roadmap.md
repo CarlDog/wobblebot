@@ -1780,7 +1780,17 @@ the detail; the full backlog index is
    advise symbol-evaluation, stamped into every success/failure
    `LLMCallRecord` at the `llm_cloud_call` chokepoint (no port
    signature changes; out-of-scope callers keep writing NULL). 3,389
-   tests, pylint 10.00, mypy clean.
+   tests, pylint 10.00, mypy clean. **P4.4b SHIPPED same day** — the
+   directional dispatch: role-gated classification (gremlin), the
+   call's own horizon as the window (malformed → zero-length window,
+   surfaces immediately), grading = last-known 60m closes at call time
+   and horizon end (no lookahead) against a 1% chop band (up/down tie
+   inside the band; chop has no tie — full falsifiability), grading
+   record in `proposed_arm_json`, `--directional` third scorer pass
+   over the NULL-granularity namespace. No-version-bump pin test:
+   every existing-corpus shape classifies exactly as v1 — evaluator
+   stays v1. 3,416 tests, pylint 10.00, mypy clean. The Gremlin
+   (P4.4c) may now emit safely.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

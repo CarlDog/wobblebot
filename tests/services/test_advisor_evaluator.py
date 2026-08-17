@@ -13,6 +13,7 @@ from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
 from wobblebot.services.advisor_evaluator import (
+    DIRECTIONAL_CHOP_BAND,
     EVALUATOR_VERSION,
     FEE_SCHEDULE_CUTOVER,
     PRE_CUTOVER_MAKER_FEE_RATE,
@@ -22,10 +23,13 @@ from wobblebot.services.advisor_evaluator import (
     ArmBuildError,
     bar_coverage_reason,
     build_arms,
+    build_directional_scored,
     build_scored,
     build_unscoreable,
     classify,
+    directional_prices,
     fee_rates_for,
+    grade_directional,
     outcome_sign,
 )
 
@@ -48,6 +52,7 @@ def _suggestion(
     current_grid: dict[str, Any] | None = _FULL_GRID,
     symbol: str | None = "BTC/USD",
     created: datetime = _CREATED,
+    role: str = "quant",
 ) -> AdvisorSuggestion:
     summary: dict[str, Any] = {}
     if symbol is not None:
@@ -57,7 +62,7 @@ def _suggestion(
     rec = AdvisorRecommendation(
         recommendation_id=str(uuid4()),
         timestamp=Timestamp(dt=created),
-        role="quant",
+        role=role,
         recommendations=recommendations or {},
         rationale="test",
         confidence="medium",
@@ -123,6 +128,145 @@ class TestClassify:
         assert result.symbol is None
         assert result.unscoreable_reason is not None
         assert "BTCUSD" in result.unscoreable_reason
+
+
+class TestDirectionalClassify:
+    def test_gremlin_call_is_directional_with_its_own_horizon(self) -> None:
+        result = classify(_suggestion({"direction": "down", "horizon_hours": 24}, role="gremlin"))
+        assert result.kind == "directional_call"
+        assert result.unscoreable_reason is None
+        assert result.symbol == _BTC
+        assert result.window_end == _CREATED + timedelta(hours=24)
+
+    def test_bad_direction_is_malformed_with_zero_window(self) -> None:
+        """Zero-length window: a malformed call must surface as an
+        unscoreable row immediately, never sit pending behind a horizon
+        that will never grade."""
+        result = classify(
+            _suggestion({"direction": "sideways", "horizon_hours": 24}, role="gremlin")
+        )
+        assert result.kind == "directional_call"
+        assert result.unscoreable_reason is not None
+        assert "malformed directional call" in result.unscoreable_reason
+        assert result.window_end == result.window_start
+
+    @pytest.mark.parametrize("horizon", [None, 0, -4, True, "24"])
+    def test_bad_horizon_is_malformed(self, horizon: Any) -> None:
+        recs: dict[str, Any] = {"direction": "up"}
+        if horizon is not None:
+            recs["horizon_hours"] = horizon
+        result = classify(_suggestion(recs, role="gremlin"))
+        assert result.unscoreable_reason is not None
+        assert "horizon_hours" in result.unscoreable_reason
+
+    def test_pin_non_gremlin_directional_shape_keeps_v1_treatment(self) -> None:
+        """The no-version-bump invariant: kind is ROLE-gated, so a
+        config role emitting direction-shaped keys classifies exactly
+        as evaluator v1 did — config_rec, unscoreable foreign keys."""
+        result = classify(_suggestion({"direction": "down", "horizon_hours": 24}))
+        assert result.kind == "config_rec"
+        assert result.unscoreable_reason is not None
+        assert "keys outside the replayable surface" in result.unscoreable_reason
+        assert result.window_end == _CREATED + REPLAY_WINDOW
+
+
+class TestGradeDirectional:
+    @pytest.mark.parametrize(
+        "direction,end_price,expected",
+        [
+            ("up", "103", "better"),
+            ("up", "97", "worse"),
+            ("up", "100.5", "tie"),
+            ("down", "97", "better"),
+            ("down", "103", "worse"),
+            ("down", "100.5", "tie"),
+            ("chop", "100.5", "better"),
+            ("chop", "103", "worse"),
+            ("chop", "97", "worse"),
+        ],
+    )
+    def test_grading_matrix(self, direction: str, end_price: str, expected: str) -> None:
+        assert grade_directional(direction, Decimal("100"), Decimal(end_price)) == expected
+
+    def test_band_boundary_is_inside_the_band(self) -> None:
+        """A move of exactly the band is chop: an up call ties, a chop
+        call is right."""
+        end = Decimal("100") * (1 + DIRECTIONAL_CHOP_BAND)
+        assert grade_directional("up", Decimal("100"), end) == "tie"
+        assert grade_directional("chop", Decimal("100"), end) == "better"
+
+
+class TestDirectionalPrices:
+    _START = _CREATED
+    _END = _CREATED + timedelta(hours=24)
+
+    def _bars(self, first_offset_hours: int, last_offset_hours: int) -> list[OHLCBar]:
+        return [
+            _bar(self._START + timedelta(hours=i), price=str(100 + i))
+            for i in range(first_offset_hours, last_offset_hours)
+        ]
+
+    def test_reads_last_known_closes(self) -> None:
+        bars = self._bars(-4, 25)
+        prices = directional_prices(bars, window_start=self._START, window_end=self._END)
+        assert not isinstance(prices, str)
+        start, end = prices
+        # Last bar CLOSED at/before the call opened at -1h (closes at 0h).
+        assert start == Decimal("99")
+        # Last bar closed at/before +24h opened at +23h.
+        assert end == Decimal("123")
+
+    def test_no_lookahead_into_the_forming_bar(self) -> None:
+        """A call mid-hour must read the previous bar's close, not the
+        close of the bar still forming around it."""
+        bars = self._bars(-4, 25)
+        prices = directional_prices(
+            bars,
+            window_start=self._START + timedelta(minutes=30),
+            window_end=self._END,
+        )
+        assert not isinstance(prices, str)
+        # The 0h bar closes at +1h — after the 0h30 call. Still the -1h bar.
+        assert prices[0] == Decimal("99")
+
+    def test_missing_head_is_a_reason(self) -> None:
+        result = directional_prices(
+            self._bars(2, 25), window_start=self._START, window_end=self._END
+        )
+        assert isinstance(result, str)
+        assert "before the call" in result
+
+    def test_stale_tail_is_a_reason(self) -> None:
+        result = directional_prices(
+            self._bars(-4, 18), window_start=self._START, window_end=self._END
+        )
+        assert isinstance(result, str)
+        assert "before horizon end" in result
+
+
+class TestBuildDirectionalScored:
+    def test_row_shape(self) -> None:
+        classification = classify(
+            _suggestion({"direction": "up", "horizon_hours": 24}, role="gremlin")
+        )
+        row = build_directional_scored(
+            9,
+            classification,
+            direction="up",
+            horizon_hours=24.0,
+            start_price=Decimal("100"),
+            end_price=Decimal("103"),
+            outcome="better",
+            scored_at=_CREATED,
+        )
+        assert row.kind == "directional_call"
+        assert row.scoreable is True
+        assert row.granularity_minutes is None
+        assert row.inforce_arm_json is None
+        assert row.proposed_arm_json is not None
+        assert row.proposed_arm_json["direction"] == "up"
+        assert row.proposed_arm_json["move_fraction"] == pytest.approx(0.03)
+        assert row.proposed_arm_json["chop_band_fraction"] == pytest.approx(0.01)
 
 
 class TestFeeSchedule:

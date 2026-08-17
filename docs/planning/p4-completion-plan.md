@@ -44,22 +44,33 @@ signature changed. asyncio task-isolation pinned by test; the
 log↔ledger correlation. Callers outside any scope (cli/operator
 today) keep writing NULL, exactly the pre-P4.4a shape.
 
-**b. Directional evaluator dispatch (M).** `kind=directional_call`
-scoring: grade a call against realized price direction over its
-stated horizon from stored bars — no replay, no counterfactual arm,
-`granularity_minutes` NULL (ADR-035 decision 4). **Ordering
-constraint: must land before the Gremlin's first emission** —
-evaluator v1 classifies unknown-key suggestions as "keys outside the
-replayable surface" and would permanently write the Gremlin's calls
-off as unscoreable at v1. Slice notes:
+**b. Directional evaluator dispatch (M).** ✅ **Shipped 2026-08-17.**
+`kind=directional_call` scoring: no replay, no arms, NULL granularity
+(ADR-035 decision 4). Settled design, now binding at evaluator v1:
 
-- Kind classification (by role vs by recommendation shape) is the
-  slice's first design call; whichever is chosen, add a pin test that
-  every existing-corpus shape still classifies exactly as v1 did — if
-  that invariant holds, no `EVALUATOR_VERSION` bump is needed (the
-  new path only touches rows that don't exist yet).
-- Sign definition (what counts as "the call was right", the tie band
-  for chop calls) gets written down in this doc when settled.
+- **Kind is ROLE-gated** (`DIRECTIONAL_ROLES = {"gremlin"}`), with
+  shape validation on top: `{"direction": up|down|chop,
+  "horizon_hours": > 0}` (extra keys tolerated; malformed →
+  unscoreable with reason and a ZERO-LENGTH window so it surfaces
+  immediately instead of pending forever). The no-version-bump pin
+  test holds: a config role emitting direction-shaped keys classifies
+  exactly as v1 did, so `EVALUATOR_VERSION` stays 1.
+- **The window is the call's own horizon** (`created_at +
+  horizon_hours`), not the 7-day config window; pending semantics
+  fall out naturally.
+- **Sign definition:** realized move = last-known 60m close at
+  horizon end vs at call time — "last known" = the most recent bar
+  CLOSED at or before the moment (no lookahead into the forming
+  bar), each within 2 intervals or the row stays queued bars-missing.
+  Chop band 1% (`DIRECTIONAL_CHOP_BAND`; changing it = version bump).
+  up/down: right beyond the band the called way, wrong beyond it the
+  other way, TIE inside it (the market didn't rule). chop: right
+  inside the band, wrong outside — no tie case, full falsifiability.
+- **The grading record** (call, prices, move, band, grading interval)
+  lives in `proposed_arm_json`; `inforce_arm_json` stays NULL.
+- **The driver's third pass**: `--directional` drains the
+  NULL-granularity queue namespace; each pass skips the other kind's
+  suggestions without writing, so the namespaces stay independent.
 
 **c. The Chaos Gremlin (M).** Per the ratified design in
 `docs/release/v1.1/adaptive-grid.md`: a standalone loose-reasoning
