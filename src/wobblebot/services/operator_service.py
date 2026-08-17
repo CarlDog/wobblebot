@@ -32,7 +32,6 @@ from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_usd
 from wobblebot.ports.assistant import AssistantPort
 from wobblebot.ports.exceptions import (
-    AssistantError,
     ExchangeError,
     OperatorError,
     StorageError,
@@ -78,10 +77,16 @@ from wobblebot.ports.operator import (
     StopCommand,
     SuggestionEntry,
     SymbolStatusEntry,
+    WeatherReportQuery,
+    WeatherReportResult,
 )
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cycle_matcher import match_cycles, today_realized_pnl
 from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.operator_reports import (
+    build_weather_report,
+    compose_status_report_narrative,
+)
 
 # --------------------------------------------------------------------- #
 # Degraded-result factories (Stage 8.0.B — R3)                          #
@@ -172,6 +177,11 @@ _HELP_ENTRIES: tuple[HelpEntry, ...] = (
         kind="status_report",
         category="query",
         description="Aggregated activity snapshot + LLM-condensed prose (since last brief).",
+    ),
+    HelpEntry(
+        kind="weather_report",
+        category="query",
+        description="Market weather: per-symbol multi-day trends + news + advisor reads.",
     ),
 )
 
@@ -414,6 +424,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 return await self._answer_status_report(
                     query, channel_id=channel_id, user_id=user_id
                 )
+            case WeatherReportQuery():
+                return await self._answer_weather_report(query)
             case _:
                 raise OperatorError(f"Unknown OperatorQuery variant: {type(query).__name__}")
 
@@ -702,7 +714,8 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             StatusReportTally(label="Proposals", value=str(len(recent_proposals.proposals))),
         ]
 
-        narrative = await self._compose_status_report_narrative(
+        narrative = await compose_status_report_narrative(
+            self._assistant,
             lookback_hours=lookback_hours,
             status=status,
             open_orders=open_orders,
@@ -732,6 +745,25 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
             tallies=tallies,
         )
 
+    async def _answer_weather_report(self, query: WeatherReportQuery) -> WeatherReportResult:
+        """Delegate to the report builder (``services/operator_reports.py``).
+
+        The news sub-query stays here — the service owns cross-DB
+        degradation for it — while aggregation + prose live with the
+        other narrative report.
+        """
+        recent_news = await self._answer_recent_news(
+            RecentNewsQuery(lookback_hours=query.lookback_days * 24, limit=15)
+        )
+        return await build_weather_report(
+            query,
+            active_symbols=self._active_symbols,
+            observe_storage=self._observe_storage,
+            advise_storage=self._advise_storage,
+            recent_news=recent_news,
+            assistant=self._assistant,
+        )
+
     async def _resolve_status_report_window(
         self,
         query: StatusReportQuery,
@@ -757,134 +789,6 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
                 hours = max(1, int(delta.total_seconds() // 3600))
                 return hours, anchor
         return 24, now - timedelta(hours=24)
-
-    async def _compose_status_report_narrative(  # pylint: disable=too-many-arguments,too-many-locals
-        self,
-        *,
-        lookback_hours: int,
-        status: StatusResult,
-        open_orders: OpenOrdersResult,
-        recent_fills: RecentFillsResult,
-        recent_suggestions: RecentSuggestionsResult,
-        recent_news: RecentNewsResult,
-        harvester_status: HarvesterStatusResult,
-        recent_proposals: RecentProposalsResult,
-        grid_config: GridConfigResult,
-    ) -> str:
-        """Build the LLM prompt + call summarize; fall back deterministically."""
-        deterministic = (
-            f"Last {lookback_hours}h snapshot: balance {fmt_usd(status.total_usd_balance)}, "
-            f"today's PnL {fmt_usd(status.session_pnl, signed=True)}, "
-            f"{len(recent_fills.fills)} fills, {len(recent_news.items)} news items, "
-            f"harvester band {harvester_status.band}, "
-            f"{len(open_orders.orders)} open orders."
-        )
-        if self._assistant is None:
-            return deterministic
-
-        # Compact data blob. The COUNTS section is pre-computed and
-        # authoritative — every count in the narrative MUST come from
-        # this section, not from re-counting JSON arrays the LLM is
-        # prone to miscount. This block addresses 2026-05-24 audit
-        # finding #4: phi4 was conflating ``STATUS.recent_fill_count``
-        # (engine-wide tally) with the lookback-scoped fill count from
-        # RECENT_FILLS, and miscounting open_orders sides (saying
-        # "five buy orders" when 5 was the total open-order count).
-        open_buys = sum(1 for o in open_orders.orders if o.side == "buy")
-        open_sells = sum(1 for o in open_orders.orders if o.side == "sell")
-        fills_buys = sum(1 for f in recent_fills.fills if f.side == "buy")
-        fills_sells = sum(1 for f in recent_fills.fills if f.side == "sell")
-        counts_block = [
-            f"  lookback_window_hours: {lookback_hours}",
-            f"  open_orders_total: {len(open_orders.orders)}",
-            f"  open_buys: {open_buys}",
-            f"  open_sells: {open_sells}",
-            f"  fills_in_lookback_total: {len(recent_fills.fills)}",
-            f"  fills_in_lookback_buys: {fills_buys}",
-            f"  fills_in_lookback_sells: {fills_sells}",
-            f"  news_in_lookback: {len(recent_news.items)}",
-            f"  suggestions_in_lookback: {len(recent_suggestions.suggestions)}",
-            f"  proposals_in_lookback: {len(recent_proposals.proposals)}",
-            f"  harvester_band: {harvester_status.band}",
-            f"  total_usd_balance: {fmt_usd(status.total_usd_balance)}",
-            f"  todays_realized_pnl: " f"{fmt_usd(status.session_pnl, signed=True)}",
-        ]
-        blob_lines = [
-            f"LOOKBACK_HOURS: {lookback_hours}",
-            "",
-            "COUNTS (authoritative -- cite these verbatim; never re-count):",
-            *counts_block,
-            "",
-            "STATUS (engine-wide; recent_fill_count here is NOT lookback-scoped):",
-            status.model_dump_json(indent=2),
-            "",
-            "GRID_CONFIG (currently in effect):",
-            grid_config.model_dump_json(indent=2),
-            "",
-            "OPEN_ORDERS:",
-            open_orders.model_dump_json(indent=2),
-            "",
-            "RECENT_FILLS (only the lookback window):",
-            recent_fills.model_dump_json(indent=2),
-            "",
-            "RECENT_SUGGESTIONS (only the lookback window; proposed changes, not yet applied):",
-            recent_suggestions.model_dump_json(indent=2),
-            "",
-            "RECENT_NEWS:",
-            recent_news.model_dump_json(indent=2),
-            "",
-            "HARVESTER_STATUS:",
-            harvester_status.model_dump_json(indent=2),
-            "",
-            "RECENT_PROPOSALS:",
-            recent_proposals.model_dump_json(indent=2),
-        ]
-        user_content = "\n".join(blob_lines)
-
-        system_prompt = (
-            "You are the WobbleBot operator assistant generating a status "
-            "report. The operator has asked for a snapshot of what's "
-            "happened since they last checked. You will receive structured "
-            "JSON for every query the bot can answer; condense it into a "
-            "user-friendly 2-3 paragraph plain-text narrative.\n\n"
-            "**The COUNTS section is authoritative.** Every count you "
-            "mention in the narrative (fills, open orders by side, news "
-            "items, suggestions, proposals) MUST come from COUNTS "
-            "verbatim. Do NOT re-count by inspecting JSON arrays in "
-            "other sections. Do NOT use STATUS.recent_fill_count for "
-            "fill counts -- that is engine-wide, not lookback-scoped. "
-            "Every COUNTS field ending in ``_in_lookback`` is scoped to "
-            "the requested window.\n\n"
-            "**If a `_in_lookback` count is 0, say so explicitly** and "
-            "do not invent activity. Examples:\n"
-            "  - fills_in_lookback_total=0 -> 'no fills in the lookback window'\n"
-            "  - news_in_lookback=0 -> 'no news in the lookback window'\n"
-            "  - suggestions_in_lookback=0 -> 'no new advisor suggestions in "
-            "the lookback window' (existing advice from earlier still "
-            "applies; just don't pretend new ones arrived)\n"
-            "  - proposals_in_lookback=0 -> 'no harvester proposals in the "
-            "lookback window'\n\n"
-            "Guidelines:\n"
-            "- Lead with what changed (fills, new news, harvester movements). "
-            "Static state (open orders, grid config) is secondary.\n"
-            "- When discussing RECENT_SUGGESTIONS, compare proposed values "
-            "against GRID_CONFIG (e.g. 'advisor recommends bumping spacing "
-            "from 1.0% to 1.2%') -- don't describe suggestions in isolation.\n"
-            "- Surface prices and timestamps that matter. Don't invent "
-            "numbers not in the JSON.\n"
-            "- If a section is empty, say so briefly; don't pad.\n"
-            "- Use Markdown sparingly -- bold for headlines, plain text for the "
-            "rest. No code fences, no JSON in the output.\n"
-            "- Keep it under ~300 words. The operator wants signal, not noise."
-        )
-
-        try:
-            narrative = await self._assistant.summarize(
-                system_prompt, user_content, max_tokens=2048
-            )
-        except (AssistantError, NotImplementedError):
-            return deterministic
-        return narrative or deterministic
 
     # ------------------------------------------------------------------ helpers
 

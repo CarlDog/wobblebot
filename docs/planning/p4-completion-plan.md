@@ -102,20 +102,35 @@ settled:
 
 ### P4.5 — `weather_report` (M–L)
 
-The Oracle seed (operator's reserved name for the eventual
-forecast compiler; the catalog name is decided at implementation —
-`market_report` / `weather_report` / `outlook`). Deterministic
-aggregation first, prose second (the llm-app rule: precompute the
-facts, the model narrates and cites):
+✅ **Shipped 2026-08-17** (catalog name settled: `weather_report`).
+The Oracle seed, built to the precompute-the-facts discipline:
 
-- Aggregation layer: per-symbol multi-day price trends from
-  `ohlc_bars`/TA, news window (3–7d) with sentiment, recent advisor
-  suggestions across symbols (the Gremlin's calls included, once
-  P4.4c ships — the design doc calls it "a natural single-forecaster
-  on-ramp" to exactly this track).
-- Prose via `AssistantPort.summarize` on NAS Ollama (decision 3).
-- Surface: operator-catalog query beside `status_report`; a web card
-  can ride later.
+- `services/weather_report.py`: pure aggregation — per-symbol trends
+  from hourly `ohlc_bars` (24h/window change, range position, RSI-14,
+  ADX-14 via `ta_metrics`; nulls mean unknown, never zero) + the
+  Gremlin's directional calls extracted from the suggestion window
+  (structural junk dropped; the ledger grades validity).
+- `services/operator_reports.py` (new): BOTH LLM-condensed report
+  builders — the status-report composer moved here and the weather
+  builder joined it, because `operator_service.py` crossed the
+  1000-line module gate (now 894 + 321; the split is the cohesive
+  "aggregate + narrate" unit). Weather narrative: TRENDS/COUNTS
+  authoritative blocks, reading hints for range/ADX/RSI, gremlin
+  calls attributed as one loose voice, describe-don't-advise, ~200
+  words; deterministic one-liner fallback without an assistant.
+- Intent + result: `WeatherReportQuery` (`lookback_days` 1–7,
+  default 3) / `WeatherReportResult` (trends + counts + calls render
+  as structured embed fields regardless of the narrative);
+  `operator.md` catalog entry; Discord embed renderer.
+- Live-verified over real NAS data copies (deterministic leg): all
+  six symbols with sane trends (BTC 98% range-position / ADX 26.5;
+  ADA bottom-of-range / RSI 40 — the stranded-capital picture), 132
+  suggestions in the 3d window, 0 gremlin calls (disabled, correct).
+  The prose leg goes live on the NAS at deploy.
+- ⚠️ **Deploy sequencing**: sync the NAS `config/prompts/operator.md`
+  WITH the image, not before — the old image's intent union rejects
+  `weather_report`, so a pre-synced parser prompt would degrade
+  parses to unparseable until the image lands.
 
 ### P4.6 — LLM Historian (XL — own design doc before code)
 

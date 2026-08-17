@@ -41,6 +41,8 @@ from wobblebot.ports.operator import (
     StatusReportQuery,
     StatusReportResult,
     StopCommand,
+    WeatherReportQuery,
+    WeatherReportResult,
 )
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.operator_service import OperatorService
@@ -824,7 +826,8 @@ class TestHelpQuery:
             "help",
         } <= kinds
         assert "status_report" in kinds
-        assert len(result.entries) == 17
+        assert "weather_report" in kinds
+        assert len(result.entries) == 18
 
 
 # --------------------------------------------------------------------- #
@@ -975,3 +978,108 @@ class TestStatusReport:
         anchor = await storage.get_last_status_report_taken_at("C-9", "U-9")
         assert anchor is not None
         assert anchor > before
+
+
+# --------------------------------------------------------------------- #
+# Weather report (P4.5)                                                 #
+# --------------------------------------------------------------------- #
+
+
+def _hourly_bars(symbol: Symbol, hours: int, *, start: float, step: float) -> list:
+    from wobblebot.domain.value_objects import OHLCBar
+
+    now = datetime.now(UTC)
+    bars = []
+    for i in range(hours):
+        price = Decimal(str(start + step * i))
+        bars.append(
+            OHLCBar(
+                symbol=symbol,
+                interval_minutes=60,
+                opened_at=now - timedelta(hours=hours - i),
+                open=price,
+                high=price,
+                low=price,
+                close=price,
+                vwap=price,
+                volume=Decimal("1"),
+                count=1,
+            )
+        )
+    return bars
+
+
+def _gremlin_suggestion(symbol: str = "BTC/USD"):  # type: ignore[no-untyped-def]
+    from uuid import uuid4
+
+    from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
+
+    created = datetime.now(UTC) - timedelta(hours=2)
+    return AdvisorSuggestion(
+        recommendation=AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=created),
+            role="gremlin",
+            recommendations={"direction": "down", "horizon_hours": 24},
+            rationale="tape feels toppy",
+            confidence="medium",
+        ),
+        created_at=Timestamp(dt=created),
+        input_summary={"symbol": symbol},
+        model_name="qwen2.5:3b-instruct-q4_K_M",
+    )
+
+
+class TestWeatherReport:
+    async def test_aggregates_trends_news_and_gremlin_calls(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        observe = SQLiteStorageAdapter(":memory:")
+        advise = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        await advise.connect()
+        try:
+            await observe.save_ohlc_bars(_hourly_bars(BTC_USD, 72, start=100.0, step=0.5))
+            await advise.save_advisor_suggestion(_gremlin_suggestion())
+            svc = await _service(
+                storage,
+                exchange_with_btc_and_eth,
+                observe_storage=observe,
+                advise_storage=advise,
+            )
+            result = await svc.answer_query(WeatherReportQuery(lookback_days=3))
+            assert isinstance(result, WeatherReportResult)
+            assert result.lookback_days == 3
+            by_symbol = {t.symbol: t for t in result.trends}
+            assert set(by_symbol) == {"BTC/USD", "ETH/USD"}
+            assert by_symbol["BTC/USD"].change_window_pct is not None
+            assert by_symbol["BTC/USD"].change_window_pct > 0
+            assert by_symbol["ETH/USD"].latest_price is None  # no bars seeded
+            assert result.suggestion_count == 1
+            [call] = result.directional_calls
+            assert call.symbol == "BTC/USD"
+            assert call.direction == "down"
+            # No assistant wired -> deterministic narrative, and it cites
+            # the window move rather than being empty.
+            assert "Market weather" in result.narrative
+            assert "BTC/USD" in result.narrative
+        finally:
+            await advise.close()
+            await observe.close()
+
+    async def test_degrades_without_cross_dbs(
+        self,
+        storage: SQLiteStorageAdapter,
+        exchange_with_btc_and_eth: MockExchangeAdapter,
+    ) -> None:
+        svc = await _service(storage, exchange_with_btc_and_eth)
+        result = await svc.answer_query(WeatherReportQuery())
+        assert isinstance(result, WeatherReportResult)
+        assert result.lookback_days == 3  # the default window
+        assert all(t.latest_price is None for t in result.trends)
+        assert result.news_count == 0
+        assert result.suggestion_count == 0
+        assert result.directional_calls == []
+        assert "no bar history available" in result.narrative

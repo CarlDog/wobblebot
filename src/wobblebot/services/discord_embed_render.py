@@ -35,6 +35,8 @@ from wobblebot.ports.operator_results import (
     StatusResult,
     SuggestionEntry,
     SymbolStatusEntry,
+    SymbolTrend,
+    WeatherReportResult,
 )
 
 # Discord embed colors (mirror of adapters/discord_transport.py
@@ -80,6 +82,8 @@ def render_query_embed(  # pylint: disable=too-many-return-statements
             return _render_help(result)
         case StatusReportResult():
             return _render_status_report(result)
+        case WeatherReportResult():
+            return _render_weather_report(result)
 
 
 # --------------------------------------------------------------------- #
@@ -374,6 +378,43 @@ def _render_status_report(result: StatusReportResult) -> dict[str, Any]:
         "color": COLOR_INFO,
         "fields": fields,
         "footer": f"since {since_iso}",
+    }
+
+
+def _trend_field_value(trend: SymbolTrend) -> str:
+    """Compact per-symbol trend line for a third-width embed column."""
+    if trend.change_window_pct is None and trend.latest_price is None:
+        return "no bar history"
+    parts: list[str] = []
+    if trend.change_window_pct is not None:
+        parts.append(f"{trend.change_window_pct:+.1f}%")
+    if trend.change_24h_pct is not None:
+        parts.append(f"24h {trend.change_24h_pct:+.1f}%")
+    if trend.rsi_14 is not None:
+        parts.append(f"RSI {trend.rsi_14:.0f}")
+    if trend.adx_14 is not None:
+        parts.append(f"ADX {trend.adx_14:.0f}")
+    return " · ".join(parts) if parts else "insufficient data"
+
+
+def _render_weather_report(result: WeatherReportResult) -> dict[str, Any]:
+    narrative = _truncate(result.narrative, 4000)
+    fields: list[tuple[str, str, bool]] = [
+        (trend.symbol, _trend_field_value(trend), True) for trend in result.trends
+    ]
+    if result.directional_calls:
+        call_lines = [
+            f"{c.symbol}: **{c.direction}** over {c.horizon_hours:g}h "
+            f"({c.confidence}, {c.age_hours:.0f}h ago)"
+            for c in result.directional_calls
+        ]
+        fields.append(("Gremlin calls", _truncate("\n".join(call_lines), 1024), False))
+    return {
+        "title": f"Weather report — last {result.lookback_days}d",
+        "description": narrative,
+        "color": COLOR_INFO,
+        "fields": fields,
+        "footer": f"{result.news_count} news · {result.suggestion_count} suggestions in window",
     }
 
 

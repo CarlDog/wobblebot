@@ -12,6 +12,7 @@ import pytest
 
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.operator_results import (
+    DirectionalCall,
     FillEntry,
     GridConfigResult,
     HarvesterStatusResult,
@@ -30,6 +31,8 @@ from wobblebot.ports.operator_results import (
     StatusResult,
     SuggestionEntry,
     SymbolStatusEntry,
+    SymbolTrend,
+    WeatherReportResult,
 )
 from wobblebot.services.discord_embed_render import (
     COLOR_INFO,
@@ -444,3 +447,45 @@ class TestRenderStatusReport:
 
         # Discord caps description at 4096; we truncate well under.
         assert len(out["description"]) <= 4000
+
+
+class TestRenderWeatherReport:
+    def test_renders_trends_and_gremlin_calls(self) -> None:
+        result = WeatherReportResult(
+            lookback_days=3,
+            narrative="Choppy few days; BTC drifting at the top of its range.",
+            trends=[
+                SymbolTrend(
+                    symbol="BTC/USD",
+                    latest_price=65000.0,
+                    change_24h_pct=1.2,
+                    change_window_pct=4.5,
+                    range_position_pct=92.0,
+                    rsi_14=68.0,
+                    adx_14=18.0,
+                ),
+                SymbolTrend(symbol="ETH/USD"),
+            ],
+            news_count=7,
+            suggestion_count=12,
+            directional_calls=[
+                DirectionalCall(
+                    symbol="BTC/USD",
+                    direction="down",
+                    horizon_hours=24,
+                    confidence="medium",
+                    age_hours=2.0,
+                )
+            ],
+        )
+
+        out = render_query_embed(result)
+
+        assert "3d" in out["title"]
+        assert "Choppy" in out["description"]
+        by_name = {n: v for n, v, *_ in out["fields"]}
+        assert "+4.5%" in by_name["BTC/USD"]
+        assert "RSI 68" in by_name["BTC/USD"]
+        assert by_name["ETH/USD"] == "no bar history"
+        assert "down" in by_name["Gremlin calls"]
+        assert "7 news" in out["footer"]

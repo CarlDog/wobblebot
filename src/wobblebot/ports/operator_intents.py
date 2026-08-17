@@ -401,6 +401,24 @@ class StatusReportQuery(BaseModel):
         frozen = True
 
 
+class WeatherReportQuery(BaseModel):
+    """External-market brief — the sibling of ``status_report`` (P4.5).
+
+    Where ``status_report`` condenses the BOT's own activity,
+    ``weather_report`` aggregates what the MARKET is doing: per-symbol
+    multi-day price trends (with RSI/ADX reads from hourly bars), the
+    news window, and the advisors' recent takes — including the
+    Gremlin's directional calls when that voice is enabled. The seed
+    of the Oracle track.
+    """
+
+    kind: Literal["weather_report"] = "weather_report"
+    lookback_days: int = Field(default=3, gt=0, le=7)
+
+    class Config:
+        frozen = True
+
+
 OperatorQuery = Annotated[
     StatusQuery
     | OpenOrdersQuery
@@ -411,7 +429,8 @@ OperatorQuery = Annotated[
     | RecentProposalsQuery
     | GridConfigQuery
     | HelpQuery
-    | StatusReportQuery,
+    | StatusReportQuery
+    | WeatherReportQuery,
     Field(discriminator="kind"),
 ]
 """Discriminated union over all v1 read-only operator queries."""
@@ -507,4 +526,5 @@ __all__ = (
     "StatusReportQuery",
     "StopCommand",
     "SymbolInput",
+    "WeatherReportQuery",
 )

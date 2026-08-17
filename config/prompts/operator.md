@@ -93,6 +93,12 @@ Available query kinds:
   user-friendly narrative. `lookback_hours: null` means "since the
   operator's last status_report" (24h default on first run). An
   explicit integer 1-168 pins a fixed window.
+- `{"kind": "weather_report", "lookback_days": 3}` — MARKET weather:
+  per-symbol multi-day price trends + news + the advisors' recent
+  reads, condensed into a narrative. Use for "how's the market",
+  "what's the weather", "market outlook", "how are things looking
+  out there". `lookback_days` 1-7 (default 3). Distinct from
+  `status_report`, which covers the BOT's own activity.
 
 ### 3. Conversational (chat with no action)
 

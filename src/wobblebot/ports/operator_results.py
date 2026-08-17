@@ -275,6 +275,61 @@ class StatusReportResult(BaseModel):
         frozen = True
 
 
+class SymbolTrend(BaseModel):
+    """One symbol's precomputed market read for ``WeatherReportResult``.
+
+    All ``None``-able: a symbol with no bar history in the window
+    reports nulls, never fabricated zeros (null means unknown — the
+    same contract as ``PerformanceSummary``'s optional fields).
+    Percentages are already ``x100`` (``2.5`` = +2.5%).
+    """
+
+    symbol: str = Field(min_length=3)
+    latest_price: float | None = None
+    change_24h_pct: float | None = None
+    change_window_pct: float | None = None
+    range_position_pct: float | None = Field(default=None, ge=0, le=100)
+    rsi_14: float | None = None
+    adx_14: float | None = None
+
+    class Config:
+        frozen = True
+
+
+class DirectionalCall(BaseModel):
+    """One Gremlin directional call surfaced in the weather report."""
+
+    symbol: str = Field(min_length=1)
+    direction: str = Field(min_length=1)
+    horizon_hours: float = Field(gt=0)
+    confidence: str = Field(min_length=1)
+    age_hours: float = Field(ge=0)
+
+    class Config:
+        frozen = True
+
+
+class WeatherReportResult(BaseModel):
+    """LLM-condensed market brief + the precomputed facts behind it.
+
+    ``trends`` / ``directional_calls`` / the counts are deterministic
+    and render as structured fields regardless of what the narrative
+    says — a malformed narrative can't hide a number (same discipline
+    as ``StatusReportResult.tallies``).
+    """
+
+    kind: Literal["weather_report"] = "weather_report"
+    lookback_days: int = Field(gt=0)
+    narrative: str = Field(min_length=1)
+    trends: list[SymbolTrend] = Field(default_factory=list)
+    news_count: int = Field(ge=0)
+    suggestion_count: int = Field(ge=0)
+    directional_calls: list[DirectionalCall] = Field(default_factory=list)
+
+    class Config:
+        frozen = True
+
+
 QueryResult = Annotated[
     StatusResult
     | OpenOrdersResult
@@ -285,7 +340,8 @@ QueryResult = Annotated[
     | RecentProposalsResult
     | GridConfigResult
     | HelpResult
-    | StatusReportResult,
+    | StatusReportResult
+    | WeatherReportResult,
     Field(discriminator="kind"),
 ]
 """Discriminated union over the typed outputs of every query."""
@@ -372,6 +428,7 @@ __all__ = (
     "ConfirmDecision",
     "ConfirmOutcome",
     "ConfirmResult",
+    "DirectionalCall",
     "FillEntry",
     "GridConfigResult",
     "HarvesterStatusResult",
@@ -391,4 +448,6 @@ __all__ = (
     "StatusResult",
     "SuggestionEntry",
     "SymbolStatusEntry",
+    "SymbolTrend",
+    "WeatherReportResult",
 )

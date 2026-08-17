@@ -1801,8 +1801,23 @@ the detail; the full backlog index is
    classifies scoreable-directional under P4.4b). Enabling = the
    operator flips `enabled: true` in the NAS settings.yml + advise
    restart. **P4.4 (start the clocks) COMPLETE** — 3,424 tests, pylint
-   10.00, mypy clean; the whole slice rides the next push/deploy, and
-   the trace + gremlin clocks start in production when it lands.
+   10.00, mypy clean; deployed same day in `f279c16` alongside the
+   fee-staleness sweep of the advisory layer (prompts 0.26/0.40→
+   0.40/0.80, heuristic fee_floor 0.52→0.80, near_floor_spacing
+   0.68→1.05; NAS config-mount copies synced — the mount OVERRIDES the
+   image's config/, so prompt/spec changes always need an explicit NAS
+   sync). **P4.5 SHIPPED same day — weather_report, the Oracle seed**:
+   `WeatherReportQuery`/`Result` + `services/weather_report.py` (pure
+   trend/call aggregation) + `services/operator_reports.py` (NEW — both
+   LLM-condensed report builders; the split that brought
+   operator_service back under the 1000-line gate, 894+321) + Discord
+   renderer + operator.md catalog entry. Precompute-the-facts
+   discipline throughout; deterministic fallback without an assistant;
+   live-verified over real NAS data copies (BTC 98% range / ADX 26.5,
+   ADA bottom-of-range / RSI 40; 132 suggestions in window). Deploy
+   sequencing note: sync NAS operator.md WITH the image, never before.
+   3,434 tests, pylint 10.00, mypy clean. Next: P4.6 Historian (after
+   the Q2-dump scoring), P4.7 cost-honesty dashboard.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
