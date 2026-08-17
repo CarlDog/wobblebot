@@ -2655,6 +2655,108 @@ cover the new example-file keys; the denylist pin test guards the forensic set.
 implements); ADR-032 (why `trades` is untouchable); ADR-035 (why `advisor_suggestions` is);
 ADR-002 (why `pending_commands` is). Implementation lands as its own slice after this ADR.
 
-<!-- ADR-036 is the last in this file; new ADRs append below. -->
+## ADR-037 — Auth-Failure Escalation: Halt the Task, Hold the Vanished Book, Back Off the Lockout
+
+**Status:** Proposed (operator to ratify — decision 2's resume semantics carry an option set)
+**Date:** 2026-08-17
+
+**Context:** The 2026-08-15→17 reader-key incident. At 2026-08-15 ~20:40 UTC the deployed
+`KRAKEN_READER_API_KEY` became invalid (the Portainer env edit that added the harvester key,
+taking effect at the evening redeploy). What followed, reconstructed from logs:
+
+- `cli/observe` retried the dead key every 10 minutes for ~30 hours — ~136
+  `EAPI:Invalid key` failures, all WARNING-level, **zero notifications**, and
+  `balance_snapshots_saved=0` for a full day (the dashboard's account value froze on
+  Friday's last snapshot).
+- Kraken answered the repeated invalid credentials with rolling **account-wide**
+  `EGeneral:Temporary lockout` windows — 10,500+ lockout errors across `cli/live`'s logs,
+  which retried at full 5-second tick cadence throughout.
+- Lockout bursts longer than 120s meant the dead-man's-switch reset failed long enough for
+  Kraken to server-side cancel the **entire order book** — correct fail-safe, wrong
+  aftermath: the engine treated each empty book as routine ("no open orders; re-laying out
+  grid at a stale anchor", WARNING) and re-placed everything. **~40 cancel-all → re-layout
+  cycles**; 11 BTC churn-fills ≈ $55 bought on dips at stale anchors.
+- The caps could not see it: the per-coin cap reads **open-order notional** (ratified
+  caps split; `grid_engine.py:1321`), and every cancel-all reset that ledger — holdings
+  accumulated to $81.66 against a $40 cap with zero refusals.
+- Discovery was the operator eyeballing a dashboard that "looked wrong." Every safety
+  *floor* held (DMS canceled when control was lost; the ADR-032 sell guard refused every
+  below-basis sell throughout; fail-soft ticks never crash-looped). The missing layer was
+  *anomaly recognition and escalation* between the floors and the operator.
+
+**Decision (proposed):**
+
+1. **Permanent auth errors halt the failing task — not the fleet.** The Kraken adapter
+   classifies `EAPI:Invalid key`, `EAPI:Invalid signature`, and `EGeneral:Permission denied`
+   as *permanent-auth*. Three consecutive permanent-auth failures on the same task halt
+   **that task** (the daemon's other tasks — e.g. observe's public price polls — continue),
+   emit one **critical** notification naming the env var pair to fix, and stay halted until
+   process restart. Rationale: retrying a permanently-dead credential is not resilience —
+   each retry re-armed the account-wide lockout that disrupted the *trading* key. The
+   inverse coupling (a global kill) would hand the flakiest key the power to stop trading
+   by design.
+2. **Mid-session book-vanish is an anomaly, never a routine re-layout.** If a symbol's
+   grid was laid out this session, the engine did not cancel it, and OpenOrders comes back
+   empty — the engine enters a **book-vanish hold** for that symbol: no re-layout, no new
+   placement, one critical notification. Session-start emptiness stays normal (clean
+   shutdown cancels by design; Phase 8.1 reconciliation covers crash recovery). Resume
+   semantics — operator option set:
+   - **(A) Operator resume only** *(recommended)*: the hold reuses the P3 state-aware
+     pause/resume machinery (`pause reason=book_vanish`); the notification names the resume
+     command. An idle grid bot is safe — it only misses fills; ADR-024's philosophy
+     (a deliberate human restart after an abnormal stop) applies exactly.
+   - **(B) Cool-down auto-resume**: re-lay automatically after a configured quiet period
+     (no API errors for N minutes). Less friction, but the incident's lockout pattern —
+     calm minutes between bursts — would have auto-resumed into every cycle.
+   - **(C) A or timeout**: operator resume, else auto-resume after a long ceiling (e.g.
+     6h). Protects an away operator from indefinite idling at the cost of (B)'s failure
+     mode, delayed.
+   Applied to this incident, (A) turns ~40 churn cycles into: one cancel, one page, an idle
+   bot awaiting one Discord command.
+3. **`EGeneral:Temporary lockout` gets hard backoff and a loud streak alarm.** Non-DMS
+   private calls back off exponentially (30s doubling to a 10-minute cap) instead of
+   hammering the locked counter at tick cadence. The DMS reset ping alone keeps trying
+   every tick — its success is worth more than the marginal lockout-extension risk, since
+   failing it for 120s costs the whole book. A DMS-reset-failure streak ≥ 3 emits a
+   **critical** notification: it is the single strongest "your book is about to die"
+   signal and today it is a WARNING nobody reads.
+4. **Episode semantics for the new alerts.** First occurrence critical; while the
+   condition persists, at most one reminder per 6h; one info-level "recovered" on
+   clearance. No per-tick spam — the notification system's existing dedup is reused.
+5. **Explicitly out of scope: the caps split.** This incident is new evidence that
+   commitment-based caps have a churn blind spot, but holdings-aware caps interact with
+   the sell guard and offside parks in ways that deserve their own analysis. Recorded as a
+   follow-up with this incident as its dataset — not smuggled in here.
+
+**Alternatives considered:**
+- **Global kill-switch on any key failure** (the operator's first instinct, examined at
+  their request). Rejected as the *default*: it couples live trading to the least
+  important credential, and the fail-safe floor it would rebuild (orders die when control
+  is lost) already exists in the DMS. The targeted levers above address the actual harm
+  mechanisms observed. A narrower variant — trading-key auth failures pause `cli/live`
+  placement — is compatible with decision 1 + 2 and can be ratified alongside (A).
+- **Status quo (fail-soft WARNINGs).** Rejected: 30 hours, 11,000 log lines, zero pages,
+  $55 of cap-invisible buys is the receipt.
+- **Alert-only (no behavior change).** Rejected for decision 2's case specifically: an
+  alerted operator still races the next 6-minute churn cycle; the hold removes the race.
+
+**Consequences:**
+- A dead credential becomes a 5-minute page instead of a 30-hour silent incident; a
+  vanished book becomes one idle symbol awaiting one command.
+- New operational friction: after a genuine external cancel-all, placement waits for an
+  operator resume (option A). Accepted — idle is safe for a grid bot.
+- Touches: Kraken adapter (error classification), `cli/observe` + `cli/harvest` (task
+  halt), `cli/live` + grid engine (hold state, backoff, streak alert), notifications
+  (episode dedup). No layer boundaries move; no new ports.
+- Tests: classifier table, halt-after-3, hold-not-relayout state transitions,
+  session-start-vs-mid-session distinction, streak alert, episode dedup.
+
+**References:** ADR-021 (dead man's switch — the floor that worked), ADR-024 (cool-down —
+the restart philosophy decision 2 extends), ADR-032 (sell guard — held throughout),
+ADR-034/P3 pause-resume (the machinery decision 2 reuses), ratified caps split (the
+follow-up's subject). Incident logs: `live.log.2026-08-16`, `observe.log.2026-08-15/16`
+(NAS), summarized above.
+
+<!-- ADR-037 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
