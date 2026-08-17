@@ -30,6 +30,7 @@ from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
+    FeeRates,
     OHLCBar,
     OrderSide,
     Price,
@@ -198,6 +199,10 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
             "KrakenAdapter (or ShadowExchangeAdapter, which forwards "
             "to the live adapter) for backfill workflows."
         )
+
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        """ADR-038: the mock bills one flat rate, so maker == taker."""
+        return FeeRates(symbol=symbol, maker=self._fee_rate, taker=self._fee_rate)
 
     async def get_balances(self) -> list[Balance]:
         return [self._balance_for(asset) for asset in sorted(self._balances)]

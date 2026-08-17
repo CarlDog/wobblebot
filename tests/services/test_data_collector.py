@@ -23,8 +23,9 @@ import pytest_asyncio
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
+from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.value_objects import Amount, FeeRates, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import DataCollectorError, ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
@@ -46,6 +47,9 @@ class _FailingExchange(ExchangePort):
 
     def __init__(self, message: str = "simulated upstream failure") -> None:
         self._message = message
+
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         raise ExchangeError(self._message)

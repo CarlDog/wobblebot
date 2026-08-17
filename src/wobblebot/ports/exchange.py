@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Ticker
+from wobblebot.domain.value_objects import FeeRates, OHLCBar, Price, Symbol, Ticker
 
 
 class ExchangePort(ABC):
@@ -63,6 +63,28 @@ class ExchangePort(ABC):
 
         Raises:
             ExchangeError: If the ticker cannot be retrieved.
+        """
+        pass
+
+    @abstractmethod
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        """Get the maker/taker rates this ACCOUNT pays for a pair (ADR-038).
+
+        The account's own answer, not a copied schedule -- Kraken's
+        2026-07-09 fee doubling hid for five weeks behind a schedule
+        copy. Called once per symbol at session start; implementations
+        need no caching.
+
+        Args:
+            symbol: Trading pair
+
+        Returns:
+            The account's current maker/taker rates for the pair.
+
+        Raises:
+            ExchangeError: If the rates cannot be retrieved (callers
+                fall back to the ``config.grid.KRAKEN_*_FEE_RATE``
+                constants and log the fallback).
         """
         pass
 

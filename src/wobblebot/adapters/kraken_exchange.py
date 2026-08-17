@@ -62,6 +62,7 @@ from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
+    FeeRates,
     OHLCBar,
     OrderSide,
     Price,
@@ -401,6 +402,29 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         await self._ensure_asset_metadata()
         result = await self._private_post("/0/private/BalanceEx")
         return [self._parse_balance_entry(code, entry) for code, entry in result.items()]
+
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        """Account's actual maker/taker for ``symbol`` via TradeVolume (ADR-038).
+
+        Kraken keys the response by its INTERNAL pair name (XXBTZUSD
+        for an XBTUSD request), so the single requested pair is read
+        positionally, not by name. Rates arrive as percentages
+        ("0.8000") and are returned as fractions. Requires the Query
+        Funds permission (both the reader and trader keys carry it).
+        """
+        altname = symbol_to_kraken_altname(symbol)
+        result = await self._private_post("/0/private/TradeVolume", {"pair": altname})
+        fees_taker = result.get("fees") or {}
+        fees_maker = result.get("fees_maker") or {}
+        if not fees_taker or not fees_maker:
+            raise ExchangeError(f"Kraken TradeVolume returned no fee data for pair {altname!r}")
+        taker_pct = Decimal(str(next(iter(fees_taker.values()))["fee"]))
+        maker_pct = Decimal(str(next(iter(fees_maker.values()))["fee"]))
+        return FeeRates(
+            symbol=symbol,
+            maker=maker_pct / Decimal("100"),
+            taker=taker_pct / Decimal("100"),
+        )
 
     async def get_balance(self, asset: str) -> Balance | None:
         """Fetch the balance for ``asset`` (e.g., "BTC", "USD") or ``None``.

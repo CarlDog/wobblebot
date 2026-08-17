@@ -234,8 +234,8 @@ class ShadowConfig(BaseModel):
     log_file_path: str | None = "data/logs/shadow.log"
 
     initial_balances: dict[str, Decimal]
-    maker_fee_rate: Decimal = Field(default=Decimal("0.0026"), ge=Decimal("0"))
-    taker_fee_rate: Decimal = Field(default=Decimal("0.0040"), ge=Decimal("0"))
+    maker_fee_rate: Decimal = Field(default=Decimal("0.0040"), ge=Decimal("0"))
+    taker_fee_rate: Decimal = Field(default=Decimal("0.0080"), ge=Decimal("0"))
 
     class Config:
         frozen = True

@@ -479,11 +479,16 @@ async def _main_async(config: WobbleBotConfig) -> int:
             },
         )
 
+    # ADR-038: the shadow engine's sell guard + fee tripwire use the
+    # shadow's own configured fee model, keeping the simulation's fee
+    # beliefs and its fee bills identical by construction.
     engine = GridEngine(
         shadow_adapter,
         storage,
         config.grid,
         config.safety,
+        maker_fee_rate=config.shadow.maker_fee_rate,
+        taker_fee_rate=config.shadow.taker_fee_rate,
         pending_counters=list(report.needs_counter_order_ids),
     )
 

@@ -74,6 +74,11 @@ from wobblebot.cli._common import (
     safe_shutdown,
 )
 from wobblebot.config.cli import LiveConfig, ScreenerConfig
+from wobblebot.config.grid import (
+    KRAKEN_MAKER_FEE_RATE,
+    KRAKEN_TAKER_FEE_RATE,
+    GridConfig,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -264,6 +269,79 @@ def _log_dms_confirmation(
             extra={"consecutive_unconfirmed_ticks": unconfirmed_ticks},
         )
     return unconfirmed_ticks
+
+
+async def _fetch_session_fee_rates(
+    adapter: KrakenAdapter, symbols: Sequence[Symbol]
+) -> tuple[Decimal, Decimal]:
+    """ADR-038: the account's actual (maker, taker) for this session.
+
+    One TradeVolume call per symbol at session start; the MAX of each
+    rate across symbols is returned (conservative for the sell guard).
+    Any failure falls back to the code constants with a WARNING — the
+    documented fallback, not silent.
+    """
+    makers: list[Decimal] = []
+    takers: list[Decimal] = []
+    for symbol in symbols:
+        try:
+            rates = await adapter.get_fee_rates(symbol)
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "fee-rate fetch failed for %s; falling back to code constants "
+                "(maker %s%%, taker %s%%): %s",
+                symbol,
+                fmt_decimal(KRAKEN_MAKER_FEE_RATE * 100),
+                fmt_decimal(KRAKEN_TAKER_FEE_RATE * 100),
+                exc,
+                extra={"symbol": str(symbol), "error": str(exc)},
+            )
+            return KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
+        makers.append(rates.maker)
+        takers.append(rates.taker)
+        _LOGGER.info(
+            "session fee rates for %s: maker %s%% / taker %s%% (live TradeVolume)",
+            symbol,
+            fmt_decimal(rates.maker * 100),
+            fmt_decimal(rates.taker * 100),
+            extra={
+                "symbol": str(symbol),
+                "maker_rate": str(rates.maker),
+                "taker_rate": str(rates.taker),
+            },
+        )
+    if not makers:
+        return KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
+    return max(makers), max(takers)
+
+
+def _warn_if_spacing_below_fee_floor(grid: GridConfig, maker_rate: Decimal) -> None:
+    """ADR-038: re-check spacing-vs-fees against the LIVE maker rate.
+
+    The config-load validator enforces the floor with the fallback
+    constants; if the account's real rate is higher, a spacing that
+    validated can still be unprofitable. Advisory (WARNING, never
+    fatal) — the operator decides.
+    """
+    floor_pct = maker_rate * Decimal("2") * Decimal("100")
+    for label, levels in [
+        ("grid.default", grid.default),
+        *[(f"grid.coins.{name}", cfg) for name, cfg in grid.coins.items() if cfg.enabled],
+    ]:
+        if levels.spacing_percentage <= floor_pct:
+            _LOGGER.warning(
+                "%s spacing %s%% is at or below the LIVE fee floor %s%% "
+                "(2 x maker %s%%) — completed cycles cannot profit at current fees",
+                label,
+                fmt_decimal(levels.spacing_percentage),
+                fmt_decimal(floor_pct),
+                fmt_decimal(maker_rate * 100),
+                extra={
+                    "label": label,
+                    "spacing_percentage": str(levels.spacing_percentage),
+                    "live_floor_percentage": str(floor_pct),
+                },
+            )
 
 
 # ADR-037 decision 3: lockout backoff window bounds. 30s doubling to a
@@ -524,7 +602,7 @@ async def _prefetch_tickers(
     return tickers
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -533,6 +611,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     notifier: NotifierPort | None = None,
     sweep: list[Symbol] | None = None,
     escalation: _AuthEscalation | None = None,
+    fee_alerted: set[Symbol] | None = None,
 ) -> bool:
     """One tick across every configured symbol + post-tick loss cap
     check. Returns True when the loss cap tripped (caller stops).
@@ -640,6 +719,29 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                         f"'resume {symbol}'). Investigate before resuming."
                     ),
                     context={"symbol": str(symbol), "reason": "book_vanish", "tick": tick},
+                )
+            # ADR-038 fee-drift tripwire: page once per symbol per
+            # session the first time a fill's fee rate matches neither
+            # believed rate. Would have paged on 2026-07-13 — the
+            # first fill after Kraken's fee doubling.
+            if (
+                fee_alerted is not None
+                and result.fills > 0
+                and symbol not in fee_alerted
+                and engine.fee_anomaly_count(symbol) > 0
+            ):
+                fee_alerted.add(symbol)
+                await notify(
+                    notifier,
+                    level="warning",
+                    title=f"Fee drift: {symbol}",
+                    message=(
+                        f"A {symbol} fill's fee rate matches neither the maker nor "
+                        "taker rate this session believes — the exchange fee "
+                        "schedule may have changed. Check the fee-drift WARNINGs "
+                        "in the live log and Kraken's fee page."
+                    ),
+                    context={"symbol": str(symbol), "anomalies": engine.fee_anomaly_count(symbol)},
                 )
             # Stage 5.5: emit a notification on fills so the operator
             # sees activity in Discord without tailing logs.
@@ -1248,6 +1350,8 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     # ADR-037: per-session auth-failure escalation state (lockout
     # backoff, permanent-auth strikes, DMS-failure streak).
     escalation = _AuthEscalation()
+    # ADR-038: symbols already paged for fee drift this session.
+    fee_alerted: set[Symbol] = set()
     # Terminal-visible periodic heartbeat (separate from the operator.db
     # daemon_heartbeats row). After the 2026-05-23 logging-audit demoted
     # per-tick "tick complete" from INFO to DEBUG, a long quiet period
@@ -1377,6 +1481,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 notifier,
                 sweep=sweep,
                 escalation=escalation,
+                fee_alerted=fee_alerted,
             ):
                 exit_code = 1
                 break
@@ -1563,7 +1668,7 @@ async def _open_observe_storage(observe_db: str | None) -> SQLiteStorageAdapter 
     return storage
 
 
-async def _main_async(  # pylint: disable=too-many-locals
+async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     config: WobbleBotConfig, *, ignore_cool_down: bool = False
 ) -> int:
     if config.live is None:
@@ -1670,12 +1775,24 @@ async def _main_async(  # pylint: disable=too-many-locals
             },
         )
 
+    # ADR-038: fetch the account's ACTUAL fee rates from Kraken at
+    # session start instead of trusting the code constants — the
+    # 2026-07-09 fee doubling hid for five weeks behind a schedule
+    # copy. Conservative reduction: the MAX rate across symbols feeds
+    # the sell guard (overestimating a fee only defers more sells,
+    # never approves a worse one). Fetch failure falls back to the
+    # constants with a WARNING; the session-start receipt logs which.
+    maker_rate, taker_rate = await _fetch_session_fee_rates(adapter, config.live.symbols)
+    _warn_if_spacing_below_fee_floor(config.grid, maker_rate)
+
     engine = GridEngine(
         adapter,
         storage,
         config.grid,
         config.safety,
         pending_counters=list(report.needs_counter_order_ids),
+        maker_fee_rate=maker_rate,
+        taker_fee_rate=taker_rate,
     )
 
     # Stage 5.4: optional operator-interaction wiring. When operator_db

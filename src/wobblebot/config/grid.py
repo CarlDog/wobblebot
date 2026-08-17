@@ -29,12 +29,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-# Kraken base-tier published rates, ratified in Stage 2.3 design decisions.
-# Same source used by ``shadow.maker_fee_rate`` / ``shadow.taker_fee_rate``
-# in ShadowConfig. If Kraken's fee schedule changes, update here AND in
-# the shadow defaults to keep the project's fee model in sync.
-KRAKEN_MAKER_FEE_RATE = Decimal("0.0026")  # 0.26% maker — limit orders that sit
-KRAKEN_TAKER_FEE_RATE = Decimal("0.0040")  # 0.40% taker — marketable orders
+# Kraken Tier-1 published rates. DOUBLED by Kraken's cross-platform fee
+# tiers, effective 2026-07-09 (accounts auto-migrated; discovered
+# 2026-08-17 from the trades table's own fee buckets, confirmed against
+# the published schedule AND the account's live TradeVolume response —
+# the drift hid five weeks because a new-schedule maker fill bills
+# exactly what an old-schedule taker did). Same source used by
+# ``shadow.maker_fee_rate`` / ``shadow.taker_fee_rate`` in ShadowConfig;
+# update both together. Per ADR-038 these are the FALLBACK — cli/live
+# fetches the account's actual per-pair rates from TradeVolume at
+# session start and these apply only when that fetch fails.
+KRAKEN_MAKER_FEE_RATE = Decimal("0.0040")  # 0.40% maker — limit orders that sit
+KRAKEN_TAKER_FEE_RATE = Decimal("0.0080")  # 0.80% taker — marketable orders
 
 
 class GridLevels(BaseModel):

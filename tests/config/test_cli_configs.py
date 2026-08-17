@@ -150,8 +150,9 @@ class TestShadowConfig:
             symbols=["BTC/USD"],
             initial_balances={"USD": Decimal("10000")},
         )
-        assert cfg.maker_fee_rate == Decimal("0.0026")
-        assert cfg.taker_fee_rate == Decimal("0.0040")
+        # Kraken Tier-1 since 2026-07-09 (ADR-038).
+        assert cfg.maker_fee_rate == Decimal("0.0040")
+        assert cfg.taker_fee_rate == Decimal("0.0080")
         assert cfg.initial_balances["USD"] == Decimal("10000")
 
     def test_balances_must_include_usd(self) -> None:

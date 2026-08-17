@@ -14,9 +14,11 @@ from decimal import Decimal
 import pytest
 
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
+from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
+    FeeRates,
     OHLCBar,
     OrderSide,
     Price,
@@ -43,6 +45,9 @@ class _StubLiveExchange(ExchangePort):
 
     def set_price(self, symbol: Symbol, price: Decimal) -> None:
         self._prices[symbol] = price
+
+    async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
+        return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         self.price_call_count += 1
@@ -210,7 +215,7 @@ class TestMakerVsTakerFee:
         trades = await shadow.get_trade_history(symbol=BTC_USD)
         assert len(trades) == 1
         # 0.26% maker
-        assert trades[0].fee == Decimal("51000") * Decimal("0.001") * Decimal("0.0026")
+        assert trades[0].fee == Decimal("51000") * Decimal("0.001") * Decimal("0.0040")
 
     async def test_sell_at_or_below_market_is_taker(self) -> None:
         """SELL at 49500 with market 50000 → marketable → taker."""
@@ -223,7 +228,7 @@ class TestMakerVsTakerFee:
         trades = await shadow.get_trade_history(symbol=BTC_USD)
         assert len(trades) == 1
         # 0.40% taker
-        assert trades[0].fee == Decimal("49500") * Decimal("0.001") * Decimal("0.0040")
+        assert trades[0].fee == Decimal("49500") * Decimal("0.001") * Decimal("0.0080")
 
 
 # ---------------------------------------------------------------------------

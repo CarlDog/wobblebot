@@ -24,6 +24,17 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ### Added
 
+- **ADR-038 live fee rates** (2026-08-17). Kraken doubled Tier-1 spot
+  fees effective 2026-07-09 (0.25/0.40 → **0.40% maker / 0.80% taker**)
+  and the copied constants drifted silently for five weeks. Now:
+  `ExchangePort.get_fee_rates` (Kraken `TradeVolume` — the account's
+  own per-pair rates) feeds the sell guard at session start with the
+  constants as logged fallback; a per-fill fee-drift tripwire pages on
+  the first fill matching neither believed rate; constants + shadow
+  defaults corrected to Tier-1; the aggressive profile's spacing moves
+  0.6% → 1.8% (the new 0.80% fee floor made it structurally
+  unprofitable); the spacing validator floor doubles accordingly.
+
 - **ADR-037 auth-failure escalation** (2026-08-17, from the reader-key
   incident). Kraken errors now classify (`ExchangeError.codes` +
   `is_permanent_auth_error` / `is_temporary_lockout`); a shared

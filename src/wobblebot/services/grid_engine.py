@@ -52,7 +52,12 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, CoinGridConfig, GridConfig
+from wobblebot.config.grid import (
+    KRAKEN_MAKER_FEE_RATE,
+    KRAKEN_TAKER_FEE_RATE,
+    CoinGridConfig,
+    GridConfig,
+)
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.exceptions import InsufficientBalance
 from wobblebot.domain.grid import (
@@ -204,6 +209,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         grid_config: GridConfig,
         safety_config: SafetyConfig,
         pending_counters: list[UUID] | None = None,
+        maker_fee_rate: Decimal = KRAKEN_MAKER_FEE_RATE,
+        taker_fee_rate: Decimal = KRAKEN_TAKER_FEE_RATE,
     ) -> None:
         self._exchange = exchange
         self._storage = storage
@@ -214,10 +221,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # free — the maker fee rate is the code-resident constant per
         # the four-homes safety-carve-out (pricing/fees stay code), the
         # tolerance is the one operator-tunable knob.
+        # ADR-038: the fee rates are INJECTED (cli/live fetches the
+        # account's actual rates from TradeVolume at session start;
+        # cli/shadow passes its configured fee model). The constants
+        # remain the defaults so every other construction site keeps
+        # its meaning — as the documented fallback.
+        self._maker_fee_rate = maker_fee_rate
+        self._taker_fee_rate = taker_fee_rate
         self._sell_guard = SellGuard(
             storage,
             max_loss_percentage=safety_config.sell_guard.max_loss_percentage,
-            maker_fee_rate=KRAKEN_MAKER_FEE_RATE,
+            maker_fee_rate=maker_fee_rate,
         )
         # ADR-023: order UUIDs the startup reconciler recovered a real
         # fill for (ReconciliationReport.needs_counter_order_ids). Each
@@ -243,6 +257,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # as fill-detection candidates). Non-zero + an empty book =
         # the book vanished externally — hold, don't re-lay.
         self._external_cancels: dict[Symbol, int] = {}
+        # ADR-038 fee-drift tripwire: count of fills whose realized
+        # fee rate matches NEITHER the maker nor the taker rate this
+        # engine believes (tolerance 5 bps). Kraken's 2026-07-09 fee
+        # doubling billed 0.80% against believed rates of 0.25/0.40
+        # for five silent weeks — this counter is what would have
+        # caught it on the first fill. cli/live pages on transition.
+        self._fee_anomaly_counts: dict[Symbol, int] = {}
         self._stop_requested = False
         # Per-symbol count of consecutive offside ticks. Drives transition +
         # heartbeat logging (log once on entry, periodic summary while
@@ -1148,6 +1169,41 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         candidates = await self._fill_candidates(symbol, exchange_open_orders)
         return bool(candidates)
 
+    _FEE_DRIFT_TOLERANCE = Decimal("0.0005")  # 5 bps
+
+    def _check_fee_drift(self, symbol: Symbol, trade: Trade) -> None:
+        """ADR-038: flag a fill whose realized fee rate matches neither
+        the maker nor the taker rate this engine believes."""
+        if trade.cost <= 0:
+            return
+        realized = trade.fee / trade.cost
+        drift = min(
+            abs(realized - self._maker_fee_rate),
+            abs(realized - self._taker_fee_rate),
+        )
+        if drift <= self._FEE_DRIFT_TOLERANCE:
+            return
+        self._fee_anomaly_counts[symbol] = self._fee_anomaly_counts.get(symbol, 0) + 1
+        _LOGGER.warning(
+            "fee drift on %s: realized %s%% matches neither maker %s%% nor taker %s%% "
+            "-- has the exchange fee schedule changed?",
+            symbol,
+            fmt_decimal(realized * 100),
+            fmt_decimal(self._maker_fee_rate * 100),
+            fmt_decimal(self._taker_fee_rate * 100),
+            extra={
+                "symbol": str(symbol),
+                "realized_rate": str(realized),
+                "maker_rate": str(self._maker_fee_rate),
+                "taker_rate": str(self._taker_fee_rate),
+                "trade_id": trade.id,
+            },
+        )
+
+    def fee_anomaly_count(self, symbol: Symbol) -> int:
+        """ADR-038: fills so far whose fee rate matched neither believed rate."""
+        return self._fee_anomaly_counts.get(symbol, 0)
+
     async def _detect_fills(
         self,
         symbol: Symbol,
@@ -1208,6 +1264,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 for trade in resolution.trades:
                     await self._storage.save_trade(trade)
                     saved_trade_ids.append(trade.id)
+                    self._check_fee_drift(symbol, trade)
                 if resolution.trades:
                     # ADR-032: a newly-saved trade changes this symbol's
                     # cost basis, so the sell guard must not reuse a
