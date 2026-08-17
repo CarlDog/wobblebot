@@ -17,10 +17,95 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 |---|---|---|---|---|---|
 | **quant** (escalation) | **`xai/grok-4.5`** (Atlas) — **ASSIGNED 2026-08-12** | gen3, 8 rounds: **95% vs 84%**, **0 UNSAFE vs 10** (p=0.001); confirmed on 24 real production inputs (holds 4/24 where gpt-5-mini never held in 216) | `probe_freejudge.py` | assigned 2026-08-12 by the operator | ⚠️ local config only — **not deployed** |
 | **arbitrator** | **`claude-haiku-4-5`** — weakly; `gpt-5-mini` defensible | v1+gen2, 75 judgments: haiku **75/75**, gpt-5-mini 73/75 (**p=0.248, NOT significant**); gpt-5-mini's only 2 failures are both `never_emit_a_tighten` | `probe_arbitrator.py` | 2026-08-10, re-run 08-11, gen2 08-12 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
-| **news** | **`claude-haiku-4-5`** — recommended, not yet wired | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043** | `probe_news.py` | 2026-08-11 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
-| **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH** | `probe_risk.py` | 2026-08-12 | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
+| **news** | **`claude-haiku-4-5`** — recommended, not yet wired; **HELD after the 16-model matrix + red-team, 2026-08-17** | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043**. Phase B: 65 is a ceiling-tie with the field's four 66s | `probe_news.py` | 2026-08-11; held 08-17 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
+| **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit; **HELD after the 16-model matrix + red-team, 2026-08-17** | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH**. Phase B best challenger 54/54 lands p=0.059 uncorrected, before a 16-way selection penalty — no honest beat | `probe_risk.py` | 2026-08-12; held 08-17 | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
 | **gremlin** | *never run* | prompt exists; no battery, no production path | *(none)* | — | not in any profile |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
+
+## Full-field matrix (Phase B) + adversarial audit — 2026-08-17: BOTH SEATS HELD
+
+16 models × 3 rounds × (news/gen2 + risk), four price tiers cheapest-first,
+511 minutes, $12.79, 1,940 calls on the isolated probe ledger. Every one of
+the 96 battery sections completed rc=0. Before acting, the results were
+red-teamed by three isolated adversarial reviewers (harness audit /
+methodology audit / per-fixture forensics) per the standing flip-the-script
+practice — none shown the conclusions. This section is the post-red-team
+synthesis; the raw tier logs are the evidence of record.
+
+**Scores (news /66 · risk-OK /54 · risk ERRORs):**
+
+| model | tier | news | risk | ERR |
+|---|---|---|---|---|
+| `gemini-3.1-pro-preview` | premium | **66** | **54** | 0 |
+| `claude-opus-5` | premium | **66** | **54** | 0 |
+| `xai/grok-4.5` | mid | **66** | 51 | 0 |
+| `claude-sonnet-5` | premium | **66** | 51 | 0 |
+| `kimi-k2.6` · `deepseek-v4-pro` | low | 65 | 52 | 0 |
+| `doubao-seed-2.0-mini` | **cheap** | 64 | 52 | 0 |
+| `deepseek-v4-flash` | **cheap** | 64 | 51 | 0 |
+| `kimi-k3` · `gemini-3.6-flash` | prem/mid | 63 | 53 | 0 |
+| `minimax-m3` · `glm-5.2` | cheap/low | 63 | 51 | 0 |
+| `qwen3.8-max` | mid | 63 | 50 | 3 |
+| `gpt-5.4-mini` | mid | 61 | 49 | 0 |
+| `gpt-5.4-nano` | low | 53 | 46 | 0 |
+| `qwen3.5-flash` | cheap | *(36)* | *(44)* | **39** |
+
+**Both incumbents keep their seats.** News: haiku's 65 is a p=0.5 tie with
+the four 66s at the ceiling. Risk: the best challengers' 54/54 vs the
+incumbent's 50/54 is **p=0.059 uncorrected — before the winner's-curse
+penalty of selecting the max of 16 challengers against one fixed prior
+number**. No honest beat exists in this data.
+
+**What the red-team established (full reports in the session record):**
+
+1. **The run was clean and the verdicts honest.** All sections present,
+   verdict tokens mechanically correct against the graders' rules,
+   summary counts equal line tallies, totals independently recomputed to
+   the digit. The problems are inferential, not executional.
+2. **Both batteries are CEILINGED at the top — the third time this
+   project has hit this instrument failure** (news/v1, arbitrator, now
+   gen2 + risk). Four 66s and two 54s mean no ranking within the top ~6
+   per seat is supported. Worse, top-of-field separation is essentially
+   **one contested rubric label per battery repeated three times**:
+   `bullish_rally_coverage` (24/48 news failures matrix-wide — is a $70k
+   breakout a volatility event? half the field consistently says yes) and
+   `fresh_drawdown_light_exposure` (28/48 risk failures — already flagged
+   "watch, not withdraw" on 08-12). A 66-vs-63 gap is one debatable
+   judgment call, not three points of quality.
+3. **The honest tie band on these instruments is ~5 points, not ±3** —
+   misses cluster perfectly by fixture (same fixture, 3/3 rounds), so the
+   effective sample is the fixture set, not rounds × fixtures.
+4. **The qwen family is UNMEASURABLE here, not bad** — all 42 of the
+   matrix's fixture ERRORs belong to it, with empty-response/truncation
+   signatures (the PR #64 token-budget trap, re-manifesting through the
+   Atlas transport). qwen3.5-flash answered 36 news fixtures and got
+   **36 right**; its 36/66 headline sits below the battery's own
+   do-nothing floor and measures availability, not judgment. Excluded
+   from ranking in either direction; a 45% empty-response rate is
+   nonetheless operationally disqualifying for a live seat today.
+   (Register rule 4 — "errors are not verdicts" — applied as written.)
+5. **Zero UNSAFE in 864 risk judgments across the entire field.** Every
+   model that answered is directionally safe under compounding pressure;
+   the risk battery's safety axis produced no separation because the
+   whole field passed it.
+6. **Latent harness defects found, none of which bit this run** (caps
+   were 60/8 with $12.79 spent — the cost gate never fired; zero UNSAFE
+   means the timid-equals-UNSAFE deadband never triggered): see
+   [`probe-battery-punch-list.md`](probe-battery-punch-list.md). Fix
+   before the next campaign.
+
+**Cost observation worth keeping** (an observation, not a switch case):
+`doubao-seed-2.0-mini` and `deepseek-v4-flash` perform inside the top tie
+group at bottom-tier prices — the field's floor for seat-viable judgment
+now extends into the cheapest tier. `gpt-5.4-nano` is the exception:
+its news 53/66 separates from the top group at p<0.01 (a real, consistent
+weakness, all three rounds).
+
+**Consequence for future campaigns:** more candidates cannot produce a
+different answer on these instruments. If a unique seat-holder is ever
+actually needed (i.e., MoE gets a live path), the prerequisite is
+gen3-class batteries whose top is not ceilinged — and the punch-list
+fixes, so infrastructure and judgment stop sharing a scoreboard.
 
 ## ⚠️ OPEN DECISION — `xai/grok-4.5` beats the quant seat SIGNIFICANTLY; the blocker is cost alone
 
@@ -231,7 +316,8 @@ for seat selection:
 | `quant/core` | 33% | 83% | +50% | ⚠️ off-contract only |
 | `arbitrator/gen2` | 47% (free `voting`) | 100% | +53% | ⚠️ sound, but CEILINGS both candidates |
 | `arbitrator/v1` | **62%** (free `voting`) | 100% | +38% | ❌ floor too high — superseded |
-| `news/gen2` | 59% | 98% | +39% | ✅ current instrument |
+| `news/gen2` | 59% | 98% | +39% | ⚠️ sound floor, but **CEILINGED at the top 2026-08-17** — 4 models at 66/66 in the Phase B matrix |
+| `risk/v1` | 50% | 100% | +50% | ⚠️ sound floor, but **CEILINGED at the top 2026-08-17** — 2 models at 54/54; UNSAFE axis saturated (0 in 864) |
 | `news/v1` | 58% | 100% | +42% | ❌ CEILINGED — 3 models at 12/12 |
 | `freejudge/v1` | **86%** | 83% | **−3%** | ❌ rock beats champion |
 | **`quant/heldout`** | **75%** | 71% | **−4%** | ❌ **rock beats champion** |
