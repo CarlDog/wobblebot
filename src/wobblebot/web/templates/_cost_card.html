@@ -4,6 +4,70 @@
    Outer #cost-card wraps TWO cards (LLM + Kraken trading fees)
    so both refresh together via a single HTMX poll. #}
 <div id="cost-card">
+  {# P4.7: the honest bottom line — realized PnL beside every cost the
+     operator actually pays. Cycle PnL is ALREADY net of trading fees
+     (cycle_matcher deducts both legs), so fees are informational in
+     the card below, never deducted again here. #}
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Cost Honesty — Net of Everything</div>
+      <div class="card-meta">
+        {% if honesty_snapshot.live_wired and not honesty_snapshot.error %}
+          {% if honesty_snapshot.infra_declared %}
+            infra declared
+          {% else %}
+            infra undeclared — set <code>web.cost_assumptions.monthly_infra_usd</code>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% if not honesty_snapshot.live_wired %}
+      <p class="placeholder">
+        Configure <code>web.live_db</code> in settings.yml to surface
+        the honest ledger — it needs the trades cli/live writes.
+      </p>
+    {% elif honesty_snapshot.error %}
+      <p class="error">{{ honesty_snapshot.error }}</p>
+    {% else %}
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th>window</th>
+            <th class="num">realized PnL</th>
+            <th class="num">LLM spend</th>
+            <th class="num">infra</th>
+            <th class="num">net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for w in honesty_snapshot.windows %}
+            <tr>
+              <td>{{ w.label }} <span class="muted">({{ w.cycle_count }} cycle{{ "s" if w.cycle_count != 1 }})</span></td>
+              <td class="num">{{ w.realized_pnl_usd | usd }}</td>
+              <td class="num">−{{ w.llm_cost_usd | usd }}</td>
+              <td class="num">
+                {% if w.infra_cost_usd is not none %}−{{ w.infra_cost_usd | usd }}{% else %}—{% endif %}
+              </td>
+              <td class="num"><strong>{{ w.net_usd | usd }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if honesty_snapshot.annualized_net_usd is not none %}
+        <p class="muted">
+          Annualized from the last 30d: <strong>{{ honesty_snapshot.annualized_net_usd | usd }}</strong>/year
+          {% if not honesty_snapshot.infra_declared %}(excl. undeclared infra){% endif %}
+          — a projection, not a promise.
+        </p>
+      {% endif %}
+      <p class="muted">
+        Realized PnL is already net of Kraken trading fees (both cycle
+        legs) — the fee card below is informational, not a further
+        deduction.
+      </p>
+    {% endif %}
+  </div>
+
   <div class="card">
     <div class="card-header">
       <div class="card-title">LLM Cost — Last 24h</div>
@@ -45,6 +109,27 @@
         </table>
       {% else %}
         <p class="placeholder">No cloud LLM calls in the last 24 hours.</p>
+      {% endif %}
+      {% if snapshot.per_trace %}
+        {# P4.4a trace clock: calls grouped by advisory evaluation. #}
+        <details>
+          <summary class="muted">By evaluation (last 24h, top {{ snapshot.per_trace | length }})</summary>
+          <table class="data compact">
+            <thead>
+              <tr><th>trace</th><th>roles</th><th class="num">calls</th><th class="num">cost (USD)</th></tr>
+            </thead>
+            <tbody>
+              {% for t in snapshot.per_trace %}
+                <tr>
+                  <td><code>{{ t.trace_label }}</code></td>
+                  <td>{{ t.roles }}</td>
+                  <td class="num">{{ t.call_count }}</td>
+                  <td class="num">{{ t.cost_usd | usd }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
       {% endif %}
     {% endif %}
   </div>

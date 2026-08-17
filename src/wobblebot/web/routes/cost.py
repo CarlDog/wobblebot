@@ -36,20 +36,34 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, Response
 
+from wobblebot.config.cli import WebConfig
 from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.models import Trade
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.cycle_matcher import RecentCycle, match_cycles
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
+    get_config,
     get_live_storage,
     get_operator_storage,
     get_templates,
 )
 
 router = APIRouter(tags=["cost"])
+
+# The by-evaluation table caps traced rows (untraced renders as one
+# aggregate row on top of the cap) — at ~144 evaluations/day a full
+# listing would drown the card.
+_TRACE_ROWS_CAP = 20
+
+# Annualization factor for the cost-honesty projection: the 30d
+# window's net, scaled to a year. A projection, not a promise — the
+# card's copy says which window it extrapolates.
+_DAYS_PER_YEAR = Decimal("365")
+_HONESTY_WINDOWS = ((7, "last 7d"), (30, "last 30d"))
 
 
 # --------------------------------------------------------------------- #
@@ -76,6 +90,22 @@ class GroupRollup:
 
 
 @dataclass(frozen=True)
+class TraceRollup:
+    """Total cost + call count for one advisory evaluation (P4.7).
+
+    Groups the 24h ``llm_calls`` slice by ``trace_id`` (P4.4a stamps
+    one per advise symbol-evaluation). The ``untraced`` bucket holds
+    NULL-trace rows — everything written before the trace clock
+    started, plus non-advise callers (cli/operator today).
+    """
+
+    trace_label: str  # short trace id, or "untraced"
+    cost_usd: Decimal
+    call_count: int
+    roles: str  # distinct roles in the group, comma-joined
+
+
+@dataclass(frozen=True)
 class CostSnapshot:  # pylint: disable=too-many-instance-attributes
     """Everything the cost template needs in one immutable bundle.
 
@@ -92,6 +122,7 @@ class CostSnapshot:  # pylint: disable=too-many-instance-attributes
     cached_tokens_24h: int
     per_day: tuple[DayRollup, ...]
     per_provider_role: tuple[GroupRollup, ...]
+    per_trace: tuple[TraceRollup, ...] = ()
     error: str | None = None
 
 
@@ -122,6 +153,98 @@ class TradingFeesSnapshot:
     trade_count_30d: int
     trade_count_all_time: int
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class HonestyWindow:
+    """One window's honest bottom line (P4.7).
+
+    ``realized_pnl_usd`` comes from matched cycles and is ALREADY net
+    of both legs' trading fees (``cycle_matcher`` subtracts them per
+    cycle) — the ledger must not subtract fees again, so the card
+    lists trading fees as an informational line, never as a deduction.
+    ``infra_cost_usd`` is ``None`` when the operator hasn't declared
+    ``web.cost_assumptions.monthly_infra_usd``; ``net_usd`` then
+    excludes infra and the card says so.
+    """
+
+    label: str
+    days: int
+    realized_pnl_usd: Decimal
+    cycle_count: int
+    llm_cost_usd: Decimal
+    infra_cost_usd: Decimal | None
+    net_usd: Decimal
+
+
+@dataclass(frozen=True)
+class CostHonestySnapshot:
+    """Realized PnL beside every cost the operator actually pays."""
+
+    live_wired: bool
+    infra_declared: bool
+    windows: tuple[HonestyWindow, ...]
+    annualized_net_usd: Decimal | None  # 30d net × 365/30; None when unwired
+    error: str | None = None
+
+
+def _empty_honesty_snapshot(*, wired: bool, error: str | None = None) -> CostHonestySnapshot:
+    return CostHonestySnapshot(
+        live_wired=wired,
+        infra_declared=False,
+        windows=(),
+        annualized_net_usd=None,
+        error=error,
+    )
+
+
+def _rollup_honesty(
+    cycles: list[RecentCycle],
+    llm_rows: list[LLMCallRecord],
+    *,
+    now: datetime,
+    monthly_infra_usd: Decimal | None,
+) -> CostHonestySnapshot:
+    """The honest bottom line per window: PnL − LLM − infra.
+
+    Cycle PnL buckets by SELL time (PnL is realized at the sell, the
+    ``today_realized_pnl`` convention); LLM cost by call timestamp;
+    infra pro-rates the declared monthly figure at 30 days/month.
+    """
+    windows: list[HonestyWindow] = []
+    net_30d: Decimal | None = None
+    for days, label in _HONESTY_WINDOWS:
+        cutoff = now - timedelta(days=days)
+        window_cycles = [c for c in cycles if c.sell_executed_at.dt >= cutoff]
+        pnl = sum((c.net_pnl for c in window_cycles), Decimal("0"))
+        llm = sum(
+            (r.cost_usd for r in llm_rows if r.timestamp.dt >= cutoff),
+            Decimal("0"),
+        )
+        infra: Decimal | None = None
+        if monthly_infra_usd is not None:
+            infra = monthly_infra_usd / Decimal("30") * Decimal(days)
+        net = pnl - llm - (infra or Decimal("0"))
+        windows.append(
+            HonestyWindow(
+                label=label,
+                days=days,
+                realized_pnl_usd=pnl,
+                cycle_count=len(window_cycles),
+                llm_cost_usd=llm,
+                infra_cost_usd=infra,
+                net_usd=net,
+            )
+        )
+        if days == 30:
+            net_30d = net
+    annualized = net_30d * _DAYS_PER_YEAR / Decimal("30") if net_30d is not None else None
+    return CostHonestySnapshot(
+        live_wired=True,
+        infra_declared=monthly_infra_usd is not None,
+        windows=tuple(windows),
+        annualized_net_usd=annualized,
+    )
 
 
 def _empty_snapshot(error: str | None = None) -> CostSnapshot:
@@ -243,6 +366,9 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
     cached_24h = 0
     by_day: dict[str, tuple[Decimal, int]] = defaultdict(lambda: (Decimal("0"), 0))
     by_group: dict[str, tuple[Decimal, int]] = defaultdict(lambda: (Decimal("0"), 0))
+    by_trace: dict[str | None, tuple[Decimal, int, set[str]]] = defaultdict(
+        lambda: (Decimal("0"), 0, set())
+    )
 
     for row in rows:
         ts = row.timestamp.dt
@@ -259,6 +385,9 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
             group_key = f"{row.provider} / {row.role}"
             prev_cost_g, prev_count_g = by_group[group_key]
             by_group[group_key] = (prev_cost_g + cost, prev_count_g + 1)
+            prev_cost_t, prev_count_t, roles = by_trace[row.trace_id]
+            roles.add(row.role)
+            by_trace[row.trace_id] = (prev_cost_t + cost, prev_count_t + 1, roles)
 
     per_day = tuple(
         DayRollup(day=day, cost_usd=cost, call_count=count)
@@ -274,6 +403,35 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
             reverse=True,
         )
     )
+    # P4.4a's trace clock groups calls by advisory evaluation. Traced
+    # groups sort by cost (capped — one row per evaluation adds up);
+    # the NULL bucket renders last as one aggregate "untraced" row.
+    traced = sorted(
+        (
+            TraceRollup(
+                trace_label=trace[:8],
+                cost_usd=cost,
+                call_count=count,
+                roles=", ".join(sorted(roles)),
+            )
+            for trace, (cost, count, roles) in by_trace.items()
+            if trace is not None
+        ),
+        key=lambda t: t.cost_usd,
+        reverse=True,
+    )[:_TRACE_ROWS_CAP]
+    per_trace = tuple(traced)
+    if None in by_trace:
+        cost, count, roles = by_trace[None]
+        per_trace = (
+            *per_trace,
+            TraceRollup(
+                trace_label="untraced",
+                cost_usd=cost,
+                call_count=count,
+                roles=", ".join(sorted(roles)),
+            ),
+        )
     return CostSnapshot(
         total_24h_usd=total_24h,
         total_7d_usd=total_7d,
@@ -282,6 +440,7 @@ def _rollup(rows: list[LLMCallRecord], *, now: datetime) -> CostSnapshot:
         cached_tokens_24h=cached_24h,
         per_day=per_day,
         per_provider_role=per_group,
+        per_trace=per_trace,
     )
 
 
@@ -301,6 +460,35 @@ async def _load_snapshot(storage: StoragePort) -> CostSnapshot:
     return _rollup(rows, now=now)
 
 
+async def _load_honesty_snapshot(
+    storage: StoragePort,
+    live_storage: StoragePort | None,
+    *,
+    monthly_infra_usd: Decimal | None,
+) -> CostHonestySnapshot:
+    """Trades → cycles, plus 30d of llm_calls → the honest ledger.
+
+    Re-fetches trades and llm_calls rather than threading them from
+    the sibling loaders — two extra indexed reads of a few thousand
+    rows per page load, in exchange for three loaders that stay
+    independently testable and independently degradable.
+    """
+    if live_storage is None:
+        return _empty_honesty_snapshot(wired=False)
+    now = datetime.now(UTC)
+    try:
+        trades = await live_storage.get_trades(limit=10_000)
+    except StorageError as exc:
+        return _empty_honesty_snapshot(wired=True, error=f"failed to query trades: {exc}")
+    try:
+        llm_rows = await storage.get_llm_calls(since=Timestamp(dt=now - timedelta(days=30)))
+    except StorageError as exc:
+        return _empty_honesty_snapshot(wired=True, error=f"failed to query llm_calls: {exc}")
+    # get_trades returns newest-first; the matcher wants chronological.
+    cycles = match_cycles(list(reversed(trades)))
+    return _rollup_honesty(cycles, llm_rows, now=now, monthly_infra_usd=monthly_infra_usd)
+
+
 # --------------------------------------------------------------------- #
 # Routes                                                                #
 # --------------------------------------------------------------------- #
@@ -314,16 +502,21 @@ async def cost_page(  # pylint: disable=too-many-arguments,too-many-positional-a
     live_storage: StoragePort | None = Depends(get_live_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    config: WebConfig = Depends(get_config),
 ) -> Response:
-    """Full cost dashboard page — LLM card + trading-fees card."""
+    """Full cost dashboard page — honesty + LLM + trading-fees cards."""
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
+    honesty_snapshot = await _load_honesty_snapshot(
+        storage, live_storage, monthly_infra_usd=config.cost_assumptions.monthly_infra_usd
+    )
     return templates.TemplateResponse(
         request,
         "cost.html",
         {
             "snapshot": snapshot,
             "fees_snapshot": fees_snapshot,
+            "honesty_snapshot": honesty_snapshot,
             "username": user.username,
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
@@ -339,20 +532,25 @@ async def cost_card(  # pylint: disable=too-many-arguments,too-many-positional-a
     live_storage: StoragePort | None = Depends(get_live_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
+    config: WebConfig = Depends(get_config),
 ) -> Response:
     """HTMX fragment — LLM cost + trading-fees cards without chrome.
 
-    The dashboard's HTMX polling hits this endpoint; both cards
+    The dashboard's HTMX polling hits this endpoint; all cards
     refresh together to keep the visual state consistent.
     """
     snapshot = await _load_snapshot(storage)
     fees_snapshot = await _load_trading_fees_snapshot(live_storage)
+    honesty_snapshot = await _load_honesty_snapshot(
+        storage, live_storage, monthly_infra_usd=config.cost_assumptions.monthly_infra_usd
+    )
     return templates.TemplateResponse(
         request,
         "_cost_card.html",
         {
             "snapshot": snapshot,
             "fees_snapshot": fees_snapshot,
+            "honesty_snapshot": honesty_snapshot,
             "last_refreshed_at": datetime.now(UTC),
             "operator_tz": prefs.timezone,
         },
@@ -361,8 +559,11 @@ async def cost_card(  # pylint: disable=too-many-arguments,too-many-positional-a
 
 __all__ = (
     "router",
+    "CostHonestySnapshot",
     "CostSnapshot",
     "DayRollup",
     "GroupRollup",
+    "HonestyWindow",
+    "TraceRollup",
     "TradingFeesSnapshot",
 )

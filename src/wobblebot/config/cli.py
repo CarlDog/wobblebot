@@ -745,6 +745,24 @@ class OperatorConfig(BaseModel):
         frozen = True
 
 
+class CostAssumptions(BaseModel):
+    """Operator-declared costs the ledgers can't see (P4.7).
+
+    ``monthly_infra_usd`` is the operator's honest estimate of what
+    keeping the bot running costs outside Kraken and the LLM
+    providers — electricity, the NAS's amortized share, a VPS, etc.
+    ``None`` means UNDECLARED: the cost-honesty card computes net
+    without infra and says so explicitly, rather than silently
+    pretending infra is free. A declared ``0.0`` is a real statement
+    ("nothing beyond sunk hardware") and is included as zero.
+    """
+
+    monthly_infra_usd: Decimal | None = Field(default=None, ge=Decimal("0"))
+
+    class Config:
+        frozen = True
+
+
 class WebConfig(BaseModel):
     """Phase 7 web UI configuration (ADR-016 + ADR-017).
 
@@ -805,6 +823,10 @@ class WebConfig(BaseModel):
     # it off.
     release_check_enabled: bool = True
     release_check_interval_hours: float = Field(default=6.0, gt=0.0, le=168.0)
+
+    # P4.7 cost-honesty card: operator-declared infra cost. See
+    # CostAssumptions — None means undeclared, and the card says so.
+    cost_assumptions: CostAssumptions = Field(default_factory=CostAssumptions)
 
     # ---- cross-DB paths -------------------------------------------- #
 

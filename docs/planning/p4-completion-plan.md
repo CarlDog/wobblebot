@@ -146,10 +146,29 @@ benchmark).
 
 ### P4.7 — cost-honesty dashboard (M)
 
-Realized PnL beside fees + LLM spend + operator-declared infra
-(`cost_assumptions`) → net-vs-cost + annualized projection, plus the
-`/cost` "by cycle" toggle riding the trace data P4.4a has been
-accumulating by then.
+✅ **Shipped 2026-08-17.** The `/cost` page gained two surfaces:
+
+- **Cost Honesty — Net of Everything** (leads the page): realized
+  cycle PnL beside LLM spend and operator-declared infra
+  (`web.cost_assumptions.monthly_infra_usd`; null = undeclared, the
+  card says so and computes net without it; declared 0.0 is a real
+  statement), 7d + 30d windows with cycle counts, and an annualized
+  projection from the 30d net labeled "a projection, not a promise."
+  **No-double-count invariant, pinned by test**: cycle `net_pnl` is
+  already net of both legs' trading fees, so the ledger uses it
+  as-is and the fee card is explicitly informational.
+- **By evaluation** (a collapsed `<details>` in the LLM card): the
+  24h `llm_calls` slice grouped by P4.4a's `trace_id` — cost, calls,
+  and roles per advisory evaluation, capped at 20 traced rows with
+  one aggregate "untraced" bucket (pre-clock rows + cli/operator).
+
+Visually verified end-to-end in the browser against a seeded live
+server: every rendered number re-derived by hand (7d net
+0.26−0.0083−0.5833=−0.3316; annualized −1.8083×365/30=−22.00), the
+trace table's grouping/sort/untraced placement confirmed. Deploying
+needs no NAS config edit — the undeclared default is safe; declaring
+infra is a one-line NAS settings.yml edit whenever the operator wants
+the full net.
 
 ## The standing external thread (interleaves at any point)
 

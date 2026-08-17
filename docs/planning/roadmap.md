@@ -1816,8 +1816,19 @@ the detail; the full backlog index is
    live-verified over real NAS data copies (BTC 98% range / ADX 26.5,
    ADA bottom-of-range / RSI 40; 132 suggestions in window). Deploy
    sequencing note: sync NAS operator.md WITH the image, never before.
-   3,434 tests, pylint 10.00, mypy clean. Next: P4.6 Historian (after
-   the Q2-dump scoring), P4.7 cost-honesty dashboard.
+   3,434 tests, pylint 10.00, mypy clean. Deployed same day
+   (sha-0f957e4; NAS operator.md synced WITH the image per the
+   sequencing rule). **P4.7 SHIPPED same day — the cost-honesty
+   dashboard**: /cost leads with "Net of Everything" (realized cycle
+   PnL − LLM spend − declared infra via `web.cost_assumptions`, 7d/30d
+   + annualized projection; the no-double-count invariant — cycle PnL
+   already nets trading fees — is pinned by test and stated on the
+   card) plus the by-evaluation `<details>` grouping the 24h llm_calls
+   by P4.4a trace (untraced bucket last). Browser-verified against a
+   seeded live server with every rendered number re-derived by hand.
+   3,442 tests, pylint 10.00, mypy clean. **P4's buildable scope is
+   now COMPLETE except P4.6 (Historian)**, which is deliberately gated
+   behind the Q2-dump canonical scoring (its own design doc first).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

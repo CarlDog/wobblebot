@@ -20,10 +20,12 @@ from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 from wobblebot.web.routes.cost import (
     _empty_fees_snapshot,
+    _empty_honesty_snapshot,
     _empty_snapshot,
     _load_trading_fees_snapshot,
     _rollup,
     _rollup_fees,
+    _rollup_honesty,
 )
 
 pytestmark = pytest.mark.unit
@@ -357,3 +359,121 @@ class TestLoadTradingFeesSnapshot:
             assert snap.total_all_time_usd == Decimal("0.075")
         finally:
             await adapter.close()
+
+
+# --------------------------------------------------------------------- #
+# P4.7: per-trace rollup + the cost-honesty ledger                      #
+# --------------------------------------------------------------------- #
+
+
+class TestTraceRollup:
+    def test_groups_by_trace_with_untraced_last(self) -> None:
+        rows = [
+            _row(cost="0.002", role="quant").model_copy(update={"trace_id": "aaaa1111-x"}),
+            _row(cost="0.001", role="quant").model_copy(update={"trace_id": "aaaa1111-x"}),
+            _row(cost="0.004", role="quant").model_copy(update={"trace_id": "bbbb2222-y"}),
+            _row(cost="0.003"),  # untraced (cli/operator today)
+        ]
+        snap = _rollup(rows, now=datetime.now(UTC))
+        assert [t.trace_label for t in snap.per_trace] == ["bbbb2222", "aaaa1111", "untraced"]
+        assert snap.per_trace[0].cost_usd == Decimal("0.004")
+        assert snap.per_trace[1].call_count == 2
+        assert snap.per_trace[1].cost_usd == Decimal("0.003")
+        assert snap.per_trace[2].roles == "operator"
+
+    def test_rows_outside_24h_are_not_traced(self) -> None:
+        rows = [_row(cost="0.001", hours_ago=30).model_copy(update={"trace_id": "old-trace"})]
+        snap = _rollup(rows, now=datetime.now(UTC))
+        assert snap.per_trace == ()
+
+
+def _cycle(*, net_pnl: str, hours_ago: float, fee: str = "0.04") -> "RecentCycle":
+    """A completed cycle whose SELL fired ``hours_ago`` hours back.
+
+    ``net_pnl`` is taken at face value — per cycle_matcher's contract
+    it is ALREADY net of both legs' fees (the ``fee`` here only
+    documents that fees existed; honesty math must never touch it).
+    """
+    from wobblebot.domain.value_objects import Amount, Price, Symbol
+    from wobblebot.services.cycle_matcher import RecentCycle
+
+    sell_at = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return RecentCycle(
+        symbol=Symbol(base="BTC", quote="USD"),
+        buy_executed_at=Timestamp(dt=sell_at - timedelta(hours=1)),
+        sell_executed_at=Timestamp(dt=sell_at),
+        buy_price=Price(amount=Decimal("60000"), currency="USD"),
+        sell_price=Price(amount=Decimal("61800"), currency="USD"),
+        amount=Amount(value=Decimal("0.0002"), asset="BTC"),
+        buy_fee=Decimal(fee),
+        sell_fee=Decimal(fee),
+        net_pnl=Decimal(net_pnl),
+    )
+
+
+class TestRollupHonesty:
+    def test_window_math_and_annualized(self) -> None:
+        now = datetime.now(UTC)
+        cycles = [
+            _cycle(net_pnl="0.50", hours_ago=24),  # in 7d and 30d
+            _cycle(net_pnl="0.25", hours_ago=24 * 20),  # 30d only
+        ]
+        llm = [
+            _row(cost="0.10", hours_ago=2),
+            _row(cost="0.05", hours_ago=24 * 10),
+        ]
+        snap = _rollup_honesty(cycles, llm, now=now, monthly_infra_usd=Decimal("3.00"))
+        w7, w30 = snap.windows
+        assert (w7.realized_pnl_usd, w7.llm_cost_usd) == (Decimal("0.50"), Decimal("0.10"))
+        assert w7.infra_cost_usd == Decimal("0.7")  # 3.00 / 30 * 7
+        assert w7.net_usd == Decimal("-0.3")
+        assert w7.cycle_count == 1
+        assert (w30.realized_pnl_usd, w30.llm_cost_usd) == (Decimal("0.75"), Decimal("0.15"))
+        assert w30.infra_cost_usd == Decimal("3.00")
+        assert w30.net_usd == Decimal("-2.40")
+        assert snap.annualized_net_usd == Decimal("-2.40") * Decimal("365") / Decimal("30")
+        assert snap.infra_declared is True
+
+    def test_fees_are_never_double_counted(self) -> None:
+        """cycle.net_pnl is already net of both legs' fees — the ledger
+        must use it as-is, never subtracting trade fees again."""
+        cycles = [_cycle(net_pnl="1.00", hours_ago=2, fee="5.00")]  # huge fees, already inside
+        snap = _rollup_honesty(cycles, [], now=datetime.now(UTC), monthly_infra_usd=None)
+        assert snap.windows[0].net_usd == Decimal("1.00")
+
+    def test_undeclared_infra_is_none_and_excluded(self) -> None:
+        snap = _rollup_honesty(
+            [_cycle(net_pnl="1.00", hours_ago=2)],
+            [],
+            now=datetime.now(UTC),
+            monthly_infra_usd=None,
+        )
+        assert snap.infra_declared is False
+        assert all(w.infra_cost_usd is None for w in snap.windows)
+        assert snap.windows[0].net_usd == Decimal("1.00")
+
+    def test_declared_zero_is_a_real_declaration(self) -> None:
+        snap = _rollup_honesty(
+            [_cycle(net_pnl="1.00", hours_ago=2)],
+            [],
+            now=datetime.now(UTC),
+            monthly_infra_usd=Decimal("0"),
+        )
+        assert snap.infra_declared is True
+        assert snap.windows[0].infra_cost_usd == Decimal("0")
+
+    def test_unwired_and_error_shapes(self) -> None:
+        assert _empty_honesty_snapshot(wired=False).live_wired is False
+        errored = _empty_honesty_snapshot(wired=True, error="db down")
+        assert errored.error == "db down"
+        assert errored.windows == ()
+
+
+class TestCostPageHonestyCard:
+    def test_card_renders_with_unwired_placeholder(self, client: TestClient) -> None:
+        login_as(client)
+        resp = client.get("/cost")
+        assert resp.status_code == 200
+        assert "Cost Honesty" in resp.text
+        # live_db unwired in the fixture app -> the honest ledger says so.
+        assert "web.live_db" in resp.text
