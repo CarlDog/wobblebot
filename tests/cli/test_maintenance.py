@@ -257,6 +257,137 @@ class TestPruneCycle:
 
 
 # --------------------------------------------------------------------- #
+# Retention (ADR-036)                                                   #
+# --------------------------------------------------------------------- #
+
+
+async def _make_schema_db(path: Path) -> None:
+    """Real-schema DB file via the adapter (so prunable tables exist)."""
+    storage = SQLiteStorageAdapter(str(path))
+    await storage.connect()
+    await storage.close()
+
+
+def _insert_old_notification(db_path: Path, *, days_ago: float) -> None:
+    stamp = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO notifications (level, title, message, timestamp, context_json, "
+            "forwarded, forwarded_at, created_at) VALUES ('info', 't', 'm', ?, '{}', 0, NULL, ?)",
+            (stamp, stamp),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestResolveRetentionTargets:
+    def test_resolves_known_tables(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(
+            target_dbs=[str(tmp_path / "live.db")],
+            retention={"news_items": 90, "notifications": 30},
+            news_db=str(tmp_path / "news.db"),
+            operator_db=str(tmp_path / "op.db"),
+        )
+        resolved = cli_maintenance._resolve_retention_targets(cfg)
+        assert ("news_items", tmp_path / "news.db", 90) in resolved
+        assert ("notifications", tmp_path / "op.db", 30) in resolved
+
+    def test_unknown_table_is_boot_error(self, tmp_path: Path) -> None:
+        """The forensic ledger can't be named — 'trades' is not in the
+        prunable registry, so boot refuses."""
+        cfg = MaintenanceConfig(
+            target_dbs=[str(tmp_path / "live.db")],
+            retention={"trades": 90},
+        )
+        with pytest.raises(ValueError, match="unknown table"):
+            cli_maintenance._resolve_retention_targets(cfg)
+
+    def test_horizon_without_home_db_is_boot_error(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(
+            target_dbs=[str(tmp_path / "live.db")],
+            retention={"news_items": 90},
+            news_db=None,
+        )
+        with pytest.raises(ValueError, match="needs maintenance.news_db"):
+            cli_maintenance._resolve_retention_targets(cfg)
+
+    def test_empty_retention_resolves_empty(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(target_dbs=[str(tmp_path / "live.db")])
+        assert cli_maintenance._resolve_retention_targets(cfg) == []
+
+
+class TestRetentionPrunes:
+    @pytest.mark.asyncio
+    async def test_prunes_and_continues_past_failures(self, tmp_path: Path) -> None:
+        """One target's DB is missing (logged, skipped); the other
+        prunes — fail-soft, same shape as _vacuum_all."""
+        op_db = tmp_path / "op.db"
+        await _make_schema_db(op_db)
+        _insert_old_notification(op_db, days_ago=120.0)
+        _insert_old_notification(op_db, days_ago=1.0)
+        targets = [
+            ("news_items", tmp_path / "missing-news.db", 90),
+            ("notifications", op_db, 90),
+        ]
+        deleted = cli_maintenance._retention_prunes(targets, tmp_path / "archive")
+        assert deleted == 1
+        archives = list((tmp_path / "archive").glob("notifications-*.csv.gz"))
+        assert len(archives) == 1
+
+
+class TestBackupDedupe:
+    def test_fresh_backup_skips_cycle(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        fresh_stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
+        (backup_dir / f"live-{fresh_stamp}.db").write_bytes(b"")
+        cfg = MaintenanceConfig(
+            target_dbs=[str(src)],
+            backup_dir=str(backup_dir),
+            min_backup_interval_hours=20.0,
+        )
+        ok = cli_maintenance._backup_all(cfg)
+        assert ok == 0
+        assert len(list(backup_dir.glob("live-*.db"))) == 1
+
+    def test_stale_backup_does_not_skip(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        # Name-encoded stamp is months old even though mtime is now —
+        # the dedupe must read the name, not mtime.
+        (backup_dir / "live-20260101-0000.db").write_bytes(b"")
+        cfg = MaintenanceConfig(
+            target_dbs=[str(src)],
+            backup_dir=str(backup_dir),
+            min_backup_interval_hours=20.0,
+        )
+        ok = cli_maintenance._backup_all(cfg)
+        assert ok == 1
+        assert len(list(backup_dir.glob("live-*.db"))) == 2
+
+    def test_zero_interval_disables_dedupe(self, tmp_path: Path) -> None:
+        src = tmp_path / "live.db"
+        _make_sqlite_file(src)
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        fresh_stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M")
+        (backup_dir / f"live-{fresh_stamp}.db").write_bytes(b"")
+        cfg = MaintenanceConfig(
+            target_dbs=[str(src)],
+            backup_dir=str(backup_dir),
+            min_backup_interval_hours=0.0,
+        )
+        ok = cli_maintenance._backup_all(cfg)
+        assert ok == 1
+
+
+# --------------------------------------------------------------------- #
 # main() pre-async-dispatch paths                                       #
 # --------------------------------------------------------------------- #
 

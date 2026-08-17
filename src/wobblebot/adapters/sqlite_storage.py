@@ -127,6 +127,12 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             if self._db_path not in (":memory:", ""):
                 await self._conn.execute("PRAGMA journal_mode = WAL")
                 await self._conn.execute("PRAGMA synchronous = NORMAL")
+                # ADR-036 decision 7 — without a limit the -wal file
+                # keeps its high-water size forever after checkpoints
+                # (production observe.db carried a 167 MB WAL). 32 MiB
+                # caps the post-checkpoint file; steady-state write
+                # bursts stay far below it.
+                await self._conn.execute("PRAGMA journal_size_limit = 33554432")
             await self._conn.executescript(SCHEMA)
             await migrate_advisor_suggestions_expert_opinions(self._conn)
             await migrate_advisor_suggestions_news_materially_drove(self._conn)

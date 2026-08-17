@@ -42,6 +42,24 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   deliberately does not cache (its system string embeds the volatile
   engine-state snapshot; restructuring first is ADR-033 trigger (a)'s
   prerequisite, documented at the build site).
+- **Data retention shipped** (2026-08-16, ADR-036). v1.0 pruned only
+  `price_snapshots`; measurement against the live NAS at ~91 days of
+  soak showed the real growth was the *multipliers*, not the tables —
+  a rotation-less archive dir, a 7× backup rotation whose fire-on-start
+  behavior burned 4 of 7 "daily" slots on deploy day, and ~200 MB of
+  never-truncated WAL. New: per-table 90-day archive-then-delete for
+  `news_items` / `conversation_turns` / `notifications` via
+  `maintenance.retention:` (horizon days only — table names must match
+  the code-side prunable registry in `services/retention.py`, and
+  forensic tables like `trades` / `orders` / `transfer_*` /
+  `pending_commands` are not in it, so config can never name the money
+  ledger); all new archives write gzipped (`.csv.gz`, ~6-8× smaller);
+  backups dedupe same-day (`min_backup_interval_hours`, age read from
+  the filename stamp, not mtime); VACUUM now checkpoints-and-truncates
+  the WAL, and every storage connection caps the WAL file via
+  `journal_size_limit`. Steady-state footprint lands ~2.3 GB with the
+  archive dir growing ~90 MB/year. Unblocks the P3-gated disk-space
+  awareness item.
 
 ### Changed
 

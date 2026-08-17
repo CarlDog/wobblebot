@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import gzip
+import sqlite3
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -69,6 +71,23 @@ class TestVacuumDatabase:
         with pytest.raises(FileNotFoundError, match="does not exist"):
             vacuum_database(tmp_path / "nope.db")
 
+    def test_wal_file_truncated_after_vacuum(self, tmp_path: Path) -> None:
+        """ADR-036 decision 7 — the post-VACUUM checkpoint(TRUNCATE)
+        leaves no (or an empty) -wal file behind."""
+        db_path = tmp_path / "wal.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+            for i in range(200):
+                conn.execute("INSERT INTO t (v) VALUES (?)", (f"row-{i}",))
+            conn.commit()
+        finally:
+            conn.close()
+        vacuum_database(db_path)
+        wal = tmp_path / "wal.db-wal"
+        assert not wal.exists() or wal.stat().st_size == 0
+
 
 # --------------------------------------------------------------------- #
 # archive_price_snapshots_to_csv                                        #
@@ -118,6 +137,24 @@ class TestArchivePriceSnapshotsToCsv:
         dest = tmp_path / "a" / "b" / "c" / "obs.csv"
         archive_price_snapshots_to_csv([_snapshot()], dest)
         assert dest.exists()
+
+    def test_gz_destination_writes_gzip(self, tmp_path: Path) -> None:
+        """ADR-036 decision 5 — a .gz suffix produces a gzipped CSV
+        with the same header + rows as the plain path."""
+        dest = tmp_path / "obs.csv.gz"
+        count = archive_price_snapshots_to_csv([_snapshot(hours_ago=1)], dest)
+        assert count == 1
+        with gzip.open(dest, "rt", newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows[0][0] == "observed_at"
+        assert len(rows) == 2
+
+    def test_gz_refuses_to_overwrite(self, tmp_path: Path) -> None:
+        dest = tmp_path / "obs.csv.gz"
+        dest.write_bytes(b"occupied")
+        with pytest.raises(FileExistsError, match="refusing to overwrite"):
+            archive_price_snapshots_to_csv([_snapshot()], dest)
+        assert dest.read_bytes() == b"occupied"
 
 
 # --------------------------------------------------------------------- #

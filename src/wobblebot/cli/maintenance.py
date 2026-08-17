@@ -12,6 +12,11 @@ Long-running daemon with four concurrent scheduled tasks:
 - **prune+archive** — exports `price_snapshots` rows older than
   the retention horizon to CSV in ``data/archive/`` then deletes
   them, on ``schedules.maintenance_prune`` cadence (default daily).
+  Since ADR-036 the same cycle also runs the per-table retention
+  registry (``maintenance.retention:`` — news_items /
+  conversation_turns / notifications), archives write gzipped, and
+  the backup task dedupes same-day copies
+  (``min_backup_interval_hours``).
 - **backup** — atomic point-in-time SQLite ``.backup`` of every
   configured DB into ``data/backups/`` on
   ``schedules.maintenance_backup`` cadence (default daily). Old
@@ -75,10 +80,12 @@ from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.backuper import (
     backup_database_locally,
     find_latest_backup,
+    parse_backup_timestamp,
     prune_old_backups,
     verify_backup_restoration,
 )
 from wobblebot.services.maintenance import prune_price_snapshots, vacuum_database
+from wobblebot.services.retention import PRUNABLE_TABLES, prune_table
 
 _LOGGER = logging.getLogger("wobblebot.cli.maintenance")
 
@@ -113,6 +120,61 @@ def _vacuum_all(target_dbs: list[Path]) -> int:
     return success
 
 
+def _resolve_retention_targets(
+    maintenance: MaintenanceConfig,
+) -> list[tuple[str, Path, int]]:
+    """Validate ``maintenance.retention`` against the prunable registry.
+
+    Returns resolved ``(table, db_path, horizon_days)`` triples. Raises
+    ``ValueError`` on an unknown table name or a configured horizon
+    whose home DB field is unset — both are config errors that must
+    fail the boot loudly (ADR-036 decision 1), never silently no-op.
+    """
+    resolved: list[tuple[str, Path, int]] = []
+    for table, days in maintenance.retention.items():
+        target = PRUNABLE_TABLES.get(table)
+        if target is None:
+            raise ValueError(
+                f"maintenance.retention names unknown table {table!r}; "
+                f"prunable tables: {sorted(PRUNABLE_TABLES)}"
+            )
+        db_value = getattr(maintenance, target.db_field)
+        if db_value is None:
+            raise ValueError(
+                f"maintenance.retention[{table!r}] needs maintenance.{target.db_field} set"
+            )
+        resolved.append((table, Path(db_value), days))
+    return resolved
+
+
+def _retention_prunes(retention_targets: list[tuple[str, Path, int]], archive_dir: Path) -> int:
+    """Run the ADR-036 registry prunes. Per-table failures are logged
+    and the loop continues (same fail-soft shape as ``_vacuum_all``).
+    Returns total rows deleted across tables."""
+    total = 0
+    now = datetime.now(UTC)
+    for table, db_path, days in retention_targets:
+        older_than = now - timedelta(days=days)
+        archive_name = f"{table}-{older_than.strftime('%Y-%m-%d')}.csv.gz"
+        try:
+            total += prune_table(
+                db_path,
+                table,
+                older_than=older_than,
+                archive_dir=archive_dir,
+                archive_name=archive_name,
+            )
+        except (StorageError, FileExistsError, FileNotFoundError, OSError) as exc:
+            _LOGGER.warning(
+                "retention prune failed on %s; will retry next interval: %s: %s",
+                table,
+                type(exc).__name__,
+                exc,
+                extra={"table": table, "error": str(exc), "error_type": type(exc).__name__},
+            )
+    return total
+
+
 async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     """Archive + delete eligible price_snapshots from the configured
     prune source DB. Returns rows deleted, 0 if no source configured."""
@@ -130,7 +192,9 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     older_than = datetime.now(UTC) - timedelta(
         days=maintenance.prune_price_snapshots_older_than_days
     )
-    archive_name = f"{source_path.stem}-{older_than.strftime('%Y-%m-%d')}.csv"
+    # .csv.gz since ADR-036 decision 5 — new archives gzip on write;
+    # pre-existing raw .csv archives stay as they are.
+    archive_name = f"{source_path.stem}-{older_than.strftime('%Y-%m-%d')}.csv.gz"
     storage = SQLiteStorageAdapter(str(source_path))
     try:
         await storage.connect()
@@ -176,6 +240,29 @@ def _backup_all(maintenance: MaintenanceConfig) -> int:
                 extra={"db_path": str(src)},
             )
             continue
+        # ADR-036 decision 6 — same-day dedupe: the backup cycle fires
+        # on daemon start, so restart churn would otherwise burn the
+        # keep_n_daily slots on near-identical same-day copies. Age
+        # comes from the filename's embedded stamp, not mtime — a
+        # copy/rsync refreshes mtime and would fake freshness.
+        if maintenance.min_backup_interval_hours > 0:
+            latest = find_latest_backup(backup_dir, db_stem=src.stem)
+            stamp = parse_backup_timestamp(latest) if latest is not None else None
+            if latest is not None and stamp is not None:
+                age_hours = (datetime.now(UTC) - stamp).total_seconds() / 3600.0
+                if age_hours < maintenance.min_backup_interval_hours:
+                    _LOGGER.info(
+                        "skipping backup; newest is %.1fh old (< %.0fh) (db_stem=%s)",
+                        age_hours,
+                        maintenance.min_backup_interval_hours,
+                        src.stem,
+                        extra={
+                            "db_stem": src.stem,
+                            "age_hours": round(age_hours, 1),
+                            "min_backup_interval_hours": maintenance.min_backup_interval_hours,
+                        },
+                    )
+                    continue
         try:
             backup_database_locally(src, backup_dir)
             success += 1
@@ -304,6 +391,19 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         )
         return 2
 
+    # ADR-036 boot validation: a retention entry naming an unknown
+    # table or pointing at an unset DB field is a config error, not a
+    # skippable cycle failure. Fail loud before any task starts.
+    try:
+        retention_targets = _resolve_retention_targets(maintenance)
+    except ValueError as exc:
+        _LOGGER.error(
+            "invalid maintenance.retention config: %s; see config/settings.example.yml",
+            exc,
+            extra={"error": str(exc)},
+        )
+        return 2
+
     # Resolve cadences. Missing schedules fall back to the design-doc
     # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d).
     vacuum_interval = _resolve_interval(config, "maintenance_vacuum", timedelta(days=7))
@@ -413,13 +513,19 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             },
         )
         deleted = await _prune_one_cycle(maintenance)
+        # ADR-036 registry prunes ride the same cadence; sync raw-sqlite
+        # calls, same event-loop-blocking caveat as VACUUM above.
+        deleted += _retention_prunes(retention_targets, Path(maintenance.archive_dir))
         prune_total_deleted += deleted
         _LOGGER.info(
-            "prune cycle complete (rows_deleted=%s, elapsed_seconds=%s)",
+            "prune cycle complete (rows_deleted=%s, retention_table_count=%s, "
+            "elapsed_seconds=%s)",
             deleted,
+            len(retention_targets),
             round(time.monotonic() - cycle_started, 2),
             extra={
                 "rows_deleted": deleted,
+                "retention_table_count": len(retention_targets),
                 "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
             },
         )
