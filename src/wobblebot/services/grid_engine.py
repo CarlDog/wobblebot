@@ -530,7 +530,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """``True`` if any operator has called :meth:`request_stop`."""
         return self._stop_requested
 
-    async def cancel_open_orders(self, symbol: Symbol | None = None) -> tuple[int, int]:
+    async def cancel_open_orders(  # pylint: disable=too-many-locals
+        self, symbol: Symbol | None = None
+    ) -> tuple[int, int]:
+        # Same rationale as _tick's disable: every local is a distinct
+        # stage signal of a linear procedure (fetch, cancel, resolve
+        # identity, persist, queue a counter); helper-splitting would
+        # obscure the cancel -> resolve -> persist ordering that IS
+        # the correctness argument (ADR-037's 2026-08-19 fix).
         """Cancel every open order on the exchange for ``symbol`` (or all).
 
         Reads the open-order set from the exchange (authoritative per
@@ -538,11 +545,41 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         view can't strand orders on Kraken. Per-order failures are
         logged and counted; the batch never aborts mid-way.
 
+        Persistence resolves each cancelled order back to its STORED
+        identity via ``exchange_id`` before saving. ``ExchangePort.
+        get_open_orders`` deliberately constructs fresh-UUID ``Order``
+        objects (see that method's docstring) — saving one of those
+        directly, as this method did before the 2026-08-19 fix, upserts
+        an ORPHAN row (``save_order`` keys on ``id``) and leaves the
+        real stored row ``status='open'`` forever. The next
+        fill-detection tick then discovers that real row as an
+        apparent EXTERNAL cancel — this was the exact mechanism behind
+        a production false-trip of ADR-037's book-vanish hold on a
+        starved re-anchor's own cancellation. An order the exchange
+        reports that local storage never tracked (a manual Kraken-side
+        order) is cancelled but not adopted, per ADR-018.
+
+        A cancel that catches an order mid-partial-fill (Kraken keeps a
+        partially-filled limit order in ``OpenOrders`` until it is
+        fully filled or cancelled) persists the matched trade(s) and
+        queues a counter-order via ``_pending_counter_ids`` (ADR-023) —
+        this method has no grid levels/spacing in scope to place one
+        synchronously, so the next tick that touches the symbol places
+        it, exactly like a startup-reconciler-recovered fill.
+        filled_amount reflects the pre-cancel ``get_open_orders``
+        snapshot (Kraken's own ``cancel_order`` doesn't re-query) — a
+        fill landing in the narrow fetch→cancel window is not caught
+        here; the next startup reconciler (ADR-023) recovers it, the
+        same as before this fix.
+
         Args:
             symbol: Restrict to one symbol; ``None`` cancels across all.
 
         Returns:
-            ``(cancelled, failed)`` counts.
+            ``(cancelled, failed)`` counts — exchange-side cancel
+            outcomes. A post-cancel persistence failure is logged but
+            does not move either count: the cancellation itself
+            already succeeded.
 
         Raises:
             ExchangeError: If the open-order fetch itself fails. The cancel
@@ -553,13 +590,20 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 logs-and-counts; the batch never aborts mid-way.)
         """
         opens = await self._exchange.get_open_orders(symbol=symbol)
+        stored_by_exchange_id = {
+            o.exchange_id: o
+            for o in await self._storage.get_open_orders(symbol=symbol)
+            if o.exchange_id
+        }
+
         cancelled = 0
         failed = 0
+        canceled_orders: list[Order] = []
         for order in opens:
             try:
                 canceled_order = await self._exchange.cancel_order(order)
-                await self._storage.save_order(canceled_order)
                 cancelled += 1
+                canceled_orders.append(canceled_order)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 _LOGGER.warning(
                     "cancel_open_orders: cancel of %s %s @ %s (%s) failed: %s",
@@ -575,6 +619,80 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     },
                 )
                 failed += 1
+
+        # Trade history is fetched AFTER every cancel completes, not
+        # before — a fill caught mid-cancel (the F1 partial-fill shape
+        # below) may not be in the exchange's trade history until the
+        # cancel itself has settled.
+        trades_by_order: dict[str, list[Trade]] = {}
+        if canceled_orders:
+            recent_trades = await self._exchange.get_trade_history(symbol=symbol, limit=200)
+            for trade in recent_trades:
+                trades_by_order.setdefault(trade.order_id, []).append(trade)
+
+        for canceled_order in canceled_orders:
+            if canceled_order.exchange_id is None:
+                continue
+            stored = stored_by_exchange_id.get(canceled_order.exchange_id)
+            if stored is None:
+                _LOGGER.info(
+                    "cancel_open_orders: cancelled %s (%s) not tracked in local storage; "
+                    "not adopting",
+                    canceled_order.symbol,
+                    canceled_order.exchange_id,
+                    extra={
+                        "symbol": str(canceled_order.symbol),
+                        "exchange_id": canceled_order.exchange_id,
+                    },
+                )
+                continue
+
+            resolved = stored.model_copy(
+                update={
+                    "status": canceled_order.status,
+                    "filled_amount": canceled_order.filled_amount,
+                    "updated_at": canceled_order.updated_at,
+                }
+            )
+            try:
+                await self._storage.save_order(resolved)
+                if resolved.filled_amount > 0:
+                    # ADR-023 F1 shape: a real fill caught by this
+                    # cancel, not a clean cancel/expire.
+                    trades = trades_by_order.get(resolved.exchange_id or "", [])
+                    for trade in trades:
+                        await self._storage.save_trade(trade)
+                        self._check_fee_drift(resolved.symbol, trade)
+                    if trades:
+                        self._sell_guard.invalidate(resolved.symbol)
+                    self._pending_counter_ids.add(resolved.id)
+                    _LOGGER.warning(
+                        "cancel_open_orders: %s %s (%s) had a partial fill of %s before "
+                        "this cancel; counter-order queued for the next tick",
+                        resolved.symbol,
+                        resolved.side.value.upper(),
+                        resolved.exchange_id,
+                        fmt_decimal(resolved.filled_amount),
+                        extra={
+                            "symbol": str(resolved.symbol),
+                            "exchange_id": resolved.exchange_id,
+                            "filled_amount": str(resolved.filled_amount),
+                        },
+                    )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _LOGGER.warning(
+                    "cancel_open_orders: persisting cancelled %s %s (%s) failed: %s",
+                    resolved.symbol,
+                    resolved.side,
+                    resolved.exchange_id,
+                    exc,
+                    extra={
+                        "symbol": str(resolved.symbol),
+                        "exchange_id": resolved.exchange_id,
+                        "error": str(exc),
+                    },
+                )
+
         _LOGGER.info(
             "cancel_open_orders complete for %s: %d cancelled, %d failed",
             symbol if symbol else "all symbols",
@@ -637,6 +755,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 f"re-anchor aborted: open-order fetch failed ({exc}); "
                 f"orders may still be LIVE and the anchor is unchanged",
             )
+        # ADR-037 belt-and-braces: this cancel is engine-initiated and
+        # cancel_open_orders now persists onto the STORED order identity
+        # (the 2026-08-19 fix), so it should already be impossible for
+        # these cancellations to surface as fill-detection candidates.
+        # Clear any accumulated external-cancel evidence for this symbol
+        # anyway -- a deliberate re-anchor supersedes it regardless, and
+        # this guards against a future regression in that invariant.
+        self._external_cancels.pop(symbol, None)
         if failed > 0:
             # The ADR's regression pin: never save a new anchor over
             # orders we could not cancel.

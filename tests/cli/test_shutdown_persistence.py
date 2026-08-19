@@ -27,9 +27,10 @@ from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _cancel_all_open as _cancel_all_open_live
 from wobblebot.cli.shadow import _cancel_all_open as _cancel_all_open_shadow
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Ticker, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
+from wobblebot.services.reconciler import apply_reconciliation
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -84,10 +85,12 @@ class _FakeAdapter:
             o for o in self._open if o.symbol.base == symbol.base and o.symbol.quote == symbol.quote
         ]
 
-    async def cancel_order(self, order: Order) -> None:
+    async def cancel_order(self, order: Order) -> Order:
         if self._fail:
             raise ExchangeError("simulated cancel failure")
         self.cancelled_ids.append(order.exchange_id or "")
+        order.status = "canceled"
+        return order
 
     async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
         # ADR-021: no-op for this minimal fake; the finally block disarms
@@ -157,6 +160,226 @@ class TestLivePersistenceOnCancel:
             roundtripped = await storage.get_order(o.id)
             assert roundtripped is not None
             assert roundtripped.status == "canceled"
+
+
+# --------------------------------------------------------------------- #
+# 2026-08-19 orphan-row identity fix: cli.live._cancel_all_open must    #
+# resolve back to STORED identity, the same as GridEngine's twin fix    #
+# --------------------------------------------------------------------- #
+#
+# ExchangePort.get_open_orders() deliberately constructs fresh-UUID
+# Order objects (see KrakenAdapter.get_open_orders's docstring) -- the
+# engine matches by exchange_id, not UUID, when diffing against
+# storage. _FakeAdapter above hands back the SAME object it was given,
+# which is exactly why this bug survived undetected: nothing in this
+# file's fixtures reproduced Kraken's real identity behavior. This
+# stub does.
+
+
+class _FreshUuidFakeAdapter:
+    """Like ``_FakeAdapter``, but ``get_open_orders`` mints a FRESH
+    UUID per order (mirroring the real ``ExchangePort`` contract) and
+    ``cancel_order`` mutates-and-returns the SAME (fresh-UUID) object
+    it was handed, mirroring ``KrakenAdapter.cancel_order``'s "no
+    re-query" contract -- ``filled_amount`` reflects only what was
+    already on the object from the ``get_open_orders`` snapshot.
+    """
+
+    def __init__(
+        self,
+        *,
+        open_orders: list[Order],
+        fail_on_cancel: bool = False,
+        partial_fill_amount: Decimal | None = None,
+    ) -> None:
+        self._open = open_orders
+        self._fail = fail_on_cancel
+        self._partial_fill_amount = partial_fill_amount
+        self.cancelled_ids: list[str] = []
+
+    async def get_open_orders(self, *, symbol: Symbol | None = None) -> list[Order]:
+        fresh = [
+            o.model_copy(
+                update={
+                    "id": uuid4(),
+                    "filled_amount": self._partial_fill_amount or Decimal("0"),
+                }
+            )
+            for o in self._open
+        ]
+        if symbol is None:
+            return fresh
+        return [o for o in fresh if o.symbol == symbol]
+
+    async def cancel_order(self, order: Order) -> Order:
+        if self._fail:
+            raise ExchangeError("simulated cancel failure")
+        self.cancelled_ids.append(order.exchange_id or "")
+        order.status = "canceled"
+        return order
+
+    async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
+        return None
+
+
+class _ReconcileStubAdapter:
+    """Just enough surface for ``apply_reconciliation`` (the
+    ``_AdapterLike`` protocol) to resolve one stale storage-open order
+    into its recovered terminal state on a simulated next boot."""
+
+    def __init__(self, *, resolved_order: Order, trades: list[Trade]) -> None:
+        self._resolved_order = resolved_order
+        self._trades = trades
+
+    async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
+        # The order was genuinely cancelled by the previous session's
+        # shutdown -- the exchange no longer reports it open.
+        return []
+
+    async def get_order_status(self, order: Order) -> Order:
+        return self._resolved_order
+
+    async def get_trade_history(
+        self, symbol: Symbol | None = None, limit: int = 100
+    ) -> list[Trade]:
+        return self._trades
+
+
+class TestLiveCancelIdentity:
+    """``cli.live._cancel_all_open`` must persist the cancellation onto
+    the STORED order's id, not the fresh UUID a real ``ExchangePort``
+    mints on ``get_open_orders()`` — else ``save_order``'s upsert
+    creates an orphan row and the real row stays storage-open forever.
+    Production incident 2026-08-19; twin of the same-day
+    ``GridEngine.cancel_open_orders`` fix (see
+    ``tests/services/test_grid_engine.py``'s
+    ``TestCancelOpenOrdersIdentity`` / ``TestReanchorBookVanishRegression``).
+    """
+
+    async def test_cancel_updates_stored_row_not_an_orphan(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        order = _make_order(exchange_id="OID-FRESH")
+        await storage.save_order(order)
+        adapter = _FreshUuidFakeAdapter(open_orders=[order])
+
+        cancelled, failed = await _cancel_all_open_live(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (Symbol(base="BTC", quote="USD"),),
+        )
+        assert (cancelled, failed) == (1, 0)
+
+        # The real row transitioned to canceled -- not an orphan.
+        roundtripped = await storage.get_order(order.id)
+        assert roundtripped is not None
+        assert roundtripped.status == "canceled"
+        assert await storage.get_open_orders(symbol=Symbol(base="BTC", quote="USD")) == []
+
+        # Exactly one order exists, not two -- no orphan row was
+        # created under the fresh UUID the exchange handed back.
+        all_orders = await storage.get_orders(symbol=Symbol(base="BTC", quote="USD"))
+        assert len(all_orders) == 1
+
+    async def test_untracked_exchange_order_is_cancelled_but_not_adopted(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """An order the exchange reports (and cancels cleanly) that
+        local storage never tracked (e.g. a manual Kraken-side order on
+        a configured symbol) must not be adopted into storage — mirrors
+        ``GridEngine.cancel_open_orders``'s same "not tracked; not
+        adopting" branch."""
+        untracked = _make_order(exchange_id="OID-UNTRACKED")
+        adapter = _FreshUuidFakeAdapter(open_orders=[untracked])
+
+        cancelled, failed = await _cancel_all_open_live(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (Symbol(base="BTC", quote="USD"),),
+        )
+        assert (cancelled, failed) == (1, 0)
+        # Not adopted -- no orphan row created under the exchange's
+        # fresh UUID (nothing was ever tracked for this order at all).
+        assert await storage.get_orders(symbol=Symbol(base="BTC", quote="USD")) == []
+
+    async def test_partial_fill_defers_to_reconciler_not_persisted_canceled(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A partial fill visible in the ``get_open_orders`` snapshot at
+        shutdown must NOT be persisted as a clean cancel here — this
+        function has no engine/tick to place a counter-order on
+        (unlike ``GridEngine.cancel_open_orders``'s
+        ``_pending_counter_ids``). The stored row is left
+        ``status='open'`` so the next daemon startup's
+        ``apply_reconciliation`` (ADR-023) discovers it as storage-only
+        and runs the full recovery."""
+        order = _make_order(exchange_id="OID-PARTIAL")
+        await storage.save_order(order)
+        adapter = _FreshUuidFakeAdapter(open_orders=[order], partial_fill_amount=Decimal("0.0004"))
+
+        cancelled, failed = await _cancel_all_open_live(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (Symbol(base="BTC", quote="USD"),),
+        )
+        # The exchange-side cancel succeeded -- the count reflects that.
+        assert (cancelled, failed) == (1, 0)
+
+        # But persistence was deliberately deferred: the stored row is
+        # untouched, still open, ready for the next boot's reconciler.
+        roundtripped = await storage.get_order(order.id)
+        assert roundtripped is not None
+        assert roundtripped.status == "open"
+        assert roundtripped.filled_amount == Decimal("0")
+
+    async def test_reconciler_recovers_the_deferred_partial_fill_next_boot(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """End-to-end proof the deferral above is actually safe: the
+        next daemon startup's ``apply_reconciliation`` recovers the
+        trade and queues a counter-order for the order the shutdown
+        cancel deliberately left ``status='open'``."""
+        order = _make_order(exchange_id="OID-PARTIAL-2")
+        await storage.save_order(order)
+        adapter = _FreshUuidFakeAdapter(open_orders=[order], partial_fill_amount=Decimal("0.0004"))
+        await _cancel_all_open_live(
+            adapter,  # type: ignore[arg-type]
+            storage,
+            (Symbol(base="BTC", quote="USD"),),
+        )
+        stale = await storage.get_order(order.id)
+        assert stale is not None
+        assert stale.status == "open"  # sanity: deferred, as proven above
+
+        # Simulate the next daemon boot: the exchange no longer has the
+        # order open (it really was cancelled), QueryOrders reports the
+        # partial fill, TradesHistory has the matched trade.
+        resolved = order.model_copy(
+            update={"status": "canceled", "filled_amount": Decimal("0.0004")}
+        )
+        trade = Trade(
+            id="TRD-RECOVERED-1",
+            order_id="OID-PARTIAL-2",
+            symbol=order.symbol,
+            side=order.side,
+            price=order.price,
+            amount=Amount(value=Decimal("0.0004"), asset="BTC"),
+            fee=Decimal("0"),
+            cost=order.price.amount * Decimal("0.0004"),
+            executed_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        recon_adapter = _ReconcileStubAdapter(resolved_order=resolved, trades=[trade])
+
+        report = await apply_reconciliation(recon_adapter, storage)  # type: ignore[arg-type]
+
+        assert report.recovered_fill_count == 1
+        assert order.id in report.needs_counter_order_ids
+        recovered = await storage.get_order(order.id)
+        assert recovered is not None
+        assert recovered.status == "canceled"
+        assert recovered.filled_amount == Decimal("0.0004")
+        recovered_trades = await storage.get_trades(symbol=order.symbol)
+        assert len(recovered_trades) == 1
 
 
 # --------------------------------------------------------------------- #
