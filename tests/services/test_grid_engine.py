@@ -1454,6 +1454,191 @@ class _OneCancelFailsExchange(MockExchangeAdapter):
         return await super().cancel_order(order)
 
 
+class _FreshUuidExchange(MockExchangeAdapter):
+    """Mirrors the real ExchangePort contract: ``get_open_orders``
+    constructs FRESH-UUID ``Order`` objects (see
+    ``KrakenAdapter.get_open_orders``'s docstring), not the caller's
+    originally-placed identity. ``MockExchangeAdapter`` hands back the
+    SAME object it was given, which is exactly why the production
+    2026-08-19 incident survived 3,442 tests — nothing in the suite
+    reproduced Kraken's real identity behavior until this stub."""
+
+    async def get_open_orders(self, symbol: Symbol | None = None):  # type: ignore[no-untyped-def]
+        orders = await super().get_open_orders(symbol=symbol)
+        return [o.model_copy(update={"id": uuid4()}) for o in orders]
+
+    async def cancel_order(self, order: Order) -> Order:
+        """Mirrors KrakenAdapter.cancel_order: mutate-and-return the
+        SAME object the caller passed in, whatever identity it carries,
+        rather than looking anything up by exchange_id internally.
+        MockExchangeAdapter's base cancel_order instead pops and
+        returns its OWN internally-tracked (correct-identity) object,
+        which silently heals the very identity bug this stub exists to
+        reproduce -- caught when the first version of these tests
+        passed unmodified against the pre-fix code."""
+        if not order.exchange_id or order.exchange_id not in self._open_orders:
+            raise ExchangeError(f"Unknown order {order.exchange_id!r}")
+        del self._open_orders[order.exchange_id]
+        order.mark_canceled()
+        # Kraken's QueryOrders still reports a just-cancelled order for
+        # a while (this is what lets a genuine external-cancel tick
+        # resolve cleanly); mirror that so a stale orphan row's later
+        # get_order_status() call resolves to a clean cancel instead of
+        # an unrelated "unknown order" crash that would mask the real
+        # symptom (a false book-vanish hold) behind a different failure.
+        self._terminal_overrides[order.exchange_id] = order
+        return order
+
+    async def get_order_status(self, order: Order) -> Order:
+        """Mirrors KrakenAdapter.get_order_status: preserves the
+        CALLER's id, only refreshing status/filled_amount/
+        updated_at from the exchange's view. MockExchangeAdapter's
+        base implementation instead returns its OWN internally-tracked
+        object outright -- correct for other tests' identity-preserving
+        setups, wrong here where the whole point of this stub is a
+        caller whose object carries a DIFFERENT identity than whatever
+        is internally tracked."""
+        fresh = await super().get_order_status(order)
+        if fresh is order:
+            return order
+        return order.model_copy(
+            update={
+                "status": fresh.status,
+                "filled_amount": fresh.filled_amount,
+                "updated_at": fresh.updated_at,
+            }
+        )
+
+
+class _PartialFillOnCancelExchange(_FreshUuidExchange):
+    """A cancel that catches the order mid-partial-fill — Kraken keeps
+    a partially-filled resting limit order in ``OpenOrders`` until it
+    is fully filled or cancelled, so ``CancelOrder`` can confirm a
+    cancel with ``vol_exec`` > 0. ``MockExchangeAdapter``'s matching
+    engine only does full-fill-on-cross, so this stub injects the
+    partial fill directly at cancel time."""
+
+    def __init__(self, *args: object, partial_fill_amount: Decimal, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._partial_fill_amount = partial_fill_amount
+
+    async def cancel_order(self, order: Order) -> Order:
+        live = await super().cancel_order(order)
+        live.filled_amount = self._partial_fill_amount
+        self._trade_counter += 1
+        trade = Trade(
+            id=f"MOCK-TRD-{self._trade_counter:06d}",
+            order_id=live.exchange_id or "",
+            symbol=live.symbol,
+            side=live.side,
+            price=live.price,
+            amount=Amount(value=self._partial_fill_amount, asset=live.amount.asset),
+            fee=Decimal("0"),
+            cost=live.price.amount * self._partial_fill_amount,
+            executed_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        self._trade_history.append(trade)
+        return live
+
+
+class TestCancelOpenOrdersIdentity:
+    """``cancel_open_orders`` must persist the cancellation onto the
+    STORED order's id, not the fresh UUID a real ``ExchangePort`` mints
+    on ``get_open_orders()`` — else ``save_order``'s upsert creates an
+    orphan row and the real row stays storage-open forever (production
+    incident 2026-08-19; see ``TestReanchorBookVanishRegression`` for
+    the exact symptom this caused)."""
+
+    async def test_cancel_updates_stored_row_not_an_orphan(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _FreshUuidExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize -> 6 orders
+        before = await storage.get_open_orders(symbol=BTC_USD)
+        before_ids = {o.id for o in before}
+        assert len(before_ids) == 6
+
+        cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+        assert (cancelled, failed) == (6, 0)
+
+        # The real rows transitioned to canceled — no longer "open".
+        assert await storage.get_open_orders(symbol=BTC_USD) == []
+        for order_id in before_ids:
+            stored = await storage.get_order(order_id)
+            assert stored is not None
+            assert stored.status == "canceled"
+
+        # No orphan rows: exactly the original 6 orders exist, not 12.
+        all_orders = await storage.get_orders(symbol=BTC_USD)
+        assert len(all_orders) == 6
+
+    async def test_cancel_catches_partial_fill_persists_trade_and_queues_counter(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _PartialFillOnCancelExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+            partial_fill_amount=Decimal("0.001"),
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)
+        before_ids = {o.id for o in await storage.get_open_orders(symbol=BTC_USD)}
+
+        cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+        assert (cancelled, failed) == (6, 0)
+
+        for order_id in before_ids:
+            stored = await storage.get_order(order_id)
+            assert stored is not None
+            assert stored.status == "canceled"
+            assert stored.filled_amount == Decimal("0.001")
+            # Queued for the next tick, never silently dropped.
+            assert order_id in engine._pending_counter_ids
+
+        trades = await storage.get_trades(symbol=BTC_USD)
+        assert len(trades) == 6
+
+
+class TestReanchorBookVanishRegression:
+    """Production incident 2026-08-19: an operator re-anchor whose
+    replacement layout is fully guard-refused (e.g. every coin is
+    inventory-capped and sell-only) must never trip ADR-037's
+    book-vanish hold on the very next tick. Root cause was
+    ``cancel_open_orders`` saving the exchange-fetched (fresh-UUID)
+    order instead of the stored order, orphaning the real row as
+    storage-open; the next tick's fill detection then discovered that
+    orphaned row and misattributed it as an external cancel."""
+
+    async def test_starved_reanchor_does_not_trip_book_vanish(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        exchange = _FreshUuidExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # initialize: 6 orders placed
+
+        # Starve the account so the reanchor's replacement layout is
+        # fully guard-refused — the exact incident shape (every coin
+        # inventory-capped and sell-only at the time of the click).
+        exchange._balances["USD"] = Decimal("0")
+        exchange._balances["BTC"] = Decimal("0")
+
+        ok, message = await engine.request_reanchor(BTC_USD)
+        assert ok is True
+        assert "placed 0/6" in message
+
+        follow_up = await engine.step(BTC_USD)
+        assert follow_up.action != "held_book_vanish"
+        assert not engine.is_paused(BTC_USD)
+        assert engine.hold_reason(BTC_USD) is None
+
+
 class TestRequestReanchor:
     """ADR-031: cancel-FIRST atomicity + in-process layout (judge correction A)."""
 

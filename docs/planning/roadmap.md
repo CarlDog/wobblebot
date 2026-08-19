@@ -1879,6 +1879,42 @@ the detail; the full backlog index is
    annotation, the never-suppress invariant, the guidance switch (and
    its absence without a recent execution), and the degrade paths.
 
+   **ADR-037 book-vanish false positive: cancel_open_orders identity
+   fix** ✅ **2026-08-19** (production incident, root-caused and fixed
+   same day). An operator re-anchor of ADA/USD, landing in a fully
+   guard-refused (0/6) replacement layout — the same inventory-capped
+   / sell-only conditions BTC/ETH/SOL are also in — false-tripped
+   ADR-037's book-vanish hold on the very next tick. Root cause was
+   NOT eventual consistency in Kraken's cancel confirmation (the
+   leading hypothesis going in): `ExchangePort.get_open_orders()`
+   deliberately mints fresh UUIDs on every call (documented on
+   `KrakenAdapter.get_open_orders`), and `GridEngine.cancel_open_orders`
+   saved that fresh-UUID object straight to storage. Since `save_order`
+   upserts by `id`, this created an orphan duplicate row instead of
+   updating the real, originally-placed order — which silently stayed
+   `status='open'` forever. The very next tick's fill-detection then
+   discovered that real row as an apparent external cancel. This was a
+   latent defect on every engine-initiated cancel, not just
+   re-anchors — masked until now because the startup reconciler
+   (ADR-018) quietly absorbs orphaned "open" rows at every daemon
+   restart; a mid-session re-anchor gives fill-detection no reconciler
+   pass in between. Fix: `cancel_open_orders` now resolves each
+   cancelled order back to its stored identity via `exchange_id`
+   before persisting, and — a related gap closed alongside it — a
+   fill caught mid-cancel now persists its trade and queues a
+   counter-order (`_pending_counter_ids`, ADR-023) instead of being
+   silently dropped. Two new regression tests reproduce the exact
+   incident (verified failing with the precise `held_book_vanish`
+   symptom against the pre-fix code, passing against the fix) plus a
+   mechanism test pinning "no orphan row, real row transitions to
+   canceled." Twin defect flagged (not bundled) in
+   `cli.live._cancel_all_open`'s shutdown-cancel path — same shape,
+   same masking-by-reconciler explanation, queued as a follow-up task.
+   3449 unit tests pass (`tests/services/test_grid_engine.py` 86 → 89),
+   mypy clean, pylint 10.00/10, black/isort clean. ADA/USD required a
+   separate manual operator resume in production — unrelated to this
+   code fix.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
