@@ -141,7 +141,10 @@ _ENGINE_COMMAND_KINDS: tuple[str, ...] = tuple(
 # ---------------------------------------------------------------------------
 
 
-async def _cancel_all_open(
+async def _cancel_all_open(  # pylint: disable=too-many-locals
+    # R0914 disable: every local is a distinct stage signal of a linear
+    # procedure (fetch both sides, cancel, resolve identity, persist-or-
+    # defer) -- same rationale as GridEngine.cancel_open_orders's disable.
     adapter: KrakenAdapter,
     storage: StoragePort,
     symbols: tuple[Symbol, ...],
@@ -156,11 +159,32 @@ async def _cancel_all_open(
     (ADR-021) — Kraken's server-side timer becomes the backstop that
     sweeps whatever this cleanup couldn't.
 
-    After each successful ``adapter.cancel_order()``, persist the
-    ``status="canceled"`` transition back to storage (Stage 8.1.B /
-    ADR-018). Storage failures log and continue — losing the audit
-    write doesn't undo the cancellation; the next-startup reconciler
-    catches stragglers.
+    Persistence resolves each cancelled order back to its STORED
+    identity via ``exchange_id`` before saving — mirrors the 2026-08-19
+    ``GridEngine.cancel_open_orders`` fix. ``ExchangePort.
+    get_open_orders`` deliberately constructs fresh-UUID ``Order``
+    objects (see that method's docstring); saving one of those directly
+    (as this function did before the 2026-08-19 fix) upserts an ORPHAN
+    row (``save_order`` keys on ``id``) and leaves the real stored row
+    ``status='open'`` forever — the next daemon start's reconciler then
+    discovers that stale row as an apparent EXTERNAL cancel. An order
+    the exchange reports that local storage never tracked (a manual
+    Kraken-side order) is cancelled but not adopted, per ADR-018.
+
+    A cancel that catches an order carrying a pre-existing partial fill
+    (visible in the ``get_open_orders`` snapshot's ``filled_amount``
+    before this loop starts cancelling — Kraken's own ``cancel_order``
+    doesn't re-query, so it never refreshes this figure) is deliberately
+    left with its stored row UNTOUCHED (``status`` stays ``"open"``)
+    rather than persisted as canceled here. This function has no engine
+    instance and the process is exiting right after — there's no tick
+    left to place a counter-order on, unlike ``GridEngine.
+    cancel_open_orders``'s ``_pending_counter_ids`` path. Leaving the
+    row ``open`` lets the next daemon startup's ``apply_reconciliation``
+    (ADR-023) discover it as storage-only, recover the matched trade(s),
+    and queue the counter-order via ``ReconciliationReport.
+    needs_counter_order_ids`` — the same recovery path a fill landing in
+    the narrow fetch→cancel window already has to rely on regardless.
 
     Successive ``cancel_order`` calls are paced (ADR-027) — a short
     sleep between attempts, none before the first — so this cleanup
@@ -170,12 +194,24 @@ async def _cancel_all_open(
     rejection with bounded backoff before it ever reaches this
     function as an ``ExchangeError``.
 
-    Returns ``(cancelled, failed)`` summed across symbols.
+    Args:
+        adapter: Trading-key exchange adapter.
+        storage: Storage port.
+        symbols: Configured symbols to restrict cancellation to.
+
+    Returns:
+        ``(cancelled, failed)`` counts — exchange-side cancel outcomes.
+        A post-cancel persistence choice (resolve now, or deliberately
+        defer to the reconciler) never moves either count: the
+        cancellation itself already succeeded.
     """
     cancelled = 0
     failed = 0
     configured = set(symbols)
     opens = await adapter.get_open_orders()
+    stored_by_exchange_id: dict[str, Order] = {
+        o.exchange_id: o for o in await storage.get_open_orders() if o.exchange_id
+    }
     attempted = 0
     for o in opens:
         if o.symbol not in configured:
@@ -185,7 +221,7 @@ async def _cancel_all_open(
             await asyncio.sleep(_INTER_CANCEL_PACING_SECONDS)
         attempted += 1
         try:
-            await adapter.cancel_order(o)
+            canceled_order = await adapter.cancel_order(o)
             cancelled += 1
             _LOGGER.info(
                 "shutdown cancelled (symbol=%s, exchange_id=%s)",
@@ -207,27 +243,62 @@ async def _cancel_all_open(
                 },
             )
             continue
-        # Stage 8.1.B: persist the status transition so the
-        # storage view matches what we just did to the exchange.
-        try:
-            await storage.save_order(
-                o.model_copy(
-                    update={
-                        "status": "canceled",
-                        "updated_at": Timestamp(dt=datetime.now(UTC)),
-                    }
-                )
+
+        if canceled_order.exchange_id is None:
+            continue
+        stored = stored_by_exchange_id.get(canceled_order.exchange_id)
+        if stored is None:
+            _LOGGER.info(
+                "shutdown cancel: %s (%s) not tracked in local storage; not adopting",
+                canceled_order.symbol,
+                canceled_order.exchange_id,
+                extra={
+                    "symbol": str(canceled_order.symbol),
+                    "exchange_id": canceled_order.exchange_id,
+                },
             )
+            continue
+
+        if canceled_order.filled_amount > 0:
+            # Deferred to the next startup's reconciler (see docstring)
+            # -- leave the stored row status='open', don't touch it.
+            _LOGGER.warning(
+                "shutdown cancel: %s %s (%s) had a partial fill of %s before this "
+                "cancel; recovery deferred to the next startup's reconciler",
+                stored.symbol,
+                stored.side.value.upper(),
+                canceled_order.exchange_id,
+                fmt_decimal(canceled_order.filled_amount),
+                extra={
+                    "symbol": str(stored.symbol),
+                    "exchange_id": canceled_order.exchange_id,
+                    "filled_amount": str(canceled_order.filled_amount),
+                },
+            )
+            continue
+
+        # Stage 8.1.B: persist the status transition onto the STORED
+        # order's identity (2026-08-19 fix) so the storage view matches
+        # what we just did to the exchange, without creating an orphan.
+        resolved = stored.model_copy(
+            update={
+                "status": canceled_order.status,
+                "filled_amount": canceled_order.filled_amount,
+                "updated_at": canceled_order.updated_at,
+            }
+        )
+        try:
+            await storage.save_order(resolved)
         except StorageError as exc:
             _LOGGER.warning(
                 "shutdown cancel persistence failed; reconciler will catch on next start "
                 "(symbol=%s, exchange_id=%s): %s",
-                o.symbol,
-                o.exchange_id,
+                resolved.symbol,
+                resolved.exchange_id,
                 exc,
                 extra={
-                    "symbol": str(o.symbol),
-                    "exchange_id": o.exchange_id,
+                    "symbol": str(resolved.symbol),
+                    "exchange_id": resolved.exchange_id,
                     "error": str(exc),
                 },
             )

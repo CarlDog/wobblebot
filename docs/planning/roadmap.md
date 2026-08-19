@@ -1907,13 +1907,36 @@ the detail; the full backlog index is
    incident (verified failing with the precise `held_book_vanish`
    symptom against the pre-fix code, passing against the fix) plus a
    mechanism test pinning "no orphan row, real row transitions to
-   canceled." Twin defect flagged (not bundled) in
-   `cli.live._cancel_all_open`'s shutdown-cancel path — same shape,
-   same masking-by-reconciler explanation, queued as a follow-up task.
-   3449 unit tests pass (`tests/services/test_grid_engine.py` 86 → 89),
-   mypy clean, pylint 10.00/10, black/isort clean. ADA/USD required a
-   separate manual operator resume in production — unrelated to this
-   code fix.
+   canceled." ADA/USD required a separate manual operator resume in
+   production — unrelated to this code fix.
+
+   **Twin fix, same day:** `cli.live._cancel_all_open`'s shutdown-cancel
+   loop carried the identical orphan-row defect (the same fresh-UUID
+   `get_open_orders()` snapshot saved straight to storage), plus a
+   second bug the `GridEngine` fix didn't have: it discarded
+   `adapter.cancel_order()`'s return value outright, so `filled_amount`
+   was never even inspected. Fixed the same way — resolve to stored
+   identity via `exchange_id` before persisting — with one deliberate
+   difference from `GridEngine`: a partial fill visible in the
+   pre-cancel snapshot is **not** persisted as canceled here. This
+   function has no engine instance and the process exits right after,
+   so there is no tick left to place a counter-order on (unlike
+   `GridEngine`'s `_pending_counter_ids`). The stored row is instead
+   left `status='open'`, so it surfaces as storage-only on the *next*
+   boot and `apply_reconciliation` (ADR-023) recovers the trade and
+   queues the counter via `needs_counter_order_ids`. Confirmed safe by
+   reading the call site directly: `cli/live._main_async` fails the
+   boot outright (`return 1`) on a reconciliation error rather than
+   proceeding with an empty report, so a deferred row can never reach
+   tick-1 fill-detection unresolved. `cli.shadow._cancel_all_open` has
+   the identical code shape but isn't exposed to the bug — its
+   `ShadowExchangeAdapter` delegates to a `MockExchangeAdapter` that
+   preserves identity — checked, not touched. Four new regression tests
+   (`tests/cli/test_shutdown_persistence.py`), including one that runs
+   `apply_reconciliation` end-to-end to prove the deferred row is
+   actually recovered on next boot. 3453 unit tests pass (+4 from this
+   fix; `tests/services/test_grid_engine.py` 86 → 89), mypy clean,
+   pylint 10.00/10, black/isort clean.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

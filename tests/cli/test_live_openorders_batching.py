@@ -307,8 +307,10 @@ class _CancelSpyAdapter:
         self.per_symbol_fetches += 1
         return [o for o in self._open if o.symbol == symbol]
 
-    async def cancel_order(self, order: Order) -> None:
+    async def cancel_order(self, order: Order) -> Order:
         self.cancelled.append(order.exchange_id or "")
+        order.status = "canceled"
+        return order
 
     async def set_dead_mans_switch(self, timeout_seconds: int) -> None:
         return None
