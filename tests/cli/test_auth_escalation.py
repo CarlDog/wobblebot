@@ -73,17 +73,47 @@ class TestDmsFailureStreak:
         assert results.count(True) == 1
         assert results[_DMS_FAILURE_STREAK_ALERT - 1] is True
 
-    def test_success_reports_recovery_after_episode(self) -> None:
+    def test_dms_success_reports_recovery_after_episode(self) -> None:
         esc = _AuthEscalation()
         for _ in range(_DMS_FAILURE_STREAK_ALERT):
             esc.note_dms_failure()
-        assert esc.note_success() is True  # episode ended — emit recovered
-        assert esc.note_success() is False  # steady state — quiet
+        assert esc.note_dms_success() is True  # episode ended — emit recovered
+        assert esc.note_dms_success() is False  # steady state — quiet
 
     def test_short_streak_recovers_quietly(self) -> None:
         esc = _AuthEscalation()
         esc.note_dms_failure()
-        assert esc.note_success() is False
+        assert esc.note_dms_success() is False
+
+    def test_unrelated_private_call_success_does_not_touch_dms_streak(self) -> None:
+        """2026-08-20 incident regression: during a real Kraken outage,
+        CancelAllOrdersAfter (the DMS reset) failed ~40 times back to
+        back while OpenOrders (a DIFFERENT private endpoint, polled every
+        tick via ``note_success``) kept succeeding. The pre-fix code
+        shared one counter between them, so every OpenOrders success
+        wiped the DMS-failure streak back to 0 before it could ever
+        reach the alert threshold — the "DMS resets failing" critical
+        never fired despite the sustained outage. This reproduces that
+        exact interleaving and asserts the alert now fires anyway."""
+        esc = _AuthEscalation()
+        fired = []
+        for _ in range(40):
+            fired.append(esc.note_dms_failure())
+            # A DIFFERENT, unrelated private call (e.g. get_open_orders)
+            # keeps succeeding this whole episode -- endpoint-specific
+            # degradation, not an account-wide auth failure.
+            esc.note_success()
+        assert fired.count(True) == 1
+        assert esc.dms_failure_streak == 40  # never reset by the unrelated successes
+        # Only a genuine DMS reset success ends the episode.
+        assert esc.note_dms_success() is True
+        assert esc.dms_failure_streak == 0
+
+    def test_generic_success_only_recovers_lockout_or_permanent_auth(self) -> None:
+        esc = _AuthEscalation()
+        esc.note_lockout()
+        assert esc.note_success() is True  # ended a lockout episode
+        assert esc.note_success() is False  # steady state — quiet
 
 
 class TestPermanentAuthHalt:

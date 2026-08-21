@@ -1938,6 +1938,72 @@ the detail; the full backlog index is
    fix; `tests/services/test_grid_engine.py` 86 → 89), mypy clean,
    pylint 10.00/10, black/isort clean.
 
+   **ADR-021/ADR-037 alerting-fidelity gaps: DMS-alert reset bug,
+   book-vanish message honesty, held-symbol reminder** ✅ **2026-08-20**
+   (production incident, root-caused and fixed same day). A real
+   ~6-minute Kraken outage (07:01:18–07:07:04 UTC) failed
+   `CancelAllOrdersAfter` (the ADR-021 DMS reset) ~40 times back to
+   back; Kraken's own 60s server-side timer lapsed and auto-cancelled
+   every open order — the safety net working exactly as designed — and
+   ADR-037's book-vanish detector correctly HELD five symbols within
+   seconds. Three related alerting gaps surfaced from
+   `data/logs/live.log.2026-08-20` + `operator.db`'s `notifications`
+   table:
+   1. **The "DMS resets failing" critical never fired.**
+      `_AuthEscalation.note_success()` was called from BOTH the
+      DMS-ping success path (main loop) AND the per-tick OpenOrders
+      fetch (`_run_one_tick`, unrelated to DMS) — an endpoint-specific
+      Kraken degradation left OpenOrders succeeding every tick while
+      `CancelAllOrdersAfter` failed, so each success reset
+      `dms_failure_streak` back to 0 before it could reach the alert
+      threshold of 3, despite ~40 consecutive real failures. Fixed by
+      splitting DMS-health tracking from generic private-call success:
+      `note_success()` (generic) now only clears lockout/permanent-auth
+      state; a new `note_dms_success()` (DMS-specific) exclusively
+      resets `dms_failure_streak`. `note_dms_failure()`'s threshold
+      check moved from `==` to `>=` plus a `dms_alerted` latch —
+      defense in depth against a future reset landing the streak
+      somewhere other than 0.
+   2. **The book-vanish message couldn't distinguish its two
+      disjunctive causes.** "orders left the exchange without the
+      engine cancelling them (DMS purge or manual cancel) ...
+      Investigate before resuming" read identically alarming whether
+      the cause was Kraken's own DMS firing (self-resolving, not
+      alarming) or a genuinely unexplained external cancel. The
+      message now reads `escalation.dms_failure_streak` (still live at
+      detection time — the DMS ping runs earlier in the same tick)
+      and, when nonzero, names the streak and reframes to "most likely
+      auto-cancelled by Kraken's own safety timer ... Resume when
+      ready"; a zero streak keeps the sharper "investigate" framing.
+      Severity and the HOLD itself are unchanged in both cases — only
+      the message's certainty.
+   3. **A held symbol got exactly one notification, ever.** By design
+      (anti-spam) `held_book_vanish` fires once per hold episode.
+      Nothing reminded the operator a symbol was STILL held after
+      hours of silence — confirmed twice in production: ADA sat held
+      ~13h on 2026-08-19 (single-symbol false positive, since fixed in
+      f5f68b7/c4fbb44), and BTC/SOL/ETH/ADA/XRP sat held ~18h+ on
+      2026-08-20, discovered only because the operator checked in. New
+      `_check_held_reminder` fires a single aggregate "N symbol(s)
+      still held" warning on a configurable cadence
+      (`live.held_reminder_seconds`, default 4h, `null` disables)
+      while any symbol remains held for `book_vanish`; resets when the
+      last held symbol resumes so a future episode gets a full window
+      before its first reminder.
+
+   15 new regression tests: `tests/cli/test_auth_escalation.py` gained
+   a test reproducing the exact interleaved-success streak-reset bug
+   (verified failing against the pre-fix class, passing against the
+   fix) plus a test pinning the new generic/DMS split;
+   `tests/cli/test_live_dms_alert_notification.py` drives the real
+   `_run_loop` end-to-end (verified failing pre-fix, passing
+   post-fix); `tests/cli/test_live_book_vanish_message.py` pins both
+   message variants plus the escalation=None fallback and the
+   unchanged-HOLD invariant; `tests/cli/test_live_held_reminder.py`
+   covers the cadence, aggregate-not-per-symbol, disable, and
+   episode-reset behavior. 3468 unit tests pass (+15 from this fix),
+   mypy clean, pylint 10.00/10, black/isort clean.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

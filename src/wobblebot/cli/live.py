@@ -445,15 +445,30 @@ class _AuthEscalation:
         self.backoff_until = 0.0
         self.backoff_seconds = 0.0
         self.dms_failure_streak = 0
+        self.dms_alerted = False
         self.permanent_auth_strikes = 0
         self.auth_paused = False
 
     def note_success(self) -> bool:
-        """Record any successful private call. Returns True exactly when
-        this ends a DMS-failure episode (caller emits the recovered
-        notice)."""
-        recovered = self.dms_failure_streak >= _DMS_FAILURE_STREAK_ALERT
-        self.dms_failure_streak = 0
+        """Record a successful private call OTHER than a DMS reset (e.g.
+        the per-tick OpenOrders fetch). Resets lockout backoff and
+        permanent-auth strikes — account-wide signals a single working
+        endpoint disproves — but deliberately leaves ``dms_failure_streak``
+        untouched.
+
+        2026-08-20 incident: a ~6-minute Kraken outage failed
+        ``CancelAllOrdersAfter`` (the DMS reset) specifically, ~40 times
+        back to back, while OpenOrders kept succeeding every tick. This
+        method used to reset ``dms_failure_streak`` on ANY private-call
+        success, so the streak was wiped back to 0 every tick right after
+        climbing to 1 — it could never reach the alert threshold and the
+        "DMS resets failing" critical never fired. DMS health is now
+        tracked exclusively via ``note_dms_failure`` / ``note_dms_success``.
+
+        Returns True exactly when this ends a lockout/permanent-auth
+        escalation episode.
+        """
+        recovered = self.permanent_auth_strikes > 0 or self.backoff_seconds > 0
         self.permanent_auth_strikes = 0
         self.backoff_seconds = 0.0
         self.backoff_until = 0.0
@@ -481,10 +496,38 @@ class _AuthEscalation:
         return False
 
     def note_dms_failure(self) -> bool:
-        """Count a DMS reset failure. Returns True exactly when the
-        streak reaches the alert threshold."""
+        """Count a DMS reset failure specifically. Returns True exactly
+        once per failure episode — when the streak first reaches (or,
+        defensively, remains at/above) the alert threshold.
+
+        ``>=`` plus the ``dms_alerted`` latch (rather than a bare ``==``)
+        is defense in depth: as long as ``note_dms_success`` is the only
+        thing that zeroes the streak, it will always pass through exactly
+        3 on the way up and ``==`` alone would suffice — but the latch
+        means a future change that increments by more than one, or a
+        reset that lands the streak somewhere other than 0, still can't
+        skip the alert or double-fire it.
+        """
         self.dms_failure_streak += 1
-        return self.dms_failure_streak == _DMS_FAILURE_STREAK_ALERT
+        if self.dms_failure_streak >= _DMS_FAILURE_STREAK_ALERT and not self.dms_alerted:
+            self.dms_alerted = True
+            return True
+        return False
+
+    def note_dms_success(self) -> bool:
+        """Record a successful DMS reset call specifically (the
+        ``CancelAllOrdersAfter`` ping in the main loop, NOT the generic
+        per-tick OpenOrders fetch — see ``note_success``). Resets the
+        DMS-failure streak and, since a DMS reset is itself a private
+        call, also clears lockout/permanent-auth state. Returns True
+        exactly when this ends a DMS-failure alert episode."""
+        recovered = self.dms_alerted
+        self.dms_failure_streak = 0
+        self.dms_alerted = False
+        self.permanent_auth_strikes = 0
+        self.backoff_seconds = 0.0
+        self.backoff_until = 0.0
+        return recovered
 
 
 async def _note_private_call_failure(
@@ -532,6 +575,55 @@ async def _note_private_call_failure(
             ),
             context={"strikes": _PERMANENT_AUTH_STRIKES, "reason": "auth_failure"},
         )
+
+
+async def _check_held_reminder(
+    engine: GridEngine,
+    live: LiveConfig,
+    notifier: NotifierPort | None,
+    tick: int,
+    last_reminder_at: float | None,
+) -> float | None:
+    """ADR-037 decision 2 follow-up: a book-vanish hold pages once when
+    it starts (by design, so the page can't spam — see the call site in
+    ``_run_one_tick``) and nothing previously reminded the operator it
+    was STILL held. Production went ~18h with 5 symbols held and only
+    the five initial alerts to notice by (2026-08-20 incident).
+
+    Called once per loop iteration, after this tick's steps. Returns the
+    updated ``last_reminder_at`` for the caller to carry into the next
+    iteration. A single aggregate reminder covers every currently-held
+    symbol — never one per symbol — so this stays the anti-spam
+    complement to the one-time page, not a second source of spam.
+
+    ``live.held_reminder_seconds is None`` disables the reminder
+    entirely (returns ``None`` unconditionally).
+    """
+    if live.held_reminder_seconds is None:
+        return None
+    held = [symbol for symbol in live.symbols if engine.hold_reason(symbol) == "book_vanish"]
+    if not held:
+        # Nothing held right now -- clear the clock so the NEXT hold
+        # episode gets a full window before its first reminder, rather
+        # than inheriting a stale start time from a prior episode.
+        return None
+    now = time.monotonic()
+    if last_reminder_at is None:
+        return now
+    if now - last_reminder_at < live.held_reminder_seconds:
+        return last_reminder_at
+    await notify(
+        notifier,
+        level="warning",
+        title=f"Still held: {len(held)} symbol(s) awaiting resume",
+        message=(
+            f"{len(held)} symbol(s) remain HELD from an earlier book-vanish pause and "
+            f"have not been resumed: {', '.join(str(symbol) for symbol in held)}. "
+            "Resume via Discord ('resume <symbol>')."
+        ),
+        context={"symbols": [str(symbol) for symbol in held], "tick": tick},
+    )
+    return now
 
 
 async def _session_usd_balance(adapter: KrakenAdapter) -> Decimal:
@@ -779,17 +871,50 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             # action exactly once (subsequent ticks read skipped_paused)
             # so this page cannot spam.
             if result.action == "held_book_vanish":
-                await notify(
-                    notifier,
-                    level="critical",
-                    title=f"Book vanished: {symbol} — trading held",
-                    message=(
+                # 2026-08-20 incident: a real Kraken outage failed DMS
+                # resets for ~6 minutes, Kraken's own 60s server-side
+                # timer lapsed and auto-cancelled every open order (the
+                # safety net working exactly as designed), and this page
+                # read identically alarming as a genuinely unexplained
+                # external cancel — "it sounded a LOT like ... everything
+                # went tits up" per the operator. escalation.dms_failure_streak
+                # is still live at this point in the tick (the DMS ping
+                # runs before this symbol loop, same iteration), so a
+                # nonzero streak means the DMS was ACTIVELY unhealthy
+                # right up to the vanish — most likely Kraken's own timer,
+                # not something to investigate. A zero streak means DMS
+                # was healthy right up to the vanish — the genuinely
+                # suspicious case keeps the sharper framing. Either way
+                # the symbol still HOLDs; only the message's certainty
+                # changes.
+                dms_streak = escalation.dms_failure_streak if escalation is not None else 0
+                if dms_streak > 0:
+                    message = (
+                        f"Kraken's dead-man's-switch reset was failing ({dms_streak} "
+                        "consecutive failures) immediately before this — orders were "
+                        "most likely auto-cancelled by Kraken's own safety timer during "
+                        f"an API disruption, not an external action. Placement is HELD "
+                        f"for {symbol} until you resume it (Discord: 'resume {symbol}'). "
+                        "Resume when ready."
+                    )
+                else:
+                    message = (
                         f"{symbol}'s open orders left the exchange without the engine "
                         "cancelling them (DMS purge or manual cancel). Placement is "
                         f"HELD for {symbol} until you resume it (Discord: "
                         f"'resume {symbol}'). Investigate before resuming."
-                    ),
-                    context={"symbol": str(symbol), "reason": "book_vanish", "tick": tick},
+                    )
+                await notify(
+                    notifier,
+                    level="critical",
+                    title=f"Book vanished: {symbol} — trading held",
+                    message=message,
+                    context={
+                        "symbol": str(symbol),
+                        "reason": "book_vanish",
+                        "tick": tick,
+                        "dms_failure_streak": dms_streak,
+                    },
                 )
             # ADR-038 fee-drift tripwire: page once per symbol per
             # session the first time a fill's fee rate matches neither
@@ -1430,6 +1555,13 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     # fires `terminal_heartbeat_seconds` after session-start, not right
     # at boot (where it'd duplicate the session-start INFO line).
     last_terminal_heartbeat_at = time.monotonic()
+    # 2026-08-20 incident follow-up: last time the aggregate "symbol(s)
+    # still held" reminder fired (see the check after each tick below).
+    # None means "no held symbols currently being tracked" -- set on the
+    # first tick any symbol is found held, cleared once none remain, so a
+    # fresh hold episode always gets a full `held_reminder_seconds`
+    # window before its first reminder rather than firing immediately.
+    last_held_reminder_at: float | None = None
     # Sweep order (live.symbol_priority). Recomputed on a SLOW cadence
     # because the screener's inputs are hourly bars: re-ranking every tick
     # would spend storage reads to produce an identical answer, and an
@@ -1466,7 +1598,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     dms_unconfirmed_ticks = _log_dms_confirmation(
                         trigger_at, live.dead_mans_switch_seconds, dms_unconfirmed_ticks
                     )
-                    if escalation.note_success():
+                    if escalation.note_dms_success():
                         await notify(
                             notifier,
                             level="info",
@@ -1561,6 +1693,10 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # tick so the row reflects this tick's paused/offside
             # outcome. Best-effort — never breaks the loop.
             await _emit_engine_states(engine, list(live.symbols), storage, operator_storage)
+
+            last_held_reminder_at = await _check_held_reminder(
+                engine, live, notifier, tick, last_held_reminder_at
+            )
 
             # Periodic terminal-visible heartbeat. Cheap (just a log
             # line) — no Kraken/Storage calls. Proves the loop is

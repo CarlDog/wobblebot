@@ -165,6 +165,10 @@ class LiveConfig(BaseModel):
     # otherwise has no business reading it, so it stays None by default
     # rather than becoming a third mandatory DB on the trading path.
     observe_db: str | None = None
+    # ADR-037 follow-up (2026-08-20 incident): a book-vanish hold pages
+    # once (anti-spam); this is the cadence for an aggregate "still
+    # held" reminder while any symbol remains held. ``null`` disables.
+    held_reminder_seconds: float | None = Field(default=14400.0, gt=0)
 
     class Config:
         frozen = True
