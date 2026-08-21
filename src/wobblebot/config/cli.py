@@ -167,7 +167,7 @@ class LiveConfig(BaseModel):
     observe_db: str | None = None
     # ADR-037 follow-up (2026-08-20 incident): a book-vanish hold pages
     # once (anti-spam); this is the cadence for an aggregate "still
-    # held" reminder while any symbol remains held. ``null`` disables.
+    # paused" reminder while any symbol is paused. ``null`` disables.
     held_reminder_seconds: float | None = Field(default=14400.0, gt=0)
 
     class Config:

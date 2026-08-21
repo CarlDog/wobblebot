@@ -429,7 +429,7 @@ _PERMANENT_AUTH_STRIKES = 3
 _DMS_FAILURE_STREAK_ALERT = 3
 
 
-class _AuthEscalation:
+class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
     """ADR-037 per-session escalation state for cli/live's private calls.
 
     Tracks three independent signals the 2026-08-15→17 incident proved
@@ -439,6 +439,12 @@ class _AuthEscalation:
     before Kraken retires the book). All state is per-session; fixing a
     credential requires a container recreate anyway, so a restart
     clearing this is the designed recovery path.
+
+    The 8 attributes are 4 independently-meaningful pairs (lockout
+    backoff, DMS failure-streak + alert latch, DMS deadline + per-tick
+    expiry evidence, permanent-auth strikes + pause flag) — splitting
+    this into sub-objects would fragment one cohesive escalation state
+    machine for no organizational gain.
     """
 
     def __init__(self) -> None:
@@ -446,6 +452,28 @@ class _AuthEscalation:
         self.backoff_seconds = 0.0
         self.dms_failure_streak = 0
         self.dms_alerted = False
+        # Kraken's own promised auto-cancel deadline, from the last
+        # CONFIRMED (trigger_at is not None) successful DMS ping. This is
+        # ground truth for "could the server-side timer have lapsed by
+        # now" — a failure COUNT is not: at the default 5s tick, a streak
+        # of even 3 is only ~15s, far short of the (default 60s) timeout,
+        # so "streak > 0" falsely blamed the timer for a same-window
+        # external cancel. Only ever moves forward on a confirmed ping;
+        # untouched by failures, so it still reflects the true deadline
+        # while it's being missed.
+        self.dms_trigger_at: datetime | None = None
+        # Per-TICK evidence (not per-session) that ``dms_trigger_at`` had
+        # already passed as of the START of this tick's DMS ping — i.e.
+        # BEFORE a same-tick success could push it back out. Snapshotting
+        # pre-ping is what lets a vanish discovered on the recovery tick
+        # still see "the timer had lapsed," instead of the just-renewed
+        # future deadline hiding the failure episode that preceded it.
+        # The caller (``_run_loop``) resets this to False unconditionally
+        # at the top of every iteration, before the DMS block — so it can
+        # never carry a stale True into a tick where the block is skipped
+        # (DMS disabled, or ``auth_paused``) and falsely reassure on a
+        # vanish that has no DMS evidence backing it this tick.
+        self.dms_timer_expired_this_tick = False
         self.permanent_auth_strikes = 0
         self.auth_paused = False
 
@@ -592,18 +620,30 @@ async def _check_held_reminder(
 
     Called once per loop iteration, after this tick's steps. Returns the
     updated ``last_reminder_at`` for the caller to carry into the next
-    iteration. A single aggregate reminder covers every currently-held
+    iteration. A single aggregate reminder covers every currently-paused
     symbol — never one per symbol — so this stays the anti-spam
     complement to the one-time page, not a second source of spam.
+
+    Filters on ``engine.is_paused(symbol)``, not ``hold_reason(symbol)
+    == "book_vanish"``. ``hold_reason`` is in-memory only (ADR-030's
+    ``engine_state`` persists ``paused: bool`` but never the reason) —
+    ``_restore_paused_symbols`` calls ``pause_symbol`` on restart with
+    no reason to restore, so a book-vanish hold that survives a restart
+    would read as ``hold_reason() is None`` and silently drop out of a
+    narrower filter, defeating this reminder for exactly the case that
+    most needs it. The tradeoff: a deliberate long-standing operator
+    pause now also gets nagged on this cadence — an operator who wants
+    a symbol parked quietly for longer than ``held_reminder_seconds``
+    sets it to ``null``.
 
     ``live.held_reminder_seconds is None`` disables the reminder
     entirely (returns ``None`` unconditionally).
     """
     if live.held_reminder_seconds is None:
         return None
-    held = [symbol for symbol in live.symbols if engine.hold_reason(symbol) == "book_vanish"]
+    held = [symbol for symbol in live.symbols if engine.is_paused(symbol)]
     if not held:
-        # Nothing held right now -- clear the clock so the NEXT hold
+        # Nothing paused right now -- clear the clock so the NEXT pause
         # episode gets a full window before its first reminder, rather
         # than inheriting a stale start time from a prior episode.
         return None
@@ -615,11 +655,11 @@ async def _check_held_reminder(
     await notify(
         notifier,
         level="warning",
-        title=f"Still held: {len(held)} symbol(s) awaiting resume",
+        title=f"Still paused: {len(held)} symbol(s) not trading",
         message=(
-            f"{len(held)} symbol(s) remain HELD from an earlier book-vanish pause and "
-            f"have not been resumed: {', '.join(str(symbol) for symbol in held)}. "
-            "Resume via Discord ('resume <symbol>')."
+            f"{len(held)} symbol(s) remain paused and are NOT trading: "
+            f"{', '.join(str(symbol) for symbol in held)}. Resume via Discord "
+            "('resume <symbol>') if this wasn't deliberate."
         ),
         context={"symbols": [str(symbol) for symbol in held], "tick": tick},
     )
@@ -877,18 +917,29 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 # safety net working exactly as designed), and this page
                 # read identically alarming as a genuinely unexplained
                 # external cancel — "it sounded a LOT like ... everything
-                # went tits up" per the operator. escalation.dms_failure_streak
-                # is still live at this point in the tick (the DMS ping
-                # runs before this symbol loop, same iteration), so a
-                # nonzero streak means the DMS was ACTIVELY unhealthy
-                # right up to the vanish — most likely Kraken's own timer,
-                # not something to investigate. A zero streak means DMS
-                # was healthy right up to the vanish — the genuinely
-                # suspicious case keeps the sharper framing. Either way
-                # the symbol still HOLDs; only the message's certainty
-                # changes.
+                # went tits up" per the operator.
+                #
+                # The framing predicate is `dms_timer_expired_this_tick`
+                # (whether Kraken's own PROMISED auto-cancel deadline had
+                # already passed as of the start of this tick's DMS ping —
+                # see `_AuthEscalation`), NOT a raw failure-streak count.
+                # A streak count is a poor proxy: at the default 5s tick,
+                # even the streak-alert threshold of 3 is only ~15s —
+                # nowhere near a 60s timeout — so "streak > 0" falsely
+                # blamed the timer for a same-window external cancel that
+                # had nothing to do with it. The deadline check also
+                # survives a same-tick recovery (DMS ping succeeds THIS
+                # tick, right before this vanish is detected): the
+                # snapshot is taken before the ping call updates the
+                # deadline, so it still reflects the failure episode that
+                # just ended rather than the freshly-renewed future one.
+                # Either way the symbol still HOLDs; only the message's
+                # certainty changes.
                 dms_streak = escalation.dms_failure_streak if escalation is not None else 0
-                if dms_streak > 0:
+                dms_timer_expired = (
+                    escalation.dms_timer_expired_this_tick if escalation is not None else False
+                )
+                if dms_timer_expired:
                     message = (
                         f"Kraken's dead-man's-switch reset was failing ({dms_streak} "
                         "consecutive failures) immediately before this — orders were "
@@ -914,6 +965,7 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                         "reason": "book_vanish",
                         "tick": tick,
                         "dms_failure_streak": dms_streak,
+                        "dms_timer_expired": dms_timer_expired,
                     },
                 )
             # ADR-038 fee-drift tripwire: page once per symbol per
@@ -1592,12 +1644,29 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # During a LOCKOUT backoff the ping deliberately continues:
             # its success is worth more than the marginal lockout-
             # extension risk, since failing it for 120s costs the book.
+            #
+            # 2026-08-20 incident follow-up: reset the per-tick DMS-timer-
+            # expiry evidence UNCONDITIONALLY, before the block below (and
+            # its early-exit conditions) can skip setting it. A book-vanish
+            # message must never see stale True evidence from a prior tick.
+            escalation.dms_timer_expired_this_tick = False
             if live.dead_mans_switch_seconds is not None and not escalation.auth_paused:
+                # Snapshot BEFORE this tick's ping call: if Kraken's last
+                # CONFIRMED promise has already passed, the server-side
+                # timer could have fired regardless of whether THIS ping
+                # now succeeds — a same-tick recovery must not erase that.
+                if (
+                    escalation.dms_trigger_at is not None
+                    and datetime.now(UTC) >= escalation.dms_trigger_at
+                ):
+                    escalation.dms_timer_expired_this_tick = True
                 try:
                     trigger_at = await adapter.set_dead_mans_switch(live.dead_mans_switch_seconds)
                     dms_unconfirmed_ticks = _log_dms_confirmation(
                         trigger_at, live.dead_mans_switch_seconds, dms_unconfirmed_ticks
                     )
+                    if trigger_at is not None:
+                        escalation.dms_trigger_at = trigger_at
                     if escalation.note_dms_success():
                         await notify(
                             notifier,
