@@ -222,6 +222,11 @@ live:
   # notifications table AND polls pending_commands WHERE status='approved'
   # (the ADR-002 firewall). Set to null to run Discord-ignorant.
   operator_db: "data/wobblebot-operator.db"
+  # ADR-037 follow-up (2026-08-20 incident): cadence (seconds) for an
+  # aggregate "N symbol(s) still paused" reminder while ANY symbol is
+  # paused -- a book-vanish hold otherwise pages once and then goes
+  # quiet even after 18+ hours. Set to null to disable.
+  held_reminder_seconds: 14400.0
 
 # ============================================================================
 # Per-CLI: shadow (cli/shadow)

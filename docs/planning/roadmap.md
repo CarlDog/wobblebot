@@ -1938,6 +1938,105 @@ the detail; the full backlog index is
    fix; `tests/services/test_grid_engine.py` 86 → 89), mypy clean,
    pylint 10.00/10, black/isort clean.
 
+   **ADR-021/ADR-037 alerting-fidelity gaps: DMS-alert reset bug,
+   book-vanish message honesty, held-symbol reminder** ✅ **2026-08-20**
+   (production incident, root-caused and fixed same day). A real
+   ~6-minute Kraken outage (07:01:18–07:07:04 UTC) failed
+   `CancelAllOrdersAfter` (the ADR-021 DMS reset) ~40 times back to
+   back; Kraken's own 60s server-side timer lapsed and auto-cancelled
+   every open order — the safety net working exactly as designed — and
+   ADR-037's book-vanish detector correctly HELD five symbols within
+   seconds. Three related alerting gaps surfaced from
+   `data/logs/live.log.2026-08-20` + `operator.db`'s `notifications`
+   table:
+   1. **The "DMS resets failing" critical never fired.**
+      `_AuthEscalation.note_success()` was called from BOTH the
+      DMS-ping success path (main loop) AND the per-tick OpenOrders
+      fetch (`_run_one_tick`, unrelated to DMS) — an endpoint-specific
+      Kraken degradation left OpenOrders succeeding every tick while
+      `CancelAllOrdersAfter` failed, so each success reset
+      `dms_failure_streak` back to 0 before it could reach the alert
+      threshold of 3, despite ~40 consecutive real failures. Fixed by
+      splitting DMS-health tracking from generic private-call success:
+      `note_success()` (generic) now only clears lockout/permanent-auth
+      state; a new `note_dms_success()` (DMS-specific) exclusively
+      resets `dms_failure_streak`. `note_dms_failure()`'s threshold
+      check moved from `==` to `>=` plus a `dms_alerted` latch —
+      defense in depth against a future reset landing the streak
+      somewhere other than 0.
+   2. **The book-vanish message couldn't distinguish its two
+      disjunctive causes.** "orders left the exchange without the
+      engine cancelling them (DMS purge or manual cancel) ...
+      Investigate before resuming" read identically alarming whether
+      the cause was Kraken's own DMS firing (self-resolving, not
+      alarming) or a genuinely unexplained external cancel. A code-review
+      pass (Copilot, PR #101) caught that the first cut of this fix used
+      `dms_failure_streak > 0` as the trigger — a raw failure COUNT is a
+      poor proxy for "the server-side timer plausibly fired": at the
+      default 5s tick, even the streak-alert threshold of 3 is only
+      ~15s, nowhere near a 60s timeout, so it would falsely blame the
+      timer for a same-window external cancel; and because
+      `note_dms_success()` zeroes the streak on the SAME tick a
+      recovery ping succeeds — before `_run_one_tick` runs — a vanish
+      discovered on that recovery tick would misread as DMS-healthy,
+      hiding the very outage that caused it. Corrected to a wall-clock
+      predicate: `_AuthEscalation.dms_trigger_at` tracks Kraken's own
+      PROMISED auto-cancel deadline (from the last CONFIRMED successful
+      ping's `trigger_at`), and a per-tick `dms_timer_expired_this_tick`
+      flag is snapshotted BEFORE each tick's ping call — `now >=
+      dms_trigger_at` as of the START of the tick, so a same-tick
+      recovery can't erase the evidence of the episode that just ended.
+      The flag resets to `False` unconditionally at the top of every
+      loop iteration (before the DMS block's early-exit conditions) so
+      it can never carry stale evidence into a tick where DMS is
+      disabled or the trader key is `auth_paused`. Severity and the
+      HOLD itself are unchanged in both message variants — only the
+      certainty.
+   3. **A held symbol got exactly one notification, ever.** By design
+      (anti-spam) `held_book_vanish` fires once per hold episode.
+      Nothing reminded the operator a symbol was STILL held after
+      hours of silence — confirmed twice in production: ADA sat held
+      ~13h on 2026-08-19 (single-symbol false positive, since fixed in
+      f5f68b7/c4fbb44), and BTC/SOL/ETH/ADA/XRP sat held ~18h+ on
+      2026-08-20, discovered only because the operator checked in. New
+      `_check_held_reminder` fires a single aggregate "N symbol(s)
+      still paused" warning on a configurable cadence
+      (`live.held_reminder_seconds`, default 4h, `null` disables) while
+      any symbol remains paused; resets when the last paused symbol
+      resumes so a future episode gets a full window before its first
+      reminder. Filters on `engine.is_paused(symbol)`, not
+      `hold_reason(symbol) == "book_vanish"` — the same code-review pass
+      caught that `hold_reason` is in-memory only (ADR-030's
+      `engine_state` persists `paused: bool` but never the reason, and
+      `_restore_paused_symbols` calls `pause_symbol` on restart with no
+      reason to restore), so a book-vanish hold that survives a restart
+      would read as `hold_reason() is None` and silently drop out of a
+      narrower filter — defeating the reminder for exactly the case
+      that most needs it. Deliberate tradeoff, not fixed via a schema
+      change: a plain long-standing operator pause now also gets
+      nagged on this cadence; the operator's escape hatch is
+      `held_reminder_seconds: null`. Persisting `hold_reason` durably
+      (a new `engine_state` column + restore-path change) was
+      considered and deferred as out of scope for an alerting-fidelity
+      PR — a real follow-up, not silently dropped.
+
+   18 new regression tests (3 added during the code-review pass above):
+   `tests/cli/test_auth_escalation.py` gained a test reproducing the
+   exact interleaved-success streak-reset bug (verified failing against
+   the pre-fix class, passing against the fix) plus a test pinning the
+   new generic/DMS split; `tests/cli/test_live_dms_alert_notification.py`
+   drives the real `_run_loop` end-to-end (verified failing pre-fix,
+   passing post-fix); `tests/cli/test_live_book_vanish_message.py` pins
+   both message variants, the short-streak-without-deadline-evidence
+   case, the escalation=None fallback, the unchanged-HOLD invariant, and
+   a wiring-level same-tick-recovery test through the real `_run_loop`
+   (verified failing when the snapshot is taken after the ping instead
+   of before, passing with the fix); `tests/cli/test_live_held_reminder.py`
+   covers the cadence, aggregate-not-per-symbol, disable,
+   episode-reset, and the restart-survivor book-vanish-hold case
+   directly. 3471 unit tests pass (+18 from this fix), mypy clean,
+   pylint 10.00/10, black/isort clean.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

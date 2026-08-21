@@ -168,6 +168,35 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ### Fixed
 
+- **ADR-021/ADR-037 alerting-fidelity gaps: DMS-alert reset bug,
+  book-vanish message honesty, held-symbol reminder** (2026-08-20,
+  production incident, root-caused and fixed same day). A real
+  ~6-minute Kraken outage failed the DMS reset (`CancelAllOrdersAfter`)
+  ~40 times back to back; Kraken's own server-side timer lapsed and
+  auto-cancelled every order (working as designed) and ADR-037
+  correctly HELD five symbols. Three related alerting gaps: (1) the
+  "DMS resets failing" critical never fired, because the per-tick
+  OpenOrders success (unrelated to DMS) shared a reset with the
+  DMS-specific streak, wiping it before it could reach the alert
+  threshold despite the sustained real failure — DMS-health tracking
+  is now split from generic private-call success; (2) the "Book
+  vanished" notification read identically alarming whether the cause
+  was Kraken's own DMS firing (self-resolving) or a genuinely
+  unexplained external cancel — it now compares wall-clock time against
+  Kraken's own PROMISED auto-cancel deadline (not a failure count,
+  which a code-review pass showed was too short-lived and vulnerable to
+  a same-tick recovery erasing the evidence) to pick the honest
+  framing, with severity and the HOLD itself unchanged; (3) a held
+  symbol got exactly one notification ever, with no reminder it was
+  STILL held — production went ~18h with 5 symbols held and only the
+  initial alerts to notice by. A new aggregate "still paused" reminder
+  now fires on a configurable cadence (`live.held_reminder_seconds`,
+  default 4h) while any symbol remains paused — deliberately not
+  scoped to book-vanish holds only, since that reason doesn't survive a
+  restart. Full detail in `docs/planning/roadmap.md`'s Stage 8.4.E
+  entry. 18 new regression tests, including three verified failing
+  against the relevant pre-fix code and passing against the fix.
+
 - **The re-anchor banner contradicted itself after a guard-vetoed
   re-anchor** (2026-08-17, diagnosed live). A re-anchor that executed
   cleanly but had its near levels vetoed (ADR-039 inventory cap on the
