@@ -55,7 +55,6 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from pydantic import ValidationError
 
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.exceptions import InsufficientBalance
@@ -163,6 +162,46 @@ PERMANENT_AUTH_CODES = frozenset(
     }
 )
 TEMPORARY_LOCKOUT_CODE = "EGeneral:Temporary lockout"
+
+# Kraken's JSON is untyped at the wire, so every coercion from a response
+# into a domain value can fail on a malformed payload. Per
+# ``ports/exceptions.py`` the port contract for that is ``ExchangeError``
+# -- callers catch ``WobbleBotPortError`` and degrade -- so a bare builtin
+# escaping a parser bypasses every graceful-degradation handler in the
+# codebase (2026-08-22 audit: the live daemon's per-tick handlers, its
+# shutdown cancel-all, and cli/harvest's balance read all inherit this).
+#
+# Shared rather than hand-copied per site because the exception SET is a
+# subtle correctness rule that has already drifted once: the guard at
+# ``_ensure_pair_metadata`` caught only (KeyError, ValueError), which
+# silently missed the InvalidOperation/TypeError its own Decimal() calls
+# raise. One named tuple means one place to be right.
+#
+#   ValueError      <- int(), float(), OrderSide(), and pydantic
+#                      ValidationError (which subclasses ValueError)
+#   ArithmeticError <- decimal.InvalidOperation and OverflowError
+#                      (NEITHER is a ValueError -- the original drift)
+#   AttributeError  <- .get()/.values() on a non-dict entry
+#   TypeError       <- Decimal(None) etc; note dict.get(k, default)
+#                      returns None when k EXISTS with a JSON null, so
+#                      the defaults sprinkled below do not prevent this
+#   OSError         <- datetime.fromtimestamp() out of range (the type
+#                      varies by platform; Linux may raise this where
+#                      Windows raises OverflowError)
+#
+# Deliberately NOT included: StopIteration (every next(iter(...)) site
+# here is already truthiness-guarded, so adding it would be shotgun
+# defensiveness) and bare Exception (it would swallow InsufficientBalance,
+# ExchangeError itself, and asyncio.CancelledError).
+_PARSE_ERRORS = (
+    AttributeError,
+    KeyError,
+    IndexError,
+    TypeError,
+    ValueError,
+    ArithmeticError,
+    OSError,
+)
 
 
 def is_permanent_auth_error(exc: ExchangeError) -> bool:
@@ -285,8 +324,13 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         ticker = next(iter(result.values()))
         # ``c`` is [last_trade_price, lot_volume]. c[0] is the canonical
         # "current price" per docs/reference/kraken-api-reference.md.
-        last_price_str = ticker["c"][0]
-        return Price(amount=Decimal(last_price_str), currency=symbol.quote)
+        try:
+            last_price_str = ticker["c"][0]
+            return Price(amount=Decimal(last_price_str), currency=symbol.quote)
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(
+                f"Kraken Ticker entry for pair {altname!r} malformed: {exc}"
+            ) from exc
 
     async def get_ticker(self, symbol: Symbol) -> Ticker:
         """Fetch last/bid/ask via the same ``/0/public/Ticker`` endpoint
@@ -302,12 +346,17 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         raw = next(iter(result.values()))
         # ``a``/``b`` are [price, whole_lot_volume, lot_volume]; a[0]/b[0]
         # are the best ask/bid per docs/reference/kraken-api-reference.md.
-        return Ticker(
-            symbol=symbol,
-            last=Decimal(raw["c"][0]),
-            bid=Decimal(raw["b"][0]),
-            ask=Decimal(raw["a"][0]),
-        )
+        try:
+            return Ticker(
+                symbol=symbol,
+                last=Decimal(raw["c"][0]),
+                bid=Decimal(raw["b"][0]),
+                ask=Decimal(raw["a"][0]),
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(
+                f"Kraken Ticker entry for pair {altname!r} malformed: {exc}"
+            ) from exc
 
     async def get_ohlc(
         self,
@@ -361,8 +410,11 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             # boundary rather than wedge a backfill mid-stream.
             if not isinstance(entry, list) or len(entry) < 8:
                 raise ExchangeError(f"Kraken OHLC entry has unexpected shape: {entry!r}")
-            opened_at = datetime.fromtimestamp(int(entry[0]), tz=UTC)
             try:
+                # fromtimestamp/int sit INSIDE the try (2026-08-22): they
+                # were above it, so a non-numeric or out-of-range entry[0]
+                # escaped as a bare ValueError/OverflowError/OSError.
+                opened_at = datetime.fromtimestamp(int(entry[0]), tz=UTC)
                 parsed_bar = OHLCBar(
                     symbol=symbol,
                     interval_minutes=interval_minutes,
@@ -375,11 +427,15 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                     volume=Decimal(str(entry[6])),
                     count=int(entry[7]),
                 )
-            except ValidationError as exc:
-                # Same fail-fast posture as the shape check above: a bar
-                # violating low<=open/close<=high is a corrupt response,
-                # and persisting it would poison every high/low-keyed
-                # indicator downstream (the OHLCBar validator's rationale).
+            except _PARSE_ERRORS as exc:
+                # Widened from `except ValidationError` (2026-08-22): the
+                # sibling Decimal(str(...)) calls raise InvalidOperation,
+                # which is an ArithmeticError and was escaping this very
+                # handler. Same fail-fast posture as the shape check
+                # above: a bar violating low<=open/close<=high is a
+                # corrupt response, and persisting it would poison every
+                # high/low-keyed indicator downstream (the OHLCBar
+                # validator's rationale).
                 raise ExchangeError(
                     f"Kraken OHLC entry failed validation for pair {altname!r}: {exc}"
                 ) from exc
@@ -418,13 +474,18 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         fees_maker = result.get("fees_maker") or {}
         if not fees_taker or not fees_maker:
             raise ExchangeError(f"Kraken TradeVolume returned no fee data for pair {altname!r}")
-        taker_pct = Decimal(str(next(iter(fees_taker.values()))["fee"]))
-        maker_pct = Decimal(str(next(iter(fees_maker.values()))["fee"]))
-        return FeeRates(
-            symbol=symbol,
-            maker=maker_pct / Decimal("100"),
-            taker=taker_pct / Decimal("100"),
-        )
+        try:
+            taker_pct = Decimal(str(next(iter(fees_taker.values()))["fee"]))
+            maker_pct = Decimal(str(next(iter(fees_maker.values()))["fee"]))
+            return FeeRates(
+                symbol=symbol,
+                maker=maker_pct / Decimal("100"),
+                taker=taker_pct / Decimal("100"),
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(
+                f"Kraken TradeVolume fee entry for pair {altname!r} malformed: {exc}"
+            ) from exc
 
     async def get_balance(self, asset: str) -> Balance | None:
         """Fetch the balance for ``asset`` (e.g., "BTC", "USD") or ``None``.
@@ -779,7 +840,18 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                         ordermin=Decimal(info.get("ordermin", "0")),
                         costmin=Decimal(info.get("costmin", "0")),
                     )
-                except (KeyError, ValueError) as exc:
+                except _PARSE_ERRORS as exc:
+                    # Widened from (KeyError, ValueError) (2026-08-22):
+                    # the Decimal()/int() calls above raise
+                    # InvalidOperation (an ArithmeticError) on a bad
+                    # numeric string and TypeError on a JSON null, and
+                    # BOTH escaped this handler. That mattered more than
+                    # it looks: this cache is populated on the path of
+                    # place_order, get_open_orders and get_trade_history,
+                    # and partition_known_symbols awaits it OUTSIDE its
+                    # own `except ExchangeError`, so the escape also
+                    # defeated that method's documented startup
+                    # graceful-degradation.
                     raise ExchangeError(
                         f"Kraken AssetPairs entry {pair_key!r} malformed: {exc}"
                     ) from exc
@@ -835,39 +907,53 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         """
         descr = entry.get("descr") or {}
         pair_key = descr.get("pair", "")
+        # _symbol_for_pair_key raises ExchangeError itself; it stays
+        # OUTSIDE the guard so its specific message survives rather than
+        # being re-wrapped (ExchangeError is deliberately not in
+        # _PARSE_ERRORS).
         symbol = self._symbol_for_pair_key(pair_key)
-        side = OrderSide(descr.get("type", "buy"))
-        price_amount = Decimal(descr.get("price", "0"))
-        volume = Decimal(entry.get("vol", "0"))
-        vol_exec = Decimal(entry.get("vol_exec", "0"))
-        opentm = float(entry.get("opentm", 0.0))
-        return Order(
-            id=uuid4(),
-            exchange_id=txid,
-            symbol=symbol,
-            side=side,
-            price=Price(amount=price_amount, currency=symbol.quote),
-            amount=Amount(value=volume, asset=symbol.base),
-            status=entry.get("status", "open"),
-            filled_amount=vol_exec,
-            created_at=Timestamp(dt=datetime.fromtimestamp(opentm, tz=UTC)),
-        )
+        try:
+            side = OrderSide(descr.get("type", "buy"))
+            price_amount = Decimal(descr.get("price", "0"))
+            volume = Decimal(entry.get("vol", "0"))
+            vol_exec = Decimal(entry.get("vol_exec", "0"))
+            opentm = float(entry.get("opentm", 0.0))
+            return Order(
+                id=uuid4(),
+                exchange_id=txid,
+                symbol=symbol,
+                side=side,
+                price=Price(amount=price_amount, currency=symbol.quote),
+                amount=Amount(value=volume, asset=symbol.base),
+                status=entry.get("status", "open"),
+                filled_amount=vol_exec,
+                created_at=Timestamp(dt=datetime.fromtimestamp(opentm, tz=UTC)),
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(f"Kraken order entry {txid!r} malformed: {exc}") from exc
 
     def _build_trade_from_kraken(self, txid: str, entry: dict[str, Any]) -> Trade:
         """Construct a ``Trade`` from a Kraken TradesHistory entry."""
         pair_key = entry.get("pair", "")
+        # See _build_order_from_kraken: ExchangeError from the symbol
+        # lookup passes through un-rewrapped, by design.
         symbol = self._symbol_for_pair_key(pair_key)
-        return Trade(
-            id=txid,
-            order_id=entry.get("ordertxid", ""),
-            symbol=symbol,
-            side=OrderSide(entry.get("type", "buy")),
-            price=Price(amount=Decimal(entry.get("price", "0")), currency=symbol.quote),
-            amount=Amount(value=Decimal(entry.get("vol", "0")), asset=symbol.base),
-            fee=Decimal(entry.get("fee", "0")),
-            cost=Decimal(entry.get("cost", "0")),
-            executed_at=Timestamp(dt=datetime.fromtimestamp(float(entry.get("time", 0.0)), tz=UTC)),
-        )
+        try:
+            return Trade(
+                id=txid,
+                order_id=entry.get("ordertxid", ""),
+                symbol=symbol,
+                side=OrderSide(entry.get("type", "buy")),
+                price=Price(amount=Decimal(entry.get("price", "0")), currency=symbol.quote),
+                amount=Amount(value=Decimal(entry.get("vol", "0")), asset=symbol.base),
+                fee=Decimal(entry.get("fee", "0")),
+                cost=Decimal(entry.get("cost", "0")),
+                executed_at=Timestamp(
+                    dt=datetime.fromtimestamp(float(entry.get("time", 0.0)), tz=UTC)
+                ),
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(f"Kraken trade entry {txid!r} malformed: {exc}") from exc
 
     def _kraken_code_to_internal(self, kraken_code: str) -> str:
         """Translate a Kraken response code (``XXBT``) to internal vocabulary (``BTC``).
@@ -899,14 +985,23 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         ``hold_trade`` is the portion locked by open orders.
         """
         internal_code = self._kraken_code_to_internal(kraken_code)
-        total = Decimal(entry["balance"])
-        hold = Decimal(entry["hold_trade"])
-        return Balance(
-            asset=internal_code,
-            total=total,
-            available=total - hold,
-            locked=hold,
-        )
+        try:
+            # The dict[str, str] annotation is unenforced at runtime: the
+            # plain Balance endpoint returns a bare string per asset where
+            # BalanceEx returns this dict, and entry["balance"] on a str
+            # raises TypeError, not KeyError. Both are covered here.
+            total = Decimal(entry["balance"])
+            hold = Decimal(entry["hold_trade"])
+            return Balance(
+                asset=internal_code,
+                total=total,
+                available=total - hold,
+                locked=hold,
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(
+                f"Kraken BalanceEx entry for asset {kraken_code!r} malformed: {exc}"
+            ) from exc
 
     # ------------------------------------------------ Kraken HTTP plumbing
 
@@ -1020,10 +1115,12 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             raise ExchangeError(f"Kraken {path} returned non-object JSON envelope")
         errors = envelope.get("error", [])
         if errors:
-            raise ExchangeError(
-                f"Kraken {path} returned errors: {errors}",
-                codes=[str(e) for e in errors],
-            )
+            # isinstance gate (2026-08-22): a truthy non-iterable `error`
+            # (Kraken sending `1` or `true`) made the comprehension raise
+            # a bare TypeError -- from the envelope normalizer itself,
+            # the one place every single call passes through.
+            codes = [str(e) for e in errors] if isinstance(errors, (list, tuple)) else [str(errors)]
+            raise ExchangeError(f"Kraken {path} returned errors: {errors}", codes=codes)
         result = envelope.get("result")
         if isinstance(result, dict):
             return result
@@ -1130,16 +1227,26 @@ def _apply_kraken_order_update(order: Order, entry: dict[str, Any]) -> Order:
     ``filled_amount``, and ``updated_at``. Mutation rather than
     reconstruction so the engine's storage UUID linkage survives.
     """
-    new_status = entry.get("status", order.status)
-    vol_exec = Decimal(entry.get("vol_exec", str(order.filled_amount)))
-    # Bypass the Order.record_fill / mark_canceled invariants — they
-    # assume forward-only transitions and we're applying an external
-    # source-of-truth snapshot. Use direct assignment with
-    # validate_assignment to keep field-level validation.
-    order.status = new_status
-    order.filled_amount = vol_exec
-    order.updated_at = Timestamp(dt=datetime.now(UTC))
-    return order
+    try:
+        new_status = entry.get("status", order.status)
+        vol_exec = Decimal(entry.get("vol_exec", str(order.filled_amount)))
+        # Bypass the Order.record_fill / mark_canceled invariants — they
+        # assume forward-only transitions and we're applying an external
+        # source-of-truth snapshot. Use direct assignment with
+        # validate_assignment to keep field-level validation.
+        #
+        # validate_assignment means these assignments can themselves
+        # raise ValidationError (an unknown status string, a negative
+        # vol_exec), which is why they sit inside the guard alongside
+        # the Decimal() above (2026-08-22).
+        order.status = new_status
+        order.filled_amount = vol_exec
+        order.updated_at = Timestamp(dt=datetime.now(UTC))
+        return order
+    except _PARSE_ERRORS as exc:
+        raise ExchangeError(
+            f"Kraken order-status update for {order.exchange_id!r} malformed: {exc}"
+        ) from exc
 
 
 def symbol_to_kraken_altname(symbol: Symbol) -> str:
