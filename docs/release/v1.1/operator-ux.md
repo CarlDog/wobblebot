@@ -2104,3 +2104,36 @@ project") -- noted as a known gap, not an immediate priority.
   non-English variant would be a sibling battery.
 - `config/prompts/operator.md` -- the language-agnosticism
   clause goes here when path #2 lands.
+
+### Help directory / FAQ / dictionary (web + Discord + CLI)
+
+**What:** a searchable, categorized help surface — concepts (grid
+spacing, offside parking, cost-basis guards, the dead-man's-switch,
+book-vanish holds, the MoE panel, the Chaos Gremlin), FAQ, and
+safety/architecture explainers (why the bot can't trade autonomously,
+ADR-002) — reachable from the web dashboard's user dropdown ("Help"),
+Discord, and the CLI, all backed by one content source. Extends the
+existing `_HELP_ENTRIES` command catalog (`services/operator_service.py`)
+rather than duplicating it; new content is author-written markdown
+(mirroring the `config/prompts/*.md` frontmatter convention), the
+command catalog stays code-generated as it is today.
+
+**Why:** motivated directly by the 2026-08-20 mass book-vanish
+incident — the "Book vanished... Investigate before resuming"
+notification read as alarming whether the cause was Kraken's own
+dead-man's-switch firing safely during a self-resolving API outage or
+a genuinely unexplained cancel, and there was nowhere in-app to go
+ask what it actually meant. Generalizes: the app has real conceptual
+surface area now with no single place explaining any of it to the
+person running the bot. A `/help#<slug>` deep-link target also gives
+future alerts somewhere concrete to point to instead of just sounding
+scary.
+
+**Full design proposal:** [`docs/planning/help-directory-design.md`](../../planning/help-directory-design.md)
+— content model, per-surface design (web layout + search, Discord
+intent-routing extension, the CLI-depth open question), explicit
+out-of-scope list, and open questions to resolve before implementation.
+
+**Status:** proposed 2026-08-21, filed for later review. Not scheduled
+to any `roadmap.md` Stage yet — per `future-ideas.md`'s own graduation
+process, moves there when the operator decides to schedule it.
