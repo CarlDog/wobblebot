@@ -45,7 +45,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -54,11 +53,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
+from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.cost_basis import replay_average_cost
 from wobblebot.domain.models import Trade
-from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.exceptions import WobbleBotPortError
+from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
+from wobblebot.services.trade_reconciliation import reconcile_symbol_trades
 
 _LEDGER_MAX_PAGES = 20  # mirrors kraken_exchange._TRADES_HISTORY_MAX_PAGES
 
@@ -81,34 +82,6 @@ class SymbolReport:
     kraken_net_qty: Decimal
     local_replayed_qty: Decimal
     ledger_entries: list[dict[str, object]]
-
-
-def _load_local_trades(db_path: Path, base: str) -> list[Trade]:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            "SELECT * FROM trades WHERE symbol_base = ? ORDER BY executed_at", (base,)
-        ).fetchall()
-    finally:
-        conn.close()
-
-    trades = []
-    for r in rows:
-        trades.append(
-            Trade(
-                id=r["id"],
-                order_id=r["order_id"],
-                symbol=Symbol(base=r["symbol_base"], quote=r["symbol_quote"]),
-                side=OrderSide(r["side"]),
-                price=Price(amount=Decimal(r["price_amount"]), currency=r["price_currency"]),
-                amount=Amount(value=Decimal(r["amount_value"]), asset=r["amount_asset"]),
-                fee=Decimal(r["fee"]),
-                cost=Decimal(r["cost"]),
-                executed_at=Timestamp(dt=datetime.fromisoformat(r["executed_at"])),
-            )
-        )
-    return trades
 
 
 async def _fetch_ledger_entries(adapter: KrakenAdapter, asset: str) -> list[dict[str, object]]:
@@ -143,27 +116,32 @@ async def _fetch_ledger_entries(adapter: KrakenAdapter, asset: str) -> list[dict
     return entries
 
 
-async def _reconcile_symbol(adapter: KrakenAdapter, db_path: Path, base: str) -> SymbolReport:
+async def _reconcile_symbol(
+    adapter: KrakenAdapter, storage: SQLiteStorageAdapter, base: str
+) -> SymbolReport:
     symbol = Symbol(base=base, quote="USD")
-    kraken_trades = await adapter.get_trade_history(symbol=symbol, limit=1000)
-    local_trades = _load_local_trades(db_path, base)
-    local_ids = {t.id for t in local_trades}
-    missing = [t for t in kraken_trades if t.id not in local_ids]
+    # Shared with cli/maintenance's scheduled reconcile task
+    # (services/trade_reconciliation.py) -- one implementation of the
+    # actual diff, so the two can never drift apart.
+    result = await reconcile_symbol_trades(adapter, storage, symbol)
 
     kraken_net_qty = sum(
-        (t.amount.value if t.side is OrderSide.BUY else -t.amount.value for t in kraken_trades),
+        (
+            t.amount.value if t.side is OrderSide.BUY else -t.amount.value
+            for t in result.kraken_trades
+        ),
         Decimal("0"),
     )
-    local_basis = replay_average_cost(local_trades)
+    local_basis = replay_average_cost(list(result.local_trades))
 
     await asyncio.sleep(_CALL_DELAY_SECONDS)
     ledger_entries = await _fetch_ledger_entries(adapter, base)
 
     return SymbolReport(
         symbol=str(symbol),
-        kraken_trade_count=len(kraken_trades),
-        local_trade_count=len(local_trades),
-        missing_locally=missing,
+        kraken_trade_count=result.kraken_trade_count,
+        local_trade_count=result.local_trade_count,
+        missing_locally=list(result.missing_locally),
         kraken_net_qty=kraken_net_qty,
         local_replayed_qty=local_basis.quantity,
         ledger_entries=ledger_entries,
@@ -214,14 +192,26 @@ async def _run(symbols: list[str], db_path: Path, out_path: Path) -> int:
         return 2
 
     adapter = KrakenAdapter(config=config)
+    # read_only=True -- this script only ever reads live.db; it must
+    # never open a write-capable connection against a file cli/live
+    # writes fills/orders to concurrently (2026-08-22 review fix).
+    # mode=ro also means a missing/typo'd path fails loudly here rather
+    # than silently creating an empty DB that would report every
+    # Kraken trade as "missing".
+    storage = SQLiteStorageAdapter(str(db_path), read_only=True)
     reports: list[SymbolReport] = []
     failed: list[str] = []
     try:
+        try:
+            await storage.connect()
+        except StorageError as exc:
+            print(f"error: could not open {db_path} read-only: {exc}")
+            return 2
         for i, base in enumerate(symbols):
             if i > 0:
                 await asyncio.sleep(_CALL_DELAY_SECONDS)
             try:
-                report = await _reconcile_symbol(adapter, db_path, base)
+                report = await _reconcile_symbol(adapter, storage, base)
             except WobbleBotPortError as exc:
                 print(f"error reconciling {base}: {exc}")
                 failed.append(base)
@@ -229,6 +219,7 @@ async def _run(symbols: list[str], db_path: Path, out_path: Path) -> int:
             reports.append(report)
             _print_report(report)
     finally:
+        await storage.close()
         await adapter.aclose()
 
     print(f"\n=== SUMMARY: {len(reports)}/{len(symbols)} symbols reconciled ===")

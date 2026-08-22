@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli import maintenance as cli_maintenance
+from wobblebot.cli._common import PermanentAuthHalt
 from wobblebot.config.cli import MaintenanceConfig
-from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.domain.models import Trade
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.notifier import Notification
 
 pytestmark = pytest.mark.unit
@@ -230,11 +234,11 @@ class TestPruneCycle:
                 Price(amount=Decimal("30000"), currency="USD"),
                 Timestamp(dt=datetime.now(UTC) - timedelta(days=days_ago)),
             )
-        for days_ago in (1, 0.5):
+        for fresh_days_ago in (1, 0.5):
             await storage.save_price_snapshot(
                 Symbol(base="BTC", quote="USD"),
                 Price(amount=Decimal("30000"), currency="USD"),
-                Timestamp(dt=datetime.now(UTC) - timedelta(days=days_ago)),
+                Timestamp(dt=datetime.now(UTC) - timedelta(days=fresh_days_ago)),
             )
         await storage.close()
 
@@ -385,6 +389,260 @@ class TestBackupDedupe:
         )
         ok = cli_maintenance._backup_all(cfg)
         assert ok == 1
+
+
+# --------------------------------------------------------------------- #
+# _reconcile_all / _reconcile_symbols (2026-08-22)                      #
+# --------------------------------------------------------------------- #
+
+BTC_USD = Symbol(base="BTC", quote="USD")
+
+
+def _fake_trade(trade_id: str) -> Trade:
+    return Trade(
+        id=trade_id,
+        order_id=f"O-{trade_id}",
+        symbol=BTC_USD,
+        side=OrderSide.BUY,
+        price=Price(amount=Decimal("50000"), currency="USD"),
+        amount=Amount(value=Decimal("0.001"), asset="BTC"),
+        fee=Decimal("0.02"),
+        cost=Decimal("50"),
+        executed_at=Timestamp(dt=datetime(2026, 5, 15, tzinfo=UTC)),
+    )
+
+
+class _FakeExchange:
+    """Minimal ExchangePort shape: only get_trade_history is exercised.
+    ``fail_with``, if set, raises on every call instead of returning."""
+
+    def __init__(
+        self, trades: list[Trade] | None = None, *, fail_with: Exception | None = None
+    ) -> None:
+        self._trades = trades or []
+        self._fail_with = fail_with
+        self.call_count = 0
+
+    async def get_trade_history(
+        self, symbol: Symbol | None = None, limit: int = 100
+    ) -> list[Trade]:
+        self.call_count += 1
+        if self._fail_with is not None:
+            raise self._fail_with
+        return list(self._trades)
+
+
+@pytest.mark.asyncio
+class TestReconcileAll:
+    """Guard clauses only -- the happy path through a real KrakenAdapter
+    needs live credentials, so it's exercised via _reconcile_symbols
+    below with a fake exchange instead (same layering as _verify_all
+    vs. the untested _main_async wiring)."""
+
+    async def test_no_source_db_configured_returns_zero(self) -> None:
+        cfg = MaintenanceConfig(reconcile_source_db=None)
+        clean = await cli_maintenance._reconcile_all(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+    async def test_no_symbols_returns_zero(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(reconcile_source_db=str(tmp_path / "live.db"))
+        clean = await cli_maintenance._reconcile_all(cfg, [], None, PermanentAuthHalt("test"))
+        assert clean == 0
+
+    async def test_halted_returns_zero_without_any_calls(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(reconcile_source_db=str(tmp_path / "live.db"))
+        halt = PermanentAuthHalt("test")
+        halt.halted = True
+        clean = await cli_maintenance._reconcile_all(cfg, [BTC_USD], None, halt)
+        assert clean == 0
+
+    async def test_missing_source_db_file_returns_zero(self, tmp_path: Path) -> None:
+        cfg = MaintenanceConfig(reconcile_source_db=str(tmp_path / "nope.db"))
+        clean = await cli_maintenance._reconcile_all(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+    async def test_missing_reader_credentials_returns_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KRAKEN_READER_API_KEY", raising=False)
+        monkeypatch.delenv("KRAKEN_READER_API_SECRET", raising=False)
+        db_path = tmp_path / "live.db"
+        db_path.touch()
+        cfg = MaintenanceConfig(reconcile_source_db=str(db_path))
+        clean = await cli_maintenance._reconcile_all(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+
+@pytest_asyncio.fixture
+async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
+    adapter = SQLiteStorageAdapter(":memory:")
+    await adapter.connect()
+    yield adapter
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+class TestReconcileSymbols:
+    """The actual diff-and-alert logic, tested with a fake exchange so
+    it never needs real Kraken credentials."""
+
+    async def test_clean_symbol_counts_as_clean_no_notification(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        trade = _fake_trade("T1")
+        await storage.save_trade(trade)
+        exchange = _FakeExchange([trade])
+        notifier = _RecordingNotifier()
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            notifier,  # type: ignore[arg-type]
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 1
+        assert notifier.sent == []
+
+    async def test_missing_trade_notifies_critical_and_is_not_clean(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The exact confirmed incident shape: a Kraken trade absent
+        from local storage must notify at critical, not just log."""
+        present = _fake_trade("PRESENT")
+        missing = _fake_trade("MISSING")
+        await storage.save_trade(present)
+        exchange = _FakeExchange([present, missing])
+        notifier = _RecordingNotifier()
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            notifier,  # type: ignore[arg-type]
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 0
+        assert len(notifier.sent) == 1
+        assert notifier.sent[0].level == "critical"
+        assert "BTC/USD" in notifier.sent[0].title
+
+    async def test_none_notifier_does_not_raise_on_gap(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _FakeExchange([_fake_trade("MISSING")])
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            None,
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 0
+
+    async def test_transient_failure_does_not_halt_and_is_retried_next_symbol(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A non-auth ExchangeError (timeout, 5xx) must not count as a
+        strike -- only a confirmed-dead key should ever halt."""
+        exchange = _FakeExchange(fail_with=ExchangeError("simulated timeout"))
+        halt = PermanentAuthHalt("test")
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            None,
+            halt,
+        )
+
+        assert clean == 0
+        assert halt.halted is False
+        assert halt.strikes == 0
+
+    async def test_third_permanent_auth_failure_halts_and_notifies_critical(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        auth_error = ExchangeError("invalid key", codes=["EAPI:Invalid key"])
+        exchange = _FakeExchange(fail_with=auth_error)
+        halt = PermanentAuthHalt("test")
+        notifier = _RecordingNotifier()
+        symbols = [BTC_USD, BTC_USD, BTC_USD, BTC_USD]  # 4th must be skipped by the halt
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            symbols,
+            notifier,  # type: ignore[arg-type]
+            halt,
+        )
+
+        assert clean == 0
+        assert halt.halted is True
+        assert exchange.call_count == 3, "the 4th symbol must be skipped once halted"
+        assert any(n.level == "critical" and "halted" in n.title.lower() for n in notifier.sent)
+
+    async def test_local_storage_read_failure_is_fail_soft(self, tmp_path: Path) -> None:
+        """2026-08-22 review finding: a corrupt/inaccessible local DB
+        must degrade the same way an exchange failure does, not crash
+        the cycle. Empirically, SQLite's mode=ro connect() succeeds
+        against a non-SQLite file (validation is deferred to the first
+        query) -- so the realistic failure surfaces at get_trades(),
+        not connect(); this exercises that actual path rather than the
+        connect()-time failure the file's existence guard already
+        prevents in production."""
+        garbled = tmp_path / "corrupt.db"
+        garbled.write_bytes(b"not a real sqlite file" * 10)
+        bad_storage = SQLiteStorageAdapter(str(garbled), read_only=True)
+        await bad_storage.connect()  # succeeds -- SQLite hasn't validated yet
+        exchange = _FakeExchange([_fake_trade("T1")])
+
+        try:
+            clean = await cli_maintenance._reconcile_symbols(
+                exchange,  # type: ignore[arg-type]
+                bad_storage,
+                [BTC_USD],
+                None,
+                PermanentAuthHalt("test"),
+            )
+        finally:
+            await bad_storage.close()
+
+        assert clean == 0  # not crashed; symbol just wasn't clean
+
+    async def test_malformed_kraken_data_does_not_crash_the_cycle(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """2026-08-22 review finding (HIGH): kraken_exchange's response
+        parsing can raise a bare ValueError/TypeError (not
+        WobbleBotPortError) on malformed TradesHistory data. Before the
+        fix, this would propagate out of _reconcile_symbols uncaught,
+        through the un-guarded asyncio.gather in _main_async, and kill
+        ALL FIVE maintenance tasks -- not just reconcile. Pins that one
+        bad symbol degrades exactly like an exchange error: logged,
+        skipped, next symbol still runs."""
+        exchange = _FakeExchange(fail_with=ValueError("could not parse Decimal('garbage')"))
+        halt = PermanentAuthHalt("test")
+
+        clean = await cli_maintenance._reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            None,
+            halt,
+        )
+
+        assert clean == 0
+        assert halt.halted is False, "a parse error must never count as an auth strike"
+        assert halt.strikes == 0
 
 
 # --------------------------------------------------------------------- #

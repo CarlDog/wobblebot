@@ -157,6 +157,7 @@ schedules:
   maintenance_prune: 1d               # cli/maintenance: price_snapshots prune+archive cadence
   maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
   maintenance_verify: 30d             # cli/maintenance (v1.1): backup restoration smoke test cadence
+  maintenance_reconcile: 1d           # cli/maintenance (2026-08-22): Kraken trade-history reconciliation cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -887,12 +888,12 @@ web:
 # ============================================================================
 # Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
 # ============================================================================
-# Long-running daemon with four concurrent scheduled tasks:
-# vacuum / prune+archive / backup / verify. Operator-started; not
-# auto-spawned by any other daemon. Cadences pulled from `schedules:`
+# Long-running daemon with five concurrent scheduled tasks:
+# vacuum / prune+archive / backup / verify / reconcile. Operator-started;
+# not auto-spawned by any other daemon. Cadences pulled from `schedules:`
 # block above (maintenance_vacuum / maintenance_prune /
-# maintenance_backup / maintenance_verify) with per-task defaults
-# (7d / 1d / 1d / 30d) when missing.
+# maintenance_backup / maintenance_verify / maintenance_reconcile) with
+# per-task defaults (7d / 1d / 1d / 30d / 1d) when missing.
 #
 # Per stage-8.2-design.md decision 3 only `price_snapshots` gets
 # pruned in v1.0. Every audit table (orders, trades, llm_calls, etc.)
@@ -906,6 +907,12 @@ web:
 # v1.1: `verify` runs a restoration smoke test (PRAGMA integrity_check
 # + a representative SELECT per table) against each DB's LATEST
 # backup, and notifies (via operator_db below, if set) on failure.
+#
+# 2026-08-22: `reconcile` diffs Kraken's own trade history against
+# reconcile_source_db for every symbol in grid.coins, and notifies at
+# critical on any Kraken trade missing locally -- born from a
+# confirmed silent-trade-loss incident (see PR #102 and its follow-up
+# comment). Read-only reader-key credentials only; never writes.
 maintenance:
   # Every DB the daemon should VACUUM + back up. Add the operator's
   # active DBs; missing files are skipped (logged WARNING) so partial
@@ -949,6 +956,15 @@ maintenance:
   # Home DB for the news_items retention entry (conversation_turns +
   # notifications resolve via operator_db below).
   news_db: "data/wobblebot-news.db"
+
+  # Source DB for the reconcile task's local trade history --
+  # typically live.db (where cli/live records fills). Same
+  # explicit-over-inferred rule as prune_source_db. Symbols come from
+  # grid.coins below, not a separate list here, so this task can never
+  # drift from what's actually traded. Unset disables the task
+  # entirely (e.g. a sandbox/shadow-only deployment with no real
+  # Kraken trading has nothing for it to check).
+  reconcile_source_db: "data/wobblebot-live.db"
 
   # Where SQLite .backup output goes. Created if missing.
   backup_dir: "data/backups"

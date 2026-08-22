@@ -5,7 +5,7 @@ Run as a module::
     python -m wobblebot.cli.maintenance
     python -m wobblebot.cli.maintenance --profile conservative
 
-Long-running daemon with four concurrent scheduled tasks:
+Long-running daemon with five concurrent scheduled tasks:
 
 - **vacuum** — runs SQLite ``VACUUM`` against each configured DB
   on ``schedules.maintenance_vacuum`` cadence (default weekly).
@@ -29,6 +29,16 @@ Long-running daemon with four concurrent scheduled tasks:
   wired) on any failure. Backups have been written since Day 1 and
   never verified before this — a silently-corrupt backup is
   otherwise only discovered the day it's needed.
+- **reconcile** — 2026-08-22, born from a confirmed silent-trade-loss
+  incident: diffs Kraken's own ``TradesHistory`` against
+  ``maintenance.reconcile_source_db`` for every symbol in
+  ``grid.coins``, on ``schedules.maintenance_reconcile`` cadence
+  (default daily). A missing trade notifies at ``critical`` — it
+  means the SellGuard's cost-basis replay for that symbol no longer
+  matches reality. Read-only reader-key credentials; never writes,
+  never backfills (see ``services/trade_reconciliation.py`` and
+  ``tools/reconcile_trade_history.py`` for the deeper manual
+  diagnostic an alert should be followed up with).
 
 Per `stage-8.2-design.md`:
 
@@ -37,10 +47,10 @@ Per `stage-8.2-design.md`:
 - Only `price_snapshots` gets pruned in v1.0 (decision 3).
 - Local-only backups in v1.0 (decision 4).
 
-The four tasks run independently via the Stage 8.0.C
+The five tasks run independently via the Stage 8.0.C
 ``run_poll_loop`` helper — one bad cycle on any task doesn't kill
 the others. Shutdown via SIGINT/SIGTERM flips the shared
-``stop_event``; all four tasks exit at their next loop iteration.
+``stop_event``; all five tasks exit at their next loop iteration.
 
 Per the Phase 8.1 reconciliation work the maintenance daemon
 assumes known-good storage state at boot — no stale-open rows
@@ -58,9 +68,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    PermanentAuthHalt,
     add_config_args,
     emit_heartbeat,
     install_signal_handlers,
@@ -72,10 +84,12 @@ from wobblebot.cli._common import (
     safe_shutdown,
 )
 from wobblebot.config.cli import MaintenanceConfig
+from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
-from wobblebot.ports.exceptions import StorageError
+from wobblebot.domain.value_objects import Symbol, fmt_decimal
+from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.backuper import (
     backup_database_locally,
@@ -86,6 +100,7 @@ from wobblebot.services.backuper import (
 )
 from wobblebot.services.maintenance import prune_price_snapshots, vacuum_database
 from wobblebot.services.retention import PRUNABLE_TABLES, prune_table
+from wobblebot.services.trade_reconciliation import reconcile_symbol_trades
 
 _LOGGER = logging.getLogger("wobblebot.cli.maintenance")
 
@@ -365,6 +380,220 @@ async def _verify_all(maintenance: MaintenanceConfig, notifier: NotifierPort | N
     return verified
 
 
+# ADR-027-style pacing between successive private Kraken calls in the
+# reconcile loop -- an unpaced sweep across several symbols tripped
+# "EAPI:Rate limit exceeded" during manual testing of
+# tools/reconcile_trade_history.py, silently covering only 2 of 5
+# requested symbols. Between calls only; nothing before the first.
+_RECONCILE_PACING_SECONDS = 2.0
+
+
+async def _reconcile_all(  # pylint: disable=too-many-return-statements
+    # Each return is a distinct guard clause (not configured / no
+    # symbols / halted / missing db / missing creds / storage open
+    # failure) that must skip the cycle WITHOUT touching Kraken or
+    # storage -- nesting these into one if/else would obscure exactly
+    # which precondition failed, which is the point of guard clauses.
+    maintenance: MaintenanceConfig,
+    symbols: list[Symbol],
+    notifier: NotifierPort | None,
+    halt: PermanentAuthHalt,
+) -> int:
+    """Diff Kraken's trade history against ``reconcile_source_db`` for
+    every symbol. Detection only -- never writes, never backfills.
+
+    A symbol with a missing trade notifies at ``critical``: it means
+    the SellGuard's cost-basis replay for that symbol no longer
+    matches what actually happened on the exchange (see
+    ``services/trade_reconciliation.py`` for why this is a binary
+    trade-id diff rather than a quantity/balance comparison).
+
+    Returns count of symbols that reconciled clean. A symbol whose
+    check itself fails (Kraken/storage error) counts as neither clean
+    nor dirty -- logged and retried next cycle, same fail-soft shape
+    as the other four tasks.
+    """
+    if maintenance.reconcile_source_db is None:
+        _LOGGER.debug("no reconcile_source_db configured; skipping reconcile cycle")
+        return 0
+    if not symbols:
+        _LOGGER.debug("no grid.coins configured; nothing to reconcile")
+        return 0
+    if halt.halted:
+        _LOGGER.debug("reconcile halted (permanent auth failure); skipping")
+        return 0
+    source_path = Path(maintenance.reconcile_source_db)
+    if not source_path.exists():
+        _LOGGER.warning(
+            "reconcile_source_db does not exist; skipping (db_path=%s)",
+            source_path,
+            extra={"db_path": str(source_path)},
+        )
+        return 0
+    try:
+        kraken_config = KrakenConfig.from_env(
+            key_var="KRAKEN_READER_API_KEY", secret_var="KRAKEN_READER_API_SECRET"
+        )
+    except ValueError as exc:
+        _LOGGER.warning(
+            "reconcile: missing reader credentials; skipping cycle: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
+        return 0
+
+    exchange = KrakenAdapter(config=kraken_config)
+    try:
+        # read_only=True -- live.db belongs to cli/live, which writes
+        # fills/orders to it continuously; this task must never open a
+        # write-capable connection against it (2026-08-22 review fix).
+        storage = SQLiteStorageAdapter(str(source_path), read_only=True)
+        try:
+            await storage.connect()
+        except StorageError as exc:
+            _LOGGER.warning(
+                "reconcile: failed to open source db (db_path=%s): %s",
+                source_path,
+                exc,
+                extra={"db_path": str(source_path), "error": str(exc)},
+            )
+            return 0
+        try:
+            return await _reconcile_symbols(exchange, storage, symbols, notifier, halt)
+        finally:
+            await storage.close()
+    finally:
+        await exchange.aclose()
+
+
+async def _reconcile_symbols(  # pylint: disable=too-many-locals
+    # One local per distinct per-symbol-iteration signal (result,
+    # missing-trade summary, notify payload); the loop body IS the
+    # correctness argument (halt-then-notify-then-continue ordering),
+    # same rationale as _main_async's disable below.
+    exchange: KrakenAdapter,
+    storage: SQLiteStorageAdapter,
+    symbols: list[Symbol],
+    notifier: NotifierPort | None,
+    halt: PermanentAuthHalt,
+) -> int:
+    clean = 0
+    for i, symbol in enumerate(symbols):
+        if i > 0:
+            await asyncio.sleep(_RECONCILE_PACING_SECONDS)
+        try:
+            result = await reconcile_symbol_trades(exchange, storage, symbol)
+        except (WobbleBotPortError, ValueError, TypeError) as exc:
+            # ValueError/TypeError: kraken_exchange._build_trade_from_kraken
+            # parses Kraken's response fields (Decimal(), OrderSide(),
+            # float()) without defensive wrapping (a pre-existing gap
+            # shared by other get_trade_history callers, not introduced
+            # here) -- catching it alongside WobbleBotPortError is what
+            # keeps one malformed TradesHistory entry from crashing this
+            # cycle (and, absent this catch, all five gathered
+            # maintenance tasks; 2026-08-22 review fix). halt.note_failure
+            # only strikes on a genuine permanent-auth ExchangeError, so a
+            # parse error here safely resets the strike count like any
+            # other transient failure.
+            _LOGGER.warning(
+                "reconcile failed for %s; will retry next interval: %s: %s",
+                symbol,
+                type(exc).__name__,
+                exc,
+                extra={
+                    "symbol": str(symbol),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            if isinstance(exc, WobbleBotPortError) and halt.note_failure(exc):
+                _LOGGER.error(
+                    "reconcile HALTED after %d consecutive permanent auth failures; "
+                    "fix KRAKEN_READER_API_KEY/_SECRET and redeploy",
+                    halt.STRIKES,
+                    extra={"strikes": halt.STRIKES},
+                )
+                await notify(
+                    notifier,
+                    level="critical",
+                    title="Reader key dead — trade reconciliation halted",
+                    message=(
+                        f"{halt.STRIKES} consecutive permanent auth failures on the reader "
+                        "key during trade-history reconciliation. Fix "
+                        "KRAKEN_READER_API_KEY/_SECRET in the deployment env and redeploy. "
+                        "Continuing to retry would re-arm Kraken's account-wide lockout."
+                    ),
+                    context={"strikes": halt.STRIKES, "task": halt.task_name},
+                )
+                break
+            continue
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Final fallback: some exception type neither WobbleBotPortError
+            # nor ValueError/TypeError from a Kraken response Python's json
+            # module or datetime.fromtimestamp can raise on truly wild input
+            # (e.g. OverflowError on an absurd timestamp). This task must
+            # never crash the daemon out from under vacuum/prune/backup/
+            # verify -- same "one bad row doesn't block the rest" discipline
+            # as every other maintenance task's own catch (see module
+            # docstring). Not counted as a halt strike: only a confirmed
+            # permanent-auth ExchangeError should ever halt.
+            _LOGGER.warning(
+                "reconcile failed for %s with an unexpected %s; will retry next interval: %s",
+                symbol,
+                type(exc).__name__,
+                exc,
+                extra={
+                    "symbol": str(symbol),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            continue
+        halt.note_success()
+        if result.is_clean:
+            clean += 1
+            continue
+        missing_summary = "; ".join(
+            f"{t.side.value} {fmt_decimal(t.amount.value)} @ {fmt_decimal(t.price.amount)} "
+            f"({t.executed_at.dt.isoformat()})"
+            for t in result.missing_locally
+        )
+        _LOGGER.error(
+            "TRADE RECONCILIATION GAP: %s has %d Kraken trade(s) missing from local storage "
+            "(kraken_count=%s, local_count=%s): %s",
+            symbol,
+            len(result.missing_locally),
+            result.kraken_trade_count,
+            result.local_trade_count,
+            missing_summary,
+            extra={
+                "symbol": str(symbol),
+                "missing_count": len(result.missing_locally),
+                "kraken_trade_count": result.kraken_trade_count,
+                "local_trade_count": result.local_trade_count,
+                "missing_trade_ids": [t.id for t in result.missing_locally],
+            },
+        )
+        await notify(
+            notifier,
+            level="critical",
+            title=f"Trade reconciliation gap: {symbol}",
+            message=(
+                f"{len(result.missing_locally)} Kraken trade(s) for {symbol} are missing from "
+                f"local storage (Kraken reports {result.kraken_trade_count}, local has "
+                f"{result.local_trade_count}). This corrupts the SellGuard's cost-basis replay "
+                "for this symbol until investigated and backfilled -- see "
+                "tools/reconcile_trade_history.py for the deeper diagnostic."
+            ),
+            context={
+                "symbol": str(symbol),
+                "missing_count": len(result.missing_locally),
+                "missing_trade_ids": [t.id for t in result.missing_locally],
+            },
+        )
+    return clean
+
+
 # --------------------------------------------------------------------- #
 # Signal handlers                                                       #
 # --------------------------------------------------------------------- #
@@ -405,11 +634,18 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         return 2
 
     # Resolve cadences. Missing schedules fall back to the design-doc
-    # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d).
+    # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d, reconcile 1d).
     vacuum_interval = _resolve_interval(config, "maintenance_vacuum", timedelta(days=7))
     prune_interval = _resolve_interval(config, "maintenance_prune", timedelta(days=1))
     backup_interval = _resolve_interval(config, "maintenance_backup", timedelta(days=1))
     verify_interval = _resolve_interval(config, "maintenance_verify", timedelta(days=30))
+    reconcile_interval = _resolve_interval(config, "maintenance_reconcile", timedelta(days=1))
+
+    # 2026-08-22: deliberately no dedicated symbol-list config field --
+    # reconciling whatever grid.coins actually trades means this can
+    # never drift from what the SellGuard's cost basis needs to cover.
+    reconcile_symbols = [Symbol(base=coin, quote="USD") for coin in config.grid.coins]
+    reconcile_halt = PermanentAuthHalt("maintenance.reconcile")
 
     # Stage 8.4.E follow-up — when operator_db is configured, open it
     # so the four task cycles can write heartbeat rows. Failure to
@@ -442,17 +678,21 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
 
     _LOGGER.info(
         "maintenance session start (target_db_count=%s, vacuum_interval_seconds=%s, "
-        "prune_interval_seconds=%s, backup_interval_seconds=%s)",
+        "prune_interval_seconds=%s, backup_interval_seconds=%s, reconcile_symbol_count=%s)",
         len(target_dbs),
         vacuum_interval.total_seconds(),
         prune_interval.total_seconds(),
         backup_interval.total_seconds(),
+        len(reconcile_symbols),
         extra={
             "target_db_count": len(target_dbs),
             "vacuum_interval_seconds": vacuum_interval.total_seconds(),
             "prune_interval_seconds": prune_interval.total_seconds(),
             "backup_interval_seconds": backup_interval.total_seconds(),
             "verify_interval_seconds": verify_interval.total_seconds(),
+            "reconcile_interval_seconds": reconcile_interval.total_seconds(),
+            "reconcile_symbol_count": len(reconcile_symbols),
+            "reconcile_source_db": maintenance.reconcile_source_db,
             "archive_dir": maintenance.archive_dir,
             "backup_dir": maintenance.backup_dir,
             "prune_source_db": maintenance.prune_source_db,
@@ -465,6 +705,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     prune_total_deleted = 0
     backup_runs = 0
     verify_runs = 0
+    reconcile_clean_runs = 0
 
     async def _vacuum_cycle() -> None:
         nonlocal vacuum_runs
@@ -576,6 +817,33 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             },
         )
 
+    async def _reconcile_cycle() -> None:
+        nonlocal reconcile_clean_runs
+        await emit_heartbeat(operator_storage, "cli/maintenance")
+        cycle_started = time.monotonic()
+        _LOGGER.info(
+            "reconcile cycle starting (symbol_count=%s, source_db=%s)",
+            len(reconcile_symbols),
+            maintenance.reconcile_source_db,
+            extra={
+                "symbol_count": len(reconcile_symbols),
+                "source_db": maintenance.reconcile_source_db,
+            },
+        )
+        ok = await _reconcile_all(maintenance, reconcile_symbols, notifier, reconcile_halt)
+        reconcile_clean_runs += ok
+        _LOGGER.info(
+            "reconcile cycle complete (symbol_count=%s, clean=%s, elapsed_seconds=%s)",
+            len(reconcile_symbols),
+            ok,
+            round(time.monotonic() - cycle_started, 2),
+            extra={
+                "symbol_count": len(reconcile_symbols),
+                "clean": ok,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
+
     try:
         await asyncio.gather(
             run_poll_loop(
@@ -598,6 +866,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 interval_seconds=verify_interval.total_seconds(),
                 stop_event=stop_event,
             ),
+            run_poll_loop(
+                _reconcile_cycle,
+                interval_seconds=reconcile_interval.total_seconds(),
+                stop_event=stop_event,
+            ),
         )
     finally:
         if operator_storage is not None:
@@ -607,17 +880,19 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             )
         _LOGGER.info(
             "maintenance session end (duration_seconds=%s, vacuum_runs=%s, "
-            "prune_rows_deleted_total=%s, backup_runs=%s)",
+            "prune_rows_deleted_total=%s, backup_runs=%s, reconcile_clean_runs=%s)",
             round(time.monotonic() - started_at, 1),
             vacuum_runs,
             prune_total_deleted,
             backup_runs,
+            reconcile_clean_runs,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "vacuum_runs": vacuum_runs,
                 "prune_rows_deleted_total": prune_total_deleted,
                 "backup_runs": backup_runs,
                 "verify_runs": verify_runs,
+                "reconcile_clean_runs": reconcile_clean_runs,
             },
         )
     return 0

@@ -68,7 +68,7 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.operator` — Discord interaction daemon (ADR-013). Intent → `pending_commands`; `WHERE status='approved'` is the ADR-002 firewall.
 - `cli.web` — FastAPI dashboard (ADR-016/017). Read-mostly; mutations firewalled via `pending_commands`. Needs `WOBBLEBOT_WEB_SESSION_SECRET`.
 - `cli.recalibrate` — scale USD-denominated knobs to a new target balance (operator-initiated; dry-run default).
-- `cli.maintenance` — VACUUM / prune+archive / backup daemon (three concurrent scheduled tasks).
+- `cli.maintenance` — VACUUM / prune+archive / backup / verify / reconcile daemon (five concurrent scheduled tasks). `reconcile` (2026-08-22) diffs Kraken's trade history against `grid.coins` symbols and alerts on any silently-lost trade.
 - `cli.screener` — rank observed symbols by grid-suitability (P2 slice 5). Read-only, offline, advisory (ADR-002); log-table output.
 - `tools/first_real_trade.py` — one-shot live round-trip diagnostic.
 - `tools/run_cloud_check.py` — one-shot cloud-LLM smoke test (`--provider`/`--role`/`--model`/`--dry-run`).
@@ -293,7 +293,19 @@ to every project. The wobblebot-specific items below extend it:
   account's own rates; `scratchpad` probe or `cli/live`'s session-start
   receipt logs them), and the per-fill fee-drift tripwire pages on the
   first deviating fill — this item is now the backstop, not the
-  detector.
+  detector. **`first_real_trade.py` writes only to its own JSONL log,
+  never to `live.db`** (no `StoragePort` import at all) — every run
+  silently desyncs BTC's cost-basis replay from its real Kraken
+  balance, and an aborted Experiment B (the price-drift-check abort
+  path) leaves real stranded BTC the engine's basis never sees. Found
+  2026-08-22: 18 trades missing across nine prior runs, a confirmed
+  0.00053613 BTC / ~2.8% average-cost gap, undetected for weeks until
+  a manual audit went looking (see PR #102 and its follow-up comment).
+  `cli/maintenance`'s `reconcile` task (added the same day) now checks
+  this automatically once a day, but don't rely on that cadence alone
+  right after a session — run `python tools/reconcile_trade_history.py
+  --symbols BTC` immediately and backfill any reported gap before
+  trusting BTC's sell guard.
 - **Cloud LLM pricing + model re-verification.** Cloud-provider pricing,
   model availability, and API shapes drift often. Re-confirm each priced
   `(provider, model)` in `services/llm_pricing.py` against the provider's
