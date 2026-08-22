@@ -1254,6 +1254,13 @@ table.data.compact td {
   color: var(--text-primary);
 }
 
+/* Hint that a tag carries an explanatory title tooltip (e.g. confidence
+   badges on the advisor page, the "below floor" tag) — otherwise there's
+   no visual cue that hovering does anything. */
+.tag[title] {
+  cursor: help;
+}
+
 .tag.ok { background: var(--tag-ok-bg); color: var(--tag-ok-text); }
 .tag.warn { background: var(--tag-warn-bg); color: var(--tag-warn-text); }
 .tag.fail { background: var(--tag-fail-bg); color: var(--tag-fail-text); }
