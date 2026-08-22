@@ -2937,7 +2937,8 @@ explicit follow-up this ADR discharges); ratified-decisions "caps split" (scopin
 vs per-symbol — which this ADR leaves untouched).
 
 ## ADR-040 — Three-Tier Configuration: ENV / SETTINGS (hard limits) / POLICY (mutable operating points)
-**Status:** Proposed — drafted 2026-08-22, awaiting operator ratification
+**Status:** Accepted (operator ratified 2026-08-22: three-tier split confirmed, seven-member
+POLICY set confirmed — the six safety caps plus `order_size_usd`)
 **Date:** 2026-08-22
 
 **Context:**
