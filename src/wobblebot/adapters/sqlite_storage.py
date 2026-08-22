@@ -94,10 +94,19 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
     concurrency control. Concurrent ``get_order(X) -> mutate ->
     save_order(X)`` from two coroutines will produce a silent lost
     update — last writer wins.
+
+    ``read_only=True`` (2026-08-22) opens the DB via SQLite's
+    ``mode=ro`` URI instead — for a consumer reading a DB another
+    daemon owns and writes to concurrently (e.g. cli/maintenance's
+    reconcile task against live.db). No schema/migrations run, no
+    commit happens, and any write call fails at the SQLite layer
+    (``StorageError``) rather than silently succeeding. See
+    :meth:`_connect_read_only`.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self._db_path = str(db_path)
+        self._read_only = read_only
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
@@ -116,8 +125,14 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         checkpoint fsync. Skipped for ``:memory:`` and anonymous on-
         disk DBs — WAL is a no-op for in-memory and confuses fixtures
         that introspect ``journal_mode``.
+
+        ``read_only=True`` (constructor) takes a genuinely different
+        path — see :meth:`_connect_read_only`.
         """
         if self._conn is not None:
+            return
+        if self._read_only:
+            await self._connect_read_only()
             return
         if self._db_path not in (":memory:", ""):
             parent = Path(self._db_path).expanduser().parent
@@ -152,6 +167,36 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
 
+    async def _connect_read_only(self) -> None:
+        """Open ``self._db_path`` genuinely read-only (2026-08-22).
+
+        For reading a DB another daemon owns and writes to concurrently
+        — e.g. cli/maintenance's reconcile task reading live.db while
+        cli/live writes fills to it. Mirrors the established
+        ``file:...?mode=ro`` idiom already used by
+        ``daemon_health._latest_iso_timestamp`` ("prevent any accidental
+        write — this is observability tooling, not a writer").
+
+        Deliberately skips everything the writable path does: no parent
+        ``mkdir`` (never creates anything), no ``PRAGMA journal_mode``
+        (the owning connection already set it), no schema/migrations, no
+        commit. ``mode=ro`` itself refuses to open a missing file rather
+        than silently creating an empty one — the previous code path
+        here (a writable ``connect()`` reused for reads) opened a
+        write-capable connection against live.db and ran a full
+        migration transaction against it on every reconcile cycle, the
+        exact class of silent-write/lock risk this feature exists to
+        catch elsewhere.
+        """
+        try:
+            uri = f"file:{self._db_path}?mode=ro"
+            self._conn = await aiosqlite.connect(uri, uri=True)
+            self._conn.row_factory = aiosqlite.Row
+        except Exception as exc:
+            raise StorageError(
+                f"Failed to open database read-only at {self._db_path}: {exc}"
+            ) from exc
+
     async def close(self) -> None:
         """Close the underlying connection."""
         if self._conn is None:
@@ -164,41 +209,47 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             raise StorageError("Adapter is not connected; call connect() first")
         return self._conn
 
+    async def _execute_save_order(self, conn: aiosqlite.Connection, order: Order) -> None:
+        """Run the order UPSERT without committing — the shared statement
+        behind ``save_order`` and ``save_fill`` (the latter needs it in the
+        same transaction as its trade inserts)."""
+        await conn.execute(
+            """
+            INSERT INTO orders (
+                id, exchange_id,
+                symbol_base, symbol_quote, side,
+                price_amount, price_currency,
+                amount_value, amount_asset,
+                status, filled_amount,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                exchange_id = excluded.exchange_id,
+                status = excluded.status,
+                filled_amount = excluded.filled_amount,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(order.id),
+                order.exchange_id,
+                order.symbol.base,
+                order.symbol.quote,
+                order.side.value,
+                str(order.price.amount),
+                order.price.currency,
+                str(order.amount.value),
+                order.amount.asset,
+                order.status,
+                str(order.filled_amount),
+                order.created_at.dt.isoformat(),
+                order.updated_at.dt.isoformat() if order.updated_at else None,
+            ),
+        )
+
     async def save_order(self, order: Order) -> None:
         conn = self._require_conn()
         try:
-            await conn.execute(
-                """
-                INSERT INTO orders (
-                    id, exchange_id,
-                    symbol_base, symbol_quote, side,
-                    price_amount, price_currency,
-                    amount_value, amount_asset,
-                    status, filled_amount,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    exchange_id = excluded.exchange_id,
-                    status = excluded.status,
-                    filled_amount = excluded.filled_amount,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    str(order.id),
-                    order.exchange_id,
-                    order.symbol.base,
-                    order.symbol.quote,
-                    order.side.value,
-                    str(order.price.amount),
-                    order.price.currency,
-                    str(order.amount.value),
-                    order.amount.asset,
-                    order.status,
-                    str(order.filled_amount),
-                    order.created_at.dt.isoformat(),
-                    order.updated_at.dt.isoformat() if order.updated_at else None,
-                ),
-            )
+            await self._execute_save_order(conn, order)
             await conn.commit()
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
@@ -257,38 +308,74 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load orders: {exc}") from exc
 
+    async def _execute_save_trade(self, conn: aiosqlite.Connection, trade: Trade) -> None:
+        """Run the trade INSERT without committing — shared by ``save_trade``
+        and ``save_fill``."""
+        await conn.execute(
+            """
+            INSERT OR REPLACE INTO trades (
+                id, order_id,
+                symbol_base, symbol_quote, side,
+                price_amount, price_currency,
+                amount_value, amount_asset,
+                fee, cost, executed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trade.id,
+                trade.order_id,
+                trade.symbol.base,
+                trade.symbol.quote,
+                trade.side.value,
+                str(trade.price.amount),
+                trade.price.currency,
+                str(trade.amount.value),
+                trade.amount.asset,
+                str(trade.fee),
+                str(trade.cost),
+                trade.executed_at.dt.isoformat(),
+            ),
+        )
+
     async def save_trade(self, trade: Trade) -> None:
         conn = self._require_conn()
         try:
-            await conn.execute(
-                """
-                INSERT OR REPLACE INTO trades (
-                    id, order_id,
-                    symbol_base, symbol_quote, side,
-                    price_amount, price_currency,
-                    amount_value, amount_asset,
-                    fee, cost, executed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trade.id,
-                    trade.order_id,
-                    trade.symbol.base,
-                    trade.symbol.quote,
-                    trade.side.value,
-                    str(trade.price.amount),
-                    trade.price.currency,
-                    str(trade.amount.value),
-                    trade.amount.asset,
-                    str(trade.fee),
-                    str(trade.cost),
-                    trade.executed_at.dt.isoformat(),
-                ),
-            )
+            await self._execute_save_trade(conn, trade)
             await conn.commit()
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save trade {trade.id}: {exc}") from exc
+
+    async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
+        """Persist an order's terminal state and its matched trades as one
+        atomic transaction (ADR-023-adjacent fix, 2026-08-22).
+
+        ``save_order`` followed by a per-trade ``save_trade`` loop leaves a
+        window where the order commits as ``closed``/``filled_amount>0``
+        but a later trade insert in the same resolution fails (a transient
+        SQLite lock, disk hiccup) — the exception propagates and is caught
+        generically several frames up, so the order's terminal state is
+        never revisited (a closed order never becomes a fill candidate
+        again) while its trade is gone with no trace. Confirmed live
+        2026-08-22 for XRP: the order row showed ``status='closed'`` with
+        the correct ``filled_amount``, but the matching Kraken trade was
+        never in ``trades`` at all.
+
+        Wrapping both writes in one transaction makes the failure mode
+        self-healing instead of silent: if any trade insert fails, the
+        order's status change rolls back with it, so it stays ``open`` in
+        storage and ``_fill_candidates``/reconciliation pick it up again
+        on the next pass instead of losing it.
+        """
+        conn = self._require_conn()
+        try:
+            await self._execute_save_order(conn, order)
+            for trade in trades:
+                await self._execute_save_trade(conn, trade)
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save fill for order {order.id}: {exc}") from exc
 
     async def get_trades(
         self,

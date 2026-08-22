@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli import maintenance as cli_maintenance
+from wobblebot.cli import maintenance_reconcile
+from wobblebot.cli._common import PermanentAuthHalt
 from wobblebot.config.cli import MaintenanceConfig
-from wobblebot.domain.value_objects import Price, Symbol, Timestamp
+from wobblebot.domain.models import Order, Trade
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.notifier import Notification
 
 pytestmark = pytest.mark.unit
@@ -230,11 +235,11 @@ class TestPruneCycle:
                 Price(amount=Decimal("30000"), currency="USD"),
                 Timestamp(dt=datetime.now(UTC) - timedelta(days=days_ago)),
             )
-        for days_ago in (1, 0.5):
+        for fresh_days_ago in (1, 0.5):
             await storage.save_price_snapshot(
                 Symbol(base="BTC", quote="USD"),
                 Price(amount=Decimal("30000"), currency="USD"),
-                Timestamp(dt=datetime.now(UTC) - timedelta(days=days_ago)),
+                Timestamp(dt=datetime.now(UTC) - timedelta(days=fresh_days_ago)),
             )
         await storage.close()
 
@@ -387,6 +392,370 @@ class TestBackupDedupe:
         assert ok == 1
 
 
+# --------------------------------------------------------------------- #
+# run_reconcile_cycle / reconcile_symbols (cli/maintenance_reconcile, 2026-08-22)
+# --------------------------------------------------------------------- #
+
+BTC_USD = Symbol(base="BTC", quote="USD")
+ETH_USD = Symbol(base="ETH", quote="USD")
+
+
+def _fake_trade(trade_id: str, *, symbol: Symbol = BTC_USD, order_id: str | None = None) -> Trade:
+    return Trade(
+        id=trade_id,
+        order_id=order_id or f"O-{trade_id}",
+        symbol=symbol,
+        side=OrderSide.BUY,
+        price=Price(amount=Decimal("50000"), currency="USD"),
+        amount=Amount(value=Decimal("0.001"), asset=symbol.base),
+        fee=Decimal("0.02"),
+        cost=Decimal("50"),
+        executed_at=Timestamp(dt=datetime(2026, 5, 15, tzinfo=UTC)),
+    )
+
+
+class _FakeExchange:
+    """Minimal ExchangePort shape: only get_trade_history is exercised.
+
+    Returns the ACCOUNT-WIDE list unfiltered, mirroring the real
+    adapter's account-wide TradesHistory (the service filters by
+    symbol client-side). ``fail_with``, if set, raises on every call.
+    ``call_count`` lets tests pin the one-fetch-per-cycle contract.
+    """
+
+    def __init__(
+        self, trades: list[Trade] | None = None, *, fail_with: Exception | None = None
+    ) -> None:
+        self._trades = trades or []
+        self._fail_with = fail_with
+        self.call_count = 0
+
+    async def get_trade_history(
+        self, symbol: Symbol | None = None, limit: int = 100
+    ) -> list[Trade]:
+        self.call_count += 1
+        if self._fail_with is not None:
+            raise self._fail_with
+        return list(self._trades)
+
+
+class _ExplodingAdapter:
+    """Stand-in for KrakenAdapter that fails the test if constructed —
+    the guard-clause tests' mutation detector (2026-08-22 review: the
+    earlier guard tests passed even with their guards deleted, because
+    every OTHER precondition was also unmet and returned 0 anyway)."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("guard failed: KrakenAdapter was constructed")
+
+
+@pytest_asyncio.fixture
+async def storage() -> AsyncIterator[SQLiteStorageAdapter]:
+    adapter = SQLiteStorageAdapter(":memory:")
+    await adapter.connect()
+    yield adapter
+    await adapter.close()
+
+
+def _set_reader_creds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KRAKEN_READER_API_KEY", "public-half")
+    monkeypatch.setenv("KRAKEN_READER_API_SECRET", "c2VjcmV0")  # base64("secret")
+
+
+@pytest.mark.asyncio
+class TestRunReconcileCycle:
+    """Guard clauses of run_reconcile_cycle. Every test makes ALL other
+    preconditions valid and monkeypatches KrakenAdapter with a class
+    that raises AssertionError on construction, so the test fails if
+    the one guard under test is removed — the earlier versions were
+    mutation-blind (empirically shown to pass with their guards
+    deleted)."""
+
+    async def test_no_source_db_configured_returns_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_reader_creds(monkeypatch)
+        monkeypatch.setattr(maintenance_reconcile, "KrakenAdapter", _ExplodingAdapter)
+        cfg = MaintenanceConfig(reconcile_source_db=None)
+        clean = await maintenance_reconcile.run_reconcile_cycle(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+    async def test_no_symbols_returns_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_reader_creds(monkeypatch)
+        monkeypatch.setattr(maintenance_reconcile, "KrakenAdapter", _ExplodingAdapter)
+        db_path = tmp_path / "live.db"
+        _make_sqlite_file(db_path)
+        cfg = MaintenanceConfig(reconcile_source_db=str(db_path))
+        clean = await maintenance_reconcile.run_reconcile_cycle(
+            cfg, [], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+    async def test_halted_returns_zero_without_touching_kraken(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_reader_creds(monkeypatch)
+        monkeypatch.setattr(maintenance_reconcile, "KrakenAdapter", _ExplodingAdapter)
+        db_path = tmp_path / "live.db"
+        _make_sqlite_file(db_path)
+        cfg = MaintenanceConfig(reconcile_source_db=str(db_path))
+        halt = PermanentAuthHalt("test")
+        halt.halted = True
+        clean = await maintenance_reconcile.run_reconcile_cycle(cfg, [BTC_USD], None, halt)
+        assert clean == 0
+
+    async def test_missing_source_db_file_returns_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_reader_creds(monkeypatch)
+        monkeypatch.setattr(maintenance_reconcile, "KrakenAdapter", _ExplodingAdapter)
+        cfg = MaintenanceConfig(reconcile_source_db=str(tmp_path / "nope.db"))
+        clean = await maintenance_reconcile.run_reconcile_cycle(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+    async def test_missing_reader_credentials_returns_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KRAKEN_READER_API_KEY", raising=False)
+        monkeypatch.delenv("KRAKEN_READER_API_SECRET", raising=False)
+        monkeypatch.setattr(maintenance_reconcile, "KrakenAdapter", _ExplodingAdapter)
+        db_path = tmp_path / "live.db"
+        _make_sqlite_file(db_path)
+        cfg = MaintenanceConfig(reconcile_source_db=str(db_path))
+        clean = await maintenance_reconcile.run_reconcile_cycle(
+            cfg, [BTC_USD], None, PermanentAuthHalt("test")
+        )
+        assert clean == 0
+
+
+@pytest.mark.asyncio
+class TestReconcileSymbols:
+    """The diff-and-alert core, with a fake exchange and real in-memory
+    storage — never needs real Kraken credentials."""
+
+    async def test_clean_symbol_counts_as_clean_no_notification(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        trade = _fake_trade("T1")
+        await storage.save_trade(trade)
+        exchange = _FakeExchange([trade])
+        notifier = _RecordingNotifier()
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            notifier,  # type: ignore[arg-type]
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 1
+        assert notifier.sent == []
+
+    async def test_one_account_fetch_covers_all_symbols(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """2026-08-22 review: per-symbol fetches re-walked the identical
+        account-wide TradesHistory once per symbol (N x 20 private
+        calls against Kraken's account-wide limiter). Pins the fix:
+        exactly ONE exchange call regardless of symbol count."""
+        btc_trade = _fake_trade("T-BTC")
+        eth_trade = _fake_trade("T-ETH", symbol=ETH_USD)
+        await storage.save_trade(btc_trade)
+        await storage.save_trade(eth_trade)
+        exchange = _FakeExchange([btc_trade, eth_trade])
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD, ETH_USD],
+            None,
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 2
+        assert exchange.call_count == 1
+
+    async def test_missing_trade_notifies_critical_and_is_not_clean(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The exact confirmed incident shape: a Kraken trade absent
+        from local storage (and NOT on a locally-open order) must
+        notify at critical, not just log."""
+        present = _fake_trade("PRESENT")
+        missing = _fake_trade("MISSING")
+        await storage.save_trade(present)
+        exchange = _FakeExchange([present, missing])
+        notifier = _RecordingNotifier()
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            notifier,  # type: ignore[arg-type]
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 0
+        assert len(notifier.sent) == 1
+        assert notifier.sent[0].level == "critical"
+        assert "BTC/USD" in notifier.sent[0].title
+
+    async def test_trade_on_locally_open_order_is_deferred_not_paged(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """2026-08-22 review: the engine persists trades only at
+        terminal order status, so a partial fill on an order still
+        resting on the book sits in Kraken's history for hours/days
+        with no local row — correct behavior, not a gap. Must log,
+        never page."""
+        open_order = Order(
+            exchange_id="OID-RESTING",
+            symbol=BTC_USD,
+            side="buy",  # type: ignore[arg-type]
+            price=Price(amount=Decimal("50000"), currency="USD"),
+            amount=Amount(value=Decimal("0.002"), asset="BTC"),
+            status="open",
+            created_at=Timestamp(dt=datetime(2026, 5, 15, tzinfo=UTC)),
+        )
+        await storage.save_order(open_order)
+        partial_fill = _fake_trade("T-PARTIAL", order_id="OID-RESTING")
+        exchange = _FakeExchange([partial_fill])
+        notifier = _RecordingNotifier()
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            notifier,  # type: ignore[arg-type]
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 1, "a deferred trade is not a gap; the symbol is clean"
+        assert notifier.sent == []
+
+    async def test_none_notifier_does_not_raise_on_gap(self, storage: SQLiteStorageAdapter) -> None:
+        exchange = _FakeExchange([_fake_trade("MISSING")])
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            None,
+            PermanentAuthHalt("test"),
+        )
+
+        assert clean == 0
+
+    async def test_transient_fetch_failure_skips_cycle_without_halting(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """A non-auth ExchangeError (timeout, 5xx) on the account fetch
+        must not count as a strike — only a confirmed-dead key should
+        ever halt. The whole cycle skips (one fetch, nothing to diff)."""
+        exchange = _FakeExchange(fail_with=ExchangeError("simulated timeout"))
+        halt = PermanentAuthHalt("test")
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD, ETH_USD],
+            None,
+            halt,
+        )
+
+        assert clean == 0
+        assert exchange.call_count == 1, "one account fetch, not one per symbol"
+        assert halt.halted is False
+        assert halt.strikes == 0
+
+    async def test_third_permanent_auth_failure_across_cycles_halts(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """ADR-037: the halt object lives across cycles; three
+        consecutive permanent-auth failures — one per daily cycle —
+        halt the task and page once."""
+        auth_error = ExchangeError("invalid key", codes=["EAPI:Invalid key"])
+        exchange = _FakeExchange(fail_with=auth_error)
+        halt = PermanentAuthHalt("test")
+        notifier = _RecordingNotifier()
+
+        for _ in range(3):
+            clean = await maintenance_reconcile.reconcile_symbols(
+                exchange,  # type: ignore[arg-type]
+                storage,
+                [BTC_USD],
+                notifier,  # type: ignore[arg-type]
+                halt,
+            )
+            assert clean == 0
+
+        assert halt.halted is True
+        halted_pages = [n for n in notifier.sent if "halted" in n.title.lower()]
+        assert len(halted_pages) == 1, "the halt pages exactly once, on the third strike"
+        assert halted_pages[0].level == "critical"
+
+    async def test_unexpected_exception_is_contained(self, storage: SQLiteStorageAdapter) -> None:
+        """Belt-and-suspenders daemon isolation: an exception that is
+        neither WobbleBotPortError nor anything the hardened adapter
+        should emit must still not escape (asyncio.gather in
+        _main_async has no return_exceptions — an escape would kill
+        all five maintenance tasks). Never a halt strike."""
+        exchange = _FakeExchange(fail_with=ValueError("genuinely unforeseen"))
+        halt = PermanentAuthHalt("test")
+
+        clean = await maintenance_reconcile.reconcile_symbols(
+            exchange,  # type: ignore[arg-type]
+            storage,
+            [BTC_USD],
+            None,
+            halt,
+        )
+
+        assert clean == 0
+        assert halt.halted is False
+        assert halt.strikes == 0
+
+    async def test_local_storage_read_failure_is_fail_soft_and_never_pages(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A corrupt/unreadable local DB degrades exactly like an
+        exchange failure: warning logged, no gap page (a broken local
+        read is NOT evidence of a trade gap), other symbols unaffected.
+        SQLite defers file validation past connect() for mode=ro, so
+        the realistic failure surfaces at the first query — this
+        exercises that actual path."""
+        garbled = tmp_path / "corrupt.db"
+        garbled.write_bytes(b"not a real sqlite file" * 10)
+        bad_storage = SQLiteStorageAdapter(str(garbled), read_only=True)
+        await bad_storage.connect()  # succeeds -- validation deferred
+        exchange = _FakeExchange([_fake_trade("T1")])
+        notifier = _RecordingNotifier()
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="wobblebot.cli.maintenance"):
+                clean = await maintenance_reconcile.reconcile_symbols(
+                    exchange,  # type: ignore[arg-type]
+                    bad_storage,
+                    [BTC_USD],
+                    notifier,  # type: ignore[arg-type]
+                    PermanentAuthHalt("test"),
+                )
+        finally:
+            await bad_storage.close()
+
+        assert clean == 0
+        assert notifier.sent == [], "a broken local read must never page a gap"
+        assert any("reconcile failed for" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------- #
 # --------------------------------------------------------------------- #
 # main() pre-async-dispatch paths                                       #
 # --------------------------------------------------------------------- #

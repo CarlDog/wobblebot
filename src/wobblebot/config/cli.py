@@ -11,6 +11,11 @@ The CLI flag layer converts comma-separated strings to lists before
 passing to these models.
 """
 
+# pylint: disable=too-many-lines
+# One cohesive per-CLI schema module, same rationale as
+# adapters/sqlite_storage.py's disable -- splitting would fragment a
+# single settings.yml contract across files for no organizational gain.
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -861,14 +866,23 @@ class WebConfig(BaseModel):
 class MaintenanceConfig(BaseModel):
     """Phase 8.2 — operator-tunable knobs for ``cli/maintenance``.
 
-    Four concurrent scheduled tasks (vacuum / prune+archive / backup /
-    verify) each pull their cadence from ``schedules:`` (keys
-    ``maintenance_vacuum`` / ``maintenance_prune`` /
-    ``maintenance_backup`` / ``maintenance_verify``); this block holds
-    the per-task parameters those cadences operate against. ``verify``
-    (v1.1) reuses ``target_dbs`` + ``backup_dir`` — no dedicated field
-    of its own — since it's a restoration smoke test against the SAME
-    backups the backup task already produces.
+    Five concurrent scheduled tasks (vacuum / prune+archive / backup /
+    verify / reconcile) each pull their cadence from ``schedules:``
+    (keys ``maintenance_vacuum`` / ``maintenance_prune`` /
+    ``maintenance_backup`` / ``maintenance_verify`` /
+    ``maintenance_reconcile``); this block holds the per-task
+    parameters those cadences operate against. ``verify`` (v1.1)
+    reuses ``target_dbs`` + ``backup_dir`` — no dedicated field of its
+    own — since it's a restoration smoke test against the SAME backups
+    the backup task already produces. ``reconcile`` (2026-08-22, born
+    from a confirmed silent-trade-loss incident — see
+    ``services/trade_reconciliation.py`` and
+    ``cli/maintenance_reconcile.py``) diffs Kraken's own trade
+    history against ``reconcile_source_db`` for every symbol in
+    ``live.symbols`` — the actually-traded set, and deliberately no
+    dedicated symbol list of its own, so it can never drift from what's
+    actually traded. (NOT ``grid.coins``: that is a per-coin override
+    map, wrong in both directions — 2026-08-22 review.)
 
     Per ``stage-8.2-design.md`` decision 7 the maintenance daemon
     is operator-started — not auto-spawned by any other daemon.
@@ -934,6 +948,16 @@ class MaintenanceConfig(BaseModel):
     # explicit-over-inferred rule as prune_source_db; operator.db
     # tables resolve via operator_db below.
     news_db: str | None = None
+
+    # ---- Reconcile (2026-08-22) ---- #
+
+    # Source DB holding the locally recorded `trades` table to diff
+    # against Kraken's own TradesHistory -- typically live.db. Same
+    # explicit-over-inferred rule as prune_source_db. None (default)
+    # disables the reconcile task entirely (skipped, not an error) --
+    # a deployment with no real Kraken trading (sandbox/shadow-only)
+    # has nothing for this task to check.
+    reconcile_source_db: str | None = None
 
     # ---- Backup ---- #
 

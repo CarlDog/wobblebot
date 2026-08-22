@@ -5,7 +5,7 @@ Run as a module::
     python -m wobblebot.cli.maintenance
     python -m wobblebot.cli.maintenance --profile conservative
 
-Long-running daemon with four concurrent scheduled tasks:
+Long-running daemon with five concurrent scheduled tasks:
 
 - **vacuum** — runs SQLite ``VACUUM`` against each configured DB
   on ``schedules.maintenance_vacuum`` cadence (default weekly).
@@ -29,6 +29,20 @@ Long-running daemon with four concurrent scheduled tasks:
   wired) on any failure. Backups have been written since Day 1 and
   never verified before this — a silently-corrupt backup is
   otherwise only discovered the day it's needed.
+- **reconcile** — 2026-08-22, born from a confirmed silent-trade-loss
+  incident: one account-wide Kraken ``TradesHistory`` fetch per
+  cycle, diffed against ``maintenance.reconcile_source_db`` for every
+  symbol in ``live.symbols`` (the actually-traded set), on
+  ``schedules.maintenance_reconcile`` cadence (default daily). A
+  missing trade notifies at ``critical`` — it means the SellGuard's
+  cost-basis replay for that symbol no longer matches reality; a
+  trade whose order is still locally open is deferred (persistence
+  pending), never paged. Reader-key credentials, storage opened
+  read-only; never writes, never backfills. Implementation in
+  ``cli/maintenance_reconcile.py`` (split out so this module stays
+  DB-hygiene-only); shared diff logic in
+  ``services/trade_reconciliation.py``; deeper manual diagnostic in
+  ``tools/reconcile_trade_history.py``.
 
 Per `stage-8.2-design.md`:
 
@@ -37,10 +51,10 @@ Per `stage-8.2-design.md`:
 - Only `price_snapshots` gets pruned in v1.0 (decision 3).
 - Local-only backups in v1.0 (decision 4).
 
-The four tasks run independently via the Stage 8.0.C
+The five tasks run independently via the Stage 8.0.C
 ``run_poll_loop`` helper — one bad cycle on any task doesn't kill
 the others. Shutdown via SIGINT/SIGTERM flips the shared
-``stop_event``; all four tasks exit at their next loop iteration.
+``stop_event``; all five tasks exit at their next loop iteration.
 
 Per the Phase 8.1 reconciliation work the maintenance daemon
 assumes known-good storage state at boot — no stale-open rows
@@ -61,6 +75,7 @@ from typing import Any
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    PermanentAuthHalt,
     add_config_args,
     emit_heartbeat,
     install_signal_handlers,
@@ -71,10 +86,12 @@ from wobblebot.cli._common import (
     run_with_clean_exit,
     safe_shutdown,
 )
+from wobblebot.cli.maintenance_reconcile import run_reconcile_cycle
 from wobblebot.config.cli import MaintenanceConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.notifier import NotifierPort
 from wobblebot.services.backuper import (
@@ -405,11 +422,25 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         return 2
 
     # Resolve cadences. Missing schedules fall back to the design-doc
-    # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d).
+    # defaults (vacuum 7d, prune 1d, backup 1d, verify 30d, reconcile 1d).
     vacuum_interval = _resolve_interval(config, "maintenance_vacuum", timedelta(days=7))
     prune_interval = _resolve_interval(config, "maintenance_prune", timedelta(days=1))
     backup_interval = _resolve_interval(config, "maintenance_backup", timedelta(days=1))
     verify_interval = _resolve_interval(config, "maintenance_verify", timedelta(days=30))
+    reconcile_interval = _resolve_interval(config, "maintenance_reconcile", timedelta(days=1))
+
+    # 2026-08-22: deliberately no dedicated symbol-list config field --
+    # reconciling live.symbols, the ACTUALLY-TRADED set, means this can
+    # never drift from what the SellGuard's cost basis needs to cover.
+    # NOT grid.coins: that is a per-coin OVERRIDE map (coins fall back
+    # to defaults without an entry), so it neither lists every traded
+    # symbol nor excludes untraded ones -- the branch's first cut used
+    # it and would have skipped actively-traded symbols while checking
+    # never-traded ones (2026-08-22 review). No live section (a
+    # maintenance-only deployment) -> nothing traded -> nothing to
+    # reconcile.
+    reconcile_symbols: list[Symbol] = list(config.live.symbols) if config.live else []
+    reconcile_halt = PermanentAuthHalt("maintenance.reconcile")
 
     # Stage 8.4.E follow-up — when operator_db is configured, open it
     # so the four task cycles can write heartbeat rows. Failure to
@@ -442,17 +473,21 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
 
     _LOGGER.info(
         "maintenance session start (target_db_count=%s, vacuum_interval_seconds=%s, "
-        "prune_interval_seconds=%s, backup_interval_seconds=%s)",
+        "prune_interval_seconds=%s, backup_interval_seconds=%s, reconcile_symbol_count=%s)",
         len(target_dbs),
         vacuum_interval.total_seconds(),
         prune_interval.total_seconds(),
         backup_interval.total_seconds(),
+        len(reconcile_symbols),
         extra={
             "target_db_count": len(target_dbs),
             "vacuum_interval_seconds": vacuum_interval.total_seconds(),
             "prune_interval_seconds": prune_interval.total_seconds(),
             "backup_interval_seconds": backup_interval.total_seconds(),
             "verify_interval_seconds": verify_interval.total_seconds(),
+            "reconcile_interval_seconds": reconcile_interval.total_seconds(),
+            "reconcile_symbol_count": len(reconcile_symbols),
+            "reconcile_source_db": maintenance.reconcile_source_db,
             "archive_dir": maintenance.archive_dir,
             "backup_dir": maintenance.backup_dir,
             "prune_source_db": maintenance.prune_source_db,
@@ -465,6 +500,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     prune_total_deleted = 0
     backup_runs = 0
     verify_runs = 0
+    reconcile_clean_runs = 0
 
     async def _vacuum_cycle() -> None:
         nonlocal vacuum_runs
@@ -576,6 +612,33 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             },
         )
 
+    async def _reconcile_cycle() -> None:
+        nonlocal reconcile_clean_runs
+        await emit_heartbeat(operator_storage, "cli/maintenance")
+        cycle_started = time.monotonic()
+        _LOGGER.info(
+            "reconcile cycle starting (symbol_count=%s, source_db=%s)",
+            len(reconcile_symbols),
+            maintenance.reconcile_source_db,
+            extra={
+                "symbol_count": len(reconcile_symbols),
+                "source_db": maintenance.reconcile_source_db,
+            },
+        )
+        ok = await run_reconcile_cycle(maintenance, reconcile_symbols, notifier, reconcile_halt)
+        reconcile_clean_runs += ok
+        _LOGGER.info(
+            "reconcile cycle complete (symbol_count=%s, clean=%s, elapsed_seconds=%s)",
+            len(reconcile_symbols),
+            ok,
+            round(time.monotonic() - cycle_started, 2),
+            extra={
+                "symbol_count": len(reconcile_symbols),
+                "clean": ok,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
+
     try:
         await asyncio.gather(
             run_poll_loop(
@@ -598,6 +661,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 interval_seconds=verify_interval.total_seconds(),
                 stop_event=stop_event,
             ),
+            run_poll_loop(
+                _reconcile_cycle,
+                interval_seconds=reconcile_interval.total_seconds(),
+                stop_event=stop_event,
+            ),
         )
     finally:
         if operator_storage is not None:
@@ -607,17 +675,19 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             )
         _LOGGER.info(
             "maintenance session end (duration_seconds=%s, vacuum_runs=%s, "
-            "prune_rows_deleted_total=%s, backup_runs=%s)",
+            "prune_rows_deleted_total=%s, backup_runs=%s, reconcile_clean_runs=%s)",
             round(time.monotonic() - started_at, 1),
             vacuum_runs,
             prune_total_deleted,
             backup_runs,
+            reconcile_clean_runs,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "vacuum_runs": vacuum_runs,
                 "prune_rows_deleted_total": prune_total_deleted,
                 "backup_runs": backup_runs,
                 "verify_runs": verify_runs,
+                "reconcile_clean_runs": reconcile_clean_runs,
             },
         )
     return 0

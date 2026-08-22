@@ -9,7 +9,7 @@ Two layers tested:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -402,7 +402,9 @@ class TestApplyReconciliationRecoveredFills:
         )
 
         class _FailingSaveStorage(SQLiteStorageAdapter):
-            async def save_order(self, order: Order) -> None:  # type: ignore[override]
+            async def save_fill(  # type: ignore[override]
+                self, order: Order, trades: Sequence[Trade]
+            ) -> None:
                 raise StorageError("simulated save failure")
 
         failing_storage = _FailingSaveStorage(":memory:")

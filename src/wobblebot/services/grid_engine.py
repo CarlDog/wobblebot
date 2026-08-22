@@ -530,14 +530,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """``True`` if any operator has called :meth:`request_stop`."""
         return self._stop_requested
 
-    async def cancel_open_orders(  # pylint: disable=too-many-locals
+    async def cancel_open_orders(  # pylint: disable=too-many-locals,too-many-branches
         self, symbol: Symbol | None = None
     ) -> tuple[int, int]:
         # Same rationale as _tick's disable: every local is a distinct
         # stage signal of a linear procedure (fetch, cancel, resolve
         # identity, persist, queue a counter); helper-splitting would
         # obscure the cancel -> resolve -> persist ordering that IS
-        # the correctness argument (ADR-037's 2026-08-19 fix).
+        # the correctness argument (ADR-037's 2026-08-19 fix). The
+        # 2026-08-22 fix (escalating log level for an untracked order's
+        # discarded fill) added one more branch for the same reason.
         """Cancel every open order on the exchange for ``symbol`` (or all).
 
         Reads the open-order set from the exchange (authoritative per
@@ -635,16 +637,41 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 continue
             stored = stored_by_exchange_id.get(canceled_order.exchange_id)
             if stored is None:
-                _LOGGER.info(
-                    "cancel_open_orders: cancelled %s (%s) not tracked in local storage; "
-                    "not adopting",
-                    canceled_order.symbol,
-                    canceled_order.exchange_id,
-                    extra={
-                        "symbol": str(canceled_order.symbol),
-                        "exchange_id": canceled_order.exchange_id,
-                    },
-                )
+                if canceled_order.filled_amount > 0:
+                    # This order has no local Order row to attach a
+                    # recovered trade to (ADR-018: never adopt an
+                    # untracked order), so the fill genuinely cannot be
+                    # recovered here -- but it's real money that moved,
+                    # so it must be loud, not an easily-missed INFO line.
+                    # Confirmed live 2026-08-22: an order placed by this
+                    # engine can end up untracked from birth if
+                    # place_order succeeds but save_order never commits
+                    # (grid_engine._place_level) -- indistinguishable at
+                    # this point from a genuine manual Kraken-side order.
+                    _LOGGER.error(
+                        "cancel_open_orders: cancelled %s (%s) had a fill of %s but is NOT "
+                        "tracked in local storage -- this trade cannot be recovered "
+                        "automatically; reconcile manually against Kraken's trade history",
+                        canceled_order.symbol,
+                        canceled_order.exchange_id,
+                        fmt_decimal(canceled_order.filled_amount),
+                        extra={
+                            "symbol": str(canceled_order.symbol),
+                            "exchange_id": canceled_order.exchange_id,
+                            "filled_amount": str(canceled_order.filled_amount),
+                        },
+                    )
+                else:
+                    _LOGGER.info(
+                        "cancel_open_orders: cancelled %s (%s) not tracked in local storage; "
+                        "not adopting",
+                        canceled_order.symbol,
+                        canceled_order.exchange_id,
+                        extra={
+                            "symbol": str(canceled_order.symbol),
+                            "exchange_id": canceled_order.exchange_id,
+                        },
+                    )
                 continue
 
             resolved = stored.model_copy(
@@ -655,13 +682,21 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 }
             )
             try:
-                await self._storage.save_order(resolved)
+                # save_fill persists the order's terminal status together
+                # with its trades in one transaction (2026-08-22 fix) --
+                # see StoragePort.save_fill's docstring for why a plain
+                # save_order + per-trade save_trade loop can silently
+                # lose a trade forever.
+                trades = (
+                    trades_by_order.get(resolved.exchange_id or "", [])
+                    if resolved.filled_amount > 0
+                    else []
+                )
+                await self._storage.save_fill(resolved, trades)
                 if resolved.filled_amount > 0:
                     # ADR-023 F1 shape: a real fill caught by this
                     # cancel, not a clean cancel/expire.
-                    trades = trades_by_order.get(resolved.exchange_id or "", [])
                     for trade in trades:
-                        await self._storage.save_trade(trade)
                         self._check_fee_drift(resolved.symbol, trade)
                     if trades:
                         self._sell_guard.invalidate(resolved.symbol)
@@ -1380,18 +1415,28 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         saved_trade_ids: list[str] = []
         for candidate in candidates:
             resolution = await _resolve_terminal_order(self._exchange, candidate, trades_by_order)
-            await self._storage.save_order(resolution.order)
+            # save_fill persists the order's terminal status together with
+            # its trades in one transaction (2026-08-22 fix) -- a plain
+            # save_order + per-trade save_trade loop left a window where
+            # the order committed as closed but a later trade insert
+            # failed, permanently losing the trade (a closed order never
+            # becomes a fill candidate again).
+            await self._storage.save_fill(resolution.order, resolution.trades)
             if not resolution.needs_counter and resolution.order.filled_amount == 0:
                 # ADR-037: a clean cancel/expire the engine did not
                 # perform (its own cancels update storage before this
                 # diff runs, so they never appear as candidates). This
                 # is the book-vanish discriminator — see the re-layout
-                # gate in _step_unlocked.
+                # gate in _step_unlocked. Counted AFTER the successful
+                # persist (2026-08-22 review): incrementing first meant a
+                # transient save_fill failure left the counter inflated
+                # while the row stayed open, and the next tick's retry
+                # double-counted the same cancel into the operator's
+                # "N order(s) cancelled outside the engine" page.
                 self._external_cancels[symbol] = self._external_cancels.get(symbol, 0) + 1
             if resolution.needs_counter:
                 filled.append(resolution.order)
                 for trade in resolution.trades:
-                    await self._storage.save_trade(trade)
                     saved_trade_ids.append(trade.id)
                     self._check_fee_drift(symbol, trade)
                 if resolution.trades:

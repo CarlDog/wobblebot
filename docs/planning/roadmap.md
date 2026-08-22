@@ -2037,6 +2037,58 @@ the detail; the full backlog index is
    directly. 3471 unit tests pass (+18 from this fix), mypy clean,
    pylint 10.00/10, black/isort clean.
 
+   **Silent fill loss: real Kraken trades missing from live.db,
+   corrupting the SellGuard's cost basis** ✅ **2026-08-22**
+   (financial-correctness audit finding, root-caused, fixed, and
+   production-remediated same day; PR #102). A replay of live.db's
+   full trade history through `domain.cost_basis.replay_average_cost`
+   diverged from actual Kraken balances. Diagnosis path worth
+   recording: the initial balance-snapshot comparison produced two
+   FALSE positives from Kraken's `total`-vs-`available` semantics
+   (open-SELL-locked quantity read as "missing") before a direct
+   trade-id diff isolated the real gaps — which is why every check
+   built from this incident diffs trade ids, never quantities. Two
+   confirmed, independent root causes:
+   1. **Non-atomic order+trade persistence** (XRP, one SELL fill,
+      2026-08-21). `_detect_fills` saved the order terminal
+      (`closed`) then saved its trades separately; the trade write
+      failed transiently and a closed order is never re-examined —
+      the trade was unrecoverable and invisible. Fixed by
+      `StoragePort.save_fill(order, trades)`: one SQLite transaction,
+      rollback leaves the row open so the next tick re-resolves it.
+      Wired into `_detect_fills`, `cancel_open_orders`, and the
+      startup reconciler.
+   2. **`tools/first_real_trade.py` writes no storage at all** (BTC,
+      18 trades across nine runs, 2026-05-15→27, incl. 4 unpaired
+      BUYs from aborted Experiment B runs — 0.00053613 BTC / ~2.8%
+      average-cost gap). By design, not a bug; the gap sat undetected
+      for weeks. **Production remediation performed:** the 18 trades
+      were backfilled into live.db via a reviewed one-off script
+      (precondition/postcondition-asserted, dry-run first, idempotent
+      `save_trade`; verified 23→41 BTC trades, avg cost
+      $67,633.72→$69,531.46, +2.81%), and `wobblebot-live` was
+      restarted so the SellGuard's in-memory basis cache picked up
+      the corrected figures.
+   Standing safeguards shipped with the fix: a fifth `cli/maintenance`
+   scheduled task (daily account-wide Kraken TradesHistory diff vs
+   live.symbols, critical page on any missing trade, open-order
+   deferral so in-flight fills never false-page; reader key,
+   storage opened read-only via the new
+   `SQLiteStorageAdapter(read_only=True)`), the manual
+   `tools/reconcile_trade_history.py` diagnostic (adds Ledgers;
+   carries the backfill runbook), and — found while hardening the
+   reconcile path — an adapter-wide fix making malformed Kraken
+   responses raise `ExchangeError` instead of bare builtins that
+   bypassed every caller's `except WobbleBotPortError` (13
+   high-severity escape paths closed, including cli/live's shutdown
+   cancel-all and cli/harvest's balance read). A five-dimension
+   adversarial model review of the full branch confirmed 20 findings
+   (all fixed or explicitly dispositioned) including the
+   symbol-source bug (first cut derived symbols from `grid.coins`, a
+   per-coin override map — wrong in both directions) and the
+   N×20-page per-symbol fetch (now one account-wide fetch per cycle).
+   3513+ unit tests pass, mypy clean, pylint 10.00/10.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
