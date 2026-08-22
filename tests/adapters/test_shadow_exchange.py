@@ -21,6 +21,7 @@ from wobblebot.domain.value_objects import (
     FeeRates,
     OHLCBar,
     OrderSide,
+    PairLimits,
     Price,
     Symbol,
     Ticker,
@@ -48,6 +49,11 @@ class _StubLiveExchange(ExchangePort):
 
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
         return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        # ADR-040 port addition. This double exercises other paths; zero
+        # floors mean "no minimum", matching the mock exchange.
+        return PairLimits(symbol=symbol, ordermin=Decimal(0), costmin=Decimal(0))
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         self.price_call_count += 1
