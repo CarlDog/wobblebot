@@ -94,10 +94,19 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
     concurrency control. Concurrent ``get_order(X) -> mutate ->
     save_order(X)`` from two coroutines will produce a silent lost
     update — last writer wins.
+
+    ``read_only=True`` (2026-08-22) opens the DB via SQLite's
+    ``mode=ro`` URI instead — for a consumer reading a DB another
+    daemon owns and writes to concurrently (e.g. cli/maintenance's
+    reconcile task against live.db). No schema/migrations run, no
+    commit happens, and any write call fails at the SQLite layer
+    (``StorageError``) rather than silently succeeding. See
+    :meth:`_connect_read_only`.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(self, db_path: str | Path, *, read_only: bool = False) -> None:
         self._db_path = str(db_path)
+        self._read_only = read_only
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
@@ -116,8 +125,14 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         checkpoint fsync. Skipped for ``:memory:`` and anonymous on-
         disk DBs — WAL is a no-op for in-memory and confuses fixtures
         that introspect ``journal_mode``.
+
+        ``read_only=True`` (constructor) takes a genuinely different
+        path — see :meth:`_connect_read_only`.
         """
         if self._conn is not None:
+            return
+        if self._read_only:
+            await self._connect_read_only()
             return
         if self._db_path not in (":memory:", ""):
             parent = Path(self._db_path).expanduser().parent
@@ -151,6 +166,36 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
+
+    async def _connect_read_only(self) -> None:
+        """Open ``self._db_path`` genuinely read-only (2026-08-22).
+
+        For reading a DB another daemon owns and writes to concurrently
+        — e.g. cli/maintenance's reconcile task reading live.db while
+        cli/live writes fills to it. Mirrors the established
+        ``file:...?mode=ro`` idiom already used by
+        ``daemon_health._latest_iso_timestamp`` ("prevent any accidental
+        write — this is observability tooling, not a writer").
+
+        Deliberately skips everything the writable path does: no parent
+        ``mkdir`` (never creates anything), no ``PRAGMA journal_mode``
+        (the owning connection already set it), no schema/migrations, no
+        commit. ``mode=ro`` itself refuses to open a missing file rather
+        than silently creating an empty one — the previous code path
+        here (a writable ``connect()`` reused for reads) opened a
+        write-capable connection against live.db and ran a full
+        migration transaction against it on every reconcile cycle, the
+        exact class of silent-write/lock risk this feature exists to
+        catch elsewhere.
+        """
+        try:
+            uri = f"file:{self._db_path}?mode=ro"
+            self._conn = await aiosqlite.connect(uri, uri=True)
+            self._conn.row_factory = aiosqlite.Row
+        except Exception as exc:
+            raise StorageError(
+                f"Failed to open database read-only at {self._db_path}: {exc}"
+            ) from exc
 
     async def close(self) -> None:
         """Close the underlying connection."""
