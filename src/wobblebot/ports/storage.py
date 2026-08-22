@@ -144,6 +144,33 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         pass
 
     @abstractmethod
+    async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
+        """Persist a resolved order's terminal state and its matched trades
+        as one atomic operation.
+
+        Every fill-resolution call site (``GridEngine._detect_fills``,
+        ``GridEngine.cancel_open_orders``, ``reconciler.apply_reconciliation``)
+        must update the order's status/filled_amount together with the
+        trade rows it produced — never as two independent writes. A
+        partial failure between them (order saved as ``closed``, its
+        trade never persisted) is permanent and undetectable: a closed
+        order never becomes a fill candidate again, so nothing ever
+        retries it. Implementations must roll back the order update if
+        any trade write fails, so the order is left in its prior state
+        and gets re-resolved on the next pass instead of silently losing
+        the trade. ``trades`` may be empty (a clean cancel/expire with no
+        fill) — equivalent to a plain ``save_order``.
+
+        Args:
+            order: The order's refreshed terminal (or updated) state.
+            trades: Trades matched to this resolution, if any.
+
+        Raises:
+            StorageError: If the save fails; no partial write is left.
+        """
+        pass
+
+    @abstractmethod
     async def get_trades(
         self,
         symbol: Symbol | None = None,

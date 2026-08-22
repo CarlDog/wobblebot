@@ -14,7 +14,7 @@ drift from the production adapter.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -133,6 +133,9 @@ class _FailingStorage(StoragePort):
         raise NotImplementedError
 
     async def save_trade(self, trade: Trade) -> None:
+        raise NotImplementedError
+
+    async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
         raise NotImplementedError
 
     async def get_trades(

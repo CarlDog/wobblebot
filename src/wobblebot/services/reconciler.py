@@ -361,9 +361,16 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
         )
         try:
             if resolution.needs_counter:
-                for trade in resolution.trades:
-                    await storage.save_trade(trade)
-                await storage.save_order(resolution.order.model_copy(update={"updated_at": now}))
+                # save_fill persists the order's terminal status together
+                # with its trades in one transaction (2026-08-22 fix) --
+                # see StoragePort.save_fill's docstring: a plain
+                # save_order + per-trade save_trade loop can leave a
+                # closed order with no matching trade if a write fails
+                # partway through, and a closed order never gets
+                # re-resolved.
+                await storage.save_fill(
+                    resolution.order.model_copy(update={"updated_at": now}), resolution.trades
+                )
                 recovered_fill_count += 1
                 needs_counter_order_ids.append(stale.id)
                 _LOGGER.warning(

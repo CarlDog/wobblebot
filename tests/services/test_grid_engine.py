@@ -1603,6 +1603,78 @@ class TestCancelOpenOrdersIdentity:
         assert len(trades) == 6
 
 
+class TestCancelOpenOrdersUntrackedOrder:
+    """2026-08-22 fix: an order the exchange reports as cancelled that
+    storage never tracked cannot be adopted (ADR-018), so its fill is
+    unrecoverable here either way -- but a real fill must not be
+    silently discarded at INFO level. Confirmed live 2026-08-22: an
+    order can end up untracked from birth if ``place_order`` succeeds
+    but ``save_order`` never commits (``_place_level``'s non-atomic
+    exchange-then-storage write); this is indistinguishable at cancel
+    time from a genuine manual Kraken-side order, so the fix is
+    visibility (ERROR, not INFO), not adoption."""
+
+    async def test_untracked_order_with_no_fill_stays_at_info(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exchange = _FreshUuidExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        untracked = Order(
+            symbol=BTC_USD,
+            side=OrderSide.SELL,
+            price=Price(amount=Decimal("51000"), currency="USD"),
+            amount=Amount(value=Decimal("0.01"), asset="BTC"),
+            status="open",
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        untracked.exchange_id = "UNTRACKED-NO-FILL"
+        exchange._open_orders["UNTRACKED-NO-FILL"] = untracked
+
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+
+        assert (cancelled, failed) == (1, 0)
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not errors, "a zero-fill untracked cancel must not escalate to ERROR"
+        assert any("not tracked in local storage" in r.getMessage() for r in caplog.records)
+        # Never adopted: no order row was created for it (ADR-018).
+        assert await storage.get_orders(symbol=BTC_USD) == []
+
+    async def test_untracked_order_with_a_fill_escalates_to_error(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        exchange = _FreshUuidExchange(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        untracked = Order(
+            symbol=BTC_USD,
+            side=OrderSide.SELL,
+            price=Price(amount=Decimal("51000"), currency="USD"),
+            amount=Amount(value=Decimal("0.01"), asset="BTC"),
+            status="open",
+            filled_amount=Decimal("0.01"),
+            created_at=Timestamp(dt=datetime.now(UTC)),
+        )
+        untracked.exchange_id = "UNTRACKED-FILLED"
+        exchange._open_orders["UNTRACKED-FILLED"] = untracked
+
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            cancelled, failed = await engine.cancel_open_orders(symbol=BTC_USD)
+
+        assert (cancelled, failed) == (1, 0)
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(errors) == 1, "a real fill on an untracked order must be loud, not INFO"
+        assert "cannot be recovered automatically" in errors[0].getMessage()
+        # Still never adopted -- the fill is unrecoverable, not repaired.
+        assert await storage.get_orders(symbol=BTC_USD) == []
+        assert await storage.get_trades(symbol=BTC_USD) == []
+
+
 class TestReanchorBookVanishRegression:
     """Production incident 2026-08-19: an operator re-anchor whose
     replacement layout is fully guard-refused (e.g. every coin is

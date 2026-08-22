@@ -557,6 +557,95 @@ class TestTrades:
         assert len(results) == 2
 
 
+class TestSaveFill:
+    """save_fill (2026-08-22 fix): atomic order+trades persistence.
+
+    Regression coverage for the confirmed 2026-08-22 incident (XRP): a
+    plain ``save_order`` + per-trade ``save_trade`` loop left a window
+    where the order committed as ``closed`` but a later trade insert in
+    the same resolution failed -- the order never became a fill
+    candidate again, so the trade was gone with no trace. These tests
+    pin the atomicity guarantee that replaced it.
+    """
+
+    async def test_save_fill_persists_order_and_all_trades(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        order = _make_order(status="open")
+        order.exchange_id = "TX-FILL-1"
+        closed = order.model_copy(update={"status": "closed", "filled_amount": Decimal("0.1")})
+        trades = [
+            _make_trade(trade_id="T1", order_id="TX-FILL-1"),
+            _make_trade(trade_id="T2", order_id="TX-FILL-1"),
+        ]
+
+        await storage.save_fill(closed, trades)
+
+        loaded_order = await storage.get_order(order.id)
+        assert loaded_order is not None
+        assert loaded_order.status == "closed"
+        assert loaded_order.filled_amount == Decimal("0.1")
+        loaded_trades = await storage.get_trades()
+        assert {t.id for t in loaded_trades} == {"T1", "T2"}
+
+    async def test_save_fill_with_no_trades_just_saves_the_order(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        order = _make_order(status="open")
+        canceled = order.model_copy(update={"status": "canceled"})
+
+        await storage.save_fill(canceled, [])
+
+        loaded = await storage.get_order(order.id)
+        assert loaded is not None
+        assert loaded.status == "canceled"
+        assert await storage.get_trades() == []
+
+    async def test_save_fill_rolls_back_order_if_a_trade_save_fails(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The exact confirmed failure mode: a trade insert fails partway
+        through a multi-trade fill. Both the order's status change AND
+        every trade in the same call -- including ones that would have
+        succeeded -- must roll back together, not commit a
+        closed-order-with-a-missing-trade half-state."""
+        order = _make_order(status="open")
+        order.exchange_id = "TX-FILL-FAIL"
+        await storage.save_order(order)
+        closed = order.model_copy(update={"status": "closed", "filled_amount": Decimal("0.1")})
+        trades = [
+            _make_trade(trade_id="T-OK", order_id="TX-FILL-FAIL"),
+            _make_trade(trade_id="T-FAILS", order_id="TX-FILL-FAIL"),
+        ]
+
+        class _FailOnSecondTrade(SQLiteStorageAdapter):
+            def __init__(self, path: str) -> None:
+                super().__init__(path)
+                self._trade_saves = 0
+
+            async def _execute_save_trade(self, conn: aiosqlite.Connection, trade: Trade) -> None:
+                self._trade_saves += 1
+                if self._trade_saves == 2:
+                    raise aiosqlite.OperationalError("simulated failure on second trade")
+                await super()._execute_save_trade(conn, trade)
+
+        failing_storage = _FailOnSecondTrade(":memory:")
+        failing_storage._conn = storage._conn  # pylint: disable=protected-access
+
+        with pytest.raises(StorageError):
+            await failing_storage.save_fill(closed, trades)
+
+        # The order must NOT have committed the status change -- it
+        # stays 'open' so a later fill-detection pass picks it up again.
+        loaded_order = await storage.get_order(order.id)
+        assert loaded_order is not None
+        assert loaded_order.status == "open"
+        assert loaded_order.filled_amount == Decimal("0")
+        # Neither trade persisted -- including T-OK, which would have
+        # succeeded on its own. A half-committed fill is exactly the bug.
+        assert await storage.get_trades() == []
+
+
 class TestBalanceSnapshots:
     async def test_save_and_load_snapshot(self, storage: SQLiteStorageAdapter) -> None:
         balances = [
