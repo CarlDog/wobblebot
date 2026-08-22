@@ -20,7 +20,7 @@ from wobblebot.config.grid import CoinGridConfig
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
-from wobblebot.ports.exceptions import ExchangeError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.services.grid_engine import GridEngine
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -1673,6 +1673,94 @@ class TestCancelOpenOrdersUntrackedOrder:
         # Still never adopted -- the fill is unrecoverable, not repaired.
         assert await storage.get_orders(symbol=BTC_USD) == []
         assert await storage.get_trades(symbol=BTC_USD) == []
+
+
+class _FlakySaveFillStorage(SQLiteStorageAdapter):
+    """save_fill raises StorageError the first ``fail_times`` calls,
+    then delegates — the transient-write shape (SQLite lock, disk
+    hiccup) behind the 2026-08-22 XRP fill loss."""
+
+    def __init__(self, path: str, *, fail_times: int = 1) -> None:
+        super().__init__(path)
+        self._fail_remaining = fail_times
+
+    async def save_fill(self, order: Order, trades: object) -> None:  # type: ignore[override]
+        if self._fail_remaining > 0:
+            self._fail_remaining -= 1
+            raise StorageError("simulated transient save_fill failure")
+        await super().save_fill(order, trades)  # type: ignore[arg-type]
+
+
+class TestDetectFillsTransientPersistFailure:
+    """Engine-level pin of the branch's headline recovery guarantee
+    (2026-08-22 review: it was tested only at the storage layer): a
+    transient save_fill failure must leave the order storage-open so
+    the NEXT tick re-resolves it, persisting the trade exactly once —
+    and must leave the in-memory ADR-037 external-cancel counter
+    consistent with storage (exactly-once, never inflated by the
+    failed attempt)."""
+
+    async def test_fill_is_persisted_exactly_once_after_transient_failure(self) -> None:
+        flaky = _FlakySaveFillStorage(":memory:", fail_times=1)
+        await flaky.connect()
+        try:
+            exchange = _exchange()
+            engine = GridEngine(exchange, flaky, _grid_config(), _safety_config())
+            await engine.step(BTC_USD)  # initialize: 6 orders
+            target = (await flaky.get_open_orders(symbol=BTC_USD))[0]
+            partial_qty = Decimal("0.0005")
+            exchange.inject_partial_cancel(target, filled_amount=partial_qty)
+
+            # Tick 1: resolution succeeds, persist fails transiently.
+            with pytest.raises(StorageError):
+                await engine.step(BTC_USD)
+            assert await flaky.get_trades(symbol=BTC_USD) == [], "rollback: no trade row"
+            still_open = {o.id for o in await flaky.get_open_orders(symbol=BTC_USD)}
+            assert target.id in still_open, "order stays open so the next tick retries"
+
+            # Tick 2: same candidate re-resolved; persist succeeds.
+            result = await engine.step(BTC_USD)
+            assert result.action == "stepped"
+            trades = await flaky.get_trades(symbol=BTC_USD)
+            assert len(trades) == 1, "the fill is persisted exactly once"
+            stored = await flaky.get_order(target.id)
+            assert stored is not None
+            assert stored.filled_amount == partial_qty
+            # A FILL never counts toward the book-vanish discriminator.
+            assert engine._external_cancels.get(BTC_USD, 0) == 0
+        finally:
+            await flaky.close()
+
+    async def test_external_cancel_counted_exactly_once_across_retry(self) -> None:
+        """The 2026-08-22 review's ordering fix: the pre-fix code
+        incremented _external_cancels BEFORE the persist, so a failed
+        persist + next-tick retry double-counted one external cancel
+        into the operator's book-vanish page."""
+        flaky = _FlakySaveFillStorage(":memory:", fail_times=1)
+        await flaky.connect()
+        try:
+            exchange = _exchange()
+            engine = GridEngine(exchange, flaky, _grid_config(), _safety_config())
+            await engine.step(BTC_USD)
+            target = (await flaky.get_open_orders(symbol=BTC_USD))[0]
+            exchange.inject_partial_cancel(target, filled_amount=Decimal("0"))
+
+            # Pinned at the _detect_fills level: a full step() later
+            # FORGIVES (resets) the counter when the book is seen
+            # non-empty, which would mask the double-count this test
+            # exists to catch.
+            with pytest.raises(StorageError):
+                await engine._detect_fills(BTC_USD)
+            # The failed persist must NOT have counted the cancel.
+            assert engine._external_cancels.get(BTC_USD, 0) == 0
+
+            await engine._detect_fills(BTC_USD)
+            assert engine._external_cancels.get(BTC_USD, 0) == 1, "exactly once, not twice"
+            stored = await flaky.get_order(target.id)
+            assert stored is not None
+            assert stored.status == "canceled"
+        finally:
+            await flaky.close()
 
 
 class TestReanchorBookVanishRegression:

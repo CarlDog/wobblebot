@@ -416,6 +416,118 @@ class TestTradeAndOrderBuilders:
             await adapter.aclose()
 
 
+class TestResidualEscapes:
+    """2026-08-22 full-branch review: three escapes the first hardening
+    pass missed, each verified with exact breaking inputs."""
+
+    @pytest.mark.asyncio
+    async def test_non_dict_trade_entry_raises_exchange_error(self) -> None:
+        """A string where a trade-entry dict belongs: .get() on it
+        raises bare AttributeError, and the pre-fix guard started
+        AFTER those lines."""
+        trades = {
+            "error": [],
+            "result": {"trades": {"TXID-1": "not-a-dict"}, "count": 1},
+        }
+        adapter = _make_adapter(
+            _routing_handler(
+                {"/Assets": _GOOD_ASSETS, "/AssetPairs": _GOOD_PAIRS, "/TradesHistory": trades}
+            )
+        )
+        try:
+            with pytest.raises(ExchangeError, match="trade entry") as exc_info:
+                await adapter.get_trade_history(symbol=BTC_USD)
+            assert isinstance(exc_info.value.__cause__, AttributeError)
+        finally:
+            await adapter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_non_dict_order_entry_raises_exchange_error(self) -> None:
+        orders = {"error": [], "result": {"open": {"OID-1": "not-a-dict"}}}
+        adapter = _make_adapter(
+            _routing_handler(
+                {"/Assets": _GOOD_ASSETS, "/AssetPairs": _GOOD_PAIRS, "/OpenOrders": orders}
+            )
+        )
+        try:
+            with pytest.raises(ExchangeError, match="order entry") as exc_info:
+                await adapter.get_open_orders()
+            assert isinstance(exc_info.value.__cause__, AttributeError)
+        finally:
+            await adapter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_unhashable_pair_value_raises_exchange_error(self) -> None:
+        """A JSON array as "pair" is a well-formed dict entry whose
+        value makes _symbol_for_pair_key's dict lookup raise bare
+        TypeError (unhashable) — invisible to any entry-shape check."""
+        trades = {
+            "error": [],
+            "result": {
+                "trades": {
+                    "TXID-1": {
+                        "pair": ["XXBTZUSD"],
+                        "ordertxid": "OID-1",
+                        "type": "buy",
+                        "price": "1",
+                        "vol": "1",
+                        "fee": "0",
+                        "cost": "1",
+                        "time": 1748191200.0,
+                    }
+                },
+                "count": 1,
+            },
+        }
+        adapter = _make_adapter(
+            _routing_handler(
+                {"/Assets": _GOOD_ASSETS, "/AssetPairs": _GOOD_PAIRS, "/TradesHistory": trades}
+            )
+        )
+        try:
+            with pytest.raises(ExchangeError, match="trade entry") as exc_info:
+                await adapter.get_trade_history(symbol=BTC_USD)
+            assert isinstance(exc_info.value.__cause__, TypeError)
+        finally:
+            await adapter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_nan_count_is_ignored_not_fatal(self) -> None:
+        """json.loads parses NaN by default; NaN passes the isinstance
+        (int, float) gate and int(nan) raises bare ValueError. A bogus
+        count must degrade to "no count" (the page cap still bounds
+        the walk), never crash the fetch."""
+        # httpx's json= kwarg refuses to ENCODE NaN, but Kraken's wire
+        # can carry it and the adapter's response.json() (stdlib
+        # json.loads) parses it happily -- so ship raw bytes.
+        good_trade = (
+            '{"pair": "XXBTZUSD", "ordertxid": "OID-1", "type": "buy", "price": "1", '
+            '"vol": "1", "fee": "0", "cost": "1", "time": 1748191200.0}'
+        )
+        page = f'{{"error": [], "result": {{"trades": {{"TXID-1": {good_trade}}}, "count": NaN}}}}'
+        empty = '{"error": [], "result": {"trades": {}, "count": NaN}}'
+        calls = {"n": 0}
+        json_headers = {"content-type": "application/json"}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/Assets"):
+                return httpx.Response(200, json=_GOOD_ASSETS)
+            if request.url.path.endswith("/AssetPairs"):
+                return httpx.Response(200, json=_GOOD_PAIRS)
+            calls["n"] += 1
+            # First TradesHistory page has the trade; later pages empty
+            # so the walk terminates via the empty-page break.
+            body = page if calls["n"] == 1 else empty
+            return httpx.Response(200, content=body.encode(), headers=json_headers)
+
+        adapter = _make_adapter(handler)
+        try:
+            trades = await adapter.get_trade_history(symbol=BTC_USD)
+            assert [t.id for t in trades] == ["TXID-1"]
+        finally:
+            await adapter.aclose()
+
+
 class TestBalanceParsing:
     """cli/live's shutdown finally-block reads balances; a bare
     exception there aborts the rest of the block, skipping cancel-all
@@ -496,6 +608,35 @@ class TestEnvelopeErrorField:
 
 
 class TestOrderStatusUpdate:
+    @pytest.mark.asyncio
+    async def test_unknown_status_literal_raises_exchange_error(self) -> None:
+        """Order.status is a Literal and the model runs
+        validate_assignment, so a status value outside Kraken's
+        canonical vocabulary raises ValidationError AT ASSIGNMENT —
+        the exact branch the in-code comment cites as the reason the
+        assignments sit inside the guard, previously untested
+        (2026-08-22 full-branch review)."""
+        order = Order(
+            exchange_id="OID-1",
+            symbol=BTC_USD,
+            side="buy",  # type: ignore[arg-type]
+            price=Price(amount=Decimal("50000"), currency="USD"),
+            amount=Amount(value=Decimal("0.001"), asset="BTC"),
+            status="open",
+            created_at=Timestamp(dt=datetime.now(tz=UTC)),
+        )
+        queried = {
+            "error": [],
+            "result": {"OID-1": {"status": "definitely-not-a-status", "vol_exec": "0"}},
+        }
+        adapter = _make_adapter(_json_handler(queried))
+        try:
+            with pytest.raises(ExchangeError, match="order-status update") as exc_info:
+                await adapter.get_order_status(order)
+            assert isinstance(exc_info.value.__cause__, ValueError)  # ValidationError
+        finally:
+            await adapter.aclose()
+
     @pytest.mark.asyncio
     async def test_malformed_vol_exec_raises_exchange_error(self) -> None:
         order = Order(

@@ -45,6 +45,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import math
 import time
 import urllib.parse
 from collections.abc import Awaitable, Callable, Iterable
@@ -575,7 +576,12 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
             offset += len(trades_map)
             if total_count is None:
                 raw_count = result.get("count")
-                if isinstance(raw_count, (int, float)):
+                # isfinite gate (2026-08-22 review): json.loads parses
+                # NaN/Infinity by default, both pass the isinstance
+                # check, and int(nan)/int(inf) raise bare ValueError/
+                # OverflowError. A bogus count degrades to "no count"
+                # (the page cap still bounds the walk).
+                if isinstance(raw_count, (int, float)) and math.isfinite(raw_count):
                     total_count = int(raw_count)
             if total_count is not None and offset >= total_count:
                 break
@@ -905,14 +911,18 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         Generated UUID — engine matches by ``exchange_id`` (the txid),
         not by UUID, so a fresh one here is harmless.
         """
-        descr = entry.get("descr") or {}
-        pair_key = descr.get("pair", "")
-        # _symbol_for_pair_key raises ExchangeError itself; it stays
-        # OUTSIDE the guard so its specific message survives rather than
-        # being re-wrapped (ExchangeError is deliberately not in
-        # _PARSE_ERRORS).
-        symbol = self._symbol_for_pair_key(pair_key)
         try:
+            # Everything sits inside the guard (2026-08-22 review): a
+            # non-dict entry makes .get() raise AttributeError, and an
+            # unhashable "pair" value (a JSON array) makes
+            # _symbol_for_pair_key's dict lookup raise TypeError -- both
+            # are wire-shape failures. _symbol_for_pair_key's OWN
+            # ExchangeError (unknown pair) still passes through
+            # un-rewrapped because ExchangeError is deliberately not in
+            # _PARSE_ERRORS; a test pins that.
+            descr = entry.get("descr") or {}
+            pair_key = descr.get("pair", "")
+            symbol = self._symbol_for_pair_key(pair_key)
             side = OrderSide(descr.get("type", "buy"))
             price_amount = Decimal(descr.get("price", "0"))
             volume = Decimal(entry.get("vol", "0"))
@@ -934,11 +944,13 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
     def _build_trade_from_kraken(self, txid: str, entry: dict[str, Any]) -> Trade:
         """Construct a ``Trade`` from a Kraken TradesHistory entry."""
-        pair_key = entry.get("pair", "")
-        # See _build_order_from_kraken: ExchangeError from the symbol
-        # lookup passes through un-rewrapped, by design.
-        symbol = self._symbol_for_pair_key(pair_key)
         try:
+            # See _build_order_from_kraken: the whole body sits inside
+            # the guard (non-dict entry -> AttributeError, unhashable
+            # pair -> TypeError), while _symbol_for_pair_key's own
+            # ExchangeError passes through un-rewrapped by design.
+            pair_key = entry.get("pair", "")
+            symbol = self._symbol_for_pair_key(pair_key)
             return Trade(
                 id=txid,
                 order_id=entry.get("ordertxid", ""),

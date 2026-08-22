@@ -135,32 +135,44 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 - **Standing Kraken-vs-local trade reconciliation** (2026-08-22) — a
   fifth `cli/maintenance` scheduled task
-  (`schedules.maintenance_reconcile`, default daily) diffing Kraken's
-  own `TradesHistory` against the locally recorded trades for every
-  symbol in `grid.coins`, notifying at `critical` on any Kraken trade
-  with no local row. Both silent-loss incidents that motivated it went
-  undetected for weeks: an orphaned SOL fill for seven, and 18 BTC
-  trades from `tools/first_real_trade.py` (which imports no storage
-  layer at all, by design) until a manual audit went looking. The diff
-  is by trade id deliberately — a binary present/absent check with no
-  dust tolerance to argue about, after an earlier
-  quantity-versus-balance comparison produced two false positives from
-  Kraken's `total`-vs-`available` semantics. Symbols come from
-  `grid.coins` rather than a config list of their own, so the check
-  cannot drift from what is actually traded; `Ledgers` is deliberately
-  NOT consulted (staking accrual and dust conversions are expected
-  noise, not a correctness signal). Reader key, read-only storage
-  handle, and `get_trade_history` as the only exchange call — the task
+  (`schedules.maintenance_reconcile`, default daily; implementation in
+  the new `cli/maintenance_reconcile.py` so the DB-hygiene module
+  keeps its single concern) diffing ONE account-wide Kraken
+  `TradesHistory` fetch per cycle against the locally recorded trades
+  for every symbol in `live.symbols`, notifying at `critical` on any
+  Kraken trade with no local row. Both silent-loss incidents that
+  motivated it went undetected for weeks: an orphaned SOL fill for
+  seven, and 18 BTC trades from `tools/first_real_trade.py` (which
+  imports no storage layer at all, by design) until a manual audit
+  went looking. The diff is by trade id deliberately — a binary
+  present/absent check with no dust tolerance to argue about, after an
+  earlier quantity-versus-balance comparison produced two false
+  positives from Kraken's `total`-vs-`available` semantics. A Kraken
+  trade whose order is still locally OPEN is *deferred* (the engine
+  persists trades only at terminal order status per ADR-023, so a
+  partial fill resting on the book is persistence-pending, not a gap)
+  — logged, never paged. Symbols come from `live.symbols` — the
+  actually-traded set — rather than a config list of their own, so the
+  check cannot drift from what is traded (the branch's first cut used
+  `grid.coins`, a per-coin *override* map that is wrong in both
+  directions; caught by the pre-merge review). `Ledgers` is
+  deliberately NOT consulted (staking accrual and dust conversions are
+  expected noise, not a correctness signal). Reader key, read-only
+  storage handle, one `get_trade_history` call per cycle (the endpoint
+  is account-wide with no pair filter, so per-symbol fetches would
+  re-walk identical pages against the account-wide limiter) — the task
   cannot place, cancel, or move anything. Fault isolation is stricter
   here than in the sibling tasks because this one parses third-party
   JSON: `_main_async`'s `asyncio.gather` has no `return_exceptions`, so
   an escaping exception would take vacuum/prune/backup/verify down with
-  it. 2s inter-symbol pacing per ADR-027's convention, after an unpaced
-  sweep tripped `EAPI:Rate limit exceeded` and silently covered 40% of
-  the requested set. `tools/reconcile_trade_history.py` is the deeper
-  one-shot manual diagnostic (adds `Ledgers` for non-trade balance
-  moves) and shares the same diff via `services/trade_reconciliation`,
-  so the two cannot diverge. (`af95f48`, `0abeeb1`)
+  it. `tools/reconcile_trade_history.py` is the deeper one-shot manual
+  diagnostic (adds `Ledgers` for non-trade balance moves, and carries
+  the backfill runbook a reported gap points at) and shares the same
+  diff via `services/trade_reconciliation`, so the two cannot diverge.
+  NB for existing deployments: `maintenance.reconcile_source_db` is a
+  NEW key — an operator `settings.yml` written before 2026-08-22 must
+  add it or the task silently never runs. (`af95f48`, `0abeeb1`, plus
+  pre-merge review fixes)
 
 - **`SQLiteStorageAdapter(..., read_only=True)`** (2026-08-22) — opens
   via SQLite's `mode=ro` URI, skipping the pragmas, schema DDL, eight
@@ -249,7 +261,19 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   un-rewrapped. 19 regression tests asserting both the `ExchangeError`
   and the `__cause__` chain (contractual per `ports/exceptions.py`,
   previously unverified for Kraken); 17 confirmed failing against the
-  pre-fix adapter.
+  pre-fix adapter. The pre-merge full-branch review then found four
+  residual escapes the first pass missed — a non-dict order/trade
+  entry (`.get()` on a string raises bare `AttributeError`, and the
+  builders' first lines sat OUTSIDE their guards), an unhashable
+  `pair` value (a JSON array reaches `_symbol_for_pair_key`'s dict
+  lookup as a bare `TypeError`), and a NaN/Infinity `count` (parsed
+  fine by `json.loads`, passes the `isinstance` gate, then
+  `int(nan)` raises bare `ValueError`) — all closed (`math.isfinite`
+  gate; builders' bodies moved fully inside their guards) with five
+  more regression tests, including one for the
+  `validate_assignment` branch of `_apply_kraken_order_update` (an
+  unknown `status` literal raising `ValidationError` at assignment)
+  that the first pass cited in a comment but never tested.
 
 - **Silent fill loss: an order's terminal status and its trades were
   persisted as two independent writes** (2026-08-22, found by a
@@ -274,7 +298,16 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   at ERROR rather than vanishing. Regression tests pin the rollback:
   a two-trade `save_fill` whose second insert fails must roll back the
   first trade too, never committing a closed-order-with-missing-trade
-  half-state. (`7285edb`)
+  half-state. The pre-merge review added two engine-level pins the
+  storage-layer tests couldn't give: the recovery loop itself (a
+  transient `save_fill` failure leaves the row open, the NEXT tick
+  re-resolves it, and the trade lands exactly once), and an ordering
+  fix it caught — the ADR-037 `_external_cancels` increment had moved
+  ahead of the persist, so a failed persist plus retry double-counted
+  one external cancel into the operator's book-vanish page; the
+  counter now increments only after the successful persist
+  (exactly-once, verified failing against the pre-fix ordering).
+  (`7285edb`, plus pre-merge review fixes)
 
 - **ADR-021/ADR-037 alerting-fidelity gaps: DMS-alert reset bug,
   book-vanish message honesty, held-symbol reminder** (2026-08-20,

@@ -876,10 +876,13 @@ class MaintenanceConfig(BaseModel):
     own — since it's a restoration smoke test against the SAME backups
     the backup task already produces. ``reconcile`` (2026-08-22, born
     from a confirmed silent-trade-loss incident — see
-    ``services/trade_reconciliation.py``) diffs Kraken's own trade
+    ``services/trade_reconciliation.py`` and
+    ``cli/maintenance_reconcile.py``) diffs Kraken's own trade
     history against ``reconcile_source_db`` for every symbol in
-    ``grid.coins`` — no dedicated symbol list of its own, deliberately,
-    so it can never drift from what's actually traded.
+    ``live.symbols`` — the actually-traded set, and deliberately no
+    dedicated symbol list of its own, so it can never drift from what's
+    actually traded. (NOT ``grid.coins``: that is a per-coin override
+    map, wrong in both directions — 2026-08-22 review.)
 
     Per ``stage-8.2-design.md`` decision 7 the maintenance daemon
     is operator-started — not auto-spawned by any other daemon.

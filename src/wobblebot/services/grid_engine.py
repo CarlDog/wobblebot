@@ -1415,13 +1415,6 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         saved_trade_ids: list[str] = []
         for candidate in candidates:
             resolution = await _resolve_terminal_order(self._exchange, candidate, trades_by_order)
-            if not resolution.needs_counter and resolution.order.filled_amount == 0:
-                # ADR-037: a clean cancel/expire the engine did not
-                # perform (its own cancels update storage before this
-                # diff runs, so they never appear as candidates). This
-                # is the book-vanish discriminator — see the re-layout
-                # gate in _step_unlocked.
-                self._external_cancels[symbol] = self._external_cancels.get(symbol, 0) + 1
             # save_fill persists the order's terminal status together with
             # its trades in one transaction (2026-08-22 fix) -- a plain
             # save_order + per-trade save_trade loop left a window where
@@ -1429,6 +1422,18 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # failed, permanently losing the trade (a closed order never
             # becomes a fill candidate again).
             await self._storage.save_fill(resolution.order, resolution.trades)
+            if not resolution.needs_counter and resolution.order.filled_amount == 0:
+                # ADR-037: a clean cancel/expire the engine did not
+                # perform (its own cancels update storage before this
+                # diff runs, so they never appear as candidates). This
+                # is the book-vanish discriminator — see the re-layout
+                # gate in _step_unlocked. Counted AFTER the successful
+                # persist (2026-08-22 review): incrementing first meant a
+                # transient save_fill failure left the counter inflated
+                # while the row stayed open, and the next tick's retry
+                # double-counted the same cancel into the operator's
+                # "N order(s) cancelled outside the engine" page.
+                self._external_cancels[symbol] = self._external_cancels.get(symbol, 0) + 1
             if resolution.needs_counter:
                 filled.append(resolution.order)
                 for trade in resolution.trades:

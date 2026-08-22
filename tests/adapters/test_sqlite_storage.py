@@ -646,6 +646,58 @@ class TestSaveFill:
         assert await storage.get_trades() == []
 
 
+class TestReadOnlyMode:
+    """read_only=True (2026-08-22): mode=ro URI, no schema/migrations,
+    no writes possible. 2026-08-22 review found the feature shipped
+    with zero dedicated tests; these pin its three advertised
+    guarantees."""
+
+    async def test_connect_refuses_missing_file(self, tmp_path: Path) -> None:
+        """mode=ro must NOT create an empty DB for a typo'd path — a
+        silently-created empty DB would report every expected row as
+        absent (for the reconcile task: every Kraken trade 'missing')."""
+        missing = tmp_path / "nope.db"
+        adapter = SQLiteStorageAdapter(str(missing), read_only=True)
+        with pytest.raises(StorageError, match="read-only"):
+            await adapter.connect()
+        assert not missing.exists(), "connect() must not have created the file"
+
+    async def test_write_through_read_only_handle_raises_storage_error(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "live.db"
+        writer = SQLiteStorageAdapter(str(db_path))
+        await writer.connect()
+        await writer.close()
+
+        ro = SQLiteStorageAdapter(str(db_path), read_only=True)
+        await ro.connect()
+        try:
+            with pytest.raises(StorageError, match="readonly"):
+                await ro.save_trade(_make_trade())
+        finally:
+            await ro.close()
+
+    async def test_reads_see_a_writers_committed_rows(self, tmp_path: Path) -> None:
+        """The deployment shape: cli/maintenance reading live.db while
+        cli/live owns it. A row committed through the writable adapter
+        must be visible through the read-only one."""
+        db_path = tmp_path / "live.db"
+        writer = SQLiteStorageAdapter(str(db_path))
+        await writer.connect()
+        trade = _make_trade(trade_id="T-VISIBLE")
+        await writer.save_trade(trade)
+
+        ro = SQLiteStorageAdapter(str(db_path), read_only=True)
+        await ro.connect()
+        try:
+            loaded = await ro.get_trades()
+            assert [t.id for t in loaded] == ["T-VISIBLE"]
+        finally:
+            await ro.close()
+            await writer.close()
+
+
 class TestBalanceSnapshots:
     async def test_save_and_load_snapshot(self, storage: SQLiteStorageAdapter) -> None:
         balances = [

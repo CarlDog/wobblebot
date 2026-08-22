@@ -908,11 +908,14 @@ web:
 # + a representative SELECT per table) against each DB's LATEST
 # backup, and notifies (via operator_db below, if set) on failure.
 #
-# 2026-08-22: `reconcile` diffs Kraken's own trade history against
-# reconcile_source_db for every symbol in grid.coins, and notifies at
+# 2026-08-22: `reconcile` fetches Kraken's account-wide trade history
+# once per cycle and diffs it against reconcile_source_db for every
+# symbol in live.symbols (the actually-traded set), notifying at
 # critical on any Kraken trade missing locally -- born from a
-# confirmed silent-trade-loss incident (see PR #102 and its follow-up
-# comment). Read-only reader-key credentials only; never writes.
+# confirmed silent-trade-loss incident (receipt in
+# docs/planning/roadmap.md's v1.1 digest). A trade on a still-open
+# local order is deferred (persistence pending), never paged.
+# Read-only reader-key credentials only; never writes.
 maintenance:
   # Every DB the daemon should VACUUM + back up. Add the operator's
   # active DBs; missing files are skipped (logged WARNING) so partial
@@ -960,10 +963,13 @@ maintenance:
   # Source DB for the reconcile task's local trade history --
   # typically live.db (where cli/live records fills). Same
   # explicit-over-inferred rule as prune_source_db. Symbols come from
-  # grid.coins below, not a separate list here, so this task can never
-  # drift from what's actually traded. Unset disables the task
-  # entirely (e.g. a sandbox/shadow-only deployment with no real
-  # Kraken trading has nothing for it to check).
+  # live.symbols above (the actually-traded set), not a separate list
+  # here, so this task can never drift from what's actually traded.
+  # Unset disables the task entirely (e.g. a sandbox/shadow-only
+  # deployment with no real Kraken trading has nothing for it to
+  # check) -- NB an operator settings.yml written before 2026-08-22
+  # won't have this key, so add it there explicitly or the daily
+  # check silently never runs.
   reconcile_source_db: "data/wobblebot-live.db"
 
   # Where SQLite .backup output goes. Created if missing.

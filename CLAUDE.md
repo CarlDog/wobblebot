@@ -51,7 +51,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Twenty-one surfaces (sixteen `cli/` + five `tools/`). One-line index; full behavior in each
+Twenty-two surfaces (sixteen `cli/` + six `tools/`). One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
@@ -68,12 +68,13 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.operator` — Discord interaction daemon (ADR-013). Intent → `pending_commands`; `WHERE status='approved'` is the ADR-002 firewall.
 - `cli.web` — FastAPI dashboard (ADR-016/017). Read-mostly; mutations firewalled via `pending_commands`. Needs `WOBBLEBOT_WEB_SESSION_SECRET`.
 - `cli.recalibrate` — scale USD-denominated knobs to a new target balance (operator-initiated; dry-run default).
-- `cli.maintenance` — VACUUM / prune+archive / backup / verify / reconcile daemon (five concurrent scheduled tasks). `reconcile` (2026-08-22) diffs Kraken's trade history against `grid.coins` symbols and alerts on any silently-lost trade.
+- `cli.maintenance` — VACUUM / prune+archive / backup / verify / reconcile daemon (five concurrent scheduled tasks). `reconcile` (2026-08-22) diffs Kraken's trade history against `live.symbols` and alerts on any silently-lost trade.
 - `cli.screener` — rank observed symbols by grid-suitability (P2 slice 5). Read-only, offline, advisory (ADR-002); log-table output.
 - `tools/first_real_trade.py` — one-shot live round-trip diagnostic.
 - `tools/run_cloud_check.py` — one-shot cloud-LLM smoke test (`--provider`/`--role`/`--model`/`--dry-run`).
 - `tools/import_kraken_history.py` — stream the local OHLCVT dump into `ohlc_bars`/`price_snapshots` (P2 slice 2; the only deep-history path).
 - `tools/auditor.py` — replay `settings.yml` through the real `GridEngine` over stored bars (ADR-028; directional, not exact).
+- `tools/reconcile_trade_history.py` — one-shot Kraken-vs-live.db trade/ledger diff (2026-08-22). The manual, deeper companion to `cli.maintenance`'s daily reconcile task; its docstring carries the backfill runbook a reported gap points at.
 - `tools/scan_logging.py` — audit log calls against `docs/implementation/logging-conventions.md`. `--check rule1` (default) exits 1 on data stranded in `extra=` and is enforced by a test; `--check decimal` lists money values interpolated without `fmt_decimal` (a review list — the heuristic trips on ints and float durations).
 
 ### Operator handoff: from dry-run to live trading
@@ -300,12 +301,13 @@ to every project. The wobblebot-specific items below extend it:
   path) leaves real stranded BTC the engine's basis never sees. Found
   2026-08-22: 18 trades missing across nine prior runs, a confirmed
   0.00053613 BTC / ~2.8% average-cost gap, undetected for weeks until
-  a manual audit went looking (see PR #102 and its follow-up comment).
+  a manual audit went looking (incident receipt in
+  `docs/planning/roadmap.md`'s v1.1 digest; detail in PR #102).
   `cli/maintenance`'s `reconcile` task (added the same day) now checks
   this automatically once a day, but don't rely on that cadence alone
   right after a session — run `python tools/reconcile_trade_history.py
-  --symbols BTC` immediately and backfill any reported gap before
-  trusting BTC's sell guard.
+  --symbols BTC` immediately and follow that tool's backfill runbook
+  for any reported gap before trusting BTC's sell guard.
 - **Cloud LLM pricing + model re-verification.** Cloud-provider pricing,
   model availability, and API shapes drift often. Re-confirm each priced
   `(provider, model)` in `services/llm_pricing.py` against the provider's
