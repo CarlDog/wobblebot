@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1689,7 +1690,19 @@ class TestReanchorExecutionFeedback:
         assert "placed 2/6" in body  # the engine tally, verbatim
         assert "still off-grid after re-anchoring" in body
         assert "Consider re-anchoring" not in body
-        assert 'reanchor-chip">mild' in body  # severity chip untouched
+        # Severity chip untouched — the feedback annotation switches the
+        # HEADING, never the tier. Matched by regex rather than exact
+        # markup so the chip's tooltip attribute (added with the
+        # reanchor_min_severity work) doesn't break an assertion about
+        # severity; the chip-and-tier pairing is still what's asserted.
+        assert re.search(r'class="reanchor-chip"[^>]*>mild<', body)
+        # The chip's tooltip must actually RENDER. The macro is defined in
+        # _status_card.html and used in the same file, but that file is
+        # *included* from dashboard.html — Jinja macro scoping across an
+        # include is exactly the failure that renders an empty title=""
+        # while every other assertion here still passes. Pin the text.
+        assert "Mild — 1.5–2.5 spacings off the market" in body
+        assert 'title=""' not in body
         # The recommendation switches; the levers never disappear.
         assert 'action="/commands/reanchor"' in body
         assert 'action="/commands/snooze-reanchor"' in body

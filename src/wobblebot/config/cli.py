@@ -42,6 +42,14 @@ LogFormat = Literal["plain", "json"]
 # (cli/sandbox).
 TradingMode = Literal["live", "shadow", "sandbox"]
 
+# Re-anchor banner severity tiers, ordered least → most urgent. Canonical
+# here rather than in `web/routes/status_reanchor.py` (where the banner
+# itself lives) so `WebConfig.reanchor_min_severity` and the classifier
+# cannot drift apart into two literals that disagree.
+ReanchorSeverity = Literal["mild", "moderate", "strong"]
+# Comparison order for the `reanchor_min_severity` floor. Index = rank.
+REANCHOR_SEVERITY_ORDER: tuple[ReanchorSeverity, ...] = ("mild", "moderate", "strong")
+
 
 class ApplicationConfig(BaseModel):
     """Application metadata + the deployment-wide trading mode.
@@ -816,6 +824,21 @@ class WebConfig(BaseModel):
     # orders). Static-ish pages (news headlines, audit logs) ignore
     # this — they're full-reload-on-navigation.
     htmx_poll_seconds: float = Field(default=15.0, gt=0.0, le=300.0)
+
+    # Lowest re-anchor banner severity that earns a banner. Default
+    # "mild" = show everything (the behavior before this knob existed).
+    #
+    # Safe to raise ONLY because severity self-escalates on age:
+    # `_classify_reanchor_severity` takes max(drift_tier, age_tier), and
+    # age alone reaches tier 2 at 48h and tier 3 at 72h. So a filtered
+    # "mild" finding is DELAYED, never dropped — if the condition
+    # persists it re-appears as "moderate" within 48h of the oldest open
+    # order. That property is pinned by
+    # tests/web/test_reanchor_severity_floor.py; if it is ever removed,
+    # this knob silently becomes signal deletion, because the dashboard
+    # banner is the ONLY surface carrying a re-anchor recommendation
+    # (no notification event, no Discord message, no advisor suggestion).
+    reanchor_min_severity: ReanchorSeverity = "mild"
 
     # Optional external Kraken account URL surfaced as a header link
     # for one-click access to the operator's Kraken Pro account.

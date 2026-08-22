@@ -378,6 +378,10 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # currency in units of the WRITER's tick cadence, threaded through
     # like cool_down_minutes (lives on LiveConfig, not WebConfig).
     app.state.live_tick_seconds = live_tick_seconds
+    # Operator's attention floor for re-anchor banners. Read straight off
+    # WebConfig rather than threaded as a create_app parameter — unlike
+    # the two above, this one is genuinely a dashboard presentation knob.
+    app.state.reanchor_min_severity = config.reanchor_min_severity
     # ADR-034 — the asset→Kraken-destination-label map the Execute
     # button echoes into its command (and shows the operator before
     # they approve). Same "read the daemon's own config section" rule

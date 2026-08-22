@@ -855,6 +855,18 @@ web:
   # Static-ish pages (news, audit log) ignore this — they're
   # full-reload-on-navigation.
   htmx_poll_seconds: 15.0
+  # Lowest re-anchor banner severity that earns a banner on the
+  # dashboard: mild | moderate | strong. Default `mild` shows every
+  # finding. Raise it to quiet routine drift.
+  #
+  # This is safe ONLY because severity self-escalates on AGE: the tier
+  # is max(drift_tier, age_tier), and age alone reaches moderate at 48h
+  # and strong at 72h. So a filtered finding is delayed, not dropped —
+  # if the drift persists it re-appears one tier up. That matters
+  # because the banner is the ONLY surface a re-anchor recommendation
+  # reaches (no notification event, no Discord message, and the
+  # heuristic advisor doesn't emit one).
+  reanchor_min_severity: mild
   # External Kraken account URL surfaced as a header link for
   # one-click access. Default lands on Kraken Pro's account home;
   # operators in non-US regions or who prefer the trade view may

@@ -32,6 +32,27 @@ levers (snooze / pause / wait for recovery). The banner's presence and
 severity are untouched in every state: drift is still a fact about
 misplaced capital, and downgrading it because the fix is unavailable
 would hide exactly what the operator needs to weigh.
+
+**`WebConfig.reanchor_min_severity` is not an exception to that rule.**
+The rule forbids the *system* withholding a finding on its own judgment
+that the operator wouldn't have wanted it — the viability stats, the
+execution-feedback state. An operator-set floor is the operator setting
+their own attention threshold, which is the same authority as the snooze
+button, and per ADR-002's transparent-guardrail stance the operator owns
+that call.
+
+What makes the floor safe is a property of the classifier rather than of
+the config: severity **self-escalates on age**. `tier =
+max(drift_tier, age_tier)`, and age alone reaches tier 2 at 48h and tier
+3 at 72h, so a suppressed "mild" is DELAYED, never dropped — a drift
+that persists re-appears as "moderate" within 48h of the oldest open
+order. This matters because the banner is the ONLY surface a re-anchor
+recommendation reaches: there is no notification event for it, no
+Discord message, and the heuristic advisor does not emit one (it only
+mentions re-anchoring in prose). If age-escalation is ever removed, this
+floor silently becomes signal deletion. `test_reanchor_severity_floor.py`
+pins the escalation property for exactly that reason — treat a failure
+there as a reason to remove the floor, not to relax the test.
 """
 
 from __future__ import annotations
@@ -40,8 +61,8 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
 
+from wobblebot.config.cli import REANCHOR_SEVERITY_ORDER, ReanchorSeverity
 from wobblebot.config.grid import KRAKEN_TAKER_FEE_RATE
 from wobblebot.domain.models import Order
 from wobblebot.domain.value_objects import Symbol
@@ -52,7 +73,9 @@ from wobblebot.services.ta_metrics import compute_atr
 
 _LOGGER = logging.getLogger(__name__)
 
-ReanchorSeverity = Literal["mild", "moderate", "strong"]
+_SEVERITY_RANK: dict[ReanchorSeverity, int] = {
+    level: rank for rank, level in enumerate(REANCHOR_SEVERITY_ORDER)
+}
 
 # Re-anchor viability annotation (P3 slice 22). Hourly bars because
 # that's the interval cli/observe's top-up maintains; 14 days gives
@@ -269,6 +292,7 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
     price_series: dict[Symbol, list[Decimal]],
     observe_storage: StoragePort | None = None,
     operator_storage: StoragePort | None = None,
+    min_severity: ReanchorSeverity = "mild",
 ) -> tuple[ReanchorRecommendation, ...]:
     """Per-symbol re-anchor recommendations from drift + age heuristic.
 
@@ -282,6 +306,12 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
     feeds the execution-feedback annotation (recent re-anchor
     results from ``pending_commands``); ``None`` degrades to no
     annotation, never to no banner.
+
+    ``min_severity`` is the operator's attention floor
+    (``WebConfig.reanchor_min_severity``); findings below it are skipped.
+    Default ``"mild"`` shows everything. See the module docstring for why
+    this does not violate the annotate-never-suppress rule, and for the
+    age-escalation property that makes it a delay rather than a drop.
     """
     if not open_orders:
         return ()
@@ -314,7 +344,10 @@ async def load_reanchor_recommendations(  # pylint: disable=too-many-locals,too-
         drift = float(nearest_distance / spacing)
         oldest_age = max(order_ages.get(str(o.id), 0) for o in symbol_orders)
         severity = _classify_reanchor_severity(drift, oldest_age)
-        if severity is None:
+        # One gate, two reasons to skip: below the drift floor at all, or
+        # below the operator's attention floor. Kept together so the
+        # expensive reads below stay behind a single check.
+        if severity is None or _SEVERITY_RANK[severity] < _SEVERITY_RANK[min_severity]:
             continue
         # Fee-only decision economics (P3 blueprint): taker rate on the
         # cancelled ladder's notional, plus the same again for the
