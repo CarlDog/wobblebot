@@ -954,6 +954,14 @@ h2 {
   border: 1px solid currentColor;
 }
 
+/* Hover cue for the severity tooltip, same treatment the advisor page
+   gives its confidence badge — a title nobody knows to hover is a title
+   nobody reads. Guarded on [title] so an untitled chip keeps the default
+   cursor. */
+.reanchor-chip[title] {
+  cursor: help;
+}
+
 .reanchor-stats {
   display: flex;
   flex-wrap: wrap;

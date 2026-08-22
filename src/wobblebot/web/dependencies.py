@@ -19,7 +19,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from wobblebot.config.cli import WebConfig
+from wobblebot.config.cli import ReanchorSeverity, WebConfig
 from wobblebot.ports.storage import StoragePort
 
 
@@ -91,6 +91,19 @@ def get_live_tick_seconds(request: Request) -> float | None:
     """
     seconds: float | None = request.app.state.live_tick_seconds
     return seconds
+
+
+def get_reanchor_min_severity(request: Request) -> ReanchorSeverity:
+    """Pull ``WebConfig.reanchor_min_severity`` off ``app.state``.
+
+    The operator's attention floor for re-anchor banners. Unlike
+    ``cool_down_minutes`` this one genuinely lives on ``WebConfig`` — it
+    is a presentation choice about the dashboard, not a fact about the
+    engine — so there is no ``None`` case: the schema default (``"mild"``,
+    i.e. show everything) always applies.
+    """
+    severity: ReanchorSeverity = request.app.state.reanchor_min_severity
+    return severity
 
 
 def get_withdrawal_destinations(request: Request) -> dict[str, str]:

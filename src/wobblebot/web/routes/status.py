@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
+from wobblebot.config.cli import ReanchorSeverity
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.models import Balance, CapTripRecord, Order, Trade
 from wobblebot.domain.users import User, UserPreferences
@@ -60,6 +61,7 @@ from wobblebot.web.dependencies import (
     get_live_tick_seconds,
     get_observe_storage,
     get_operator_storage,
+    get_reanchor_min_severity,
     get_templates,
 )
 from wobblebot.web.routes.status_reanchor import (
@@ -545,6 +547,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     cool_down_minutes: float | None = None,
     operator_storage: StoragePort | None = None,
     live_tick_seconds: float | None = None,
+    reanchor_min_severity: ReanchorSeverity = "mild",
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -626,6 +629,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         price_series,
         observe_storage,
         operator_storage,
+        reanchor_min_severity,
     )
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
@@ -742,6 +746,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     cool_down_minutes: float | None = Depends(get_cool_down_minutes),
     operator_storage: StoragePort = Depends(get_operator_storage),
     live_tick_seconds: float | None = Depends(get_live_tick_seconds),
+    reanchor_min_severity: ReanchorSeverity = Depends(get_reanchor_min_severity),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
 
@@ -756,6 +761,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
         cool_down_minutes=cool_down_minutes,
         operator_storage=operator_storage,
         live_tick_seconds=live_tick_seconds,
+        reanchor_min_severity=reanchor_min_severity,
     )
     return templates.TemplateResponse(
         request,
@@ -780,6 +786,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     cool_down_minutes: float | None = Depends(get_cool_down_minutes),
     operator_storage: StoragePort = Depends(get_operator_storage),
     live_tick_seconds: float | None = Depends(get_live_tick_seconds),
+    reanchor_min_severity: ReanchorSeverity = Depends(get_reanchor_min_severity),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
 
@@ -793,6 +800,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
         cool_down_minutes=cool_down_minutes,
         operator_storage=operator_storage,
         live_tick_seconds=live_tick_seconds,
+        reanchor_min_severity=reanchor_min_severity,
     )
     return templates.TemplateResponse(
         request,
