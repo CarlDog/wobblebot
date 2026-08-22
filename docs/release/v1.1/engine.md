@@ -182,6 +182,120 @@ duration, operator-override discipline).
 cool-down duration (longer for trend-following losses, shorter
 for known-bug recoveries).
 
+### Capital utilization — added capital and realized profit never reach the trading envelope
+
+**What:** three linked questions raised by the operator 2026-08-22,
+filed together because they share one root: **every USD-denominated
+knob is a static config number, and nothing in the running system
+ever revises it.** Capital added to the Kraken account, and profit
+the bot itself realizes, sit idle unless the operator manually reruns
+`cli/recalibrate`.
+
+**The observation that prompted it:** advisor output read
+`Risk's high-confidence constraint dominates: daily spend is 98.4%
+consumed ($118.02 of $120.00)` against an account that started at
+~$250, has since taken a ~$100 operator top-up and realized ~$25 of
+trading profit — yet is still cycling on roughly $150 of working
+capital, the rest being either stale inventory or headroom the engine
+cannot see.
+
+**Sub-question 1 — is `max_daily_spend_usd` too conservative, and
+should it recover as cycles complete?**
+
+Verified behavior (`services/exposure.py:111`): `daily_spend_usd()`
+sums `price × amount` over BUY orders with `created_after` = midnight
+UTC and status in `SPEND_COMMITTED_STATUSES = {open, pending,
+closed}`. Consequences:
+
+- It is a **ratchet, not a balance.** A completed round-trip — BUY
+  fills, counter-SELL fills, capital returns plus profit — leaves the
+  BUY at `closed`, so it keeps consuming the cap for the rest of the
+  UTC day. A grid that cycles *well* is penalized: the more
+  round-trips it completes, the sooner it locks itself out. The cap
+  resets only at midnight UTC.
+- Only `canceled` and `expired` release headroom — precisely the
+  orders that never moved money in the first place.
+- **Fees and LLM costs are not in it.** It is pure notional; the LLM
+  budget is a separate gate (`services/llm_cost_gate`) and Kraken
+  fees are never added. So the figure is not "money spent today" in
+  any ledger sense either — it is "BUY notional committed today,"
+  which double-counts capital that has already come back.
+
+The design intent is defensible (it bounds how much fresh exposure
+can be opened per day, and it is trivially auditable), but
+"committed" and "spent" have quietly diverged from each other and
+from the operator's mental model. Worth deciding explicitly: is the
+cap meant to bound *new risk opened per day* (current behavior,
+ratchet correct) or *net capital deployed* (would need to net out
+completed cycles)? Those are different safety properties and only the
+first is implemented.
+
+**Sub-question 2 — should order size scale with account balance? Is
+that part of re-anchoring?**
+
+No, on both counts. `_place_level` reads `coin_cfg.order_size_usd`
+straight from config (`services/grid_engine.py:1595`); it is never
+derived from a live balance. Re-anchoring (`request_reanchor` /
+`_reanchor_unlocked`, `services/grid_engine.py:744`) recomputes the
+**reference price** and re-lays the grid around it — cancelling and
+replacing orders at new price *levels*, at the same *size*. Nothing
+in the engine resizes an order for any reason.
+
+The lever that does exist is `cli/recalibrate --target-balance N`,
+which scales ten config sections proportionally
+(`services/calibrator.py`) — per-coin `order_size_usd`, all three
+exposure caps, `max_daily_spend_usd`, the session loss cap, and the
+four harvester thresholds — and rewrites `settings.yml` under
+`--commit`. It is operator-initiated per ADR-012's auto-tuning gate,
+and there is no record of it having been run against this deployment.
+The mechanism is built; the gap is that nothing tells the operator
+when it is needed, and nothing runs it.
+
+**Sub-question 3 — should realized profit be redeployed?**
+
+Same gap, sharper. Realized profit lands in the Kraken USD balance
+and is invisible to the engine: exposure caps are computed from
+*orders* (`total_exposure_usd`) and inventory from *trades at cost
+basis* (`coin_inventory_cost_usd`, ADR-039) — never from the
+account's free USD. Profit therefore neither raises headroom nor gets
+reinvested; it accumulates as idle quote currency until the
+Harvester's surplus threshold sweeps it out or the operator
+recalibrates by hand.
+
+**Candidate directions (not a decision):**
+
+1. **A drift detector, not an auto-tuner.** Cheapest, and most in
+   keeping with ADR-002 / ADR-012: a daily check comparing live free
+   USD + inventory-at-cost against the balance the config was
+   calibrated for, alerting when the ratio drifts past a threshold
+   (say ±25%). Surfaces "you have ~$100 of unused capital; consider
+   `cli/recalibrate --target-balance 350`" and leaves the call to the
+   operator. Could ride `cli/maintenance` alongside the reconcile
+   task.
+2. **Make the daily cap net of completed cycles** — change
+   `SPEND_COMMITTED_STATUSES` semantics so a BUY whose counter-SELL
+   has filled stops consuming the cap. Needs an ADR: it materially
+   loosens a safety cap, and `closed` was included deliberately after
+   an incident (see the `services/exposure.py` module docstring).
+3. **Balance-aware sizing** — derive `order_size_usd` from a fraction
+   of free balance at layout time rather than from config. Rejected
+   on first pass as an over-reach: it makes order size
+   non-deterministic, breaks the schema-drift / example-config
+   contract, and makes backtests non-reproducible. Recorded only so a
+   later reader knows it was considered.
+
+**Why deferred:** all three sub-questions touch safety caps or money
+sizing, so none is a "while we're in here" change. (1) is the only
+one that could ship without an ADR — it is advisory output, no
+behavior change. (2) and (3) both loosen guardrails and need
+ratification.
+
+**Trigger:** review alongside the P4 advisor-feedback work, or sooner
+if the daily-spend cap starts short-circuiting cycles regularly (the
+98.4% reading above is the first observation of it binding). Running
+`cli/recalibrate` in its default dry-run mode is worth doing now
+regardless — it costs nothing and writes nothing.
+
 ### Slippage / spread guard before placement
 
 **What:** pre-tick check on the current bid-ask spread; refuse
