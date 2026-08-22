@@ -133,6 +133,49 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ### Added
 
+- **Standing Kraken-vs-local trade reconciliation** (2026-08-22) — a
+  fifth `cli/maintenance` scheduled task
+  (`schedules.maintenance_reconcile`, default daily) diffing Kraken's
+  own `TradesHistory` against the locally recorded trades for every
+  symbol in `grid.coins`, notifying at `critical` on any Kraken trade
+  with no local row. Both silent-loss incidents that motivated it went
+  undetected for weeks: an orphaned SOL fill for seven, and 18 BTC
+  trades from `tools/first_real_trade.py` (which imports no storage
+  layer at all, by design) until a manual audit went looking. The diff
+  is by trade id deliberately — a binary present/absent check with no
+  dust tolerance to argue about, after an earlier
+  quantity-versus-balance comparison produced two false positives from
+  Kraken's `total`-vs-`available` semantics. Symbols come from
+  `grid.coins` rather than a config list of their own, so the check
+  cannot drift from what is actually traded; `Ledgers` is deliberately
+  NOT consulted (staking accrual and dust conversions are expected
+  noise, not a correctness signal). Reader key, read-only storage
+  handle, and `get_trade_history` as the only exchange call — the task
+  cannot place, cancel, or move anything. Fault isolation is stricter
+  here than in the sibling tasks because this one parses third-party
+  JSON: `_main_async`'s `asyncio.gather` has no `return_exceptions`, so
+  an escaping exception would take vacuum/prune/backup/verify down with
+  it. 2s inter-symbol pacing per ADR-027's convention, after an unpaced
+  sweep tripped `EAPI:Rate limit exceeded` and silently covered 40% of
+  the requested set. `tools/reconcile_trade_history.py` is the deeper
+  one-shot manual diagnostic (adds `Ledgers` for non-trade balance
+  moves) and shares the same diff via `services/trade_reconciliation`,
+  so the two cannot diverge. (`af95f48`, `0abeeb1`)
+
+- **`SQLiteStorageAdapter(..., read_only=True)`** (2026-08-22) — opens
+  via SQLite's `mode=ro` URI, skipping the pragmas, schema DDL, eight
+  migrations and commit that `connect()` otherwise runs. Those are
+  correct for a daemon that owns its DB and wrong for one reading a DB
+  another daemon writes: without it the reconcile task above holds a
+  write lock on `live.db` during its migration transaction, and since
+  no `busy_timeout` is set anywhere in `src/`, a collision surfaces as
+  an immediate `SQLITE_BUSY` on `cli/live`'s own write rather than a
+  wait. `mode=ro` additionally refuses to open a missing file instead
+  of creating an empty one, so a typo'd path fails loudly rather than
+  reporting every expected row as absent. Mirrors the idiom
+  `daemon_health._latest_iso_timestamp` already used for exactly this
+  situation; it simply wasn't reachable through the adapter. (`90eae3f`)
+
 - **The MoE risk expert now receives the exposure data its prompt promised.**
   `risk.md` told the model it was handed "current open exposure vs the
   configured caps … and daily spend so far vs the daily cap"; of those,
@@ -167,6 +210,71 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
   consecutive lines. (`af2907d`, `7f800d2`, `c8ce723`, `b9ec699`)
 
 ### Fixed
+
+- **Malformed Kraken responses raised bare builtins, bypassing every
+  graceful-degradation handler in the codebase** (2026-08-22, found by
+  auditing the root cause behind a defensive patch in the new reconcile
+  task). Kraken's JSON is untyped at the wire and `KrakenAdapter`
+  coerced it into domain values unguarded, so a malformed payload raised
+  `decimal.InvalidOperation` / `TypeError` / `KeyError` / `IndexError` /
+  `OverflowError` / pydantic `ValidationError`. None of those subclass
+  `WobbleBotPortError`, which is what every caller catches, so none of
+  the designed containment applied. A caller audit found 13
+  high-severity paths: `cli/live`'s per-tick handlers (designed to skip
+  a symbol, would instead exit the loop and kill the real-money daemon
+  mid-session); `cli/live`'s **shutdown** `finally` block, where the
+  balance read precedes `_cancel_all_open`, so a bad `BalanceEx` entry
+  aborted the block and left real orders resting on Kraken;
+  `cli/harvest`, the only module with transfer authority (ADR-003),
+  whose `asyncio.gather` has no `return_exceptions`; and
+  `grid_engine.cancel_open_orders`' trade-history fetch, which runs
+  *after* the cancels have executed — the exact silent-fill-loss shape
+  the `save_fill` entry above closes. Nine parse sites now guard against
+  a shared `_PARSE_ERRORS` tuple, shared because that exception set is a
+  subtle correctness rule that had **already drifted**:
+  `_ensure_pair_metadata` caught `(KeyError, ValueError)` and so missed
+  the `InvalidOperation` its own `Decimal()` calls raise
+  (`InvalidOperation` is an `ArithmeticError`, not a `ValueError`), and
+  `get_ohlc` had the mirror-image hole — catching only `ValidationError`
+  while its sibling `Decimal()` calls escaped, with the timestamp
+  coercion outside the `try` entirely. `_unwrap_envelope`'s error-code
+  comprehension is additionally `isinstance`-gated: a truthy
+  non-iterable `error` (Kraken sending `1`) made the envelope
+  normalizer — the one place every call passes through — raise a bare
+  `TypeError`. Deliberately not a decorator or context manager: a
+  blanket wrapper on `place_order` would swallow the
+  `InsufficientBalance` translation and convert a domain exception into
+  an `ExchangeError`. `ExchangeError` is likewise excluded from the
+  tuple so `_symbol_for_pair_key`'s own message passes through
+  un-rewrapped. 19 regression tests asserting both the `ExchangeError`
+  and the `__cause__` chain (contractual per `ports/exceptions.py`,
+  previously unverified for Kraken); 17 confirmed failing against the
+  pre-fix adapter.
+
+- **Silent fill loss: an order's terminal status and its trades were
+  persisted as two independent writes** (2026-08-22, found by a
+  financial-correctness audit, root-caused and fixed same day).
+  `GridEngine._detect_fills` saved the order as `closed` and *then*
+  looped saving its matched trades. A failure between the two left the
+  order permanently `closed` with its trade never written — and a closed
+  order never becomes a fill candidate again, so nothing ever retried
+  it. Confirmed live on XRP: the `orders` row carried the correct
+  `status`/`filled_amount` while Kraken's matching trade was absent from
+  `trades` entirely, silently corrupting that symbol's cost-basis replay
+  and therefore the SellGuard's allow/defer decisions. New
+  `StoragePort.save_fill(order, trades)` wraps both writes in one SQLite
+  transaction, so a failed trade insert rolls the order's status change
+  back with it and the order is re-resolved on the next pass instead of
+  losing the fill. Wired into all three call sites with that shape
+  (`GridEngine._detect_fills`, `GridEngine.cancel_open_orders`,
+  `reconciler.apply_reconciliation`). Separately,
+  `cancel_open_orders`'s "not tracked in local storage" branch
+  discarded a real fill at INFO — ADR-018 still forbids adopting an
+  untracked order, so such a fill stays unrecoverable, but it now pages
+  at ERROR rather than vanishing. Regression tests pin the rollback:
+  a two-trade `save_fill` whose second insert fails must roll back the
+  first trade too, never committing a closed-order-with-missing-trade
+  half-state. (`7285edb`)
 
 - **ADR-021/ADR-037 alerting-fidelity gaps: DMS-alert reset bug,
   book-vanish message honesty, held-symbol reminder** (2026-08-20,
