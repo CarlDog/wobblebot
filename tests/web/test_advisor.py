@@ -268,6 +268,31 @@ class TestAdvisorRoute:
             assert "below floor" not in resp.text
 
     @pytest.mark.asyncio
+    async def test_confidence_badges_carry_descriptive_titles(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        advise_storage: SQLiteStorageAdapter,
+    ) -> None:
+        """The confidence tag on the aggregate row and on each per-expert
+        row must explain what high/medium/low mean, not just show the bare
+        word — the badges alone don't tell an unfamiliar user anything."""
+        await advise_storage.save_advisor_suggestion(
+            _make_suggestion(symbol="BTC/USD", confidence="medium", with_experts=True)
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            resp = client.get("/advisor")
+            assert resp.status_code == 200
+
+        titles = re.findall(r'title="([^"]*confidence[^"]*)"', resp.text, re.IGNORECASE)
+        # Aggregate row: medium. Experts: quant=high, risk=medium.
+        assert titles == [
+            "Medium confidence — a real but mixed signal; worth weighing, not decisive on its own.",
+            "High confidence — a clear, well-supported signal; the advisor would act on this call.",
+            "Medium confidence — a real but mixed signal; worth weighing, not decisive on its own.",
+        ]
+
+    @pytest.mark.asyncio
     async def test_lists_multiple_suggestions_newest_first(
         self,
         operator_storage: SQLiteStorageAdapter,

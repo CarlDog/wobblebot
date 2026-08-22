@@ -4,6 +4,20 @@
 
 {% block title %}Advisor — WobbleBot{% endblock %}
 
+{# Self-reported LLM conviction in a recommendation (see config/prompts/*.md);
+   the MoE aggregator weights it high=3/medium=2/low=1 (services/aggregators.py).
+   One macro so the aggregate-row and per-expert-table badges below can't drift
+   apart on wording. #}
+{% macro confidence_title(level) -%}
+  {%- if level == 'high' -%}
+    High confidence — a clear, well-supported signal; the advisor would act on this call.
+  {%- elif level == 'medium' -%}
+    Medium confidence — a real but mixed signal; worth weighing, not decisive on its own.
+  {%- else -%}
+    Low confidence — thin or ambiguous data (or a faint hunch), flagged for visibility rather than conviction.
+  {%- endif -%}
+{%- endmacro %}
+
 {% block content %}
 <h1>Advisor</h1>
 
@@ -53,7 +67,8 @@
           <span class="tag
             {% if rec.confidence == 'high' %}ok
             {% elif rec.confidence == 'medium' %}warn
-            {% else %}fail{% endif %}">{{ rec.confidence }}</span> ·
+            {% else %}fail{% endif %}"
+            title="{{ confidence_title(rec.confidence) }}">{{ rec.confidence }}</span> ·
           role={{ rec.role }}
           {% if row.below_floor %}
             · <span class="tag floor"
@@ -92,7 +107,8 @@
                   <span class="tag
                     {% if o.confidence == 'high' %}ok
                     {% elif o.confidence == 'medium' %}warn
-                    {% else %}fail{% endif %}">{{ o.confidence }}</span>
+                    {% else %}fail{% endif %}"
+                    title="{{ confidence_title(o.confidence) }}">{{ o.confidence }}</span>
                 </td>
                 <td>
                   {% if o.recommendations %}
