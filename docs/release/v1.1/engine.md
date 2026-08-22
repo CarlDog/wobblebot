@@ -246,8 +246,19 @@ which scales ten config sections proportionally
 (`services/calibrator.py`) — per-coin `order_size_usd`, all three
 exposure caps, `max_daily_spend_usd`, the session loss cap, and the
 four harvester thresholds — and rewrites `settings.yml` under
-`--commit`. It is operator-initiated per ADR-012's auto-tuning gate,
-and there is no record of it having been run against this deployment.
+`--commit`. It is operator-initiated per ADR-012's auto-tuning gate.
+
+Whether it has ever been run here is **not determinable after the
+fact**: `services/settings_rewriter.apply_dotted_overrides` writes
+atomically (temp file + rename) and leaves no backup, no audit row,
+and no log marker — a past run is indistinguishable from an operator
+hand-editing the same values. (The `.bak-YYYYMMDD` files on the NAS
+are made by hand during config sessions, so they are not evidence
+either.) Worth noting as its own small gap: a config-mutating
+operator tool with no trace is hard to reason about later. What is
+certain is that `settings.yml`'s own sizing comments still describe
+the original ~$242 soak, so nothing has re-scaled them since.
+
 The mechanism is built; the gap is that nothing tells the operator
 when it is needed, and nothing runs it.
 
