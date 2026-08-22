@@ -189,6 +189,57 @@ be guessed; should be tuned to observed growth rates after
 **Trigger:** post-v1.0 + ~6 months of accumulated runtime data
 so retention windows can be set against real growth curves.
 
+### Prune cycle logs a WARNING on every same-day restart
+
+**What:** teach the prune cycle to tell "this cutoff is already
+archived" apart from a genuine archive-name collision, so a
+same-UTC-day re-run skips silently instead of logging a
+scary-looking failure.
+
+**Why worth doing:** it is currently noise, not data risk — but
+it is noise that fires on *every* restart, which is exactly how
+operators get trained to ignore WARNINGs. Observed twice within
+11 minutes on 2026-08-22 (`18:12`, `18:23`) during the reconcile
+deploy:
+
+```
+[WARNING] prune cycle failed; will retry next interval:
+FileExistsError: archive target already exists; refusing to
+overwrite: data/archive/wobblebot-observe-2026-07-23.csv.gz
+```
+
+**Mechanism:** `cli/maintenance.py:214` builds
+`archive_name = f"{stem}-{older_than:%Y-%m-%d}.csv.gz"` where
+`older_than = now - prune_price_snapshots_older_than_days`. That
+date is *stable within a UTC day*, so the first prune of the day
+writes the archive and deletes its rows, and every later run that
+day recomputes the same filename and hits
+`archive_price_snapshots_to_csv`'s deliberate
+`FileExistsError` overwrite guard
+(`services/maintenance.py:124`). The registry prunes at
+`:175` share the identical shape.
+
+**Why it is benign today:** by the time the second run collides,
+that cutoff's rows are already archived and deleted, so nothing
+is lost. Rows that cross the 30-day boundary *later* in the same
+day simply wait for tomorrow's run, when the cutoff date advances
+— a ≤24h delay, self-correcting, no data risk. The cycle is
+fail-soft and retries next interval.
+
+**Implementation:** cheapest correct fix is to treat an existing
+archive for the *current cutoff* as "already done": check
+`dest.exists()` before querying, and if so skip the cycle at INFO
+rather than raising. Keep the `FileExistsError` guard itself —
+refusing to silently overwrite an archive is right; it is only
+the caller's interpretation that is wrong. Do NOT solve it by
+adding a timestamp to the filename: that would produce a new
+archive file per restart and defeat the guard's purpose.
+
+**Why deferred:** cosmetic; no correctness or data-loss
+consequence. Bundle it with the next cli/maintenance change.
+
+**Trigger:** next time cli/maintenance is opened for other work.
+
 ### Daily summary email or Discord-DM
 
 **What:** a `cli/daily-summary` daemon that produces "yesterday in

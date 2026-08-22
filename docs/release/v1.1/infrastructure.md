@@ -404,6 +404,47 @@ raises LLM call volume/cadence. Implementation notes (system-string →
 block list; snapshot split; the 1h-TTL 2× write rate needing its own
 pricing column) are in ADR-033.
 
+### One-off operator scripts accumulate in the NAS `data/` dir
+
+**What:** decide where ad-hoc diagnostic/remediation scripts live when
+they must run *inside* a container, and clean up the ones already
+stranded on the NAS.
+
+**Why worth doing:** `tools/` is baked into the image, but `data/` is
+the only host-mounted writable path, so any script written during an
+incident lands in `data/` — beside the live databases, unversioned, and
+permanent. After the 2026-08-22 fill-loss incident three are sitting
+there:
+
+- `data/reconcile_trade_history.py` — **now a stale duplicate.** The
+  real one ships in the image at `tools/reconcile_trade_history.py`
+  (merged in #102) and has since gained the account-wide single fetch,
+  open-order deferral, and logger output. The `data/` copy is the
+  pre-review version. Anyone reaching for the obvious path gets the
+  worse script, and nothing warns them.
+- `data/backfill_btc_trades.py` — spent one-off (18 BTC trades,
+  2026-08-22).
+- `data/backfill_sol_xrp.py` — spent one-off (SOL + XRP, 2026-08-22).
+
+The stale duplicate is the actual hazard; the two backfills are inert
+but are precondition-guarded to abort on an unexpected state, so a
+stray re-run is safe.
+
+**Implementation:** two parts. (1) Delete all three from the NAS
+`data/` dir — the reconcile tool is in the image, and both backfills
+are complete and idempotent-no-op anyway. (2) Establish the
+convention: incident scripts get run via a container that mounts the
+repo, or land in `tools/` and ship in the image, or go in a dedicated
+`data/scratch/` that is documented as ephemeral and swept. The current
+implicit answer ("drop it next to live.db forever") is the one to
+retire.
+
+**Why deferred:** no correctness impact today; the stale copy only
+bites if someone runs it by hand instead of the image's version.
+
+**Trigger:** next NAS housekeeping pass, or immediately if anyone is
+about to run a reconcile by hand.
+
 ### Audit: hardcoded facts that should be data / DB-driven
 
 **What:** a systematic v1.1 sweep of facts hardcoded in *code* that are
