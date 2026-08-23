@@ -75,6 +75,11 @@ _CAP_MATERIAL_FRACTION = Decimal("0.5")
 
 
 async def run_capital_report_cycle(  # pylint: disable=too-many-return-statements
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # Mirrors run_reconcile_cycle's shape: the caller (cli/maintenance)
+    # already holds every one of these, so taking them as parameters
+    # keeps this module free of config-loading and storage-opening
+    # concerns it has no business owning.
     # Each return is a distinct precondition (no source db / no symbols
     # / halted / missing file / missing creds / storage open failure)
     # that must skip the cycle without touching Kraken or storage --
@@ -211,6 +216,10 @@ async def _held_quantities(
 
 
 async def _build_report(  # pylint: disable=too-many-locals
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # Gathers the inputs for three independent checks; each parameter
+    # is one of those inputs. Bundling them would invent a DTO with a
+    # single construction site.
     exchange: KrakenAdapter,
     storage: StoragePort,
     grid: GridConfig,
