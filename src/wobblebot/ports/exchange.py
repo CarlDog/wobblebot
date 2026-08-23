@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import FeeRates, OHLCBar, Price, Symbol, Ticker
+from wobblebot.domain.value_objects import FeeRates, OHLCBar, PairLimits, Price, Symbol, Ticker
 
 
 class ExchangePort(ABC):
@@ -85,6 +85,31 @@ class ExchangePort(ABC):
             ExchangeError: If the rates cannot be retrieved (callers
                 fall back to the ``config.grid.KRAKEN_*_FEE_RATE``
                 constants and log the fallback).
+        """
+        pass
+
+    @abstractmethod
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        """Get the exchange's minimum order size for a pair (ADR-040).
+
+        ``ordermin`` (base-currency floor) and ``costmin`` (quote-currency
+        floor); an order must clear both or the exchange refuses it.
+
+        Exists so the capital Reporter can judge entry/exit viability from
+        the exchange's own numbers. It must NOT be inferred from refusal
+        messages: the engine's safety caps are evaluated before the order
+        reaches the exchange, so whichever gate trips first is the only
+        one visible, and the same defect reports differently at different
+        times of day.
+
+        Args:
+            symbol: Trading pair
+
+        Returns:
+            The pair's current minimum order size.
+
+        Raises:
+            ExchangeError: If the limits cannot be retrieved.
         """
         pass
 

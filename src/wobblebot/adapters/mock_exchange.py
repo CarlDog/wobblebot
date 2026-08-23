@@ -33,6 +33,7 @@ from wobblebot.domain.value_objects import (
     FeeRates,
     OHLCBar,
     OrderSide,
+    PairLimits,
     Price,
     Symbol,
     Ticker,
@@ -211,6 +212,17 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
         """ADR-038: the mock bills one flat rate, so maker == taker."""
         return FeeRates(symbol=symbol, maker=self._fee_rate, taker=self._fee_rate)
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        """ADR-040: the mock enforces no minimum, so both floors are zero.
+
+        This is an honest report of the mock's behaviour, not a stub --
+        ``place_order`` here really does accept any volume. It also means
+        a sandbox run can NEVER reproduce an ``ordermin`` refusal that
+        live would hit (the 2026-08-22 SOL freeze is exactly that class
+        of bug). Treat minimum-order viability as untested by sandbox.
+        """
+        return PairLimits(symbol=symbol, ordermin=Decimal(0), costmin=Decimal(0))
 
     async def get_balances(self) -> list[Balance]:
         return [self._balance_for(asset) for asset in sorted(self._balances)]

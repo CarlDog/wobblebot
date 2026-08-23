@@ -27,7 +27,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.models import Balance
-from wobblebot.domain.value_objects import FeeRates
+from wobblebot.domain.value_objects import FeeRates, PairLimits
 from wobblebot.domain.value_objects import Timestamp as _Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
@@ -60,6 +60,11 @@ class _StubExchange(ExchangePort):
 
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
         return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        # ADR-040 port addition. This double exercises other paths; zero
+        # floors mean "no minimum", matching the mock exchange.
+        return PairLimits(symbol=symbol, ordermin=Decimal(0), costmin=Decimal(0))
 
     async def get_balance(self, asset: str) -> Balance | None:
         self.call_count += 1

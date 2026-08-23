@@ -158,6 +158,7 @@ schedules:
   maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
   maintenance_verify: 30d             # cli/maintenance (v1.1): backup restoration smoke test cadence
   maintenance_reconcile: 1d           # cli/maintenance (2026-08-22): Kraken trade-history reconciliation cadence
+  maintenance_capital: 1d             # cli/maintenance (ADR-040): capital-viability report cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -904,7 +905,8 @@ web:
 # vacuum / prune+archive / backup / verify / reconcile. Operator-started;
 # not auto-spawned by any other daemon. Cadences pulled from `schedules:`
 # block above (maintenance_vacuum / maintenance_prune /
-# maintenance_backup / maintenance_verify / maintenance_reconcile) with
+# maintenance_backup / maintenance_verify / maintenance_reconcile /
+# maintenance_capital) with
 # per-task defaults (7d / 1d / 1d / 30d / 1d) when missing.
 #
 # Per stage-8.2-design.md decision 3 only `price_snapshots` gets

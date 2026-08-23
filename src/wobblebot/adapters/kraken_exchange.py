@@ -65,6 +65,7 @@ from wobblebot.domain.value_objects import (
     FeeRates,
     OHLCBar,
     OrderSide,
+    PairLimits,
     Price,
     Symbol,
     Ticker,
@@ -442,6 +443,17 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                 ) from exc
             out.append(parsed_bar)
         return out
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        """ADR-040: the pair's ``ordermin``/``costmin`` from AssetPairs.
+
+        Served from the same cached metadata every order submission is
+        validated against, so the Reporter and the placement path can
+        never disagree about what the minimum is.
+        """
+        await self._ensure_pair_metadata()
+        meta = self._pair_metadata_for(symbol)
+        return PairLimits(symbol=symbol, ordermin=meta.ordermin, costmin=meta.costmin)
 
     async def get_balances(self) -> list[Balance]:
         """Fetch all account balances via ``/0/private/BalanceEx``.
