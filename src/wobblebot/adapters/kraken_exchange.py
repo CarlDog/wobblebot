@@ -92,6 +92,22 @@ _TRADES_HISTORY_MAX_PAGES = 20
 # bug can't spin forever, not as a real ceiling.
 _LEDGERS_MAX_PAGES = 20
 
+# Delay between Ledgers pages. Kraken's private-API call counter is
+# shared across EVERY endpoint on the account (max 15 points, decaying
+# ~0.33/s; a Ledgers or TradesHistory call costs 2).
+#
+# This value is not a guess -- tools/reconcile_trade_history.py already
+# carries it, with the note "an earlier unpaced run tripped
+# EAPI:Rate limit exceeded". That lesson was written down and this
+# method was still shipped unpaced, which promptly reproduced it in
+# production (2026-08-23): ~410 entries is 9 pages x 2 = 18 points
+# against a 15-point ceiling.
+#
+# Trade history escapes today only by being smaller (~331 rows, 7
+# pages, 14 points -- one page below the ceiling). It is the same
+# latent bug and will bite when the account's history grows.
+_LEDGERS_PAGE_DELAY_SECONDS = 2.0
+
 # ---------------------------------------------------------------- #
 # Per-API-key nonce state, shared across adapter INSTANCES           #
 # ---------------------------------------------------------------- #
@@ -525,6 +541,12 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         (``XETH`` -> ``ETH``) so callers never see Kraken's naming; that
         is the same translation ``Balance.asset`` already gets.
 
+        Pages are PACED (:data:`_LEDGERS_PAGE_DELAY_SECONDS`) because
+        Kraken's call counter is account-wide and this walk alone
+        exceeds it -- see that constant. A full ingest therefore takes
+        ~20s, which is fine for a daily maintenance task and is why this
+        must never be called from a latency-sensitive path.
+
         ``type`` is passed through verbatim. Kraken's vocabulary is open
         (``staking``, ``deposit``, ``transfer``, ``adjustment``,
         ``reward``, ...) and mapping it onto a closed enum here would
@@ -539,9 +561,13 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         entries: list[LedgerEntry] = []
         offset = 0
         total_count: int | None = None
-        for _ in range(_LEDGERS_MAX_PAGES):
+        for page in range(_LEDGERS_MAX_PAGES):
             if len(entries) >= limit:
                 break
+            if page > 0:
+                # Between pages only -- never before the first call, so a
+                # single-page account pays nothing.
+                await asyncio.sleep(_LEDGERS_PAGE_DELAY_SECONDS)
             result = await self._private_post("/0/private/Ledgers", {"ofs": offset})
             ledger_map = result.get("ledger", {})
             if not isinstance(ledger_map, dict) or not ledger_map:

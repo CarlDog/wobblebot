@@ -180,3 +180,71 @@ class TestLedgerParsing:
         )
         entries = await adapter.get_ledger_entries(limit=1)
         assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+class TestPagination:
+    async def test_pages_are_paced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Kraken's call counter is account-wide and a full ledger walk
+        alone exceeds it.
+
+        Production, 2026-08-23: an unpaced walk over ~410 entries (9
+        pages x 2 points against a 15-point ceiling) returned
+        ``EAPI:Rate limit exceeded``. The lesson was already written
+        down in tools/reconcile_trade_history.py and this method still
+        shipped without it, so it gets a test rather than a comment.
+        """
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr("wobblebot.adapters.kraken_exchange.asyncio.sleep", fake_sleep)
+
+        pages = [
+            {f"L{p}{i}": dict(_REAL_STAKING_ROW, refid=f"R{p}{i}") for i in range(50)}
+            for p in range(3)
+        ]
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/0/public/Assets"):
+                return httpx.Response(200, json=_ASSETS)
+            idx = min(calls["n"], len(pages) - 1)
+            calls["n"] += 1
+            return httpx.Response(200, json=_ledger_payload(pages[idx], count=150))
+
+        client = httpx.AsyncClient(
+            base_url="https://api.kraken.com", transport=httpx.MockTransport(handler)
+        )
+        adapter = KrakenAdapter(
+            config=KrakenConfig(api_key="pacing", api_secret=_TEST_SECRET), http_client=client
+        )
+        try:
+            await adapter.get_ledger_entries(limit=1000)
+        finally:
+            await adapter.aclose()
+
+        # Three pages -> two inter-page waits. Never before the first
+        # call, so a single-page account pays nothing.
+        assert len(sleeps) == 2, f"expected 2 inter-page delays, got {len(sleeps)}"
+        assert all(d >= 2.0 for d in sleeps), sleeps
+
+    async def test_single_page_pays_no_delay(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr("wobblebot.adapters.kraken_exchange.asyncio.sleep", fake_sleep)
+        adapter = _adapter(
+            {
+                "/0/public/Assets": _ASSETS,
+                "/0/private/Ledgers": _ledger_payload({"L1": _REAL_STAKING_ROW}, count=1),
+            }
+        )
+        try:
+            await adapter.get_ledger_entries()
+        finally:
+            await adapter.aclose()
+        assert sleeps == []
