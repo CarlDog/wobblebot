@@ -5,7 +5,7 @@ Run as a module::
     python -m wobblebot.cli.maintenance
     python -m wobblebot.cli.maintenance --profile conservative
 
-Long-running daemon with six concurrent scheduled tasks:
+Long-running daemon with seven concurrent scheduled tasks:
 
 - **vacuum** — runs SQLite ``VACUUM`` against each configured DB
   on ``schedules.maintenance_vacuum`` cadence (default weekly).
@@ -56,6 +56,20 @@ Long-running daemon with six concurrent scheduled tasks:
   depending on which gate trips first. Advisory only: it notifies and
   writes nothing. Implementation in ``cli/maintenance_capital.py``;
   pure checks in ``services/capital_reporter.py``.
+- **ledger sync** — ADR-040 follow-up (2026-08-22): ingests Kraken's
+  ``Ledgers`` into ``operator.db`` on ``schedules.maintenance_ledger``
+  cadence (default daily), so non-trade balance movements stop being
+  invisible. Born from a real gap: SOL/ETH/ADA balances each exceeded
+  their replayed quantity by exactly their net staking income (gross
+  minus Kraken's 30% cut) while unstaked BTC/XRP/DOGE matched to the
+  digit — the account was earning money nothing recorded. Fetches
+  ACCOUNT-WIDE rather than per traded symbol: keying off
+  ``live.symbols`` would have skipped ``BABY`` (staked but never
+  traded) and the USD deposits recording the operator's own capital.
+  Upserts on the exchange's ledger id, so re-ingesting is a no-op and
+  no watermark can drift. Implementation in
+  ``cli/maintenance_ledger.py``; aggregation in
+  ``services/staking_income.py``.
 
 Per `stage-8.2-design.md`:
 
@@ -100,6 +114,7 @@ from wobblebot.cli._common import (
     safe_shutdown,
 )
 from wobblebot.cli.maintenance_capital import run_capital_report_cycle
+from wobblebot.cli.maintenance_ledger import run_ledger_sync_cycle
 from wobblebot.cli.maintenance_reconcile import run_reconcile_cycle
 from wobblebot.config.cli import MaintenanceConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -443,6 +458,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     verify_interval = _resolve_interval(config, "maintenance_verify", timedelta(days=30))
     reconcile_interval = _resolve_interval(config, "maintenance_reconcile", timedelta(days=1))
     capital_interval = _resolve_interval(config, "maintenance_capital", timedelta(days=1))
+    ledger_interval = _resolve_interval(config, "maintenance_ledger", timedelta(days=1))
 
     # 2026-08-22: deliberately no dedicated symbol-list config field --
     # reconciling live.symbols, the ACTUALLY-TRADED set, means this can
@@ -457,6 +473,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     reconcile_symbols: list[Symbol] = list(config.live.symbols) if config.live else []
     reconcile_halt = PermanentAuthHalt("maintenance.reconcile")
     capital_halt = PermanentAuthHalt("maintenance.capital")
+    ledger_halt = PermanentAuthHalt("maintenance.ledger")
 
     # Stage 8.4.E follow-up — when operator_db is configured, open it
     # so the four task cycles can write heartbeat rows. Failure to
@@ -518,6 +535,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     verify_runs = 0
     reconcile_clean_runs = 0
     capital_findings = 0
+    ledger_entries_written = 0
 
     async def _vacuum_cycle() -> None:
         nonlocal vacuum_runs
@@ -686,6 +704,23 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
             },
         )
 
+    async def _ledger_cycle() -> None:
+        nonlocal ledger_entries_written
+        await emit_heartbeat(operator_storage, "cli/maintenance")
+        cycle_started = time.monotonic()
+        _LOGGER.info("ledger sync cycle starting")
+        written = await run_ledger_sync_cycle(operator_storage, notifier, ledger_halt)
+        ledger_entries_written += written
+        _LOGGER.info(
+            "ledger sync cycle complete (written=%s, elapsed_seconds=%s)",
+            written,
+            round(time.monotonic() - cycle_started, 2),
+            extra={
+                "written": written,
+                "elapsed_seconds": round(time.monotonic() - cycle_started, 2),
+            },
+        )
+
     try:
         await asyncio.gather(
             run_poll_loop(
@@ -718,6 +753,11 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 interval_seconds=capital_interval.total_seconds(),
                 stop_event=stop_event,
             ),
+            run_poll_loop(
+                _ledger_cycle,
+                interval_seconds=ledger_interval.total_seconds(),
+                stop_event=stop_event,
+            ),
         )
     finally:
         if operator_storage is not None:
@@ -728,13 +768,14 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         _LOGGER.info(
             "maintenance session end (duration_seconds=%s, vacuum_runs=%s, "
             "prune_rows_deleted_total=%s, backup_runs=%s, reconcile_clean_runs=%s, "
-            "capital_findings=%s)",
+            "capital_findings=%s, ledger_entries=%s)",
             round(time.monotonic() - started_at, 1),
             vacuum_runs,
             prune_total_deleted,
             backup_runs,
             reconcile_clean_runs,
             capital_findings,
+            ledger_entries_written,
             extra={
                 "duration_seconds": round(time.monotonic() - started_at, 1),
                 "vacuum_runs": vacuum_runs,
@@ -743,6 +784,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
                 "verify_runs": verify_runs,
                 "reconcile_clean_runs": reconcile_clean_runs,
                 "capital_findings": capital_findings,
+                "ledger_entries": ledger_entries_written,
             },
         )
     return 0

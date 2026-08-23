@@ -63,7 +63,15 @@ from wobblebot.adapters.sqlite_storage_schema import SCHEMA
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import (
+    Balance,
+    CapTripRecord,
+    LedgerEntry,
+    NewsItem,
+    Order,
+    PriceSnapshot,
+    Trade,
+)
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -345,6 +353,86 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save trade {trade.id}: {exc}") from exc
+
+    async def save_ledger_entries(self, entries: list[LedgerEntry]) -> int:
+        """Upsert exchange ledger entries (ADR-040 follow-up).
+
+        One transaction for the whole batch: a partially-written ingest
+        would make the next cycle's income total depend on where the
+        previous one failed. INSERT OR REPLACE keyed on the exchange's
+        ledger id makes re-ingesting an overlapping window a no-op.
+        """
+        if not entries:
+            return 0
+        conn = self._require_conn()
+        try:
+            for entry in entries:
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO ledger_entries (
+                        id, ref_id, asset, entry_type, amount, fee, occurred_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry.id,
+                        entry.ref_id,
+                        entry.asset,
+                        entry.entry_type,
+                        str(entry.amount),
+                        str(entry.fee),
+                        entry.occurred_at.dt.isoformat(),
+                    ),
+                )
+            await conn.commit()
+            return len(entries)
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save {len(entries)} ledger entries: {exc}") from exc
+
+    async def get_ledger_entries(
+        self,
+        asset: str | None = None,
+        entry_type: str | None = None,
+        limit: int = 1000,
+    ) -> list[LedgerEntry]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[object] = []
+        if asset is not None:
+            clauses.append("asset = ?")
+            params.append(asset)
+        if entry_type is not None:
+            clauses.append("entry_type = ?")
+            params.append(entry_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        try:
+            cursor = await conn.execute(
+                f"""
+                SELECT id, ref_id, asset, entry_type, amount, fee, occurred_at
+                FROM ledger_entries
+                {where}
+                ORDER BY occurred_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read ledger entries: {exc}") from exc
+        return [
+            LedgerEntry(
+                id=row["id"],
+                ref_id=row["ref_id"],
+                asset=row["asset"],
+                entry_type=row["entry_type"],
+                amount=Decimal(row["amount"]),
+                fee=Decimal(row["fee"]),
+                occurred_at=Timestamp(dt=datetime.fromisoformat(row["occurred_at"])),
+            )
+            for row in rows
+        ]
 
     async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
         """Persist an order's terminal state and its matched trades as one

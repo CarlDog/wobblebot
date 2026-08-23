@@ -500,6 +500,47 @@ CREATE TABLE IF NOT EXISTS engine_state (
 );
 
 -- ---------------------------------------------------------------- --
+-- ledger_entries — exchange balance movements that are NOT trades   --
+-- ---------------------------------------------------------------- --
+-- Kraken's Ledgers endpoint records every asset movement; wobblebot's
+-- trades table explains only the `trade` rows. Discovered 2026-08-22:
+-- SOL/ETH/ADA balances each exceeded their replayed quantity by
+-- exactly their net staking income (gross minus Kraken's 30% cut),
+-- while unstaked BTC/XRP/DOGE matched to the digit. The income was
+-- real and invisible to every accounting surface.
+--
+-- entry_type is stored VERBATIM with no CHECK constraint. A closed
+-- enum here would reject (or silently misfile) a reward type Kraken
+-- adds later — losing precisely the income this table exists to
+-- capture. Classification happens at read time, in code that can be
+-- updated without a migration.
+--
+-- `amount` is GROSS and `fee` is charged in the SAME asset, so the
+-- balance moves by (amount - fee). Summing amount alone overstates
+-- staking income by the fee — the 2026-08-22 reconciliation only
+-- closed once that was subtracted.
+--
+-- Lives in operator.db, following ADR-014 decision 5's precedent for
+-- llm_calls: a shared ledger read by several daemons belongs in the
+-- cross-daemon DB, not in one daemon's private store. Append-only and
+-- forensic — never pruned (ADR-036).
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id              TEXT PRIMARY KEY,
+    ref_id          TEXT,
+    -- Internal vocabulary (ETH), normalized by the adapter.
+    asset           TEXT NOT NULL CHECK (length(asset) > 0),
+    entry_type      TEXT NOT NULL CHECK (length(entry_type) > 0),
+    amount          TEXT NOT NULL,
+    fee             TEXT NOT NULL,
+    occurred_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_asset_type
+    ON ledger_entries(asset, entry_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred
+    ON ledger_entries(occurred_at);
+
+-- ---------------------------------------------------------------- --
 -- reanchor_snoozes — dashboard banner snoozes (P3 banner button)    --
 -- ---------------------------------------------------------------- --
 -- cli/web upserts one row per symbol when the operator clicks

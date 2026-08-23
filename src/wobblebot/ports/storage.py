@@ -19,7 +19,15 @@ from uuid import UUID
 from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
-from wobblebot.domain.models import Balance, CapTripRecord, NewsItem, Order, PriceSnapshot, Trade
+from wobblebot.domain.models import (
+    Balance,
+    CapTripRecord,
+    LedgerEntry,
+    NewsItem,
+    Order,
+    PriceSnapshot,
+    Trade,
+)
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -188,6 +196,51 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         Returns:
             List of trades
+
+        Raises:
+            StorageError: If retrieval fails
+        """
+        pass
+
+    # Exchange ledger operations (ADR-040 follow-up)
+    @abstractmethod
+    async def save_ledger_entries(self, entries: list[LedgerEntry]) -> int:
+        """Upsert exchange ledger entries; returns the number written.
+
+        Keyed on the exchange's own ledger id, so re-ingesting an
+        overlapping window is a no-op rather than a duplicate. That is
+        deliberate: the ingest re-fetches a bounded window every cycle
+        instead of tracking a watermark, and a watermark that drifts
+        (or a page boundary that shifts) must never double-count
+        income.
+
+        Args:
+            entries: Entries to upsert. An empty list is a no-op.
+
+        Returns:
+            Count of rows written.
+
+        Raises:
+            StorageError: If the write fails
+        """
+        pass
+
+    @abstractmethod
+    async def get_ledger_entries(
+        self,
+        asset: str | None = None,
+        entry_type: str | None = None,
+        limit: int = 1000,
+    ) -> list[LedgerEntry]:
+        """Read exchange ledger entries, newest first.
+
+        Args:
+            asset: Optional exchange asset-code filter (e.g. ``XETH``)
+            entry_type: Optional verbatim type filter (e.g. ``staking``)
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of entries, newest first
 
         Raises:
             StorageError: If retrieval fails

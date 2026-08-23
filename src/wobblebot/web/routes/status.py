@@ -54,6 +54,7 @@ from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.cycle_matcher import RecentCycle, match_cycles, today_realized_pnl
+from wobblebot.services.staking_income import income_by_asset, value_income_usd
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_cool_down_minutes,
@@ -91,6 +92,9 @@ _TREND_FLAT_THRESHOLD = Decimal("0.001")  # 0.1%
 # mirrors the cost page's all-time fee aggregation. Revisit if the trade
 # count ever approaches this.
 _TRADE_FETCH_LIMIT = 10_000
+# Ledger rows are a few hundred lifetime; this covers the whole table
+# so the income total is never computed from a truncated read.
+_LEDGER_FETCH_LIMIT = 100_000
 # Cap on cycles rendered in the Recent Cycles table (the full set still
 # feeds the lifetime-PnL aggregate). Keeps the table bounded once the
 # match window covers the whole history.
@@ -204,6 +208,15 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # All-time realized cycle PnL (sum of every matched cycle's net_pnl).
     # None when no cycles have completed.
     lifetime_realized_pnl: Decimal | None = None
+    # ADR-040 follow-up: non-trade income (staking rewards), valued at
+    # current prices. `None` = the ledger has not been ingested yet;
+    # `unpriced_income_assets` names any asset earning income that the
+    # dashboard has no price for, so it is visibly EXCLUDED rather than
+    # silently valued at zero. BABY is the live example — staked but
+    # never traded, so no price snapshot exists for it.
+    staking_income_usd: Decimal | None = None
+    staking_income_assets: tuple[str, ...] = ()
+    unpriced_income_assets: tuple[str, ...] = ()
     # Aggregate account scoreboard (top-of-dashboard strip). Sourced from
     # observe.db's latest balance snapshot (credential-free per ADR-016)
     # + the observed prices above. All ``None`` when observe.db is
@@ -539,6 +552,43 @@ def _compute_balance_metrics(
     return (free_usd, usd_total + held_value, held_value)
 
 
+async def _load_staking_income(
+    operator_storage: StoragePort | None,
+    prices: dict[Symbol, Decimal],
+) -> tuple[Decimal | None, tuple[str, ...], tuple[str, ...]]:
+    """Non-trade income (ADR-040 follow-up), valued at current prices.
+
+    Returns ``(total_usd, income_assets, unpriced_assets)``; a ``None``
+    total means "nothing ingested yet", which the template renders as
+    absent rather than as zero.
+
+    Lives in operator.db (ADR-014 decision 5's shared-ledger precedent),
+    so an unwired or unreadable store degrades to "not shown" — the same
+    posture every other cross-DB card here takes.
+    """
+    if operator_storage is None:
+        return None, (), ()
+    try:
+        ledger = await operator_storage.get_ledger_entries(limit=_LEDGER_FETCH_LIMIT)
+    except StorageError as exc:
+        _LOGGER.warning(
+            "ledger read failed; staking income omitted from status: %s",
+            exc,
+            extra={"error": str(exc)},
+        )
+        return None, (), ()
+    if not ledger:
+        return None, (), ()
+    by_asset = income_by_asset(ledger)
+    # Price map keyed by ASSET, from the symbols the dashboard already
+    # priced. An income asset absent here is reported as unpriced, never
+    # valued at zero — BABY is the live case: staked but never traded,
+    # so no price snapshot exists for it.
+    asset_prices = {sym.base: price for sym, price in prices.items()}
+    total, unpriced = value_income_usd(by_asset, asset_prices)
+    return total, tuple(sorted(by_asset)), unpriced
+
+
 async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     live_storage: StoragePort | None,
     observe_storage: StoragePort | None,
@@ -631,6 +681,14 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         operator_storage,
         reanchor_min_severity,
     )
+    # ADR-040 follow-up: income the trades table cannot see. Lives in
+    # operator.db (ADR-014 decision 5's shared-ledger precedent), so it
+    # degrades to "not shown" rather than erroring when that DB is
+    # unwired -- same posture as every other cross-DB card here.
+    income_usd, income_assets, unpriced_assets = await _load_staking_income(
+        operator_storage, prices
+    )
+
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
         operator_storage, tick_seconds=live_tick_seconds, now=now
@@ -661,6 +719,9 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         recent_cycles=cycles[:_RECENT_CYCLES_DISPLAY],
         today_realized_pnl=today_pnl,
         lifetime_realized_pnl=lifetime_pnl,
+        staking_income_usd=income_usd,
+        staking_income_assets=income_assets,
+        unpriced_income_assets=unpriced_assets,
         free_usd=free_usd,
         account_value_usd=account_value,
         held_value_usd=held_value,
