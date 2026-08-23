@@ -89,8 +89,11 @@ class TestSign:
 
 class TestMakeNonce:
     def test_strictly_increasing_across_consecutive_calls(self) -> None:
+        # Distinct key per test: nonce state is now shared per API KEY
+        # across adapter instances (the 2026-08-23 fix), so a key reused
+        # by another test carries its high-water mark in here.
         adapter = KrakenAdapter(
-            config=KrakenConfig(api_key="k", api_secret=_KRAKEN_DOC_SECRET),
+            config=KrakenConfig(api_key="nonce-increasing", api_secret=_KRAKEN_DOC_SECRET),
         )
         nonces = [adapter._make_nonce() for _ in range(100)]  # noqa: SLF001
 
@@ -101,9 +104,16 @@ class TestMakeNonce:
         )
 
     def test_recovers_when_wall_clock_jumps_backward(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Simulate NTP correction by feeding a controlled ``time_ns`` sequence."""
+        """Simulate NTP correction by feeding a controlled ``time_ns`` sequence.
+
+        Uses a key unique to this test. Since the 2026-08-23 fix the
+        counter is shared per API KEY across adapter instances, so a key
+        another test already drove would seed this one with a real
+        wall-clock high-water mark and the absolute assertions below
+        would be meaningless.
+        """
         adapter = KrakenAdapter(
-            config=KrakenConfig(api_key="k", api_secret=_KRAKEN_DOC_SECRET),
+            config=KrakenConfig(api_key="nonce-clock-jump", api_secret=_KRAKEN_DOC_SECRET),
         )
         # ms equivalents: 1000, 1001, 999 (backwards jump), 1002.
         fake_ns_values = iter([1_000_000_000, 1_001_000_000, 999_000_000, 1_002_000_000])
