@@ -92,6 +92,56 @@ _TRADES_HISTORY_MAX_PAGES = 20
 # bug can't spin forever, not as a real ceiling.
 _LEDGERS_MAX_PAGES = 20
 
+# ---------------------------------------------------------------- #
+# Per-API-key nonce state, shared across adapter INSTANCES           #
+# ---------------------------------------------------------------- #
+# Kraken requires a strictly increasing nonce per API KEY. A counter
+# living on the adapter instance is therefore the wrong scope: several
+# adapters in one process, all built from the same key, each start
+# their own counter and collide.
+#
+# That is not hypothetical. cli/maintenance runs its tasks under one
+# asyncio.gather, and each constructs its own KrakenAdapter from the
+# reader key. With two such tasks it raced and usually won; the third
+# (ledger sync, 2026-08-23) tipped it over and production returned
+# ``EAPI:Invalid nonce`` on BOTH the balance fetch and the Ledgers
+# call in the same 300ms.
+#
+# Two things are needed, and a shared counter alone is NOT enough:
+#   1. one monotonic source per key, so no two requests draw the same
+#      nonce; and
+#   2. serialized in-flight requests per key, because Kraken compares
+#      against the highest nonce it has SEEN -- two concurrent requests
+#      can arrive out of order and the lower one is rejected even
+#      though it was generated correctly.
+# The lock delivers both.
+#
+# Keyed by API key, so the trader key's calls are never serialized
+# behind the reader key's maintenance reads.
+#
+# STILL UNSOLVED: separate PROCESSES sharing one key (cli/observe and
+# cli/maintenance both hold the reader key) have independent state.
+# That has been fine in practice because their calls are spread across
+# seconds rather than fired together, but it is the same class of bug
+# and would need a persistent store to close properly.
+_NONCE_LOCKS: dict[str, asyncio.Lock] = {}
+_LAST_NONCE_BY_KEY: dict[str, int] = {}
+
+
+def _nonce_lock_for(api_key: str) -> asyncio.Lock:
+    """Get-or-create the per-key lock.
+
+    Safe without its own mutex: asyncio is single-threaded, and there is
+    no await between the check and the insert, so two coroutines cannot
+    interleave here.
+    """
+    lock = _NONCE_LOCKS.get(api_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _NONCE_LOCKS[api_key] = lock
+    return lock
+
+
 # Colloquial-naming aliases between our domain vocabulary and Kraken's
 # altname vocabulary. These are conventions we *choose* — Kraken's data
 # doesn't tell us "BTC means the same thing as XBT". Anything not listed
@@ -1152,20 +1202,28 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         """
 
         async def _do() -> dict[str, Any]:
-            body = dict(params or {})
-            nonce = self._make_nonce()
-            body["nonce"] = nonce
-            signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
-            headers = {
-                "API-Key": self._config.api_key,
-                "API-Sign": signature,
-                "Content-Type": "application/x-www-form-urlencoded",
-            }
-            try:
-                response = await self._http.post(path, data=body, headers=headers)
-            except httpx.HTTPError as exc:
-                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-            return self._unwrap_envelope(response, path, require_result=require_result)
+            # Held across the POST, not just the nonce draw: Kraken
+            # validates against the highest nonce it has SEEN, so two
+            # concurrent requests on one key can arrive out of order and
+            # the lower one is rejected despite being generated
+            # correctly. Acquired inside _do so the lock is released
+            # between rate-limit retry backoffs rather than held through
+            # the sleep.
+            async with _nonce_lock_for(self._config.api_key):
+                body = dict(params or {})
+                nonce = self._make_nonce()
+                body["nonce"] = nonce
+                signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
+                headers = {
+                    "API-Key": self._config.api_key,
+                    "API-Sign": signature,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
+                try:
+                    response = await self._http.post(path, data=body, headers=headers)
+                except httpx.HTTPError as exc:
+                    raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+                return self._unwrap_envelope(response, path, require_result=require_result)
 
         return await self._call_with_rate_limit_retry(_do)
 
@@ -1258,13 +1316,23 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         nonce remains roughly equal to wall-clock ms in the common case
         and walks forward by 1ms-at-a-time during a collision or jump.
 
-        If this adapter is ever instantiated across multiple processes
-        sharing one API key, replace this in-process counter with a
-        persistent monotonic store (file lock, Redis, etc.).
+        The counter is shared PER API KEY across every adapter instance
+        in this process (``_LAST_NONCE_BY_KEY``) -- an instance-local
+        counter collided as soon as two tasks built their own adapter
+        from the same key. Generation alone is not sufficient; see
+        ``_nonce_lock_for`` for why the request itself is serialized.
+
+        Separate PROCESSES sharing one key still hold independent state;
+        closing that needs a persistent monotonic store (file lock,
+        Redis, etc.).
         """
         now = time.time_ns() // 1_000_000
-        self._last_nonce = max(now, self._last_nonce + 1)
-        return self._last_nonce
+        last = _LAST_NONCE_BY_KEY.get(self._config.api_key, self._last_nonce)
+        nonce = max(now, last + 1)
+        _LAST_NONCE_BY_KEY[self._config.api_key] = nonce
+        # Kept in step so a single-adapter process behaves identically.
+        self._last_nonce = nonce
+        return nonce
 
     def _sign(self, uri_path: str, nonce: int, post_data: dict[str, Any]) -> str:
         """Compute the Kraken ``API-Sign`` header value.
