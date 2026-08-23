@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from decimal import Decimal
 
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, LedgerEntry, Order, Trade
 from wobblebot.domain.value_objects import FeeRates, OHLCBar, PairLimits, Price, Symbol, Ticker
 
 
@@ -110,6 +110,43 @@ class ExchangePort(ABC):
 
         Raises:
             ExchangeError: If the limits cannot be retrieved.
+        """
+        pass
+
+    @abstractmethod
+    async def get_ledger_entries(
+        self, asset: str | None = None, limit: int = 1000
+    ) -> list[LedgerEntry]:
+        """Every balance-affecting entry for one asset, newest first.
+
+        NOT just trades: staking rewards, deposits, withdrawals,
+        transfers and adjustments all move a balance and none of them
+        appear in trade history. This is the only surface that can
+        explain why a replayed position legitimately differs from the
+        exchange balance.
+
+        Implementations must return the exchange's ``entry_type``
+        VERBATIM rather than mapping it onto a closed set -- an
+        unrecognised income type must arrive as itself so it can be
+        classified later, not be dropped or misfiled at the boundary.
+
+        Implementations fetch ACCOUNT-WIDE and filter client-side, the
+        same shape as ``get_trade_history`` -- one call, not one per
+        asset. ``LedgerEntry.asset`` comes back in wobblebot's internal
+        vocabulary (``BTC``, ``ETH``), normalized by the adapter exactly
+        like ``Balance.asset``, so no caller has to know the exchange's
+        naming.
+
+        Args:
+            asset: Optional internal asset-code filter (``ETH``, not
+                ``XETH``). ``None`` returns every asset.
+            limit: Maximum entries to return.
+
+        Returns:
+            Ledger entries, newest first. Empty when the asset has none.
+
+        Raises:
+            ExchangeError: If the entries cannot be retrieved.
         """
         pass
 

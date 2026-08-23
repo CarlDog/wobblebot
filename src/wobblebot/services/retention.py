@@ -87,6 +87,10 @@ FORENSIC_TABLES: frozenset[str] = frozenset(
         "cap_trips",
         "grid_state",
         "engine_state",
+        # ADR-040 follow-up (2026-08-22): exchange ledger entries are
+        # income records. Pruning them would delete the only account of
+        # staking rewards -- money the trades table cannot reconstruct.
+        "ledger_entries",
     }
 )
 

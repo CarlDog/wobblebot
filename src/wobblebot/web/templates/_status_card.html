@@ -210,6 +210,19 @@
         {% else %}<div class="metric-value">—</div>{% endif %}
         <div class="metric-label">lifetime PnL</div>
       </div>
+      {# ADR-040 follow-up: income the trades table cannot see. Shown
+         BESIDE realized PnL, never folded into it — a staking reward is
+         a zero-cost acquisition, so adding it to a figure derived from
+         BUY/SELL cycles would misreport where the money came from.
+         Hidden entirely until the ledger is ingested. #}
+      {% if snapshot.staking_income_usd is not none %}
+      <div class="metric">
+        {% set st = snapshot.staking_income_usd %}
+        <div class="metric-value{% if st > 0.0001 %} metric-pos{% endif %}"
+             title="Non-trade income (staking rewards) across {{ snapshot.staking_income_assets | join(', ') }} — net of the exchange's cut, valued at current prices. Reported separately from realized PnL: it is earned, not traded.{% if snapshot.unpriced_income_assets %} EXCLUDED (no price available): {{ snapshot.unpriced_income_assets | join(', ') }}.{% endif %}">{{ st | usd_signed }}</div>
+        <div class="metric-label">staking income{% if snapshot.unpriced_income_assets %} *{% endif %}</div>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
     {% if not snapshot.live_wired %}

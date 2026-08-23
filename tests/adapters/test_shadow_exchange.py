@@ -15,7 +15,7 @@ import pytest
 
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, LedgerEntry, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
     FeeRates,
@@ -49,6 +49,13 @@ class _StubLiveExchange(ExchangePort):
 
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
         return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
+
+    async def get_ledger_entries(
+        self, asset: str | None = None, limit: int = 1000
+    ) -> list[LedgerEntry]:
+        # ADR-040 follow-up port addition. This double exercises other
+        # paths; no synthetic ledger to report.
+        return []
 
     async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
         # ADR-040 port addition. This double exercises other paths; zero

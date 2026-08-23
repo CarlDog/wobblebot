@@ -41,7 +41,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, LedgerEntry, Order, Trade
 from wobblebot.domain.value_objects import (
     FeeRates,
     OHLCBar,
@@ -157,6 +157,18 @@ class ShadowExchangeAdapter(ExchangePort):
         orders its own ledger then never fills, which is a different lie.
         """
         return await self._mock.get_pair_limits(symbol)
+
+    async def get_ledger_entries(
+        self, asset: str | None = None, limit: int = 1000
+    ) -> list[LedgerEntry]:
+        """ADR-040 follow-up: delegates to the synthetic ledger (empty).
+
+        Shadow prices are real but its balances are synthetic, so there
+        is no exchange ledger behind them. Wiring the LIVE account's
+        ledger in here would credit a shadow run with income the shadow
+        position never earned.
+        """
+        return await self._mock.get_ledger_entries(asset, limit)
 
     async def get_balances(self) -> list[Balance]:
         return await self._mock.get_balances()

@@ -171,7 +171,17 @@ async def _held_quantities(
     balances: dict[str, Decimal] = {}
     try:
         for balance in await exchange.get_balances():
-            balances[balance.asset] = balance.total
+            # AVAILABLE, not total. The question this check asks is "can
+            # a NEW sell order be placed against what's free" -- quantity
+            # already locked in resting SELL orders is committed and
+            # cannot back another order. Using total was a real
+            # false-all-clear risk: XRP currently shows total 8.42 with
+            # 6.24 locked, so a symbol holding most of its position in
+            # open sells would have reported "sellable" on a free
+            # balance that is actually dust. Same total-vs-available
+            # trap that produced a wrong first hypothesis during the
+            # 2026-08-22 fill-loss investigation.
+            balances[balance.asset] = balance.available
         halt.note_success()
     except WobbleBotPortError as exc:
         _LOGGER.warning(
