@@ -2936,6 +2936,275 @@ ADR-032 (the sell guard whose deferrals are half of the valve); ADR-037 decision
 explicit follow-up this ADR discharges); ratified-decisions "caps split" (scoping — global
 vs per-symbol — which this ADR leaves untouched).
 
-<!-- ADR-039 is the last in this file; new ADRs append below. -->
+## ADR-040 — Three-Tier Configuration: ENV / SETTINGS (hard limits) / POLICY (mutable operating points)
+**Status:** Accepted (operator ratified 2026-08-22: three-tier split confirmed, seven-member
+POLICY set confirmed — the six safety caps plus `order_size_usd`)
+**Date:** 2026-08-22
+
+**Context:**
+
+Every configuration value in wobblebot is static and read once. `settings.yml` is loaded
+at process start, held for the session, and never re-read; ADR-012 decision 5 states the
+position explicitly ("`cli/live` is restarted by the operator to pick up the new config.
+The engine does not poll for config changes mid-session"). That was the right call in
+Stage 3.4b, when the alternative on the table was an autonomous hot-tune daemon and the
+deployment had weeks of history rather than months.
+
+Three observations from the 2026-08-22 production session say the landscape has moved.
+
+**1. A static sizing knob can silently take a symbol off the market entirely.** SOL placed
+0/6 orders on boot. At `order_size_usd: 5.0` and SOL near $86–103, every level computes to
+~0.058 SOL against Kraken's `ordermin` of 0.06 — refused at every level, in both
+directions. Worse, SOL's held position is 0.05876515 SOL, **98% of the same minimum**, so
+the inventory cannot be sold as a single order either. SOL is frozen in both directions
+with ~$5.58 of market value trapped, and nothing detected it. DOGE hit the identical
+failure in 2026-06 and was fixed by hand with a per-coin override; the class of bug was
+never made detectable, so it recurred on a different symbol.
+
+**2. The daily-spend cap charges for capital that has already come back.** Replaying the
+ledger for the UTC day (through the 10:23 snapshot):
+
+| Symbol | BUY fills | SELL proceeds | Net | Refused by |
+|---|---|---|---|---|
+| ADA | $29.86 | $5.00 | **−$24.86** | `max_per_coin_inventory_usd` |
+| DOGE | $29.32 | $42.06 | +$12.75 | — |
+| XRP | $54.71 | $61.26 | **+$6.55** | `max_daily_spend_usd` |
+| **Total** | **$113.88** | **$108.32** | **−$5.57** | |
+
+$108.32 of $113.88 was recycled — 95%. Net capital that actually left the account: $5.57.
+The cap read ~$118 of $120 consumed, because `daily_spend_usd()` counts BUY orders with
+status in `{open, pending, closed}` and `closed` never releases until midnight UTC. **The
+cap is charging roughly 21× the capital that moved**, and XRP — net cash-*positive* on the
+day — was blocked from buying because of it. A grid that cycles well locks itself out
+faster than one that stalls.
+
+**3. Not all idle capital is a defect, and conflating the cases is the dangerous error.**
+ADA's refusals are ADR-039's inventory cap working exactly as ratified five days earlier
+("BTC and ETH freeze for new buys immediately… This is the intended posture, not a side
+effect"). ADR-039 deliberately uses *cost* basis rather than mark-to-market precisely so
+falling prices cannot re-authorize averaging down. Any process that "notices idle capital
+and raises caps" would fight that guard hardest during drawdowns, when idle capital is
+most abundant and redeploying it is most harmful. The three cases must stay distinguished:
+**broken unit conversion** (SOL), **guard working** (ADA), **accounting artifact** (XRP).
+
+**The blocker.** The obvious remedy — a process that adjusts constraints — is precisely
+what ADR-012 rejected (option 2, the hot-tune daemon) and what ADR-034's scope note
+forbids (no daemon owns a `settings.yml` rewrite). Operator-gating it does not by itself
+resolve this, because the applied change still has to land somewhere, and today the only
+"somewhere" is `settings.yml`.
+
+**The compounding cost.** Even a fully operator-approved config change requires a
+`cli/live` restart to take effect, and ADR-039's own context documents that every
+deliberate restart's boot re-layout buys near price while the ADR-032 guard defers the
+counter-SELL, stepping inventory up ~$5 per deploy (BTC: stable ~$50 for ten weeks, then
+$50→$110 across six days of churn plus three deploys). A click-driven tuning UX built on
+restart-to-apply would ratchet inventory on every click — potentially faster than the
+recommendations recover capital.
+
+**The unlock.** These constraints dissolve if the mutable values stop living in
+`settings.yml`. Two facts, both verified against the code rather than assumed:
+
+- **The engine already re-reads the caps continuously.** In `GridEngine._check_safety`,
+  `cap = self._safety` and all six caps are read as `cap.<field>` **on every placement**,
+  as is `proposed = coin_cfg.order_size_usd`. Nothing caches them for the session. Making
+  them dynamic requires swapping a held object for a resolver — not rewriting the checks.
+- **Changing `order_size_usd` mid-flight does not corrupt cycle matching.**
+  `match_cycles()`'s primary heuristic pairs a SELL with the oldest unmatched BUY of the
+  *same executed amount*. That invariant holds per-pair because `GridEngine` sizes every
+  counter-order to `filled.filled_amount` and explicitly **not** from `order_size_usd`
+  (ADR-006 decision 2). Global size uniformity is not required, so a size change between
+  cycles is safe.
+
+**Industry precedent.** The split proposed below is standard practice rather than
+invention. Electronic trading distinguishes **soft limits** (warn, evaluate) from **hard
+limits** (immediate, un-bypassable reject). SEC Rule 15c3-5 requires risk controls to be
+under the broker-dealer's "direct and exclusive control" — the trading system may not
+modify its own limits — while explicitly contemplating that once a threshold blocks an
+order, a human "may evaluate whether it is appropriate to modify the relevant threshold in
+accordance with supervisory procedures," with reasons "documented and retained." That is
+the operator-approval loop this ADR describes, codified by regulators. General
+configuration practice draws the same line: values like feature flags, rate limits, and
+kill switches are expected to change without redeployment, while config should be
+"loadable and reloadable, but not mutable during execution," and every dynamic change
+needs an audit trail or there is no rollback target.
+
+**Decision:**
+
+Adopt three configuration tiers, distinguished by *who may change the value* and *what
+happens when it changes*.
+
+**1. ENV — deployment identity.** Secrets and environment wiring: exchange and LLM
+credentials, `OLLAMA_BASE_URL`, `WOBBLEBOT_LOG_LEVEL`/`_FORMAT`,
+`WOBBLEBOT_WEB_SESSION_SECRET`, `WOBBLEBOT_STRICT_CONFIG_DRIFT`. Lives in `.env` locally
+and Portainer stack env in production; never in git. Changing it requires a container
+restart. **No change from today** — this tier is ratified as-is, and named only so the
+boundary with SETTINGS is explicit.
+
+**2. SETTINGS — hard limits and structure.** `config/settings.yml`, git-tracked shape via
+`settings.example.yml`, operator-edited by hand, requires a restart. Two kinds of value:
+
+- **Hard limits.** The outer bounds that stop activity when crossed. These are the
+  operator's exclusive control surface; **no process in the system may alter them**, with
+  or without approval. Expressed as `*_max` / `*_min` ceilings on their POLICY
+  counterparts.
+- **Structure.** Anything whose mid-flight change would invalidate existing state or the
+  audit trail: `live.symbols`, `grid.spacing_percentage`, `levels_above` / `levels_below`,
+  `counter_target_mode`, `schedules.*`, advisor profiles and model assignments.
+
+**3. POLICY — mutable operating points.** A new DB-backed tier holding the *current
+operating value* of a knob, always within its SETTINGS hard limit. Changed via an
+operator-approved `pending_commands` row; takes effect on the next evaluation with **no
+restart**.
+
+**Membership in POLICY is a testable rule, not a judgment call.** A value qualifies only
+if BOTH hold:
+
+  (a) the engine already re-reads it on every evaluation, AND
+  (b) a change cannot invalidate state created under the previous value.
+
+By that rule the initial POLICY set is exactly seven values — the six safety caps
+(`max_orders_per_coin`, `max_per_coin_exposure_usd`, `max_total_exposure_usd`,
+`max_daily_spend_usd`, `max_per_coin_inventory_usd`, `max_total_inventory_usd`) plus
+`order_size_usd`. Both criteria are verified above for all seven. Everything else stays in
+SETTINGS until someone demonstrates both properties for it.
+
+**Four structural safety properties:**
+
+1. **The hard-limit clamp lives on the READ path, not the write path.** The resolver
+   returning an effective value computes `min(policy_value, settings_hard_limit)` (or
+   `max` for floors) at every read. A clamp enforced only when storing is bypassable by
+   any other writer — a migration, a manual `sqlite3` session, a future daemon. A clamp in
+   the resolver cannot be bypassed, because there is no other way to obtain the value.
+   Same single-chokepoint reasoning the project already applies to secret redaction.
+2. **Authority is asymmetric.** *Tightening* a bound can be applied automatically — it can
+   only reduce risk, and this is the natural home for a future anomaly-driven clamp.
+   *Loosening* always requires operator approval through `pending_commands`. Direction, not
+   magnitude, decides whether a human is in the loop.
+3. **Every change is an interval, not an overwrite.** A `policy_changes` table records
+   `(key, scope, old_value, new_value, effective_from, effective_to, approved_by,
+   pending_command_id, rationale)`. "What was the per-coin inventory cap at trade T" becomes
+   a query.
+4. **Fail-safe by construction.** No POLICY row → the SETTINGS value applies. DB
+   unreadable → the SETTINGS value applies. The dynamic tier can only ever narrow the
+   static one, so its failure mode is "behaves exactly like today," never "unbounded."
+
+**5. The Capital Reporter — deterministic, advisory, writes nothing.** A read-only pass
+(riding `cli/maintenance` beside the reconcile task) running three checks, one per failure
+class found on 2026-08-22:
+
+  1. **Entry viability** — does `order_size_usd` produce a volume ≥ `ordermin`/`costmin` at
+     every grid level? *(SOL fails today.)*
+  2. **Exit viability** — is the **held position** ≥ `ordermin`? A position below the
+     exchange minimum cannot be sold at all. *(SOL fails today — this check exists because
+     SOL surfaced it; it would not have been specified from first principles.)*
+  3. **Cap honesty** — does cap consumption track *net* capital deployed? Report
+     `daily_spend_charged_usd` against `net_capital_deployed_today_usd` and name the gap.
+     *(XRP fails today: ~$118 charged against $5.57 net.)*
+
+  Findings are emitted as recommendations, never applied. Each carries its estimated effect
+  **and its cost**, so an operator sees net value rather than upside only.
+
+**6. Findings batch; they do not drip.** Recommendations accumulate and are approved
+together. For POLICY-tier changes this is a convenience; for any change still requiring a
+restart it is a safety property, because of the ~$5-per-restart inventory ratchet above.
+
+**7. The advisor consumes capital facts; it never produces capital decisions.** The
+Reporter's precomputed figures are injected into the advisor prompt as a labeled,
+authoritative block with scope-qualified field names (`daily_spend_charged_usd` and
+`net_capital_deployed_today_usd` as *distinct* fields, never a single ambiguous "spend").
+The model narrates and cites; it does not compute. Flow is strictly facts→LLM; no LLM
+output reaches a money path, preserving ADR-002. The XRP case is exactly where a model
+asked to infer from raw rows would get it wrong.
+
+**Alternatives Considered:**
+
+- **A "Money Manager" daemon that adjusts constraints autonomously.** Rejected — this is
+  ADR-012's option 2 under a new name, and it is the design most likely to destroy the
+  balance sheet: it would systematically fight ADR-039 by redeploying capital that is idle
+  *because* a guard is holding an underwater position.
+- **Operator-approved clicks that rewrite `settings.yml`.** Rejected — still requires a
+  daemon to own the rewrite (ADR-034 scope note), still requires a restart to take effect,
+  and therefore still pays the inventory ratchet per apply. Tiering removes both problems
+  rather than working around them.
+- **Put everything mutable in the DB and retire `settings.yml`.** Rejected — it destroys
+  the operator's exclusive control over hard limits, which is the one property that makes
+  the dynamic tier safe. It also loses git history and the schema-drift guard.
+- **Make the caps dynamic without hard ceilings.** Rejected — an unbounded dynamic tier
+  means a bug in the approval path has unbounded blast radius. The ceiling is what caps
+  worst case at "the operator's own stated maximum."
+- **Fix `order_size_usd` for SOL by hand and stop there.** Rejected as insufficient, and
+  deliberately *not done*: DOGE received exactly this treatment in 2026-06 and the class of
+  bug recurred on SOL two months later because nothing made it detectable. Per operator
+  decision 2026-08-22, **SOL is left broken on purpose** as the validation fixture for
+  check 1 and check 2. Cost of holding it: ~$5.58 of frozen market value.
+- **Include `spacing_percentage` in POLICY.** Rejected — it fails criterion (b): existing
+  orders were placed on the old geometry, so a mid-session change yields a grid that is
+  self-inconsistent until a full re-layout.
+
+**Consequences:**
+
+- **Positive:** a POLICY change takes effect with no restart, which removes the ~$5
+  inventory ratchet per applied recommendation — the single largest cost of an
+  operator-driven tuning loop.
+- **Positive:** ADR-012's audit objection is *inverted*, not merely answered. It rejected
+  hot-tuning partly because mid-run changes "confuse the audit trail — which spacing was in
+  effect at trade T?" A `policy_changes` table with validity intervals answers that
+  question exactly; `settings.yml` cannot answer it at all, at any time, today.
+- **Positive:** ADR-034 is satisfied by construction rather than amended — no daemon
+  rewrites `settings.yml`, because the mutable values are not in it.
+- **Positive:** the SOL class of failure becomes detectable rather than recurring silently
+  every time a price crosses an exchange minimum.
+- **Negative — the real one:** this introduces exactly the writer/reader coupling ADR-012
+  rejected in its option 2 (`cli/advise` writes, `cli/live` reads). Three things distinguish
+  it. First, an approval gate sits between writer and reader; `pending_commands` already
+  establishes precisely this coupling for pause/resume/re-anchor and for ADR-034's transfer
+  proposals, so the pattern is load-bearing in production rather than novel. Second, the
+  engine reads a *bound*, not a *decision* — it never learns why the bound changed and its
+  logic is unchanged. Third, ADR-012's option 2 had no audit trail and no ceiling; this has
+  both. The coupling is real and should be reviewed as such, not waved away.
+- **Negative:** two config stores to reason about. Mitigated by the fail-safe rule (absent
+  POLICY == SETTINGS) and by requiring the Reporter to render the *effective* value with
+  its source.
+- **Negative:** a new DB table plus a resolver on the placement hot path. The read is a
+  small indexed lookup and the caps already perform several storage queries per placement,
+  but it must be measured against the tick latency budget, not assumed free.
+- **Negative:** operators gain a way to change trading behavior without a git commit.
+  This is the point, and it is also the risk; the audit table and the hard ceilings are what
+  make it acceptable.
+
+**Validation plan (before any POLICY value is writable):**
+
+1. The Reporter runs read-only and must independently reproduce all three known findings:
+   SOL entry-blocked, SOL exit-blocked, XRP cap-vs-net gap. A check that cannot rediscover
+   a defect already proven from production data is not trusted.
+2. Resolver clamp: a test asserting that a POLICY value exceeding its SETTINGS hard limit
+   resolves to the hard limit — written against the *read* path, and verified to fail when
+   the clamp is deleted (the 2026-08-22 mutation-blind guard tests are the cautionary
+   precedent).
+3. Fail-safe: with the POLICY table empty, absent, and unreadable, effective values must
+   equal today's SETTINGS values exactly.
+4. Only then is SOL's sizing corrected — as the first POLICY change, exercising the full
+   loop end to end.
+
+**Compliance:** Preserves ADR-002 (facts flow to the LLM; no LLM output reaches a money
+path). Preserves ADR-003 (nothing here touches transfer authority). Preserves ADR-034 (no
+daemon rewrites `settings.yml`). **Amends ADR-012 decision 5** — the engine may now
+re-read POLICY-tier values mid-session; ADR-012's rejection of the *autonomous* hot-tune
+daemon stands unchanged and is reaffirmed. Respects ADR-039 by leaving the inventory caps'
+semantics and their cost-basis rationale untouched — only their *operating point* becomes
+mutable, and only downward without approval. Layer boundaries unchanged: the resolver is a
+service, the table an adapter concern, the engine keeps reading a port.
+
+**References:** the 2026-08-22 session receipt in `docs/planning/roadmap.md`;
+`docs/release/v1.1/engine.md` "Capital utilization"; `services/exposure.py` (the ratchet);
+`services/grid_engine.py::_check_safety` (per-placement cap reads);
+`services/cycle_matcher.py::match_cycles` (the amount-pairing invariant); ADR-006 decision
+2 (counter sized to filled amount); ADR-012; ADR-032; ADR-034; ADR-039.
+[FINRA Market Access Rule](https://www.finra.org/rules-guidance/guidance/reports/2024-finra-annual-regulatory-oversight-report/market-access-rule);
+[17 CFR § 240.15c3-5](https://www.law.cornell.edu/cfr/text/17/240.15c3-5);
+[SEC staff FAQs on Rule 15c3-5](https://www.sec.gov/rules-regulations/staff-guidance/trading-markets-frequently-asked-questions/divisionsmarketregfaq-0);
+[FIA, Automated Trading Risk Controls](https://www.fia.org/sites/default/files/2024-07/FIA_WP_AUTOMATED%20TRADING%20RISK%20CONTROLS_FINAL_0.pdf).
+
+<!-- ADR-040 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

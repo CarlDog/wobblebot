@@ -158,6 +158,8 @@ schedules:
   maintenance_backup: 1d              # cli/maintenance: SQLite .backup cadence
   maintenance_verify: 30d             # cli/maintenance (v1.1): backup restoration smoke test cadence
   maintenance_reconcile: 1d           # cli/maintenance (2026-08-22): Kraken trade-history reconciliation cadence
+  maintenance_capital: 1d             # cli/maintenance (ADR-040): capital-viability report cadence
+  maintenance_ledger: 1d              # cli/maintenance (ADR-040): exchange-ledger income ingest cadence
 
 # ============================================================================
 # Per-CLI: live (cli/live)
@@ -855,6 +857,18 @@ web:
   # Static-ish pages (news, audit log) ignore this — they're
   # full-reload-on-navigation.
   htmx_poll_seconds: 15.0
+  # Lowest re-anchor banner severity that earns a banner on the
+  # dashboard: mild | moderate | strong. Default `mild` shows every
+  # finding. Raise it to quiet routine drift.
+  #
+  # This is safe ONLY because severity self-escalates on AGE: the tier
+  # is max(drift_tier, age_tier), and age alone reaches moderate at 48h
+  # and strong at 72h. So a filtered finding is delayed, not dropped —
+  # if the drift persists it re-appears one tier up. That matters
+  # because the banner is the ONLY surface a re-anchor recommendation
+  # reaches (no notification event, no Discord message, and the
+  # heuristic advisor doesn't emit one).
+  reanchor_min_severity: mild
   # External Kraken account URL surfaced as a header link for
   # one-click access. Default lands on Kraken Pro's account home;
   # operators in non-US regions or who prefer the trade view may
@@ -892,7 +906,8 @@ web:
 # vacuum / prune+archive / backup / verify / reconcile. Operator-started;
 # not auto-spawned by any other daemon. Cadences pulled from `schedules:`
 # block above (maintenance_vacuum / maintenance_prune /
-# maintenance_backup / maintenance_verify / maintenance_reconcile) with
+# maintenance_backup / maintenance_verify / maintenance_reconcile /
+# maintenance_capital / maintenance_ledger) with
 # per-task defaults (7d / 1d / 1d / 30d / 1d) when missing.
 #
 # Per stage-8.2-design.md decision 3 only `price_snapshots` gets

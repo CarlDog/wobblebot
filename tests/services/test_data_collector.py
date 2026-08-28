@@ -24,8 +24,16 @@ import pytest_asyncio
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
-from wobblebot.domain.models import Balance, Order, Trade
-from wobblebot.domain.value_objects import Amount, FeeRates, OrderSide, Price, Symbol, Timestamp
+from wobblebot.domain.models import Balance, LedgerEntry, Order, Trade
+from wobblebot.domain.value_objects import (
+    Amount,
+    FeeRates,
+    OrderSide,
+    PairLimits,
+    Price,
+    Symbol,
+    Timestamp,
+)
 from wobblebot.ports.exceptions import DataCollectorError, ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.storage import StoragePort
@@ -50,6 +58,18 @@ class _FailingExchange(ExchangePort):
 
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
         return FeeRates(symbol=symbol, maker=KRAKEN_MAKER_FEE_RATE, taker=KRAKEN_TAKER_FEE_RATE)
+
+    async def get_ledger_entries(
+        self, asset: str | None = None, limit: int = 1000
+    ) -> list[LedgerEntry]:
+        # ADR-040 follow-up port addition. This double exercises other
+        # paths; no synthetic ledger to report.
+        return []
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        # ADR-040 port addition. This double exercises other paths; zero
+        # floors mean "no minimum", matching the mock exchange.
+        return PairLimits(symbol=symbol, ordermin=Decimal(0), costmin=Decimal(0))
 
     async def get_current_price(self, symbol: Symbol) -> Price:
         raise ExchangeError(self._message)
@@ -100,6 +120,12 @@ class _FailingStorage(StoragePort):
         self._message = message
 
     async def save_order(self, order: Order) -> None:
+        raise NotImplementedError
+
+    async def save_ledger_entries(self, entries):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_ledger_entries(self, asset=None, entry_type=None, limit=1000):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
     async def save_recommendation_outcome(self, outcome):  # type: ignore[no-untyped-def]

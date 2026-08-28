@@ -244,6 +244,32 @@ class FeeRates(BaseModel):
         frozen = True
 
 
+class PairLimits(BaseModel):
+    """The exchange's minimum order size for one pair (ADR-040).
+
+    ``ordermin`` is a BASE-currency floor (Kraken: 0.06 SOL, 20 ADA);
+    ``costmin`` is a QUOTE-currency floor on the order's notional. An
+    order must clear both.
+
+    These are the reason a static ``order_size_usd`` can silently take a
+    symbol off the market as price moves: at $5/order, SOL near $86-103
+    yields ~0.058 SOL against a 0.06 minimum, so every level is refused.
+    Exposed on ``ExchangePort`` (rather than left private to the Kraken
+    adapter) so the capital Reporter can judge viability from the
+    exchange's own numbers instead of inferring it from refusal
+    messages — which report whichever gate happened to trip first.
+    """
+
+    symbol: Symbol
+    ordermin: Decimal = Field(..., ge=0)
+    costmin: Decimal = Field(..., ge=0)
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 class Amount(BaseModel):
     """Quantity/amount value with validation.
 

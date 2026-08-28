@@ -59,12 +59,13 @@ import httpx
 
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.domain.exceptions import InsufficientBalance
-from wobblebot.domain.models import Balance, Order, Trade
+from wobblebot.domain.models import Balance, LedgerEntry, Order, Trade
 from wobblebot.domain.value_objects import (
     Amount,
     FeeRates,
     OHLCBar,
     OrderSide,
+    PairLimits,
     Price,
     Symbol,
     Ticker,
@@ -84,6 +85,78 @@ _API_VERSION = "0"
 # precedent). 20 pages (~1000 raw trades) comfortably covers the current
 # grid_engine.py caller's limit=200 across the account's traded symbols.
 _TRADES_HISTORY_MAX_PAGES = 20
+
+# Same safety bound for the Ledgers walk (ADR-040 follow-up). Ledgers
+# pages at 50 like TradesHistory, so 20 pages is 1000 entries per asset
+# -- far beyond this deployment's ~40. The cap exists so a pagination
+# bug can't spin forever, not as a real ceiling.
+_LEDGERS_MAX_PAGES = 20
+
+# Delay between Ledgers pages. Kraken's private-API call counter is
+# shared across EVERY endpoint on the account (max 15 points, decaying
+# ~0.33/s; a Ledgers or TradesHistory call costs 2).
+#
+# This value is not a guess -- tools/reconcile_trade_history.py already
+# carries it, with the note "an earlier unpaced run tripped
+# EAPI:Rate limit exceeded". That lesson was written down and this
+# method was still shipped unpaced, which promptly reproduced it in
+# production (2026-08-23): ~410 entries is 9 pages x 2 = 18 points
+# against a 15-point ceiling.
+#
+# Trade history escapes today only by being smaller (~331 rows, 7
+# pages, 14 points -- one page below the ceiling). It is the same
+# latent bug and will bite when the account's history grows.
+_LEDGERS_PAGE_DELAY_SECONDS = 2.0
+
+# ---------------------------------------------------------------- #
+# Per-API-key nonce state, shared across adapter INSTANCES           #
+# ---------------------------------------------------------------- #
+# Kraken requires a strictly increasing nonce per API KEY. A counter
+# living on the adapter instance is therefore the wrong scope: several
+# adapters in one process, all built from the same key, each start
+# their own counter and collide.
+#
+# That is not hypothetical. cli/maintenance runs its tasks under one
+# asyncio.gather, and each constructs its own KrakenAdapter from the
+# reader key. With two such tasks it raced and usually won; the third
+# (ledger sync, 2026-08-23) tipped it over and production returned
+# ``EAPI:Invalid nonce`` on BOTH the balance fetch and the Ledgers
+# call in the same 300ms.
+#
+# Two things are needed, and a shared counter alone is NOT enough:
+#   1. one monotonic source per key, so no two requests draw the same
+#      nonce; and
+#   2. serialized in-flight requests per key, because Kraken compares
+#      against the highest nonce it has SEEN -- two concurrent requests
+#      can arrive out of order and the lower one is rejected even
+#      though it was generated correctly.
+# The lock delivers both.
+#
+# Keyed by API key, so the trader key's calls are never serialized
+# behind the reader key's maintenance reads.
+#
+# STILL UNSOLVED: separate PROCESSES sharing one key (cli/observe and
+# cli/maintenance both hold the reader key) have independent state.
+# That has been fine in practice because their calls are spread across
+# seconds rather than fired together, but it is the same class of bug
+# and would need a persistent store to close properly.
+_NONCE_LOCKS: dict[str, asyncio.Lock] = {}
+_LAST_NONCE_BY_KEY: dict[str, int] = {}
+
+
+def _nonce_lock_for(api_key: str) -> asyncio.Lock:
+    """Get-or-create the per-key lock.
+
+    Safe without its own mutex: asyncio is single-threaded, and there is
+    no await between the check and the insert, so two coroutines cannot
+    interleave here.
+    """
+    lock = _NONCE_LOCKS.get(api_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _NONCE_LOCKS[api_key] = lock
+    return lock
+
 
 # Colloquial-naming aliases between our domain vocabulary and Kraken's
 # altname vocabulary. These are conventions we *choose* — Kraken's data
@@ -442,6 +515,107 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
                 ) from exc
             out.append(parsed_bar)
         return out
+
+    async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
+        """ADR-040: the pair's ``ordermin``/``costmin`` from AssetPairs.
+
+        Served from the same cached metadata every order submission is
+        validated against, so the Reporter and the placement path can
+        never disagree about what the minimum is.
+        """
+        await self._ensure_pair_metadata()
+        meta = self._pair_metadata_for(symbol)
+        return PairLimits(symbol=symbol, ordermin=meta.ordermin, costmin=meta.costmin)
+
+    async def get_ledger_entries(
+        self, asset: str | None = None, limit: int = 1000
+    ) -> list[LedgerEntry]:
+        """ADR-040 follow-up: every non-trade balance movement for ``asset``.
+
+        Paginated exactly like ``get_trade_history`` -- Kraken returns
+        50 per page with an ``ofs`` cursor and a ``count`` total -- and
+        fetched ACCOUNT-WIDE with client-side filtering, so six traded
+        assets cost one call rather than six.
+
+        ``asset`` on each entry is normalized to internal vocabulary
+        (``XETH`` -> ``ETH``) so callers never see Kraken's naming; that
+        is the same translation ``Balance.asset`` already gets.
+
+        Pages are PACED (:data:`_LEDGERS_PAGE_DELAY_SECONDS`) because
+        Kraken's call counter is account-wide and this walk alone
+        exceeds it -- see that constant. A full ingest therefore takes
+        ~20s, which is fine for a daily maintenance task and is why this
+        must never be called from a latency-sensitive path.
+
+        ``type`` is passed through verbatim. Kraken's vocabulary is open
+        (``staking``, ``deposit``, ``transfer``, ``adjustment``,
+        ``reward``, ...) and mapping it onto a closed enum here would
+        silently discard an income type added later -- precisely the
+        money this feature exists to stop losing.
+
+        ``amount`` is GROSS and ``fee`` is charged in the SAME asset; the
+        balance moves by ``amount - fee``. Kraken bills staking at 30%,
+        so ignoring ``fee`` overstates income by nearly a third.
+        """
+        await self._ensure_asset_metadata()
+        entries: list[LedgerEntry] = []
+        offset = 0
+        total_count: int | None = None
+        for page in range(_LEDGERS_MAX_PAGES):
+            if len(entries) >= limit:
+                break
+            if page > 0:
+                # Between pages only -- never before the first call, so a
+                # single-page account pays nothing.
+                await asyncio.sleep(_LEDGERS_PAGE_DELAY_SECONDS)
+            result = await self._private_post("/0/private/Ledgers", {"ofs": offset})
+            ledger_map = result.get("ledger", {})
+            if not isinstance(ledger_map, dict) or not ledger_map:
+                break
+            for ledger_id, raw in ledger_map.items():
+                entries.append(self._build_ledger_entry(str(ledger_id), raw))
+            offset += len(ledger_map)
+            if total_count is None:
+                raw_count = result.get("count")
+                # isfinite: json.loads accepts NaN/Infinity and int() on
+                # either raises -- a bogus count degrades to "no count"
+                # and the page cap still bounds the walk. Same guard as
+                # the trades-history pagination.
+                if isinstance(raw_count, (int, float)) and math.isfinite(raw_count):
+                    total_count = int(raw_count)
+            if total_count is not None and offset >= total_count:
+                break
+        entries.sort(key=lambda e: e.occurred_at.dt, reverse=True)
+        if asset is not None:
+            entries = [e for e in entries if e.asset == asset]
+        return entries[:limit]
+
+    def _build_ledger_entry(self, ledger_id: str, raw: Any) -> LedgerEntry:
+        """Map one Kraken ledger row, or raise ``ExchangeError``.
+
+        Deliberately NOT skip-and-log. This module has no logger by
+        design -- it signals through ``ExchangeError`` -- so "skip the
+        bad row" would mean dropping income silently, the exact failure
+        this feature exists to end. A malformed row fails the whole
+        ingest loudly; the next cycle retries and nothing is lost,
+        because the upsert is keyed on the exchange's ledger id.
+        """
+        try:
+            if not isinstance(raw, dict):
+                raise TypeError(f"expected a dict, got {type(raw).__name__}")
+            return LedgerEntry(
+                id=ledger_id,
+                ref_id=str(raw["refid"]) if raw.get("refid") is not None else None,
+                asset=self._kraken_code_to_internal(str(raw.get("asset") or "unknown")),
+                entry_type=str(raw.get("type") or "unknown"),
+                amount=Decimal(str(raw.get("amount", "0"))),
+                fee=Decimal(str(raw.get("fee", "0"))),
+                occurred_at=Timestamp(
+                    dt=datetime.fromtimestamp(float(str(raw.get("time", 0))), tz=UTC)
+                ),
+            )
+        except _PARSE_ERRORS as exc:
+            raise ExchangeError(f"Kraken Ledgers entry {ledger_id!r} malformed: {exc}") from exc
 
     async def get_balances(self) -> list[Balance]:
         """Fetch all account balances via ``/0/private/BalanceEx``.
@@ -1054,20 +1228,28 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         """
 
         async def _do() -> dict[str, Any]:
-            body = dict(params or {})
-            nonce = self._make_nonce()
-            body["nonce"] = nonce
-            signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
-            headers = {
-                "API-Key": self._config.api_key,
-                "API-Sign": signature,
-                "Content-Type": "application/x-www-form-urlencoded",
-            }
-            try:
-                response = await self._http.post(path, data=body, headers=headers)
-            except httpx.HTTPError as exc:
-                raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
-            return self._unwrap_envelope(response, path, require_result=require_result)
+            # Held across the POST, not just the nonce draw: Kraken
+            # validates against the highest nonce it has SEEN, so two
+            # concurrent requests on one key can arrive out of order and
+            # the lower one is rejected despite being generated
+            # correctly. Acquired inside _do so the lock is released
+            # between rate-limit retry backoffs rather than held through
+            # the sleep.
+            async with _nonce_lock_for(self._config.api_key):
+                body = dict(params or {})
+                nonce = self._make_nonce()
+                body["nonce"] = nonce
+                signature = self._sign(uri_path=path, nonce=nonce, post_data=body)
+                headers = {
+                    "API-Key": self._config.api_key,
+                    "API-Sign": signature,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
+                try:
+                    response = await self._http.post(path, data=body, headers=headers)
+                except httpx.HTTPError as exc:
+                    raise ExchangeError(f"Kraken {path} transport failure: {exc}") from exc
+                return self._unwrap_envelope(response, path, require_result=require_result)
 
         return await self._call_with_rate_limit_retry(_do)
 
@@ -1160,13 +1342,23 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         nonce remains roughly equal to wall-clock ms in the common case
         and walks forward by 1ms-at-a-time during a collision or jump.
 
-        If this adapter is ever instantiated across multiple processes
-        sharing one API key, replace this in-process counter with a
-        persistent monotonic store (file lock, Redis, etc.).
+        The counter is shared PER API KEY across every adapter instance
+        in this process (``_LAST_NONCE_BY_KEY``) -- an instance-local
+        counter collided as soon as two tasks built their own adapter
+        from the same key. Generation alone is not sufficient; see
+        ``_nonce_lock_for`` for why the request itself is serialized.
+
+        Separate PROCESSES sharing one key still hold independent state;
+        closing that needs a persistent monotonic store (file lock,
+        Redis, etc.).
         """
         now = time.time_ns() // 1_000_000
-        self._last_nonce = max(now, self._last_nonce + 1)
-        return self._last_nonce
+        last = _LAST_NONCE_BY_KEY.get(self._config.api_key, self._last_nonce)
+        nonce = max(now, last + 1)
+        _LAST_NONCE_BY_KEY[self._config.api_key] = nonce
+        # Kept in step so a single-adapter process behaves identically.
+        self._last_nonce = nonce
+        return nonce
 
     def _sign(self, uri_path: str, nonce: int, post_data: dict[str, Any]) -> str:
         """Compute the Kraken ``API-Sign`` header value.

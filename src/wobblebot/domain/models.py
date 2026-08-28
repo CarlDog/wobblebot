@@ -160,6 +160,66 @@ class Trade(BaseModel):
         frozen = True  # Trades are immutable once created
 
 
+class LedgerEntry(BaseModel):
+    """One balance-affecting entry from the exchange's ledger.
+
+    Kraken's ``Ledgers`` endpoint records EVERY movement of an asset,
+    not just trades: staking rewards, deposits, withdrawals, transfers,
+    adjustments. wobblebot's trade history explains only the ``trade``
+    rows, which is why a replayed position can legitimately disagree
+    with the exchange balance without anything being lost.
+
+    Discovered 2026-08-22: SOL/ETH/ADA balances each exceeded their
+    replayed quantity by exactly their net staking income, while
+    BTC/XRP/DOGE (unstaked) matched to the digit. The gap was income,
+    not a defect -- but it was invisible to every accounting surface in
+    the project.
+
+    ``entry_type`` is stored VERBATIM from the exchange rather than
+    mapped onto a closed enum. A type we have never seen must land in
+    the table as itself; classifying it as "other" (or dropping it)
+    would silently lose exactly the income the table exists to capture.
+
+    Attributes:
+        id: Exchange ledger id (Kraken: the ``ledger_id`` key). Unique.
+        ref_id: Exchange's grouping id (``refid``) -- ties the two
+            sides of a transfer, or a ledger row to its trade.
+        asset: Internal asset code (``ETH``), normalized by the adapter
+            exactly like ``Balance.asset`` -- callers never see the
+            exchange's own naming (``XETH``).
+        entry_type: Verbatim exchange type (``staking``, ``deposit``...).
+        amount: Signed change in ``asset`` units. GROSS -- the balance
+            actually moves by ``amount - fee``.
+        fee: Fee charged in the SAME asset. Kraken bills staking at 30%
+            here, so net income is materially below gross.
+        occurred_at: Exchange-reported timestamp.
+    """
+
+    id: str = Field(..., min_length=1, description="Exchange ledger id")
+    ref_id: str | None = Field(default=None, description="Exchange refid")
+    asset: str = Field(..., min_length=1, description="Exchange asset code")
+    entry_type: str = Field(..., min_length=1, description="Verbatim exchange type")
+    amount: Decimal = Field(..., description="Signed gross change, in asset units")
+    fee: Decimal = Field(default=Decimal("0"), description="Fee in the same asset")
+    occurred_at: Timestamp
+
+    @property
+    def net_amount(self) -> Decimal:
+        """What the balance actually moved by: ``amount - fee``.
+
+        The 2026-08-22 reconciliation only closed once fee was
+        subtracted -- summing ``amount`` alone overstated staking income
+        by exactly Kraken's 30% cut and made the balances look like they
+        still disagreed.
+        """
+        return self.amount - self.fee
+
+    class Config:
+        """Pydantic config."""
+
+        frozen = True
+
+
 # Note: Position model deferred to Phase 3+ (margin trading)
 # For Phase 1-2 spot trading, P&L tracking via Trade records is sufficient
 # See ADR-005 for rationale

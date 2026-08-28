@@ -4,6 +4,24 @@
    the HTMX target so banners + card refresh together; banners
    live OUTSIDE the .card chrome so they read as alerts above
    the card rather than as a section inside it. #}
+
+{# Severity tier explained on hover, mirroring advisor.html's
+   confidence_title macro. Severity is max(drift_tier, age_tier), so each
+   title names BOTH routes into the tier — a reader who sees "moderate"
+   on a barely-drifted grid should learn it got there on age, not think
+   the number is wrong. Thresholds interpolated from nothing: they are
+   the module constants in web/routes/status_reanchor.py, and if those
+   move these strings must move with them. #}
+{% macro severity_title(level) -%}
+  {%- if level == 'strong' -%}
+    Strong — the grid is 4+ spacings off the market, or its oldest open order has sat 72h+. Capital is parked well away from where trading is happening.
+  {%- elif level == 'moderate' -%}
+    Moderate — 2.5–4 spacings off the market, or the oldest open order has sat 48h+. Worth a look; a mild finding escalates to here on age alone if it persists.
+  {%- else -%}
+    Mild — 1.5–2.5 spacings off the market and under 48h old. Drifted but not yet urgent; if it persists it becomes moderate on age alone.
+  {%- endif -%}
+{%- endmacro %}
+
 <div id="status-wrap"
      hx-get="/status/card"
      hx-trigger="every 15s"
@@ -25,7 +43,7 @@
            heading switches, the severity does not (drift is still a
            fact about misplaced capital). #}
         <span class="reanchor-title"><span class="reanchor-icon">⚠</span> {% if rec.reanchor_wont_help %}{{ rec.symbol.base }}/{{ rec.symbol.quote }} still off-grid after re-anchoring{% else %}Consider re-anchoring {{ rec.symbol.base }}/{{ rec.symbol.quote }}{% endif %}</span>
-        <span class="reanchor-chip">{{ rec.severity }}</span>
+        <span class="reanchor-chip" title="{{ severity_title(rec.severity) }}">{{ rec.severity }}</span>
       </div>
       {# The stat row mirrors the scoreboard's big-number/small-label
          pattern so the decision facts scan instead of read. #}
@@ -192,6 +210,19 @@
         {% else %}<div class="metric-value">—</div>{% endif %}
         <div class="metric-label">lifetime PnL</div>
       </div>
+      {# ADR-040 follow-up: income the trades table cannot see. Shown
+         BESIDE realized PnL, never folded into it — a staking reward is
+         a zero-cost acquisition, so adding it to a figure derived from
+         BUY/SELL cycles would misreport where the money came from.
+         Hidden entirely until the ledger is ingested. #}
+      {% if snapshot.staking_income_usd is not none %}
+      <div class="metric">
+        {% set st = snapshot.staking_income_usd %}
+        <div class="metric-value{% if st > 0.0001 %} metric-pos{% endif %}"
+             title="Non-trade income (staking rewards) across {{ snapshot.staking_income_assets | join(', ') }} — net of the exchange's cut, valued at current prices. Reported separately from realized PnL: it is earned, not traded.{% if snapshot.unpriced_income_assets %} EXCLUDED (no price available): {{ snapshot.unpriced_income_assets | join(', ') }}.{% endif %}">{{ st | usd_signed }}</div>
+        <div class="metric-label">staking income{% if snapshot.unpriced_income_assets %} *{% endif %}</div>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
     {% if not snapshot.live_wired %}
