@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Personal-domain email pattern used in two places:
-#  - the author-identity check below (step 1)
+# Canonical fleet pre-commit hook: author-identity guard + gitleaks +
+# PII pattern scan. Generic by design — drop into any repo via the
+# /install-precommit-hook skill or reference/install-hooks.{sh,ps1}.
+# Contains NO repo-specific logic and NO baked-in PII: the patterns are
+# generic so the hook itself is safe to commit publicly.
+#
+# Extend per-repo by appending project-specific checks AFTER section 3
+# (e.g. a schema-drift gate) — keep sections 1-3 identical to the
+# canonical version so the fleet stays in lockstep.
+
+# Personal-domain email pattern, used in two places:
+#  - the author-identity check (step 1)
 #  - the PII pattern scan over staged content (step 3)
 PERSONAL_EMAIL_PATTERN='[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|icloud|me|live|aol)\.[a-z]{2,}'
 
@@ -33,7 +43,13 @@ if ! command -v gitleaks >/dev/null 2>&1; then
 fi
 
 echo "Running gitleaks..."
-gitleaks protect --staged --redact --config .gitleaks.toml
+# Use the repo's .gitleaks.toml when present (path exclusions, allowlists);
+# fall back to gitleaks' default config so the hook works in any repo.
+if [ -f .gitleaks.toml ]; then
+  gitleaks protect --staged --redact --config .gitleaks.toml
+else
+  gitleaks protect --staged --redact
+fi
 
 # 3. PII pattern scan over staged content
 # Catches user-home directory references and personal-domain email
@@ -48,7 +64,27 @@ PII_PATTERNS=(
   "$PERSONAL_EMAIL_PATTERN"
 )
 
-# ACMR (not AM): renamed/copied files must be PII-scanned too. A `git mv` of a
+# Internal hostnames, supplied OUT OF BAND.
+#
+# This hook is committed publicly, so it cannot name the hosts it protects --
+# writing them here would be the very disclosure it is meant to prevent. Set
+# them per-clone instead:
+#
+#   git config fleet.internalHosts my-nas,my-router
+#
+# The 2026-07-24 fleet audit found an internal hostname in 32 tracked files
+# across all 8 public repos (72 occurrences), beside the service ports. Nothing
+# had ever checked, because the patterns above cover only home paths and
+# personal email domains. Configure this and it cannot recur.
+INTERNAL_HOSTS=$(git config --get fleet.internalHosts 2>/dev/null || true)
+if [ -n "$INTERNAL_HOSTS" ]; then
+  # Comma-separated -> one alternation, regex-escaped for dots and dashes.
+  HOST_ALT=$(printf '%s' "$INTERNAL_HOSTS" | tr ',' '\n' \
+    | sed 's/[][\.|$(){}?+*^]/\\&/g' | paste -sd '|' -)
+  [ -n "$HOST_ALT" ] && PII_PATTERNS+=("($HOST_ALT)")
+fi
+
+# ACMR (not AM): renamed/copied files must be PII-scanned too — a `git mv` of a
 # file containing a home path / personal email would otherwise bypass this scan.
 STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
 if [ -z "$STAGED" ]; then
