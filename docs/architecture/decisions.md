@@ -2941,6 +2941,26 @@ vs per-symbol — which this ADR leaves untouched).
 POLICY set confirmed — the six safety caps plus `order_size_usd`)
 **Date:** 2026-08-22
 
+> **Addendum (2026-08-28): the SOL/ADA validation fixture was superseded before Stage 2
+> existed.** Decision item 4's "SOL is left broken on purpose... as the validation fixture
+> for check 1 and check 2," and the validation plan's step 4 ("Only then is SOL's sizing
+> corrected — as the first POLICY change, exercising the full loop end to end"), no longer
+> describe current state. The Capital Reporter (Stage 1) had already independently
+> reproduced the SOL entry-blocked finding correctly across 4 consecutive daily cycles
+> (2026-08-23 → 08-26) — satisfying validation-plan step 1 against real production data —
+> before an operator-approved manual fix (`order_size_usd` SOL $5→$8, ADA $5→$7 for the
+> same class of failure, both via the pre-Stage-2 mechanism: a `settings.yml` edit +
+> restart, not a POLICY write) landed 2026-08-28. Decided explicitly, not accidentally: the
+> fixture's evidentiary purpose was already served, and the ongoing cost of two coins sitting
+> inert until Stage 2+ exists outweighed the narrative value of SOL specifically being the
+> literal first POLICY change. **Consequence for Stage 2+ design:** validation-plan step 4
+> needs a different vehicle when Stage 2 (the writable POLICY path) is actually built — any
+> currently-POLICY-eligible value away from its ideal operating point, live or deliberately
+> staged in the Auditor/backtest harness, satisfies the same "exercise the full loop
+> end-to-end" intent that SOL was standing in for. This does not touch the tier design,
+> the seven-member POLICY set, or any of the four structural safety properties — Stage 2+
+> remains exactly as specified below, only its literal first-exercise example is stale.
+
 **Context:**
 
 Every configuration value in wobblebot is static and read once. `settings.yml` is loaded

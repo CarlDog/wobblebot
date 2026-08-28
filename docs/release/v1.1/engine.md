@@ -4,6 +4,33 @@
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
+### Bug: ADR-038 fee-drift check false-positives on dust trade fragments
+
+**Confirmed 2026-08-28.** A DOGE/USD fill triggered `fee drift on DOGE/USD:
+realized 0% matches neither maker 0.4% nor taker 0.8%`
+(`_check_fee_drift`, `services/grid_engine.py:1338`) — read as a possible
+Kraken fee-schedule change, but isn't one. Traced against the raw
+`trades` rows: Kraken split the fill into two trade records 34ms apart
+on the same order (`OFNBLB-XSSBM-5NH4LA`) — the real trade (68.97 DOGE,
+$6.00 cost, $0.024 fee = exactly 0.4000%, correct) plus a dust remainder
+(0.00000021 DOGE, $0.000000018 cost, $0 fee). The guard is `if
+trade.cost <= 0: return` — the dust trade's cost is a tiny *positive*
+number, so it slips past, and `0 / ~2e-8` computes to exactly 0%,
+trivially outside the 5bps tolerance against either rate.
+
+**No accounting impact** — the real trade's fee is correct and already
+persisted correctly; this is a false-positive alarm, not a money bug.
+
+**Fix:** give the guard a materiality floor (e.g. skip trades below the
+pair's `costmin`, not just `> 0`) instead of a bare positivity check.
+Small, well-scoped, low-risk — a one-line guard change plus a test
+fixture reproducing a real+dust trade pair from the same order.
+
+**Trigger:** next time `services/grid_engine.py` is touched, or if the
+false-positive recurs enough to be noisy. Not urgent — it's a rare
+Kraken-side split, not a routine occurrence (the last several DOGE fills
+before this one were clean single-trade fills).
+
 ### Storage caching layer
 
 **What:** an in-memory LRU cache for hot read paths (`get_open_orders`,
