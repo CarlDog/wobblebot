@@ -20,6 +20,26 @@
 # wobblebot.cli.<entry>` against the `tools` service (Compose
 # profile = tools, so it doesn't start with `docker compose up`).
 
+# ====================================================================
+# ADR-041 — the deployment capability matrix.
+#
+# THERE IS NO SHARED CREDENTIAL BLOCK, DELIBERATELY. Until 2026-08-28
+# one anchor injected every Kraken key — reader, trader, AND the
+# withdrawal-enabled Harvester key — plus every cloud-LLM key, the
+# Discord token, and the web session secret into all nine services.
+# ADR-003 says withdrawal authority lives only with the Harvester;
+# that was true of the Python and false of the deployment.
+#
+# Each service now declares the credentials it actually reads, and
+# nothing else. `tests/deployment/test_compose_capability_matrix.py`
+# asserts the matrix as an ALLOWLIST — adding a credential back to a
+# shared block fails there, with a source citation on every row.
+#
+# When adding a service or a credential: put it in the service's own
+# `environment:` block and add the matching row to that test. Do NOT
+# reach for a shared anchor.
+# ====================================================================
+
 x-wobblebot-defaults: &wobblebot-defaults
   # Pulled from GitHub Container Registry — the `Publish Docker
   # image to GHCR` workflow rebuilds + pushes on every main commit
@@ -35,38 +55,6 @@ x-wobblebot-defaults: &wobblebot-defaults
   # "deploy a new build" action: change the env in Portainer →
   # save → stack auto-redeploys → guaranteed fresh pull.
   image: ghcr.io/carldog/wobblebot:${IMAGE_TAG:-main}
-  environment:
-    # ---- Kraken keys (per ADR-003 key separation) --------------
-    # Read-only: cli/status, cli/observe, cli/shadow, cli/web,
-    #            cli/operator (BalanceEx for the StatusQuery path)
-    KRAKEN_READER_API_KEY: ${KRAKEN_READER_API_KEY}
-    KRAKEN_READER_API_SECRET: ${KRAKEN_READER_API_SECRET}
-    # Trade: cli/preflight, cli/live
-    KRAKEN_TRADER_API_KEY: ${KRAKEN_TRADER_API_KEY}
-    KRAKEN_TRADER_API_SECRET: ${KRAKEN_TRADER_API_SECRET}
-    # Harvester (Withdraw scope ON; trade key Withdraw OFF): cli/harvest
-    KRAKEN_HARVESTER_API_KEY: ${KRAKEN_HARVESTER_API_KEY}
-    KRAKEN_HARVESTER_API_SECRET: ${KRAKEN_HARVESTER_API_SECRET}
-    # ---- Cloud LLM keys (optional; cpu-only profile uses Ollama) -
-    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-    # Atlas Cloud (OpenAI-compatible gateway; the quant seat's
-    # xai/grok-4.5 is reachable only through it). NOTE the exact
-    # name — cli/advise reads ATLASCLOUD_API_KEY, not ATLAS_API_KEY.
-    ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
-    # ---- News ingestion (CryptoCompare — retired upstream; key only
-    # matters with a paid CoinDesk Data plan + enabled: true) -------
-    CRYPTOCOMPARE_API_KEY: ${CRYPTOCOMPARE_API_KEY:-}
-    # ---- Discord (cli/operator) --------------------------------
-    DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
-    # ---- Web UI session cookie signing key (cli/web) -----------
-    WOBBLEBOT_WEB_SESSION_SECRET: ${WOBBLEBOT_WEB_SESSION_SECRET}
-    # ---- NAS-specific Ollama routing (static, not a secret) ----
-    # cli/advise reads OLLAMA_BASE_URL from env. The host-gateway
-    # entry in extra_hosts below makes host.docker.internal:11434
-    # resolve to the NAS's host-networked Ollama container.
-    OLLAMA_BASE_URL: http://host.docker.internal:11434
   volumes:
     # Host paths default to the NAS layout under /volume1/docker/wobblebot.
     # Override via HOST_DATA_DIR / HOST_CONFIG_DIR for local development
@@ -76,8 +64,19 @@ x-wobblebot-defaults: &wobblebot-defaults
     # NB: every daemon's log_file_path defaults to data/logs/X.log
     # (relative to /app), so log files land under /app/data/logs/
     # inside the data mount — there's no separate /app/logs mount.
+    #
+    # /app/config is READ-ONLY here. services/settings_rewriter — the
+    # only code that writes settings.yml — is reached from exactly two
+    # callers, cli/apply and cli/recalibrate, and both are one-shot
+    # CLIs run through the `tools` service, which overrides this with a
+    # writable mount. Every daemon reads config and never writes it.
+    #
+    # Per-service scoping of /app/data is NOT done here: the daemons
+    # share the data tree (each writes its own DB + logs) and splitting
+    # it needs per-DB paths. Named as 2.1 work rather than rushed into
+    # a release.
     - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
-    - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
+    - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config:ro
   extra_hosts:
     # Containers reach host-resident Ollama via
     # `http://host.docker.internal:11434`. Per the global
@@ -85,6 +84,20 @@ x-wobblebot-defaults: &wobblebot-defaults
     # harmless when unused and load-bearing when needed.
     - "host.docker.internal:host-gateway"
   restart: unless-stopped
+
+# Non-secret runtime wiring, safe to share by definition.
+#
+# ⚠️ A per-service `environment:` block REPLACES an anchor's rather than
+# deep-merging it (YAML merge keys are shallow), which is why every
+# service below merges this explicitly with `<<: *common-env`. A dropped
+# merge silently loses OLLAMA_BASE_URL; the matrix test asserts against
+# exactly that mistake.
+x-common-env: &common-env
+  # cli/advise, cli/operator, and cli/web's /health probe all read
+  # OLLAMA_BASE_URL from env. The host-gateway entry in extra_hosts
+  # makes host.docker.internal:11434 resolve to the NAS's
+  # host-networked Ollama container. Static routing, not a secret.
+  OLLAMA_BASE_URL: http://host.docker.internal:11434
 
 services:
 
@@ -96,6 +109,14 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-live
     command: python -m wobblebot.cli.live --profile cpu-only
+    environment:
+      <<: *common-env
+      # cli/live.py:1954 — the trade key, and only the trade key.
+      # Withdraw scope is OFF on it (ADR-003); the Harvester key is
+      # not here at all. Fills notify via the DB for cli/operator to
+      # forward, so no Discord token either.
+      KRAKEN_TRADER_API_KEY: ${KRAKEN_TRADER_API_KEY}
+      KRAKEN_TRADER_API_SECRET: ${KRAKEN_TRADER_API_SECRET}
     restart: "no"
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/live", "--profile", "cpu-only"]
@@ -111,6 +132,11 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-observe
     command: python -m wobblebot.cli.observe --profile cpu-only
+    environment:
+      <<: *common-env
+      # cli/observe.py:460 — KrakenConfig.from_env() with the reader defaults.
+      KRAKEN_READER_API_KEY: ${KRAKEN_READER_API_KEY}
+      KRAKEN_READER_API_SECRET: ${KRAKEN_READER_API_SECRET}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/observe", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -126,6 +152,13 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-news
     command: python -m wobblebot.cli.news --profile cpu-only
+    environment:
+      <<: *common-env
+      # cli/news.py:78 — the only credential it reads. No Kraken adapter
+      # at all: the Kraken status feed and the RSS sources are public.
+      # CryptoCompare is retired upstream and off by default; the var
+      # stays wired for an operator with a paid CoinDesk Data plan.
+      CRYPTOCOMPARE_API_KEY: ${CRYPTOCOMPARE_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/news", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -140,6 +173,17 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-advise
     command: python -m wobblebot.cli.advise --profile cpu-only
+    environment:
+      <<: *common-env
+      # cli/advise.py:128-131 (_CLOUD_KEY_ENV). No Kraken adapter — the
+      # advisor reads DBs, never the exchange (ADR-002). Ollama needs no
+      # credential. NOTE the exact Atlas name: cli/advise reads
+      # ATLASCLOUD_API_KEY, not ATLAS_API_KEY (the quant seat's
+      # xai/grok-4.5 is reachable only through that gateway).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/advise", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -155,6 +199,29 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-harvest
     command: python -m wobblebot.cli.harvest --profile cpu-only
+    environment:
+      <<: *common-env
+      # THE ONLY SERVICE THAT SEES THE WITHDRAWAL CREDENTIAL (ADR-003,
+      # asserted by tests/deployment/test_compose_capability_matrix.py).
+      #
+      # cli/harvest.py:432 builds its single adapter from
+      # config.harvester.api_key_env_var — daemon mode included. (The
+      # module docstring still says "uses the read-only
+      # KRAKEN_READER_API_KEY"; that text is frozen at Stage 4.2 and
+      # Stage 4.4 replaced it. The code is authoritative.)
+      #
+      # The trade key is deliberately ABSENT even though harvest.py:323
+      # byte-compares against it to prove the two keys differ. That
+      # check degrades by design when the trade key is not in the
+      # environment — and its absence IS the separation the check
+      # approximates. Removing it strengthens the invariant.
+      #
+      # Run the terminal execute path against THIS service so withdrawal
+      # authority stays in one place:
+      #   docker compose run --rm harvest \
+      #     python -m wobblebot.cli.harvest --execute <proposal-id>
+      KRAKEN_HARVESTER_API_KEY: ${KRAKEN_HARVESTER_API_KEY}
+      KRAKEN_HARVESTER_API_SECRET: ${KRAKEN_HARVESTER_API_SECRET}
     restart: "no"
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/harvest", "--profile", "cpu-only"]
@@ -172,6 +239,20 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-operator
     command: python -m wobblebot.cli.operator --profile cpu-only
+    environment:
+      <<: *common-env
+      # NO KRAKEN CREDENTIAL. The compose file used to claim this service
+      # needed the reader key "for the StatusQuery BalanceEx path" — it
+      # does not, and never did on this code path: the USD balance comes
+      # from observe.db's balance_snapshots (operator.py:530-535) and a
+      # MockExchangeAdapter is injected at operator.py:1399.
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      # cli/operator.py:1127/1154/1183 — the assistant's intent parser.
+      # No Atlas: cli/operator has its own three-provider branch and
+      # does not read ATLASCLOUD_API_KEY.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/operator", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -190,6 +271,24 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-web
     command: python -m wobblebot.cli.web serve --bind-host 0.0.0.0 --bind-port 8000 --profile cpu-only
+    environment:
+      <<: *common-env
+      # NO KRAKEN CREDENTIAL — ADR-016/017's credential-free web tier,
+      # now enforced rather than asserted. web.py:229 builds a bare
+      # httpx client for public health probes only; exchange data on the
+      # dashboard comes from the DBs the daemons write.
+      WOBBLEBOT_WEB_SESSION_SECRET: ${WOBBLEBOT_WEB_SESSION_SECRET}
+      # ACCEPTED RESIDUAL (ADR-041). web.py:245-247 uses these for the
+      # /health LLM card's ok / unauthorized / not-configured badge via
+      # non-billable GET /v1/models probes. This is the reverse-proxied
+      # service holding three billable keys to render a badge — a real
+      # trade. Dropping them would make the card report "not configured"
+      # for providers that ARE configured, which is worse than no card;
+      # sourcing that status from a daemon that already holds the keys
+      # is named 2.1 work, not a silent change here.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     ports:
       # Host port 8000 is already in use on the NAS (likely DSM Web
       # Station / FreshRSS stack). Bind 28080 on the host instead;
@@ -211,6 +310,15 @@ services:
     <<: *wobblebot-defaults
     container_name: wobblebot-maintenance
     command: python -m wobblebot.cli.maintenance --profile cpu-only
+    environment:
+      <<: *common-env
+      # cli/maintenance.py:116-118 imports the capital / ledger /
+      # reconcile cycles, each calling KrakenConfig.from_env(
+      # key_var="KRAKEN_READER_API_KEY", …). Read-only by construction:
+      # reconciliation compares Kraken's history against live.db, it
+      # never places or cancels anything.
+      KRAKEN_READER_API_KEY: ${KRAKEN_READER_API_KEY}
+      KRAKEN_READER_API_SECRET: ${KRAKEN_READER_API_SECRET}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/maintenance", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -219,17 +327,43 @@ services:
       start_period: 120s
 
   # ------------------------------------------------------------------
-  # One-shot CLI dispatcher. No default command; no auto-restart.
-  # Operator invokes via:
+  # One-shot CLI dispatcher. No default command; no auto-restart; not
+  # started by `docker compose up` (profile = tools). Operator invokes:
   #   docker compose run --rm tools python -m wobblebot.cli.preflight
   #   docker compose run --rm tools python -m wobblebot.cli.recalibrate --target-balance 100
   #   docker compose run --rm tools python -m wobblebot.cli.apply --commit
   #   docker compose run --rm tools python -m wobblebot.cli.status
+  #
+  # NOT the withdrawal path. `cli/harvest --execute <id>` runs against
+  # the `harvest` service instead (see its comment), so the Harvester
+  # key stays in exactly one service definition.
   # ------------------------------------------------------------------
   tools:
     <<: *wobblebot-defaults
     container_name: wobblebot-tools
     command: ["python", "-c", "import sys; sys.stderr.write('use: docker compose run --rm tools <command>\\n'); sys.exit(2)"]
+    environment:
+      <<: *common-env
+      # cli/status + cli/recalibrate + cli/screener read the reader key;
+      # cli/preflight reads the trade key (its ADR-003 scope audit is
+      # exactly a probe of THAT key); tools/run_cloud_check.py reads the
+      # cloud keys. Broad, but this container is ephemeral and
+      # operator-invoked rather than one of the eight always-on daemons.
+      KRAKEN_READER_API_KEY: ${KRAKEN_READER_API_KEY}
+      KRAKEN_READER_API_SECRET: ${KRAKEN_READER_API_SECRET}
+      KRAKEN_TRADER_API_KEY: ${KRAKEN_TRADER_API_KEY}
+      KRAKEN_TRADER_API_SECRET: ${KRAKEN_TRADER_API_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
+    volumes:
+      # THE AUTHORIZED SETTINGS WRITER. cli/apply --commit and
+      # cli/recalibrate --commit reach services/settings_rewriter, which
+      # rewrites settings.yml — so this is the one service whose
+      # /app/config mount is writable. Every daemon's is `:ro`.
+      - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
+      - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
     restart: "no"
     profiles:
       - tools

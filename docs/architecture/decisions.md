@@ -3225,6 +3225,150 @@ service, the table an adapter concern, the engine keeps reading a port.
 [SEC staff FAQs on Rule 15c3-5](https://www.sec.gov/rules-regulations/staff-guidance/trading-markets-frequently-asked-questions/divisionsmarketregfaq-0);
 [FIA, Automated Trading Risk Controls](https://www.fia.org/sites/default/files/2024-07/FIA_WP_AUTOMATED%20TRADING%20RISK%20CONTROLS_FINAL_0.pdf).
 
-<!-- ADR-040 is the last in this file; new ADRs append below. -->
+---
+
+## ADR-041 — The Deployment Enforces the Capability Matrix, Not Just the Python
+
+**Status:** Accepted
+**Date:** 2026-08-28
+
+**Context:**
+
+ADR-003 is this project's load-bearing safety invariant: only the Harvester may move
+money, and withdrawal scope lives only on the Harvester key. ADR-001's hexagonal layering,
+ADR-002's `pending_commands` firewall, and ADR-034's daemon-kind ownership all assume it.
+The Python has always honored it — `cli/live` builds its adapter from
+`KRAKEN_TRADER_API_KEY` and has no code path to `withdraw()`; `ExecuteProposalCommand`
+sits outside the LLM-emittable union; `cli/harvest` is the sole caller of the withdrawal
+endpoint.
+
+An external-repository assessment on 2026-08-27 (`docs/reference/openclaw-integration-assessment-2026-08-27.md`,
+corroborated the next day by `docs/reference/nemoclaw-repository-assessment-2026-08-28.md`)
+observed that the guarantee **stops at the Python boundary**, and re-verification against
+`docker/docker-compose.yml` confirmed it: a single `x-wobblebot-defaults` YAML anchor
+injected *every* credential into *every* service. All nine — `live`, `observe`, `news`,
+`advise`, `harvest`, `operator`, `web`, `maintenance`, and the one-shot `tools` — held the
+reader key, the trader key, **the withdrawal-enabled Harvester key**, all four cloud-LLM
+keys, the CryptoCompare key, the Discord bot token, and the web session secret, plus
+read-write mounts of the entire `data/` and `config/` trees.
+
+The practical shape of that: an arbitrary-code path in `web` (the reverse-proxied service),
+`news` (which parses third-party RSS), or `advise` (which handles model output) yields the
+credential that moves money out of the account. No Python bug is required — the credential
+is simply present in the process environment. ADR-003 was, at the deployment layer, a
+comment.
+
+A second, quieter version of the same problem: `config/` was mounted read-write everywhere,
+though `services/settings_rewriter` — the only code that writes `settings.yml` — is reached
+from exactly two callers (`cli/apply`, `cli/recalibrate`), both one-shot CLIs.
+
+**Decision:**
+
+1. **No shared block carries a secret.** `x-wobblebot-defaults` keeps image, volumes,
+   `extra_hosts`, and restart policy. A new `x-common-env` anchor carries non-secret
+   runtime wiring only (`OLLAMA_BASE_URL`). Every credential moves into the individual
+   service's own `environment:` block.
+
+2. **Each service is granted exactly the credentials its code reads**, per a matrix derived
+   from the source — not from the compose file's own comments, which had drifted in three
+   places (see Consequences). The matrix:
+
+   | Service | Credentials | Established by |
+   |---|---|---|
+   | `live` | trader | `cli/live.py:1954` |
+   | `observe` | reader | `cli/observe.py:460` |
+   | `news` | cryptocompare | `cli/news.py:78` |
+   | `advise` | cloud-LLM ×3, atlas | `cli/advise.py:128-131` |
+   | `harvest` | **harvester (only service)** | `cli/harvest.py:432` |
+   | `operator` | cloud-LLM ×3, discord | `cli/operator.py:1127/1154/1183` |
+   | `web` | cloud-LLM ×3, web-session-secret | `cli/web.py:245-247` |
+   | `maintenance` | reader | `cli/maintenance.py:116-118` |
+   | `tools` | reader, trader, cloud-LLM ×3, atlas | preflight / status / recalibrate / `run_cloud_check` |
+
+3. **`/app/config` is read-only for all eight daemons**; only `tools`, which runs the
+   settings-rewriting CLIs, mounts it read-write.
+
+4. **`tools` does not receive the Harvester key.** The terminal execute path becomes
+   `docker compose run --rm harvest python -m wobblebot.cli.harvest --execute <id>`, so
+   withdrawal authority appears in exactly one service definition.
+
+5. **The matrix is asserted by test**, `tests/deployment/test_compose_capability_matrix.py`,
+   as an **allowlist** — a service holding an *extra* credential fails as loudly as one
+   missing a required credential — plus a structural guard that no `x-` anchor may carry a
+   credential at all.
+
+**Consequences:**
+
+- **The Harvester key goes from nine services to one**; the trader key from nine to two
+  (`live`, and the ephemeral `tools`); the reader key from nine to three. Verified by
+  rendering `docker compose config` against a synthetic canary environment: the withdrawal
+  canary resolves into `harvest` alone.
+
+- **`harvest` loses the trader key, and that is an improvement, not a regression.**
+  `cli/harvest.py:323` byte-compares the Harvester key against `KRAKEN_TRADER_API_KEY` to
+  prove the two differ, and that check degrades by design when the trade key is absent. Its
+  absence *is* the separation the check approximates, so the deployment now provides
+  structurally what the check could only sample.
+
+- **Three comments in the compose file were wrong and are now corrected.** It claimed
+  `cli/operator` needed the reader key "for the StatusQuery BalanceEx path" — operator has
+  no Kraken adapter at all, reading balances from `observe.db`'s `balance_snapshots`
+  (`operator.py:530-535`) with a `MockExchangeAdapter` injected at `operator.py:1399`. It
+  claimed `cli/web` needed the reader key — `web.py:229` builds a bare `httpx` client for
+  public health probes, which is ADR-016/017's credential-free web tier, now enforced
+  rather than asserted. And `cli/harvest`'s own module docstring still described the Stage
+  4.2 reader-key posture that Stage 4.4 replaced. The code was authoritative in all three.
+
+- **Accepted residual: `web` keeps the three cloud-LLM keys.** `cli/web.py:245-247` uses
+  them for the `/health` LLM card's ok / unauthorized / not-configured badge via
+  non-billable `GET /v1/models` probes. This is the most network-exposed service holding
+  three billable credentials to render a badge — a real trade, taken deliberately: dropping
+  them would make the card report "not configured" for providers that *are* configured,
+  which is worse than no card. Sourcing that status from a daemon that already holds the
+  keys is named 2.1 work.
+
+- **What this does and does not prove.** Compose can prove *credential presence* and *mount
+  mode*. It cannot prove *semantic* authority — placing an order, approving a command,
+  rewriting settings, initiating a transfer — which remains enforced by the application and
+  the storage contract, with its own tests. This ADR closes the gap between "the Python
+  respects ADR-003" and "the deployment respects ADR-003." It does not replace either layer.
+
+- **Per-service scoping of `/app/data` is explicitly out of scope.** The daemons share the
+  data tree — each writes its own database and log file — and splitting it requires per-DB
+  paths and a migration of the deployment layout. Deferred to 2.1 rather than rushed into a
+  release; the config split is the half that was both cheap and unambiguous.
+
+- **Deployment action required.** No new Portainer stack variables are introduced and none
+  are removed, so the existing stack environment continues to satisfy every reference.
+  Redeploying applies the narrowed grants. A daemon that turns out to need a credential
+  this matrix withholds will exit with the existing missing-credential path (exit 2 with a
+  named env var), not fail obscurely.
+
+**Alternatives considered:**
+
+- **Docker secret files (`*_FILE` inputs).** Deferred, and the prior assessment names the
+  same trigger: it is worth doing *after* per-service credential separation exists, since it
+  changes how secrets arrive rather than who receives them. Splitting first is the larger
+  win and does not preclude it.
+
+- **A signing proxy** holding Kraken credentials on behalf of the daemons (the pattern
+  NemoClaw's gateway uses). Declined. Kraken HMAC signing requires the trusted exchange
+  adapter to hold the secret, so a proxy would create a *second* financial-authority
+  surface rather than removing one.
+
+- **Egress restrictions for `live` and `harvest`.** Sequenced after this ADR, deliberately.
+  A brittle allowlist is itself a safety problem for a financial system — `news` has a
+  changing feed set and provider endpoints move — and evaluating one is only meaningful once
+  credentials and filesystem authority are already split.
+
+**References:** ADR-001; ADR-002; **ADR-003** (the invariant this enforces); ADR-004;
+ADR-016/017 (credential-free web tier); ADR-026 (the DB-enforced withdrawal replay guard
+this complements); ADR-034; `docker/docker-compose.yml`;
+`tests/deployment/test_compose_capability_matrix.py`;
+`docs/reference/openclaw-integration-assessment-2026-08-27.md` (Confirmed Finding 1);
+`docs/reference/nemoclaw-repository-assessment-2026-08-28.md` (Candidate 1);
+`docs/planning/release-2.0-plan.md` §3 (B1-1), §5a.
+
+<!-- ADR-041 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 
