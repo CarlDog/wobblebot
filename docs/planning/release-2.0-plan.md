@@ -152,6 +152,17 @@ already true or is cheap, test-only, or documentation.
       a silent dead safety knob is worse than none — so the retirement was
       preserving its own bug for exactly the operators it was written for.
       Fixed in the same commit by a retired-key registry on `WobbleBotConfig`.
+- [x] **The tag ceremony can actually publish an image** (added 2026-08-28).
+      This was not on the list because nobody had exercised it: `docker-publish.yml`
+      had no `tags:` trigger, and `build-and-push` was gated
+      `if: … github.ref == 'refs/heads/main'`, so `git push origin v2.0.0`
+      would have **skipped the publish job entirely** and produced no
+      `2.0.0` image — a tag ceremony with nothing at the end of it. Now
+      wired: `tags: ['v*']`, a `startsWith(github.ref, 'refs/tags/v')` arm on
+      the publish gate, `type=semver` tag patterns, and `flavor: latest=false`
+      so the release build does not republish `:latest` (fleet standard
+      UNI-19). `needs: test` is unchanged, so the tag build is still
+      test-gated.
 - [ ] **Deprived-environment walkthrough** for all 22 operator entry points
       (the CLAUDE.md phase-end item; the last full baseline was 2026-05-15 for
       the original 7). **The one gate item still outstanding.**
