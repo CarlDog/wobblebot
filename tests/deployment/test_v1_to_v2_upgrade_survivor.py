@@ -16,9 +16,13 @@ hides, so the breaking half is what these tests aim at.
 THE FIXTURE IS THE REAL v1.0 SCHEMA, not a hand-written approximation: it is
 read from ``git show v1.0.0:src/wobblebot/adapters/sqlite_storage_schema.py``
 at test time. A hand-copied schema would drift from the tag and quietly stop
-testing the upgrade. If git or the tag is unavailable the test SKIPS rather
-than passing — a gate that cannot run must not report green (the
-``skipped-is-not-passed`` rule from ``ci-verification.md``).
+testing the upgrade. If git or the tag is unavailable the test skips locally
+and FAILS under ``WOBBLEBOT_REQUIRE_UPGRADE_GATE=1`` (set in CI) — a gate
+that cannot run must not report green (the ``skipped-is-not-passed`` rule
+from ``ci-verification.md``). That guard is not theoretical: the first CI run
+of this file reported an all-green 3635 passed / 10 skipped against 3645
+passed locally, because ``actions/checkout`` is shallow and tagless by
+default.
 
 WHAT IS ASSERTED: pre-existing rows survive; integrity holds; migrating a
 second time is a no-op (an interrupted upgrade must be resumable); an
@@ -28,6 +32,7 @@ a v1.0 config fails ACTIONABLY rather than silently.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 import sys
@@ -43,6 +48,30 @@ from wobblebot.config.loader import WobbleBotConfig, _find_retired_keys
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _V1_TAG = "v1.0.0"
 _SCHEMA_MODULE = "src/wobblebot/adapters/sqlite_storage_schema.py"
+
+# Set in CI. Turns "cannot reach the tag → skip" into a hard failure,
+# because a release gate that skips is a release gate that isn't running.
+#
+# This exists because it already happened: the first CI run of this
+# file reported an all-green 3635 passed / 10 skipped against 3645
+# passed locally. `actions/checkout` fetches shallow with no tags by
+# default, so `git show v1.0.0:…` failed and every database test here
+# skipped — under a green check, on the PR whose whole purpose was to
+# prove the upgrade works. The workflow now fetches full history; this
+# flag is the guard that stops a future checkout change from silently
+# undoing it.
+_REQUIRE_GATE_ENV = "WOBBLEBOT_REQUIRE_UPGRADE_GATE"
+
+
+def _unavailable(reason: str) -> None:
+    """Skip locally, fail loudly where the gate is mandatory."""
+    if os.environ.get(_REQUIRE_GATE_ENV) == "1":
+        pytest.fail(
+            f"the v1.0→2.0 upgrade gate could not run: {reason}. "
+            f"{_REQUIRE_GATE_ENV}=1 means this must never be skipped — check that the "
+            "checkout fetched tags (`fetch-depth: 0`)."
+        )
+    pytest.skip(reason)
 
 
 def _v1_schema_sql() -> str:
@@ -62,7 +91,7 @@ def _v1_schema_sql() -> str:
             timeout=30,
         ).stdout
     except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"cannot read {_V1_TAG}:{_SCHEMA_MODULE} from git ({exc})")
+        _unavailable(f"cannot read {_V1_TAG}:{_SCHEMA_MODULE} from git ({exc})")
 
     namespace: dict[str, object] = {}
     exec(
@@ -70,7 +99,7 @@ def _v1_schema_sql() -> str:
     )  # noqa: S102  # trusted: our own tagged source
     schema = namespace.get("SCHEMA")
     if not isinstance(schema, str) or "CREATE TABLE" not in schema:
-        pytest.skip(f"{_V1_TAG}:{_SCHEMA_MODULE} has no usable SCHEMA constant")
+        _unavailable(f"{_V1_TAG}:{_SCHEMA_MODULE} has no usable SCHEMA constant")
     return schema
 
 
