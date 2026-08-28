@@ -679,6 +679,20 @@ operator's call on whether it is worth a slot.
   phases, each broken into five stages" — there are nine phases plus the
   P0–P4 track, and the branching section predates how P1–P4 actually shipped.
   It is a cross-version doc, so it should be corrected rather than archived.
+- **RESOLVED 2026-08-28 — the footer's "update available" check had never
+  worked once in production.** `release_checker` shipped 2026-08-01 (`dd35431`)
+  polling `api.github.com/repos/CarlDog/wobblebot/releases/latest` every 6h.
+  That endpoint returns only *published Releases*, and the repo had none — the
+  `v1.0.0` **git tag** is not a GitHub **Release**. So for four weeks the check
+  404'd on every poll, the code's fail-soft path swallowed it as "no update
+  available," and the footer looked correct while reading nothing. Backfilled a
+  `v1.0.0` Release from the existing tag; the real `check_for_update` now
+  returns `update_available=False, latest=1.0.0` against the running 2.0.0 with
+  no warning logged. **The transferable lesson: a feature can pass its tests,
+  ship green, and still never function, because the tests exercise the code and
+  not the data source it depends on existing.** Cut a Release at the 2.0.0 tag
+  too, or this silently regresses to the same state.
+
 - **No 2.0.0 known-limitations document exists.** v1.0 got one; the tag should
   have its own, and writing it is a good forcing function for confirming which
   v1.0 limitations the 2.0 line actually closed.
