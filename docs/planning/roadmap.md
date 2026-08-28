@@ -307,6 +307,14 @@ the detail; the full backlog index is
 [`docs/release/v1.0-future-improvements.md`](../release/v1.0-future-improvements.md)). Only
 *shipped* items are receipted here.
 
+> **Closing this line and opening the next (proposed 2026-08-28, not yet ratified):**
+> [`docs/planning/release-2.0-plan.md`](release-2.0-plan.md) carries the `2.0.0` tag-gate
+> checklist (this roadmap had none), the aggregation of the 2026-08-27/28 Ollama /
+> OpenClaw / NemoClaw assessments into scheduled-vs-parked-vs-declined buckets, the
+> proposed 2.1 phase (deployment & lifecycle integrity, ADR-041/042/043) ahead of the
+> committed Phase 9, and a per-document plan for the documentation audit. Receipts for
+> anything it schedules land here, not there.
+
 1. **Dead man's switch** ✅ 2026-06-01 — server-side `CancelAllOrdersAfter` safety net
    (`ExchangePort.set_dead_mans_switch` + per-tick pet/disarm in `cli/live`), on by default
    at 60s. Kraken auto-cancels all open orders if the host goes silent (crash/power/network
