@@ -90,11 +90,23 @@ un-released development line, not a patch on top of a shipped artifact.
 
 ### 1b. The deployment pin must move with the tag
 
-Roadmap Guardrail 1 states the NAS stack is explicitly pinned by `IMAGE_TAG`,
-so a push is not a redeploy. Production currently runs an untagged
-`sha-<short>` image. The tag ceremony should include repointing `IMAGE_TAG` at
-the tagged build — otherwise "we released 2.0.0" and "what's running" stay
-different things, which is the drift class §6 is about.
+Production runs an untagged `sha-<short>` image. The tag ceremony should
+include repointing `IMAGE_TAG` at the tagged build — otherwise "we released
+2.0.0" and "what's running" stay different things, which is exactly the drift
+class §5c's startup receipt exists to surface.
+
+> **Correction while you are in here.** Guardrail 1 in
+> [`docs/release/v1.1/README.md`](../release/v1.1/README.md) (line 622) says
+> the NAS stack is explicitly pinned by `IMAGE_TAG` "so a push is not a
+> redeploy." That is **stale**: Portainer stack 158 is git-managed and
+> auto-deploys on push — PR #101's DMS-alert fix was running in production
+> roughly five minutes after CI published the image, about a day before any
+> explicit `IMAGE_TAG` bump, confirmed via the container's
+> `org.opencontainers.image.revision` label. The pin is still worth setting
+> deliberately at the tag (and a manual bump is still how a docs-only compose
+> change advances `ConfigHash`), but it should not be described as what
+> *prevents* a redeploy. Fix the guardrail text as part of the documentation
+> audit.
 
 ---
 
@@ -500,11 +512,16 @@ per-slice branches (`claude/capital-reporter`, `feat/p3-discord-buttons`,
 `claude/staking-income`, …) merged to `main` by PR.
 
 **Recommendation:** do not create a long-lived `v2.x` branch. `main` is the
-2.x development line (roadmap Guardrail 1 already says so), and each slice in
-§5 gets its own short-lived, **content-named** branch → PR → `main`, tagged
-`2.1.0` when the phase closes. If a long-lived branch is wanted anyway, name it
-for its content (`hardening/deployment-integrity`), never for a version
-number that may change.
+post-tag development line — Guardrail 1 in
+[`docs/release/v1.1/README.md`](../release/v1.1/README.md) already says so —
+and each slice in §5 gets its own short-lived, **content-named** branch → PR →
+`main`, tagged `2.1.0` when the phase closes. If a long-lived branch is wanted
+anyway, name it for its content (`hardening/deployment-integrity`), never for a
+version number that may change.
+
+**This narrows an explicit ask** — the operator asked for a new development
+branch, and the recommendation is that the *long-lived* form of it is the
+wrong shape. Flagged rather than silently reinterpreted; the ruling is theirs.
 
 This plan document is on **`claude/release-2.0-plan`** — content-named,
 short-lived, to be merged with the tag-ceremony decisions once ratified.
@@ -607,8 +624,8 @@ audit's process discipline.
 Flagged, not scheduled. Each is a one-liner because each deserves the
 operator's call on whether it is worth a slot.
 
-- **28 local branches, most merged.** `git branch` lists 28 local and 24 remote
-  branches; the `v1.1` branch is fully merged (0 commits not in `main`) and so
+- **~31 local branches, most merged.** `git branch` lists 31 local and 24
+  remote; the `v1.1` branch is fully merged (0 commits not in `main`) and so
   are most of the `claude/*` and `feat/p3-*` lines. A prune before the tag
   makes the repo's history legible for the first archaeologist who comes back
   to it. Low effort, purely hygienic.
