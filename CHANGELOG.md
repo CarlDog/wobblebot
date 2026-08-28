@@ -9,20 +9,80 @@ carry the canonical completion dates.
 **`v1.0.0` was tagged 2026-07-31** (see the `[1.0.0]` section below and
 `docs/planning/phase-8-summary.md`). The work developed on the `v1.1`
 branch since then — P1's safety-hardening backlog, the ADR-022 advisor
-reorientation, and a full web UI expansion — merges to `main` as
-**`2.0.0`**, not `1.1.0`: it includes a breaking config-schema change
+reorientation, and a full web UI expansion — ships as **`2.0.0`**, not
+`1.1.0`: it includes a breaking config-schema change
 (`EmergencyStopConfig` removed, ADR-032) and a full replacement of the
 advisor's decision architecture (ADR-022), both of which warrant a
 major bump under this file's stated SemVer discipline. The branch
 itself keeps its `v1.1` name for history (git branches, ADR numbers,
 and the `docs/release/v1.1/` planning directory aren't renamed) — only
-the released version number changes. Entries land under `[2.0.0]`
-below until the tag ceremony stamps a date. New direct-to-`main`
-changes (post-merge hotfixes) land under `[Unreleased]`.
+the released version number changed.
 
-## [Unreleased]
+**Fold note (2026-08-28).** This file briefly carried two unreleased
+sections — `[2.0.0]` for the branch work and `[Unreleased]` for
+post-merge changes on `main`. Since nothing on `main` had ever been
+released, the split described one development line, not a release and
+a patch on top of it. They are now one `[2.0.0]` section, per
+`docs/planning/release-2.0-plan.md` §1a. Post-2.0.0 work lands under a
+fresh `[Unreleased]` heading created at that time.
+
+## [2.0.0] - 2026-08-28
 
 ### Added
+
+- **ADR-041 — the deployment enforces the capability matrix** (2026-08-28).
+  A single `x-wobblebot-defaults` YAML anchor had been injecting *every*
+  credential into *all nine* services: `web`, `news`, `advise`, `operator`,
+  `maintenance`, and the one-shot `tools` container each held the
+  withdrawal-enabled Harvester key alongside the reader and trader keys, every
+  cloud-LLM key, the Discord token, and the web session secret — plus
+  read-write mounts of the entire `data/` and `config/` trees. ADR-003's
+  financial-power fragmentation was enforced in the Python and merely *assumed*
+  at the container boundary; reaching the withdrawal credential required no
+  Python bug, only a foothold in any daemon. Each service now declares exactly
+  what its code reads (Harvester key: 9 services → 1; trader: 9 → 2; reader:
+  9 → 3), `/app/config` is read-only for all eight daemons with only the
+  settings-rewriting `tools` container keeping write access, and the terminal
+  withdrawal path moves to `docker compose run --rm harvest …` so withdrawal
+  authority appears in one service definition.
+  `tests/deployment/test_compose_capability_matrix.py` asserts the matrix as an
+  allowlist — an *extra* credential fails as loudly as a missing one — with a
+  structural guard that no shared anchor may carry a credential at all.
+  Verified beyond the unit test by rendering `docker compose config` against a
+  synthetic canary environment. The matrix was derived from the source, not
+  from the compose file's own comments, which had drifted in three places.
+  Found by the external-repository assessments below and re-verified directly.
+- **A v1.0 → 2.0 upgrade-survivor gate** (2026-08-28,
+  `tests/deployment/test_v1_to_v2_upgrade_survivor.py`). Every migration had
+  unit coverage for its own column; nothing exercised what an operator actually
+  does — open a v1.0-written database with the 2.0 artifact. The fixture is
+  built from the *real* tagged schema (`git show v1.0.0:…`) rather than a
+  hand-copy that would drift, and skips rather than passing green if the tag is
+  unreachable. Asserts that the database opens, integrity holds, seeded rows
+  survive, a second migration pass is a no-op (an interrupted upgrade must be
+  resumable), and — the one that matters most — an operator-**approved**
+  `pending_commands` row is still `approved` with a NULL `dispatched_at`
+  afterward, so migrating can never execute a live ADR-002 instruction as a
+  side effect.
+
+### Fixed
+
+- **A config carrying an ADR-retired key is now refused, with the fix in the
+  error** (2026-08-28). ADR-032 deleted `safety.emergency_stop` precisely
+  because a silent dead safety knob is worse than none — but no config model
+  sets `extra="forbid"`, so Pydantic's `extra="ignore"` default meant an
+  upgrading operator's `settings.yml` kept the block, loaded without a word,
+  and went on claiming a balance floor that does not exist. ADR-032's own
+  stated problem survived the fix that retired it. A `mode="before"` validator
+  on `WobbleBotConfig` now rejects a named registry of retired keys (inactive
+  `profiles.*` sub-trees included) and names the ADR and the superseding
+  setting. Deliberately *not* `extra="forbid"` everywhere, which would turn a
+  targeted upgrade check into a broad compatibility break. Found by the
+  upgrade-survivor gate above; the live NAS config, the local checkout, and
+  `settings.example.yml` were all verified free of the key before shipping a
+  hard failure into a `restart: unless-stopped` fleet.
+
+### Previously under `[Unreleased]`
 
 - **External-repository assessments and manual operator tooling** (2026-08-27 →
   2026-08-28). Added source-backed Ollama, OpenClaw, and NemoClaw assessments under
@@ -657,7 +717,7 @@ $0.00 — every slice runs on public/read-only or offline data.
   now priced at the cached-input rate in the ADR-014 ledger (they were billed at full
   input rate); Anthropic `cache_control` enablement stays deferred with triggers.
 
-## [2.0.0] — Unreleased (developed on the `v1.1` branch)
+### The `v1.1`-branch phases (P1–P4)
 
 ### P1 — Safety-hardening + ready-now backlog, COMPLETE (2026-07-31 → 2026-08-01)
 

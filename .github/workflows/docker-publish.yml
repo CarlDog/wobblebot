@@ -60,6 +60,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # Full history + tags, NOT the default shallow single-commit
+          # fetch. tests/deployment/test_v1_to_v2_upgrade_survivor.py
+          # builds its fixture from the real tagged schema via
+          # `git show v1.0.0:src/.../sqlite_storage_schema.py`, so a
+          # shallow checkout makes the 2.0 release gate SKIP — and it
+          # did, silently, on the first run of this PR: 3635 passed /
+          # 10 skipped in CI against 3645 passed locally, under an
+          # all-green check. A skipped gate is an untested gate.
+          fetch-depth: 0
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v7
@@ -83,6 +93,12 @@ jobs:
 
       - name: Tests (pytest — unit; integration excluded by addopts)
         run: pytest
+        env:
+          # The v1.0→2.0 upgrade gate must RUN here, not skip. Without
+          # this it degrades to a skip whenever the checkout can't reach
+          # the v1.0.0 tag, which reads as green. See the comment on the
+          # checkout step above.
+          WOBBLEBOT_REQUIRE_UPGRADE_GATE: "1"
 
   build-and-push:
     needs: test
