@@ -127,9 +127,15 @@ already true or is cheap, test-only, or documentation.
 
 ### 2b. Required before the tag
 
-- [ ] **CHANGELOG reconciliation** — resolve §1a (recommend Option A), then
-      stamp `[2.0.0]` with the tag date.
-- [ ] **v1.0 → 2.0 upgrade-survivor test.** *Both* the OpenClaw and NemoClaw
+> **Operator ruling 2026-08-28:** fix the credential defect first, then tag —
+> the fix-then-tag branch of §4. ADR-041 shipped on `claude/release-2.0-plan`;
+> the atomicity work stays in 2.1 (it needs its own ADR and edits the approval
+> firewall, and its highest-blast-radius case is already closed by ADR-026).
+> Items below are ticked as they land on that branch.
+
+- [x] **CHANGELOG reconciliation** — Option A taken: `[Unreleased]` folded into
+      `[2.0.0]`, stamped `2026-08-28`. Adjust the date if the tag slips.
+- [x] **v1.0 → 2.0 upgrade-survivor test.** *Both* the OpenClaw and NemoClaw
       assessments independently flag this as a 2.0 release gate, and the
       repo has no lane that starts from the published v1.0 state and proves
       the 2.0 artifact upgrades it. Shape: take a sanitized v1.0 fixture DB +
@@ -139,11 +145,18 @@ already true or is cheap, test-only, or documentation.
       by ADR-032) fails actionably rather than silently, and (b) no pending
       command or transfer proposal executes during migration or startup.
       This is the single highest-value tag-gate item — it is the only check
-      that exercises the *breaking* part of the breaking change.
+      that exercises the *breaking* part of the breaking change. **It earned
+      its keep immediately:** it found that a v1.0 `settings.yml` keeps
+      `safety.emergency_stop` and 2.0 ignores it *silently*, because no config
+      model sets `extra="forbid"`. ADR-032 deleted that block precisely because
+      a silent dead safety knob is worse than none — so the retirement was
+      preserving its own bug for exactly the operators it was written for.
+      Fixed in the same commit by a retired-key registry on `WobbleBotConfig`.
 - [ ] **Deprived-environment walkthrough** for all 22 operator entry points
       (the CLAUDE.md phase-end item; the last full baseline was 2026-05-15 for
-      the original 7).
-- [ ] **Schema-drift tests clean**, including `WOBBLEBOT_STRICT_CONFIG_DRIFT=1`.
+      the original 7). **The one gate item still outstanding.**
+- [x] **Schema-drift tests clean**, including `WOBBLEBOT_STRICT_CONFIG_DRIFT=1`
+      (26 passed, 2026-08-28).
 - [ ] **`IMAGE_TAG` repointed** at the tagged build (§1b).
 - [ ] **Documentation audit** (§7) — at minimum the disposition decisions; the
       file moves themselves can follow the tag.
