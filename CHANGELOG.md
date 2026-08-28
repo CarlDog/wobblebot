@@ -30,6 +30,20 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Added
 
+- **`Private :: Do Not Upload` classifier blocks an accidental PyPI
+  publish** (2026-08-28). WobbleBot is packaged like a distributable — a
+  setuptools backend, MIT license, a full classifier list — and the Dockerfile
+  really does build a wheel (`pip wheel`, then `pip install /wheels/*.whl`),
+  but it ships only as a container and has no PyPI publish path. The name
+  `wobblebot` is also unclaimed on PyPI, so nothing stops a stray
+  `twine upload` from succeeding and becoming the public `wobblebot` package.
+  PyPI rejects any upload whose metadata carries a `Private ::` classifier, so
+  this is the pyproject analogue of npm's `private: true` (which the fleet's
+  eight TypeScript repos adopted the same day). Verified the wheel still
+  builds both with and without build isolation — the path the Dockerfile
+  takes — and that the classifier survives into the wheel METADATA. Do not
+  remove it without deciding to publish.
+
 - **ADR-041 — the deployment enforces the capability matrix** (2026-08-28).
   A single `x-wobblebot-defaults` YAML anchor had been injecting *every*
   credential into *all nine* services: `web`, `news`, `advise`, `operator`,
