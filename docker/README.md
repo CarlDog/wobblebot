@@ -185,25 +185,21 @@ docker compose --profile tools run --rm tools python -m wobblebot.cli.apply --co
 
 ## The `cpu-only` profile
 
-`docker-compose.yml` passes `--profile cpu-only` to every WobbleBot
-daemon. That profile (defined in `config/settings.example.yml`) swaps
-the local-desktop model selections for CPU-friendly q4_K_M variants:
+`docker-compose.yml` passes `--profile cpu-only` to every WobbleBot daemon. The tracked profile
+is a portable NAS baseline, not the production seat register:
 
-| Role            | Local desktop default | `cpu-only` (NAS Docker)         |
-| --------------- | --------------------- | ------------------------------- |
-| operator        | phi4:14b-q8_0         | qwen2.5:3b-instruct-q4_K_M      |
-| advisor         | deepseek-r1:7b        | llama3.1:8b-instruct-q4_K_M     |
-| advisor type    | single (default)      | single (MoE on CPU is too slow) |
-| ollama base_url | localhost:11434       | host.docker.internal:11434      |
+- the interactive operator assistant uses the small local
+  `qwen2.5:1.5b-instruct-q4_K_M` model;
+- the tracked advisor baseline is the ADR-022 heuristic cascade with a bounded cloud escalation;
+- `OLLAMA_BASE_URL` points to `host.docker.internal:11434`, where a host-managed Ollama instance
+  listens outside this Compose stack; and
+- operator `settings.yml` may deliberately override the advisor into the evaluated MoE/Gremlin
+  lineup without changing the generic example.
 
-Measured token rates on the operator's DS1823xs+ (Ryzen V1780B,
-2026-05-27, hot cache):
-
-- operator (qwen2.5:3b-q4): **12.69 tok/sec** → 2-8s per response
-- advisor (llama3.1:8b-q4): **5.63 tok/sec** → ~35s per 200-token JSON
-
-See `~/.claude/rules/nas-ollama-optimization.md` for the underlying
-quant-selection principles + RAM budget guidance.
+Current seat holders and their evidence live in
+[`docs/reference/advisor-seats.md`](../docs/reference/advisor-seats.md); deployment dates and
+receipts live in the roadmap. Keep hardware-specific tuning in those evidence records rather than
+in user-home rule files that do not travel with the repository.
 
 ## Persistence model
 

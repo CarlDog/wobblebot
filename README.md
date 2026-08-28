@@ -1,18 +1,11 @@
 # WobbleBot
 
-<!-- markdownlint-disable MD033 -->
-<!-- fleet-confidence -->
-![code confidence](https://img.shields.io/badge/code_confidence-fair-orange) <sub>· claude-fable-5 · 2026-07-26 · [details](../../issues/19)</sub>
-<!-- /fleet-confidence -->
-<!-- markdownlint-enable MD033 -->
-
 **Deterministic, safety-first micro-trading system on Kraken using hexagonal architecture.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Tests](https://img.shields.io/badge/tests-2767%20unit%20%2B%2029%20integration-brightgreen.svg)](docs/planning/testing-plan.md)
-[![Pylint](https://img.shields.io/badge/pylint-10.00%2F10-brightgreen.svg)](pyproject.toml)
+[![CI](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml)
 
 > **⚠ Disclaimer.** WobbleBot is a personal hobby project. It places real
 > orders against real money on a real exchange when you run it in `live`
@@ -23,7 +16,7 @@
 > proceed if you understand what you're running.
 >
 > WobbleBot is **not affiliated with or endorsed by** Kraken, Payward Inc.,
-> Discord, Anthropic, OpenAI, Google, or Ollama. See [`NOTICE.md`](NOTICE.md)
+> Discord, Anthropic, OpenAI, Google, Ollama, or AtlasCloudAI. See [`NOTICE.md`](NOTICE.md)
 > for trademark + brand attributions.
 
 ---
@@ -46,47 +39,15 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 
 **Source of truth:** [`docs/planning/roadmap.md`](docs/planning/roadmap.md). Each completed stage carries a ✅ completion date.
 
-| Phase | Status |
-|---|---|
-| **Phase 1** — Foundation & Sandbox | ✅ closed 2026-05-13 |
-| **Phase 2** — Real Kraken adapter, micro-grid, multi-asset | ✅ closed 2026-05-14 (total real-money cost: **$0.08**) |
-| **Phase 3 / Stage 3.0** — Observer & Shadow Mode | ✅ closed 2026-05-14 |
-| **Config consolidation audit** (8 slices, no live-money risk) | ✅ closed 2026-05-14 |
-| **Phase 3 / Stage 3.1** — Data Collector & Metrics v2 | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.2** — Advisor Port + single-LLM Ollama | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.2.5** — News Ingestion (RSS + CryptoCompare) | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.3** — Passive Advisory Workflow (`cli/advise`) | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.4a** — Mixture of Experts (MoE) | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.4b** — Bounded Auto-Tuning Gate (`cli/apply`) | ✅ closed 2026-05-15 |
-| **Phase 3 / Stage 3.5** — Phase 3 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-3-summary.md)) |
-| **Stage 3.6** — Operational polish (indefinite runtime + multi-symbol advise) | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.1** — Harvester domain + decision logic | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.2** — `cli/harvest` read-only balance monitor | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.3** — Transfer proposal persistence + `tools/show_proposals.py` | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.4** — Active-mode withdrawals (`cli/harvest --execute`) | ✅ closed 2026-05-15 |
-| **Phase 4 / Stage 4.5** — Phase 4 integration check | ✅ closed 2026-05-15 ([summary](docs/planning/phase-4-summary.md)) |
-| **Phase 5** — Operator Interaction Engine (Discord + LLM intent parsing; ADR-013) | ✅ closed 2026-05-16 ([summary](docs/planning/phase-5-summary.md)) |
-| **Phase 6** — Cloud LLM Integration (Anthropic / OpenAI / Google adapters; cost gate; ADR-014 + ADR-015) | ✅ closed 2026-05-17 ([summary](docs/planning/phase-6-summary.md)) |
-| **Phase 7** — Web UI / Dashboard (FastAPI + Jinja2 + HTMX; ADR-016 + ADR-017) | ✅ closed 2026-05-18 ([summary](docs/planning/phase-7-summary.md)) |
-| **Stage 7.6** — `cli/recalibrate` operator tool (balance-scaling polish) | ✅ closed 2026-05-18 |
-| **Stage 8.0** — Deferred Phase-5-audit refactors (ports/operator split; run_poll_loop helper) | ✅ closed 2026-05-18 |
-| **Stage 8.1** — Reliability & Recovery (engine reconciliation; ADR-018) | ✅ closed 2026-05-18 |
-| **Stage 8.2** — Background Maintenance Worker (`cli/maintenance`; VACUUM + prune + backup) | ✅ closed 2026-05-18 |
-| **Stage 8.3** — Performance & Resource Tuning (SQLite pragmas + index audit + profile harness) | ✅ closed 2026-05-18 |
-| **Stage 8.4** — Phase 8 / v1.0 Release Check (incl. the ~10-week gating soak, Stage 8.4.E) | ✅ closed 2026-07-31 ([summary](docs/planning/phase-8-summary.md)) |
-| **Stage 8.5** — Advisor Engine: Heuristic + LLM Cascade (pre-soak value-add) | ✅ closed 2026-05-29 |
-| **Stage 8.6** — Advisor hardening + grid widen 1% → 3% (pre-soak) | ✅ closed 2026-05-30 |
-| **`v1.0.0` tagged** — soak passed its stated exit criteria | ✅ 2026-07-31 |
-| **v1.1 Track / P1** — safety-hardening backlog + ADR-022 advisor reorientation, merged to `main` as **`2.0.0`** | ✅ closed 2026-08-01 |
-| **v1.1 Track / P2** — data-infrastructure spine (backfill, history import, TA, auditor, screener, counter-target; ADR-028/029) | ✅ closed 2026-08-08 |
-
-**Health:** 2767 unit tests pass by default; 29 integration tests opt-in. mypy clean (125 src files), black/isort clean, pylint **10.00/10**.
+The roadmap owns current phase, release, quality, and real-money receipts. Release history is
+summarized in [`CHANGELOG.md`](CHANGELOG.md); do not copy point-in-time counts or phase tables from
+either file into this README.
 
 ---
 
 ## Operator Entry Points
 
-Twenty entry points cover the full operational surface (sixteen `cli/` modules + four `tools/` one-shots). Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both.
+Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configuration with deep-merge profile overrides; per-CLI flags override both. The table below names the primary surfaces; each module's `--help` is authoritative for flags and current behavior.
 
 | CLI | Phase | Touches money? | Purpose |
 |---|---|---|---|
@@ -104,12 +65,13 @@ Twenty entry points cover the full operational surface (sixteen `cli/` modules +
 | `python -m wobblebot.cli.operator` | 5.6 | ❌ (chat surface only) | Discord-backed operator interaction daemon (ADR-013). Maintains a Gateway connection, drains the `notifications` SQLite table to Discord, parses inbound operator messages via `OllamaAssistantAdapter` into typed `OperatorIntent` payloads — Command → writes `PendingCommand` + posts confirm embed (cli/live polls the approved rows; that's the ADR-002 firewall); Query → reads engine + storage state via `OperatorService` and replies; Conversational / Unparseable → text reply. Background TTL expirer transitions abandoned `awaiting_confirmation` rows to `expired`. |
 | `python -m wobblebot.cli.web` | 7.1 | ❌ (read-mostly; ADR-013-firewalled mutations) | FastAPI + Jinja2 + HTMX dashboard. `serve` subcommand boots uvicorn against `127.0.0.1:8000` (operator's reverse proxy fronts the LAN); `create-user` seeds a bcrypt-hashed `users` row. Status / cost / advisor / harvester / news / audit views. Pause/resume/stop buttons create `PendingCommand` rows in `awaiting_confirmation` — cli/live's `WHERE status='approved'` poll stays the only path from intent to engine. |
 | `python -m wobblebot.cli.recalibrate` | 7.6 | ❌ (config writes) | Scales every USD-denominated knob in `settings.yml` proportionally to a new `--target-balance`. Reads live Kraken USD balance via the read-only key by default; `--current-balance X` overrides for what-if analysis. `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving, atomic). Spacing %, level counts, max_loss_percentage, shadow:* are policy invariants and stay constant. |
-| `python -m wobblebot.cli.maintenance` | 8.2 | ❌ | Background maintenance daemon. Three concurrent scheduled tasks via `asyncio.gather` over `run_poll_loop`: VACUUM (default 7d cadence) → `services.maintenance.vacuum_database`; prune+archive (1d) → archive-then-delete `price_snapshots` to CSV; backup (1d) → SQLite online `.backup` API to `data/backups/`. Opt-in log rotation via `TimedRotatingFileHandler` ALONGSIDE stderr. |
+| `python -m wobblebot.cli.maintenance` | 8.2+ | ❌ | Background maintenance daemon. Five isolated scheduled tasks: VACUUM, prune+archive, backup, backup verification, and Kraken-vs-local trade reconciliation. Current cadence/config details live in the module's `--help` and `config/settings.example.yml`. |
 | `python -m wobblebot.cli.screener` | P2.5 | ❌ (offline; no credentials) | Rank observed symbols by grid-suitability (P2 slice 5). Reads stored 60m bars only; vol + ATR% scored as distance-from-band-center (non-monotonic), flatness descending, rank-based composite; strongest \|Pearson\| vs the live lineup as a post-score annotation. Advisory only (ADR-002); log-table output, no DB table. |
 | `python tools/first_real_trade.py` | 2.3 | **✅ REAL MONEY** | One-shot diagnostic: marketable round-trip with hard caps. Used 2026-05-15 against the operator's account; total cost $0.08. |
-| `python tools/run_cloud_check.py` | 6.5 | **✅ REAL MONEY** (tiny) | One-shot cloud-LLM smoke test (`--provider anthropic|openai|google` / `--role` / `--model`). Lives under `tools/` (diagnostic, not daemon). |
+| `python tools/run_cloud_check.py` | 6.5 | **✅ REAL MONEY** (tiny) | One-shot cloud-LLM smoke test (`--provider anthropic|openai|google|atlas` / `--role` / `--model`). Lives under `tools/` (diagnostic, not daemon). |
 | `python tools/import_kraken_history.py` | P2.2 | ❌ (offline) | Stream the local Kraken OHLCVT dump (base + quarterly CSVs) into `ohlc_bars`/`price_snapshots` through the idempotent write paths. The only deep-history path (the live OHLC endpoint retains ~720 bars/interval). |
 | `python tools/auditor.py` | P2.4 | ❌ (pure replay) | Replay `settings.yml` through the real `GridEngine` over stored bars (ADR-028): fills/fees/cycles/PnL/drawdown per symbol. Directional, not exact; `_Sim`-equivalent at 1m. |
+| `python tools/reconcile_trade_history.py` | operations | ❌ (read-only) | One-shot Kraken-vs-`live.db` trade/ledger reconciliation and backfill runbook; deeper manual companion to maintenance's daily reconciliation task. |
 
 **Inspection tools** (read-only, safe against live DBs while their CLIs run):
 
@@ -154,7 +116,7 @@ pip install -e ".[dev]"
 # scripts\install-hooks.ps1     # Windows PowerShell
 
 # 5. Verify the install
-pytest                          # 2767 unit tests; ~90s with coverage
+pytest                          # default unit suite with coverage
 black --check src/ tests/
 mypy src/
 ```
@@ -194,15 +156,33 @@ wobblebot/
 │   ├── services/          # Orchestrators wiring ports to flows
 │   ├── cli/               # Operator entry points
 │   └── config/            # Pydantic schemas + YAML loader + profile resolver
-├── tests/                 # 2767 unit + 29 integration; mirrors src/
+├── tests/                 # Unit/integration suites mirroring src/
 ├── docs/                  # Architecture, planning, implementation, reference
 │   ├── architecture/      # System design, constraints, ADRs
 │   ├── implementation/    # Coding guidelines, module specs, deployment guide
 │   ├── planning/          # Roadmap, requirements, testing plan
-│   └── reference/         # Kraken API reference
+│   └── reference/         # API, model-evaluation, and external-repository references
 ├── config/                # settings.example.yml + prompts/ (operator-editable)
-└── scripts/               # install-hooks.{sh,ps1} for the pre-commit hook
+├── scripts/               # install-hooks.{sh,ps1} for the pre-commit hook
+└── vendor/                # third-party tools, vendored as git submodules
 ```
+
+---
+
+## Third-Party Tools
+
+- **[Atlas Cloud CLI](https://github.com/AtlasCloudAI/cli)** (vendored as a
+  git submodule at `vendor/atlascloud-cli`) — credit to AtlasCloudAI. This
+  is a manual dev/ops tool for checking Atlas Cloud account balance, model
+  availability, and API connectivity from the shell; wobblebot's own runtime
+  code does **not** call it. The advisor's Atlas Cloud adapter talks to
+  `https://api.atlascloud.ai/v1` directly via the existing
+  `OpenAIAdvisorAdapter` (see `.env.example`'s Atlas Cloud section) — the
+  CLI is a separate, optional tool, not a dependency of that path. After
+  cloning, run `git submodule update --init --recursive` to pull it in. The
+  gitlink pins the wrapper/docs snapshot, not the binary fetched by its
+  installer; see [`vendor/README.md`](vendor/README.md) for the explicit-version
+  and update-review policy.
 
 ---
 
@@ -211,9 +191,9 @@ wobblebot/
 ### Running Tests
 
 ```bash
-pytest                       # default — 2767 unit tests, integration excluded
+pytest                       # default unit suite, integration excluded
 pytest -m unit               # explicitly unit only
-pytest -m integration        # opt-in: 29 integration tests (some hit live Kraken)
+pytest -m integration        # opt-in integration suite; inspect markers/credentials first
 pytest tests/path/to/test_file.py::TestClass::test_name   # one test
 ```
 
@@ -247,7 +227,7 @@ WobbleBot follows **hexagonal architecture** with strict layer boundaries:
 
 All cross-module wiring happens via constructor dependency injection of port interfaces.
 
-See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the thirty-three ADRs that drive code structure.
+See [`docs/architecture/`](docs/architecture/) for the full architecture guide and [`docs/architecture/decisions.md`](docs/architecture/decisions.md) for the ADRs that drive code structure.
 
 ---
 
@@ -256,7 +236,7 @@ See [`docs/architecture/`](docs/architecture/) for the full architecture guide a
 The most important design constraint: **financial power is fragmented**.
 
 1. Only **Harvester** initiates fund transfers (Kraken withdrawal API per ADR-004).
-2. The Kraken **trading** API key must NOT have withdrawal permissions. The Phase 4 Harvester key is separate.
+2. The Kraken **trading** API key must NOT have withdrawal permissions. The Harvester key is separate.
 3. **LLM advisor cannot execute trades.** JSON-schema-validated recommendations only; bounded auto-tuning is opt-in and constrained by `max_*_change_percentage`.
 4. **News-derived advisor recommendations NEVER auto-apply** regardless of bounds (ADR-007).
 5. Max exposure caps + daily spend limits are enforced inside Bot Core, not at the adapter layer.
@@ -272,7 +252,7 @@ Full constraint list: [`docs/architecture/constraints.md`](docs/architecture/con
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) at the repo root.
 - **Planning:** [`docs/planning/`](docs/planning/) — `roadmap.md` (current phase + per-stage receipts), `requirements.md`, `testing-plan.md`.
 - **Kraken API reference:** [`docs/reference/kraken-api-reference.md`](docs/reference/kraken-api-reference.md).
-- **Project guide for AI assistants:** [`CLAUDE.md`](CLAUDE.md) — phase status, ratified design decisions, and project-specific conventions.
+- **Project guide for AI assistants:** [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) — repository conventions and pointers to authoritative status/decision records.
 
 ---
 

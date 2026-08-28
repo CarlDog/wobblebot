@@ -184,6 +184,23 @@ for known-bug recoveries).
 
 ### Capital utilization — added capital and realized profit never reach the trading envelope
 
+> **⚠️ Priority escalated (2026-08-26) — Sub-question 2 stopped being
+> theoretical.** `cli/maintenance`'s Capital Reporter (ADR-040) had been
+> flagging SOL/USD and ADA/USD daily since 2026-08-23: `order_size_usd`
+> couldn't clear Kraken's per-symbol ordermin at current prices (SOL needs
+> ≥$6.18, had $5; ADA needs ≥$5.36 at 3 of 6 levels, had $5). Confirmed via
+> `wobblebot-live`'s own log: SOL placed **0/6** orders on every re-layout
+> attempt for 3+ hours straight — not degraded, completely inert. Applied
+> a **stopgap** the same day (per-coin `order_size_usd` overrides, SOL
+> $8 / ADA $7, mirroring the existing DOGE precedent below) — confirmed
+> live, SOL immediately went to 3/6 placed. **This is a static fix and
+> will drift back out of range if either coin rallies enough** — it does
+> not touch the underlying gap. Sub-question 2 / Candidate direction 3
+> below (balance- and ordermin-aware sizing) is the real fix and should
+> be prioritized ahead of the other two sub-questions the next time this
+> file's items are picked up — a coin going fully inert is a harder
+> failure than a daily-spend cap binding early.
+
 **What:** three linked questions raised by the operator 2026-08-22,
 filed together because they share one root: **every USD-denominated
 knob is a static config number, and nothing in the running system
@@ -303,9 +320,12 @@ ratification.
 
 **Trigger:** review alongside the P4 advisor-feedback work, or sooner
 if the daily-spend cap starts short-circuiting cycles regularly (the
-98.4% reading above is the first observation of it binding). Running
-`cli/recalibrate` in its default dry-run mode is worth doing now
-regardless — it costs nothing and writes nothing.
+98.4% reading above is the first observation of it binding) — **or
+sooner still**, since sub-question 2's trigger already fired
+2026-08-26 (see the escalation note above): a coin going fully inert
+on its ordermin is the concrete case, not a hypothetical one anymore.
+Running `cli/recalibrate` in its default dry-run mode is worth doing
+now regardless — it costs nothing and writes nothing.
 
 ### Slippage / spread guard before placement
 

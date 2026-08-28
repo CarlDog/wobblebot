@@ -5,6 +5,8 @@ backoff** today, plus the gaps worth closing in v1.1. This is a documentation/co
 audit (v1.1 P0.5) — it describes the as-is posture and **tickets** the gaps; it does not
 change behavior.*
 
+**Last reconciled:** 2026-08-28.
+
 The soak has surfaced no retry-related defect (the one 2026-05-19 connectivity bug was a
 missing `try/except` in the shutdown `finally`, not a missing retry). So the items below
 are **consistency + robustness gaps, not active bugs.**
@@ -15,15 +17,14 @@ are **consistency + robustness gaps, not active bugs.**
 |---|---|---|---|---|
 | **Cloud LLM** (Anthropic / OpenAI / Google, advisor + assistant) | yes (60s default, per-adapter) | ✅ **Yes — ADR-015** (`retry_with_backoff`) | n/a | retry 1+3 attempts → `LLMRetryExhausted` → caller degrades (heuristic fallback / skip tick) |
 | **Kraken REST** | yes (10s, `KrakenConfig` default) | ⚠️ **Partial — ADR-027 (2026-07-31)**: `EAPI:Rate limit exceeded` retries (bounded exponential backoff, ADR-015 shape); every other error is still single-attempt | ❌ none enforced (reactive retry only, no token bucket) | per-symbol error swallowed at the CLI (Stage 2.4); retried next tick. One-shot CLIs surface the error to the operator |
-| **Ollama** (advisor + operator assistant) | yes (60s default; up to 180s for slow CPU models via config) | ❌ No — single attempt | n/a | MoE is fail-open (one expert timeout → proceed); `cli/advise`/`cli/operator` isolate per-cycle failures |
+| **Ollama** (advisor + operator assistant) | yes (per-role config) | Advisor: single attempt. Operator intent parsing: one same-payload retry on empty content or cold-cache read timeout | n/a | MoE is fail-open; daemon cycles remain isolated; a second operator-assistant failure surfaces |
 | **RSS feeds** | yes (30s) + `follow_redirects` | ❌ No — single attempt | n/a | per-source fault isolation in `cli/news` (one feed fails → log + continue) |
-| **CryptoCompare** | yes (30s) | ❌ No — single attempt | n/a | same per-source isolation in `cli/news` |
+| **CryptoCompare** *(retired)* | historical 30s client | historical single attempt | n/a | source retired 2026-07-31; retained here only as audit history |
 
-**One-line takeaway:** only the **cloud LLM** path retries. Everything else is
-single-attempt-with-timeout, contained by *fault isolation + next-cycle re-poll* on the
-daemon paths — which is acceptable by design for polled work, but leaves the **one-shot**
-Kraken paths (preflight / status / first-real-trade / harvest `--execute`) with no
-cushion against a transient blip, and leaves the Kraken **config knobs dead**.
+**One-line takeaway:** cloud LLM calls have the general bounded retry policy; Kraken rate limits
+have a narrow bounded retry; and operator-assistant Ollama calls retry only the two empirically
+transient cases above. Other paths rely on fault isolation plus next-cycle re-poll, while general
+one-shot Kraken timeouts/5xx/connection failures still surface for operator retry.
 
 ---
 
@@ -75,11 +76,14 @@ This is the gold standard the other integrations are measured against.
   `first_real_trade`, `harvest --execute`) surface the failure to the operator, who
   re-runs. So a transient blip is recoverable, just not automatically on the one-shots.
 
-### Ollama — single attempt, fail-open above it
+### Ollama — advisor single-attempt; operator assistant has one narrow retry
 
-- `httpx.AsyncClient(timeout=timeout_seconds)` (default **60s**; the cpu-only advisor
-  profile raises it toward 180s for slow local models). Single attempt; `httpx.HTTPError`
-  → wrapped error.
+- Both adapters use `httpx.AsyncClient(timeout=timeout_seconds)` and wrap transport failures in
+  their port-specific error.
+- The advisor adapter remains single-attempt. Operator intent parsing retries the identical
+  payload once when Ollama returns empty content or when the first read times out during a
+  cold-cache evaluation. Schema/JSON failures and other transport failures do not earn that retry;
+  a second empty/read-timeout result surfaces as `AssistantError`.
 - Containment is at a higher layer: the **MoE advisor is fail-open** (one expert
   timing out → WARNING + proceed; only all-fail raises), and `cli/advise` / `cli/operator`
   isolate a failed cycle (log + continue to the next scheduled run). A single Ollama
@@ -94,11 +98,10 @@ This is the gold standard the other integrations are measured against.
 - `cli/news` polls each source independently with per-source fault isolation — one feed
   erroring logs and continues; the feed is retried on the next news-poll cadence.
 
-### CryptoCompare — single attempt, per-source isolation
+### CryptoCompare — retired historical path
 
-- `httpx.AsyncClient(timeout=30.0)`. Single attempt. Same per-source fault isolation in
-  `cli/news`. CryptoCompare is redundant with RSS by design (ADR-010), so a transient
-  failure is doubly cushioned.
+- The former source used a 30-second single-attempt client with per-source isolation. It was
+  retired 2026-07-31 after its upstream became paid-only and is not an active retry surface.
 
 ---
 

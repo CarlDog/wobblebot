@@ -1,6 +1,9 @@
 # Project Roadmap – Phases & Stages
 
-WobbleBot’s development is organized into **five phases**, each containing **five stages**.  We build like a house: lay the foundation, frame the structure, wire up systems, finish the surfaces, then polish and decorate.  This roadmap lays out what gets built when; it is a *guiding structure*, not a rigid contract—phases and stages may be merged or adjusted as we learn.
+WobbleBot's development is organized into sequential phases and stages that grow as evidence
+and operator decisions warrant. We build like a house: lay the foundation, frame the structure,
+wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
+status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
 ## Phase 1 – Foundation & Sandbox ✅ Complete (2026-05-13)
 

@@ -6,7 +6,7 @@ Each document in this folder is the single source of truth for one aspect of pro
 
 | File | Purpose |
 | --- | --- |
-| `roadmap.md` | High‑level, five‑phase roadmap with five stages per phase. |
+| `roadmap.md` | Authoritative sequential phase/stage roadmap, current status, gates, and completion receipts. |
 | `milestones.md` | Concrete phase/stage outcomes and release checkpoints. |
 | `requirements.md` | Functional and non‑functional requirements with phase mapping. |
 | `process.md` | Development workflow, branching, code reviews, and stage progression. |

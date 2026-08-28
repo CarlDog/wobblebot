@@ -1,0 +1,3 @@
+[submodule "vendor/atlascloud-cli"]
+	path = vendor/atlascloud-cli
+	url = https://github.com/AtlasCloudAI/cli

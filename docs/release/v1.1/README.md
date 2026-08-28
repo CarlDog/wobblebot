@@ -12,14 +12,11 @@ declines), **not** plan candidates.
 - **Decision records:** `docs/architecture/decisions.md` (ADRs).
 - **Written:** 2026-06-01. Living document — re-sequence as the soak surfaces facts; keep it honest.
 
-> **⚠️ Strategy update (2026-06-02).** The work that was originally built on the `v1.1`
-> branch turned out to be mostly **v1.0 hardening** (the dead man's switch, the preflight
-> key-scope gate, the four-homes/schema-drift/retry audits, the o4 bug fix, the G1
-> dead-config cleanup, the offside log-noise fix). It was **fast-forwarded into `main` as
-> the v1.0 candidate** (`73e9388`) — `main` is **no longer frozen**. "v1.1" now refers to
-> the **post-tag P1–P4 roadmap** below; those phases branch off `main` *after* the v1.0
-> tag. The gating soak is being **restarted on the hardened candidate** (and going
-> **multi-coin** for better engine coverage while BTC is parked).
+> **Historical strategy update (2026-06-02).** Work originally built on the `v1.1` branch
+> proved to be v1.0 hardening and was fast-forwarded into `main` (`73e9388`). The hardened
+> candidate then completed its multi-coin soak and tagged as `v1.0.0` on 2026-07-31.
+> "v1.1" remains the historical name of the post-tag P1–P4 plan, although its release target
+> became `2.0.0`. Current completion state lives only in the roadmap.
 
 > Built from a full inventory of every documented v1.1 candidate (213 item-rows →
 > deduped). Nothing is dropped: work that isn't in an active phase below is in the
@@ -32,16 +29,15 @@ declines), **not** plan candidates.
 **Freeze-gated dependency layering, value-and-risk ordered within each layer.** Phases
 are cut by the three hard boundaries that actually constrain the work:
 
-1. **Tag gate** *(the original branch-freeze that shaped this plan was lifted 2026-06-02 —
-   see the strategy update above; the "P0" hardening already merged into the v1.0
-   candidate)* — the **P1–P4 work below is gated on the v1.0 tag**: it branches off `main`
-   after the restarted soak passes and v1.0 ships.
+1. **Tag gate** *(historical)* — P1–P4 were gated on the v1.0 tag. The soak passed and
+   `v1.0.0` tagged 2026-07-31, so this gate is closed.
 2. **Dependency spine** — the four-homes audit must precede any storage-tier migration;
    the Kraken-history import must precede its DB consumers; OHLC+TA is the shared input
    gating the regime detector / auditor / screener / counter-target / historian.
-3. **Data-time gates** — advisor outcome tracking needs 30–90d of applied-recommendation
-   data; the regime detector needs a 60–90d shadow-run before any consumer wires into
-   `cli/live`.
+3. **Data-time gates** — ADR-035 replaced the never-running applied-recommendation clock
+   with counterfactual scoring, which shipped in P4.1–P4.3. P4.6 still waits on the Q2-dump
+   canonical scoring run, and the regime detector still needs its 60–90d shadow-run before
+   any consumer wires into `cli/live`.
 
 Within each phase, slices are ordered **value-and-risk first** (safety-critical +
 soak-exposed defects ahead of speculative sophistication; effort is the tie-breaker,
@@ -50,36 +46,9 @@ never the sort key). **WIP limit: finish a phase before opening the next** — r
 
 ## Current status
 
-**Stale note (kept for history, see below for the real state):** the table immediately below
-this note was written pre-tag, when `main` was still the soak candidate. `v1.0.0` **tagged
-2026-07-31** on `main` exactly as it stood at tag time (`docs/planning/phase-8-summary.md`);
-this plan (still named for the `v1.1` branch it was developed on) **ships as `2.0.0`, not
-`1.1.0`** — `EmergencyStopConfig`'s removal (ADR-032) is a breaking config-schema change and
-ADR-022 replaced the advisor's whole decision architecture, both past what SemVer's minor
-bump should carry (see `CHANGELOG.md`'s `[2.0.0]` section). **P1 is now COMPLETE** (2026-07-31
-→ 2026-08-01) and merged to `main` — see the P1 table below for per-item receipts and
-roadmap.md's v1.1 Track item 2 for the consolidated ledger entry. **P2 is COMPLETE**
-(2026-08-07 → 2026-08-08, all six slices — see the P2 table + roadmap item 4). P3/P4 have
-not started.
-
-| | |
-|---|---|
-| `main` | = the **v0.1.0 candidate** at `38b8678` (advances with soak-hotfixes; **no longer frozen** since 2026-06-02) |
-| v1.0 hardening | ✅ dead man's switch (ADR-021) · preflight key-scope gate · four-homes/schema-drift/retry audits · o4 fix · G1 cleanup · offside log fix — **all on `main`** |
-| v1.0 soak-hotfixes | ✅ rate-limit batch fix + DMS disarm-on-failed-cancel fix (`abf3aa6`) · regression test (`8b25feb`) · DOGE ordermin workaround — **2026-06-02, on `main`** |
-| v1.0 | gating soak **running multi-coin** (ETH/SOL/XRP/DOGE/ADA) on the hardened candidate |
-| "v1.1" (post-tag) | the **P1–P4 roadmap below** — branches off `main` after the v1.0 tag |
-
-## Phase map
-
-| Phase | When | Theme | Status |
-|---|---|---|---|
-| ✅ Hardening (dead man's switch + P0.1–P0.5 + o4 + G1) | merged to `main` 2026-06-02 | Safety / Groundwork | **done** |
-| ✅ **GATE** | soak passed, `v1.0.0` tagged 2026-07-31 | **tag v1.0** | **done** |
-| **P1** | 2026-07-31 → 2026-08-01 | Safety + ready-now | **✅ COMPLETE** |
-| **P2** | 2026-08-07 → 2026-08-08 | Data-infrastructure spine | **✅ COMPLETE** (all six slices) |
-| **P3** | not started | Ops / observability / UX | pending |
-| **P4** | not started | Advisor-feedback cluster | data-gated |
+This file preserves the dependency map, candidate detail, and historical execution notes.
+For the current phase, shipped slices, remaining gates, dates, and quality receipts, read
+[`docs/planning/roadmap.md`](../../planning/roadmap.md). Do not maintain a second phase ledger here.
 
 Effort key: **S** = hours · **M** = 1–2 days · **L** = several days · **XL** = a week+.
 
@@ -393,7 +362,7 @@ detector** needs ~30d of baseline, so it tails the phase.
 | **Web actions: wait-for-completion + auto-refresh** *(operator-filed 2026-08-09)* | M | med-high | ✅ | **✅ COMPLETE 2026-08-09 (P3 slices 12+13):** row-watch to the real outcome + the MODAL-CARD flow (confirm → watch → immediate status refresh) for every dashboard action; no-JS keeps the full-page flow; CSP-clean. | **◐ ROW-WATCH CORE DONE 2026-08-09 (P3 slice 12):** the result page polls `GET /commands/{id}/watch` to terminal state and shows the real `CommandResult`, with the honest slow-pickup warning. Remaining: the MODAL-CARD presentation + dashboard auto-refresh (queue with per-entity buttons). — *Original:* The confirm page stops at "approved"; execution lands a tick later via cli/live's poll and only the 15s dashboard refresh shows it. Fix = the command_result page WATCHES the row (htmx poll → terminal state → show `CommandResult.message`; honest timeout wired to heartbeat data) — never synchronous execution (ADR-002: cli/live stays the only executor). Queue with the per-entity action buttons. **Amended 2026-08-09 (operator): present the whole flow as a MODAL CARD over the dashboard, not interim page navigations — the modal is the natural container for confirm → watch → auto-refresh.** Detail in `operator-ux.md`. |
 | **Re-anchor viability weighting** *(operator question 2026-08-09)* | M | med | ✅ | **✅ COMPLETE 2026-08-10 (P3 slice 22).** The full item: Wilder **ATR(14) over 14 days of stored hourly bars, divided by grid spacing** — "0.15×" = a typical hour moves price a seventh of a spacing, so even a perfect ladder waits ~7 hours per fill. Reuses `services/ta_metrics.compute_atr` (the screener's own primitive) rather than a second implementation. **Hourly, not daily:** that's the interval `cli/observe`'s top-up actually maintains, and ATR doesn't rescale across intervals by any honest constant — per-hour keeps the number literal. **Merged into ONE stat cell with the v0 2h number** (`activity: 2h · ATR/hr`) rather than added as a seventh: they answer the same question and only mean something next to each other — a quiet 2h inside a lively fortnight is noise, a quiet 2h inside a dead fortnight is the idle-ladder case. **Design questions from the note, answered:** window = 14d hourly; a poor-viability strong-drift banner **still renders loud** (a drifted ladder in a dead market is idle capital, and the right answer may be *pause*, not silence) — pinned by a test; and it is annotation-only, never auto-suppression, now stated as a rule in the `status.py` module docstring with its ADR-002 rationale. Fetched only AFTER the severity gate, so the 15s dashboard poll costs one bounded read for the 0–2 symbols that actually have a banner, not six every poll. Degrades to "—" on unwired observe.db, thin bars, or a storage failure — an annotation must never break what it annotates. — *Original:* Weight/annotate banners by whether a re-anchored grid would actually CYCLE. |
 | **Anomaly detector daemon** *(needs ~30d baseline)* | L | high | ⚠️ | `cli/anomaly`: deterministic Z-score/IQR cross-DB outlier watcher vs the operator's own baseline. Tails the phase once the clock matures. |
-| └ Disk-space awareness *(needs data-retention first)* | S | low-med | | `shutil.disk_usage` warn/critical; bundles onto the anomaly daemon. |
+| └ Disk-space awareness *(retention prerequisite closed)* | S | low-med | | ADR-036 shipped 2026-08-16, so retention no longer blocks this check. It remains bundled with the anomaly daemon and therefore waits on that daemon's baseline clock. |
 
 ### P3 resolved blueprints (feature-dev ×7 agents + adversarial judge, 2026-06-03)
 
@@ -505,10 +474,15 @@ re-anchor command) — **written** in `decisions.md` (2026-06-05). See the P2 cr
 
 ---
 
-## P4 — Advisor-feedback cluster (data-gated, 30–90d post-tag)
+## P4 — Advisor-feedback cluster (buildable scope complete; Historian gated)
 
 **Goal:** build the advisor feedback loop and the consumers it gates. Auto-action consumers
 remain firewalled behind their own ADRs.
+
+> **Status 2026-08-17:** P4.1 outcome ledger, P4.2 evaluator, P4.3 scoreboard,
+> P4.4 trace/Gremlin, P4.5 weather report, and P4.7 cost-honesty dashboard shipped. P4.6
+> Historian remains deliberately gated on the Q2-dump canonical scoring run and requires its
+> own design document. See the roadmap and `docs/planning/p4-completion-plan.md` for receipts.
 
 > **Gate changed 2026-08-10 — see ADR-035.** This cluster used to read "schedulable only when
 > the applied-rec clock matures." That clock was **never running**: `applied_suggestions` was
@@ -519,39 +493,40 @@ remain firewalled behind their own ADRs.
 > **rank and hit-rate, never dollars** (the auditor is directional, not exact).
 >
 > **The keystone is therefore no longer data-gated** — 2586 suggestions spanning 2026-05-27 →
-> 2026-08-10 are already scoreable. Two constraints carry forward: the corpus is
-> `heuristic` 2390 / `quant` 196 with no other roles (production has only ever run the ADR-022
-> cascade, never MoE), and those two are the router's branches rather than competitors — the
-> LLM only sees ticks the guards declined, so a naive side-by-side hit-rate would be a
-> confident wrong answer. A real per-expert panel needs MoE switched on first.
+> 2026-08-10 were already scoreable. That historical corpus is `heuristic` 2390 / `quant` 196;
+> those are router branches rather than competitors, so a naive side-by-side hit-rate remains
+> a confident wrong answer. MoE and the Gremlin went live observe-only on 2026-08-17, so a real
+> panel corpus now accumulates prospectively without changing the interpretation of old rows.
 
 | Slice | Effort | Value | Notes |
 |---|---|---|---|
-| **Advisor outcome tracking** *(keystone)* | XL | high | `recommendation_outcomes` table + `advisor_evaluator` + scoreboard. **No longer data-gated (ADR-035):** scoring is counterfactual via the ADR-028 replay, the corpus already exists, and the success definition is settled — **rank + hit-rate, never dollars**. Ships with per-cycle tracing (one migration). Scope note: two roles only until MoE runs; never print a naive heuristic-vs-quant ranking (router bias). |
-| **`risk.md` promises inputs the DTO doesn't carry** *(found 2026-08-10)* | S–M | **high** | 🐛 **BUG, blocks the risk battery.** The prompt tells the model it receives "current open exposure vs the configured caps, time-to-recovery from the last loss, and daily spend so far vs the daily cap". `PerformanceSummary` has **none** of them — only `max_drawdown`; `active_orders` is a count and no cap value is passed. The live MoE risk expert consequently **confabulated** ("has not yet approached its drawdown or daily spend caps") in fluent, convincing prose. Fix: extend the DTO + `SummaryBuilder` with real exposure / daily-spend / cap-headroom (preferred — engine and config already have it), or narrow the prompt to what exists. A risk fidelity battery cannot be built until this is settled, or it bakes the mismatch in. |
-| **Role-fidelity batteries — risk / news** *(gap found 2026-08-10)* | M | med-high | `probe_advisor.py` grades the **quant** rubric only (its oracle is the ideal-spacing-vs-volatility curve). Arbitrator now has one (`probe_arbitrator.py`, 2026-08-10). **Risk** is blocked on the DTO bug above; **news** needs a hand-labelled headline fixture set (the quant fixtures carry no news at all). Gremlin is deliberately un-batteriable — "scored, not applied" by design, so it needs ADR-035's outcome ledger, not a rubric. |
-| **Chaos Gremlin advisor** *(loose-reasoning, scored-not-applied)* | M | med-high | Standalone observe-and-score voice: same inputs, loose logic; own `gremlin` role in `_BLOCKED_ROLES`, **not** arbitrator-fed (avoids the `role="aggregated"` news-laundering hole). Emits a falsifiable directional call → cleanest first customer for the outcome ledger. **Role buildable in v1.1 with MoE-on for the 1.1 soak; scoreboard rides the keystone.** Detail in `adaptive-grid.md`. |
-| Per-cycle LLM call tracing | S | low-med | `trace_id` on `llm_calls` + "by cycle" `/cost` toggle. **Shares the outcome-tracking migration — ship together.** |
-| Auditor — rec-scoring half | M | high | Score past advisor recs vs realized outcomes. Needs the outcome ledger + the P2 config-replay half. |
-| `weather_report` query | M–L | med | News + price-trend + advisor-suggestion summary over multi-day windows via `AssistantPort.summarize`. After `status_report` stabilizes. |
+| **Advisor outcome tracking** *(keystone)* | XL | high | ✅ **SHIPPED 2026-08-17 (P4.1–P4.3).** `recommendation_outcomes` + counterfactual evaluator + scoreboard; success is **rank + hit-rate, never dollars**. Router-bias safeguards remain load-bearing. |
+| **`risk.md` input/DTO mismatch** *(found 2026-08-10)* | S–M | **high** | ✅ **CLOSED.** `PerformanceSummary` and `SummaryBuilder` now carry real exposure, daily-spend, and cap values; the risk battery no longer grades a prompt/DTO mismatch. |
+| **Role-fidelity batteries — risk / news** *(gap found 2026-08-10)* | M | med-high | ✅ **SHIPPED.** Dedicated risk/news probes and tests now complement the quant and arbitrator batteries. Gremlin remains outcome-scored rather than rubric-scored by design. |
+| **Chaos Gremlin advisor** *(loose-reasoning, scored-not-applied)* | M | med-high | ✅ **SHIPPED 2026-08-17 (P4.4c).** Standalone, `_BLOCKED_ROLES`, observe-and-score only; emits falsifiable directional calls. Detail in `adaptive-grid.md`. |
+| Per-cycle LLM call tracing | S | low-med | ✅ **SHIPPED 2026-08-17 (P4.4a).** One trace scope per symbol evaluation, persisted on cloud-call success/failure; `/cost` groups calls by evaluation. |
+| Auditor — rec-scoring half | M | high | ✅ **SHIPPED 2026-08-17 (P4.2).** Resumable counterfactual scoring reuses ADR-028 replay and keeps missing-bar rows pending. |
+| `weather_report` query | M–L | med | ✅ **SHIPPED 2026-08-17 (P4.5).** Multi-day price/advisor aggregation with the operator-facing summary path. |
 | `AssistantPort.summarize` cloud impls | M | low | Implement on Anthropic/OpenAI/Google (currently `NotImplementedError`); via the cost gate. Needed if `weather_report` runs on cloud. |
-| LLM Historian *(90d+)* | XL | high | `cli/historian` synthesizing macro patterns → `historian_findings` + `/historian`. Read-only first; likely cloud long-context. |
-| Data retention policy *(~6mo)* | M | high | Per-table retention + archive-then-delete. Gates the P3 disk-space awareness. |
+| LLM Historian *(90d+)* | XL | high | ⏳ **P4.6 GATED.** Wait for the Q2-dump canonical scoring run, then write its own design document before implementation. |
+| Data retention policy *(~6mo)* | M | high | ✅ **SHIPPED 2026-08-16 (ADR-036).** Per-table archive-then-delete, compressed archives, backup dedupe, and WAL truncation; the prior retention gate is closed. |
 | Daily summary (email / Discord DM) | M | low-med | "Yesterday in WobbleBot." Operator-demand. |
-| Cost-honesty dashboard | M | med | Realized PnL beside fees + LLM spend + operator-declared infra (`cost_assumptions`) → net-vs-cost + annualized projection. |
+| Cost-honesty dashboard | M | med | ✅ **SHIPPED 2026-08-17 (P4.7).** Realized cycle PnL minus LLM and declared infrastructure cost, with a pinned no-double-count rule and by-evaluation call grouping. |
 
 ---
 
-## Recommended order
+## Dependency order
 
-1. ✅ **Done:** dead man's switch (ADR-021).
-2. **P0** (during soak, branch-only): four-homes audit **first** → schema-drift → preflight key-scope → incident runbook → retry-policy audit → *(refactors only if clean)*. No `main` merge.
-3. 🚦 **GATE:** soak passes → tag v1.0 → merge P0 + dead-man's-switch → `main` unfreezes.
-4. **P1**: ✅ **COMPLETE 2026-07-31 → 2026-08-01** — reconciler fill-vs-cancel (ADR + test) → cool-down (ADR) → spread guard (ADR) → partial-grid WARN→INFO → backup smoke test → CSP → Kraken-status news → footer indicator → session-cap card → 5 test-hardening additions. `cli/up` and more-Kraken-pairs stay parked (Open Questions 5/6 — neither had a trigger fire).
-5. **P2**: backfill ergonomics → import dump → OHLC+TA → auditor config-replay → screener → counter-order target.
-6. **P3** (parallel to P2): stale-heartbeat Discord alert → LLM `/health` → Ollama-hang audit → catalog SSOT → re-anchor command → banner button+snooze → state-aware pause/resume → web action buttons → Discord UI buttons → notifications read-state → deep-linking → cosmetic leaves → *(~30d)* anomaly detector → disk-space awareness.
-7. **P4** (data clock matures): outcome tracking + per-cycle tracing (one migration) → auditor rec-scoring → `weather_report` (+cloud summarize) → *(90d)* historian → *(~6mo)* data retention → daily summary + cost dashboard.
-8. **Throughout:** pull parked items reactively **only** when their named trigger fires; never batch-build a parked cluster.
+This is the architectural sequence the plan was built around, not a second status ledger:
+
+1. Dead man's switch (ADR-021).
+2. P0: four-homes audit → schema drift → preflight key scope → incident runbook → retry-policy audit.
+3. v1.0 soak/tag gate.
+4. P1: reconciler fill-vs-cancel → cool-down → spread guard → operator/backup/security hardening.
+5. P2: backfill ergonomics → import dump → OHLC+TA → auditor config replay → screener → counter target.
+6. P3: health/observability substrate → state visibility → operator action surfaces → UX leaves → gated anomaly/disk bundle.
+7. P4: outcome ledger/evaluator/scoreboard → tracing/directional dispatch/Gremlin → weather report → cost dashboard → gated Historian.
+8. Throughout: pull parked items only when their named trigger fires; never batch-build a parked cluster.
 
 ---
 
@@ -624,9 +599,10 @@ with CI) · **LLM-provider-drift-watcher** (new models + pricing/API re-verify) 
 prompt-cache `cache_control`** (ADR-033 deferral — trigger: an Anthropic provider in a *deployed*
 config path with call cadence inside a cache TTL, or Phase 9 raising LLM volume; the cache-aware
 *accounting* shipped 2026-08-02) · portainer-mcp
-AutoUpdate flags (separate repo) · Python 3.14 compat · test-count growth · OpenClaw integration ·
-news-source expansion (Messari/Reuters/stocks + publisher-attribution UI) · CryptoCompare 90-day
-eval (**2026-08-13**) · Kraken API/fee change responses.
+AutoUpdate flags (separate repo) · Python 3.14 compatibility · test-count growth · OpenClaw
+integration (**research complete; implementation requires a demonstrated operator workflow**) ·
+news-source expansion (Messari/Reuters/stocks + publisher-attribution UI) · Kraken API/fee change
+responses. CryptoCompare is retired rather than awaiting evaluation.
 
 ### Trading-scope (gated)
 More exchange adapters · high-frequency memecoin grid · **margin (v1.2+)** & **futures (v1.3+)** —
@@ -643,7 +619,7 @@ response quality (2026-05-24, v1.0).
 
 ## Guardrails
 
-1. **`main` = the v1.0 candidate (freeze lifted 2026-06-02):** the hardening + soak-hotfixes live on `main`, which advances with soak-surfaced *hotfixes only* during the soak — no speculative P1+ code until the tag (planning/doc work is open). Image rebuilds only on a push-to-`main` that touches a build-allowlist path (docs-only pushes don't rebuild); the deployed soak is pinned via the `IMAGE_TAG` stack env var, so a push doesn't auto-redeploy it.
+1. **Release boundaries stay explicit:** `v1.0.0` is the immutable 2026-07-31 tag; `main` is the post-tag development line. Image rebuilds only when the workflow's build allowlist matches, and the deployed NAS stack remains explicitly pinned by `IMAGE_TAG`, so a push is not a redeploy.
 2. **Advisory-only (ADR-002):** the LLM never executes trades or transfers. Auto-action features stay parked behind their own ADRs + accrued data; auto-pause needs an ADR-002 ratified-with-exception. `pending_commands WHERE status='approved'` stays the firewall on every mutation.
 3. **Harvester sole transfer authority (ADR-003/004):** no `BankingPort`; trade key has no Withdraw; Withdraw lives only on the Harvester key. Top-up deposits parked behind a feasibility check + new ADR + ADR-003 re-ratification.
 4. **Safety-critical facts stay code-resident:** the P0 audit keeps LLM pricing + Kraken fees in code; only non-safety facts may move, and only after the verdict.
@@ -659,16 +635,9 @@ response quality (2026-05-24, v1.0).
 
 ## Open questions
 
-Resolve as we reach each phase; the plan stands without them, but a few shape it.
+Resolved questions are recorded in ADRs and the roadmap rather than retained in an active list.
+The genuinely open plan-shaping questions are:
 
-1. **Soak exit criteria** — ✅ **DEFINED 2026-06-02** (see the GATE above): engine-coverage + reconciliation-across-restarts + ≥1 of each daemon cycle + no hard-stops; profit/BTC-direction NOT a criterion. Open sub-question: the minimum *duration* (the multi-coin restart targets ~1 month).
-2. **"Success" definition** for advisor outcome tracking (P4 keystone) — fill-cadence delta? realized-PnL? cap-trip avoidance? operator-regret?
-3. **Four-homes migration scope** — after the audit, move approved facts in one wave or one at a time? (Bounds whether SQLCipher is in v1.1's horizon.)
-4. **Branch-only refactor appetite** (P0 #6/#7) — pull into the soak window only if clean, or leave parked?
-5. **`cli/up` priority** — promote in P1 only if real restart friction, else let it sink.
-   **Resolved (by inaction) 2026-08-01:** no restart friction reported through P1's close —
-   stays parked. Re-open if it ever bites.
-6. **More-Kraken-pairs activation** — which coins, what split of the $100? **Still open
-   2026-08-01** — operator's call, not something P1's close resolves.
-7. **Auditor split** — confirm shipping the config-replay half in P2, deferring rec-scoring to P4.
-8. **Hosting topology** — is the NAS the committed host, or is the laptop-decoupling ADR still open? (Gates SQLCipher; informs where Ollama lives.)
+1. **More-Kraken-pairs allocation** — which coins and what share of the operator's risk budget?
+2. **Long-term hosting topology** — whether the NAS remains the committed topology or a later
+   move warrants a new ADR; this gates SQLCipher and other shared/cloud-storage assumptions.

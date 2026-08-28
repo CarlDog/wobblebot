@@ -1290,3 +1290,30 @@ stop.
 **Trigger:** the agreement/robustness half unlocks with the first real
 MoE panel corpus; the outcome-consuming half waits on ADR-035's
 ledger. Neither is scheduled.
+
+### A "buy guard" (cost-basis guard's missing other half) — question stub (no design)
+
+**What (operator-raised 2026-08-26):** the existing cost-basis sell
+guard (ADR-032) blocks realizing a loss on a SELL, but nothing
+symmetric governs BUYs — a grid can keep averaging down through a
+real downtrend with no check beyond the hard exposure caps and the
+coarse "park the whole symbol once fully offside" cutoff.
+
+**Why it's not a clean-line fix like re-anchoring/capital-gap sizing:**
+those two have a fact to check (which direction did the anchor move;
+does this order clear ordermin). A buy guard needs a genuine "is this
+a real trend or normal oscillation" signal, which doesn't exist yet —
+that's the same hard problem a full auto-re-anchor-down would have
+faced.
+
+**Two candidate directions, not decided:**
+1. Cheap, mechanical, no prediction required: pause new buys after N
+   consecutive buy-fills with no completed round-trip in between
+   (data already tracked).
+2. Reuse the planned regime detector once it clears its 60-90d
+   shadow-run — the principled path, but not fast.
+
+**Trigger:** revisit alongside the re-anchor-up-only / capital-gap
+drift-check automation work, if that goes ahead. Needs Auditor
+backtesting either way before it can gate real buys — too eager and
+it just stops the grid from buying dips at all.

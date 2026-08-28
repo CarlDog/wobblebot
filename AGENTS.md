@@ -8,31 +8,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 completion date. Do NOT duplicate project status here (per the documentation-discipline
 rule); this section is a pointer, not a changelog.
 
-- **Current:** **Phase 8 complete — `v1.0.0` tagged 2026-07-31** (`docs/planning/phase-8-summary.md`).
-  The gating soak (Stage 8.4.E, started 2026-05-18) ran ~10 weeks on the NAS Docker
-  deployment and passed its stated exit criteria (engine-coverage + reconciliation-across-restarts
-  + all-daemon-cycles + no fund-losing hard-stops), including a clean recovery from an
-  11-day host-wide NAS reboot discovered 2026-07-31. **`v1.0.0` is `main` exactly as it
-  stood at tag time.** The work developed since on the `v1.1` branch (ADR-022 advisor
-  reorientation, web UI expansion, two fleet-review passes, and P1's safety-hardening
-  backlog — see `docs/release/v1.1/README.md`) **merges to `main` as `2.0.0`, not `1.1.0`**
-  (a breaking config-schema change — `EmergencyStopConfig` removed, ADR-032 — plus ADR-022's
-  full advisor-architecture replacement warrant the major bump; see `CHANGELOG.md`).
-  **P1 is COMPLETE** (2026-07-31 → 2026-08-01, roadmap v1.1 Track item 2, merged
-  2026-08-01). **P2 (data-infrastructure spine) is COMPLETE** (2026-08-07 → 2026-08-08,
-  slices 1–6; slice 6 = ADR-029 counter-order target). **P3 (ops/UX) is COMPLETE
-  for its buildable scope** (2026-08-08 → 2026-08-10, slices 1–23; ADR-030,
-  ADR-031, ADR-034). **Three P3 items are gated, not skipped** — the anomaly
-  detector needs ~30d of baseline (matures ~2026-09-07), disk-space awareness
-  bundles onto it *and* waits on the data-retention policy, and the advisor's
-  Apply / Approve-Reject is blocked by ADR-034's scope note (no daemon can own a
-  `settings.yml` rewrite; unblocking it needs an ADR, not code). **P4
-  (advisor-feedback) remains unstarted, but its keystone is no longer data-gated**
-  — **ADR-035** (2026-08-10) settled the methodology: scoring is *counterfactual*
-  via the ADR-028 replay (not applied-rec, a clock measured at 0 rows that had no
-  mechanism to start), reported as *rank and hit-rate, never dollars*. The corpus
-  (2586 suggestions, 2026-05-27 →) already exists. Phase 9 (Kraken Securities equities)
-  follows, not immediately after this merge.
+- **Current:** read the latest dated entry in `docs/planning/roadmap.md`; do not infer
+  phase or release status from this file. `docs/planning/phase-8-summary.md` records the
+  v1.0 close, while `docs/release/v1.1/README.md` retains the historically named post-tag plan.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
   onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
@@ -51,7 +29,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Twenty-one surfaces (sixteen `cli/` + five `tools/`). One-line index; full behavior in each
+Twenty-two surfaces (sixteen `cli/` + six `tools/`). One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
@@ -68,17 +46,20 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.operator` — Discord interaction daemon (ADR-013). Intent → `pending_commands`; `WHERE status='approved'` is the ADR-002 firewall.
 - `cli.web` — FastAPI dashboard (ADR-016/017). Read-mostly; mutations firewalled via `pending_commands`. Needs `WOBBLEBOT_WEB_SESSION_SECRET`.
 - `cli.recalibrate` — scale USD-denominated knobs to a new target balance (operator-initiated; dry-run default).
-- `cli.maintenance` — VACUUM / prune+archive / backup daemon (three concurrent scheduled tasks).
+- `cli.maintenance` — scheduled database hygiene, backup/verification, Kraken reconciliation,
+  capital reporting, and ledger-sync work. The module's `--help`, settings schema, and roadmap
+  receipts are authoritative for the current task set.
 - `cli.screener` — rank observed symbols by grid-suitability (P2 slice 5). Read-only, offline, advisory (ADR-002); log-table output.
 - `tools/first_real_trade.py` — one-shot live round-trip diagnostic.
 - `tools/run_cloud_check.py` — one-shot cloud-LLM smoke test (`--provider`/`--role`/`--model`/`--dry-run`).
 - `tools/import_kraken_history.py` — stream the local OHLCVT dump into `ohlc_bars`/`price_snapshots` (P2 slice 2; the only deep-history path).
 - `tools/auditor.py` — replay `settings.yml` through the real `GridEngine` over stored bars (ADR-028; directional, not exact).
+- `tools/reconcile_trade_history.py` — one-shot Kraken-vs-live.db trade/ledger diff (2026-08-22). The manual, deeper companion to `cli.maintenance`'s daily reconcile task; its docstring carries the backfill runbook a reported gap points at.
 - `tools/scan_logging.py` — audit log calls against `docs/implementation/logging-conventions.md`. `--check rule1` (default) exits 1 on data stranded in `extra=` and is enforced by a test; `--check decimal` lists money values interpolated without `fmt_decimal` (a review list — the heuristic trips on ints and float durations).
 
 ### Operator handoff: from dry-run to live trading
 
-1. **Mint a Kraken trading key**, separate from the read-only key (per ADR-003-style separation). Permissions: Query Funds + Query open & closed orders & trades + Create & modify orders + Cancel & close orders. **Withdraw must stay off** — that scope is exclusive to the future Phase 4 Harvester key. Recommended: enable IP address restriction.
+1. **Mint a Kraken trading key**, separate from the read-only key (per ADR-003-style separation). Permissions: Query Funds + Query open & closed orders & trades + Create & modify orders + Cancel & close orders. **Withdraw must stay off** — that scope is exclusive to the separate Harvester key. Recommended: enable IP address restriction.
 2. **Stash credentials in `.env`** as `KRAKEN_TRADER_API_KEY` / `KRAKEN_TRADER_API_SECRET` (separate from the existing `KRAKEN_READER_API_KEY` / `KRAKEN_READER_API_SECRET` so the read-only key can keep being used for `cli/status`).
 3. **Run `cli/preflight`** — confirm Kraken accepts the grid config without spending anything. Exit 0 means every layout order would be accepted by Kraken's matching engine.
 4. **Run `cli/live`** with eyes on the Kraken Pro Orders + Trade History tab. Defaults: $10 per order, 1% spacing, 3 above + 3 below = $60 total exposure, $5 max session loss, 60 minute max runtime, 5s tick. The first session is the highest-risk session — watch it.
@@ -161,15 +142,9 @@ Full constraint list: `docs/architecture/constraints.md`.
 
 ### Phase-Gated Development
 
-Phases are strictly sequential. Do not implement Phase N+1 features until Phase N is stable.
-
-- **Phase 1** – Foundation & sandbox (mock exchange, paper trades, SQLite, logging)
-- **Phase 2** – Real Kraken adapter, tiny exposure, withdrawals disabled at API key level
-- **Phase 3** – LLM Advisor (advisory only) + metrics
-- **Phase 4** – Harvester + treasury management (real withdrawals, guarded)
-- **Phase 5** – Dashboard, hardening, v1.0
-
-Each stage's acceptance criteria live in `docs/planning/roadmap.md`. Per ADR-003, Phase 4 introduces the Harvester key separation, not earlier.
+Phases are strictly sequential. Do not implement later-phase work until the current phase's
+documented gates are satisfied. Phase definitions, current position, acceptance criteria, and
+completion receipts live only in `docs/planning/roadmap.md`.
 
 ### Domain Model Conventions (ADR-005)
 
@@ -200,12 +175,17 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Kraken API reference:** `docs/reference/kraken-api-reference.md`
 - **Which LLM holds which advisor seat:** `docs/reference/advisor-seats.md` (the
   register — holder, evidence, battery, and whether `settings.yml` agrees). Evidence
-  lives in `advisor-llm-models.md` / `operator-llm-models.md`. **Only the quant seat
-  runs in production**; the MoE profiles still name unscored models, so reconcile
-  against the register before flipping any profile to `type: moe`.
+  lives in `advisor-llm-models.md` / `operator-llm-models.md`. Reconcile the register,
+  the operator's current `settings.yml`, and the roadmap's deployment receipt before
+  changing a seat; this file deliberately carries no point-in-time deployment claim.
 - **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored). Per-CLI sections + grid/safety + advisor + profiles. Operators copy this to `settings.yml` and adjust values; comments and structure stay in sync per the schema-drift tests.
 - **Prompt files:** `config/prompts/{quant,risk,news,arbitrator}.md` (committed defaults; operators edit freely). YAML frontmatter + Markdown body; loader in `wobblebot.config.prompts`.
 - **Env vars example:** `.env.example` at the repo root (single source of truth — schema-drift tests verify operator `.env` files stay in sync)
+- **Atlas Cloud CLI:** [github.com/AtlasCloudAI/cli](https://github.com/AtlasCloudAI/cli)
+  (credit: AtlasCloudAI), vendored as a git submodule at `vendor/atlascloud-cli`.
+  Manual dev/ops tool only (shell-side balance/model/connectivity checks) — the
+  advisor's Atlas Cloud adapter calls `https://api.atlascloud.ai/v1` directly via
+  `OpenAIAdvisorAdapter` and does not use this CLI.
 
 ## Project-Specific Conventions
 
@@ -286,8 +266,27 @@ to every project. The wobblebot-specific items below extend it:
 - **Live taker fee re-verification.** The live Kraken fee schedule
   could shift over time. If a tiny live trade (`tools/first_real_trade.py`)
   runs during the audit window, capture the actual fee rate from
-  the receipt and confirm it still matches the **0.40% taker / 0.26%
-  maker** assumption documented in Stage 2.3 design decisions.
+  the receipt and confirm it still matches the **0.80% taker / 0.40%
+  maker** Tier-1 rates (Kraken doubled the schedule 2026-07-09 —
+  caught by this exact audit item 2026-08-17, five weeks late). Since
+  ADR-038 the authoritative check is one `TradeVolume` call (the
+  account's own rates; `scratchpad` probe or `cli/live`'s session-start
+  receipt logs them), and the per-fill fee-drift tripwire pages on the
+  first deviating fill — this item is now the backstop, not the
+  detector. **`first_real_trade.py` writes only to its own JSONL log,
+  never to `live.db`** (no `StoragePort` import at all) — every run
+  silently desyncs BTC's cost-basis replay from its real Kraken
+  balance, and an aborted Experiment B (the price-drift-check abort
+  path) leaves real stranded BTC the engine's basis never sees. Found
+  2026-08-22: 18 trades missing across nine prior runs, a confirmed
+  0.00053613 BTC / ~2.8% average-cost gap, undetected for weeks until
+  a manual audit went looking (incident receipt in
+  `docs/planning/roadmap.md`'s v1.1 digest; detail in PR #102).
+  `cli/maintenance`'s `reconcile` task (added the same day) now checks
+  this automatically once a day, but don't rely on that cadence alone
+  right after a session — run `python tools/reconcile_trade_history.py
+  --symbols BTC` immediately and follow that tool's backfill runbook
+  for any reported gap before trusting BTC's sell guard.
 - **Cloud LLM pricing + model re-verification.** Cloud-provider pricing,
   model availability, and API shapes drift often. Re-confirm each priced
   `(provider, model)` in `services/llm_pricing.py` against the provider's
@@ -315,13 +314,11 @@ to every project. The wobblebot-specific items below extend it:
   just quarterly. (Receipt: the three live cloud-LLM tests, which read as
   provider drift and were a stale cap — PR #64.)
 
-### Pre-1.0 one-shot (wobblebot extras, run when applicable)
+### Standing credential verification (wobblebot extras)
 
-- **Phase 4 Harvester key separation verified.** When Phase 4 lands
-  and the Harvester is operational, audit-confirm that the Harvester
-  key is genuinely separate from the trade key, has Withdraw scope
-  on, and that the trade key has Withdraw scope OFF. This is
-  ADR-003's load-bearing invariant.
+- **Harvester key separation.** At each key rotation and security audit, confirm the
+  Harvester key is genuinely separate from the trade key, has Withdraw scope on, and
+  the trade key has Withdraw scope OFF. This is ADR-003's load-bearing invariant.
 
 ### Tracking
 

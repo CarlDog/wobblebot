@@ -1058,6 +1058,17 @@ to the narrative.
 > them is renderer work without payoff). Build-sequence step 6 (drop
 > `context` + the legacy fields path once all rows are new-format) remains
 > the post-soak cleanup. Receipt in `docs/planning/roadmap.md`.
+>
+> **Operator follow-up (2026-08-26):** after living with both surfaces for
+> a few weeks post-ship, the operator's read is that the web fill-toast
+> (`status/recent-fills.json` poller — "Fill toast (Kraken-style)" further
+> up this file) is *orders of magnitude* more informative than the Discord
+> fill card this renderer produces, even though both draw from the same
+> `fill` event payload (symbol, fills, counters_placed, tick). Flagged for
+> a side-by-side review: is something genuinely missing from the Discord
+> card's field selection, or is it the same data landing in a less
+> legible layout under Discord's embed constraints? Not investigated yet —
+> parking the observation here rather than guessing at a cause.
 
 **What:** give the *proactive* Discord notifications — the events
 ``cli/live`` / ``cli/harvest`` raise through ``NotifierPort`` — the

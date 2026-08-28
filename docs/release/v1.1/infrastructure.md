@@ -140,8 +140,9 @@ the dev-loop fast.
 
 ### Test count growth
 
-**What:** v1.0 ships with 1785 unit tests + 29 integration tests
-(opt-in). Coverage is good but not exhaustive.
+**What:** v1.0 closed with a broad unit and opt-in integration suite.
+The dated phase-close counts remain in `docs/planning/roadmap.md`; this
+future-work note deliberately avoids copying a number that will drift.
 
 **Why deferred:** the global working-style rule's "Don't test the
 impossible" applies — testing hypothetical edge cases that can't

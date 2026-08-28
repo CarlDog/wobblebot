@@ -35,6 +35,10 @@ any of the following:
 - **Ollama** — open-source project hosted at https://ollama.com.
   WobbleBot's `OllamaAdapter` calls Ollama's local API. No
   affiliation.
+- **Atlas Cloud / AtlasCloudAI** — Atlas Cloud's hosted inference
+  service and open-source CLI. WobbleBot can call the public API through
+  its OpenAI-compatible adapter and includes the official CLI as an
+  optional git submodule for manual operator checks. No affiliation.
 
 ## Bundled assets
 
@@ -88,13 +92,19 @@ python-frontmatter, aiosqlite, feedparser, discord.py, rapidfuzz,
 tzdata, pydantic) are pulled via `pip` and used per their own
 licenses (predominantly MIT and BSD-3-Clause; all compatible with
 WobbleBot's MIT license). See `pyproject.toml` for the canonical
-list. No third-party source code is vendored into this repository;
-every dependency is fetched at install time from PyPI.
+runtime list.
+
+The optional `vendor/atlascloud-cli` git submodule points at
+[`AtlasCloudAI/cli`](https://github.com/AtlasCloudAI/cli), which is
+copyright AtlasCloud and licensed under the MIT License included in
+that submodule. WobbleBot does not copy it into the Python package or
+invoke it at runtime; operators fetch it explicitly with
+`git submodule update --init --recursive`.
 
 ## Trademark policy
 
 Trademarked names mentioned anywhere in this repository (Kraken,
-Discord, Anthropic, OpenAI, Google, Gemini, Ollama, Bitcoin, BTC,
+Discord, Anthropic, OpenAI, Google, Gemini, Ollama, Atlas Cloud, Bitcoin, BTC,
 ETH, etc.) are used in their nominative sense to describe
 integration points, supported services, or asset symbols. All
 trademarks are the property of their respective owners. If you

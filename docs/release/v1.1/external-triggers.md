@@ -48,54 +48,39 @@ machinery rather than standing alone here.*
 
 ### OpenClaw integration — wobblebot as a callable tool
 
-**What:** investigate (and possibly implement) integration
-between wobblebot and OpenClaw, the autonomous AI-agent
-framework that crossed 100k GitHub stars in Feb 2026 and 250k
-in March 2026 (overtook React as most-starred OSS). OpenClaw
-connects LLMs to local systems + messaging + external APIs;
-wobblebot's existing surfaces (Discord bot, web UI read
-endpoints, future MCP server per the v1.1 entry) are natural
-integration points for an OpenClaw agent that wants to monitor
-or control wobblebot on the operator's behalf.
+**Research status:** completed 2026-08-27. See the source-backed
+[`OpenClaw integration assessment`](../../reference/openclaw-integration-assessment-2026-08-27.md).
+The assessment is not an implementation commitment or ADR.
 
-**Why deferred:** zero v1.0-blocking impact -- wobblebot already
-runs end-to-end without OpenClaw. The integration question is
-"do wobblebot operators ALSO use OpenClaw, and if so what
-surface do they need exposed?" That's a community-signal
-question we don't have data on yet.
+**What:** evaluate integration between wobblebot and
+[`openclaw/openclaw`](https://github.com/openclaw/openclaw), a general agent/channel Gateway.
+This is integration work, not model compatibility or a replacement for wobblebot's advisor.
 
-**Likely integration surfaces (no implementation commitment):**
+**Assessment conclusion:** borrow narrow reliability and security patterns, but do not embed
+OpenClaw or make it a financial control plane. If an operator demonstrates a real workflow, the
+preferred integration is a generic, authenticated wobblebot-owned MCP service:
 
-1. **MCP server** -- the existing v1.1 MCP-server entry in
-   ``operator-ux.md`` (or wherever it lives) is the cleanest
-   path. OpenClaw natively speaks MCP; if wobblebot exposes
-   an MCP server with read + confirm-pending-command tools, an
-   OpenClaw agent can introspect engine state and request
-   actions through the ADR-002 firewall.
-2. **Discord webhook ingestion** -- OpenClaw can already
-   trigger wobblebot by posting to the Discord channel via
-   the operator-allowlisted webhook (same path our
-   ``tools/probe_discord_bot.py`` uses). No new code; just
-   document the workflow.
-3. **Web UI HTTP scraping** -- OpenClaw could scrape
-   ``/dashboard`` / ``/health`` / ``/cost`` HTML. Crude but
-   zero-effort on our side.
+1. **Read-only first** -- expose existing typed status, health, notifications, cost, suggestion,
+   outcome, and weather-report queries. The service receives no Kraken or other wobblebot secrets.
+2. **Request creation only, if later justified** -- a separately ratified MCP mutation may queue a
+   typed `awaiting_confirmation` command. It may never approve, reject, execute, rewrite config, or
+   originate a withdrawal. Human confirmation remains in authenticated wobblebot web/Discord.
 
-**What "support" might mean:**
+The old idea of a `confirm-pending-command` tool is rejected: letting the requesting agent approve
+its own action collapses the ADR-002/ADR-034 human firewall. HTML scraping is also rejected as a
+supported contract because it is brittle and loses typed semantics. A dedicated
+`adapters/openclaw_transport.py` is not justified while portable MCP can serve other clients too.
 
-- Lightest: a doc page ``docs/integrations/openclaw.md``
-  walking through the webhook + MCP options for operators who
-  want to wire wobblebot into their OpenClaw flow.
-- Medium: ship a wobblebot-flavored OpenClaw "tool spec" or
-  MCP descriptor that operators can drop into their OpenClaw
-  config.
-- Heavy: dedicated ``adapters/openclaw_transport.py`` if the
-  community asks for tight integration.
+**Existing zero-code probe:** `tools/probe_discord_bot.py` proves that an explicitly allowlisted
+webhook identity can exercise the inbound Discord path. It cannot perform confirmation reactions,
+so it is a controlled test/experiment rather than an approval mechanism or preferred durable
+integration.
 
-**Trigger:** the first operator or community user asking "how do
-I get OpenClaw to talk to wobblebot?" Operator-flagged
-2026-05-24 ("openclaw has been grabbing a bunch of headlines
-lately, let's make sure we support that when it comes time").
-Research note: confirmed OpenClaw is an agent framework, not an
-LLM, so this is integration work and not a model-compatibility
-question.
+**Why implementation remains deferred:** wobblebot already runs end-to-end without OpenClaw, no
+MCP server exists, and this research request does not prove that an operator runs OpenClaw or needs
+a production workflow. The deployment-isolation and atomic-command prerequisites in the assessment
+also outrank an external-agent surface.
+
+**Implementation trigger:** an operator confirms an actual OpenClaw deployment and a concrete
+read-only wobblebot query workflow. Any mutation request is a second trigger and requires its own
+ADR after the prerequisite safety corrections.

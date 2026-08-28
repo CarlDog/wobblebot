@@ -10,7 +10,7 @@ This folder contains developer‑facing, hands‑on documentation for building, 
 | `api-reference.md` | Documentation of public CLI commands, optional HTTP endpoints, and Advisor JSON schema. |
 | `deployment-guide.md` | Steps for deploying WobbleBot via Docker Compose on Synology NAS or locally. |
 | `operations.md` | Day‑2 operations: monitoring, logs, backups, upgrades, incident response. |
-| `changelog.md` | Human‑readable history of notable changes between versions. |
+| [`../../CHANGELOG.md`](../../CHANGELOG.md) | Human‑readable history of notable changes between versions. |
 | `operator-guide.md` | Practical usage guide for running WobbleBot: configuring, starting, observing, and adjusting modes. |
 
 Implementation docs should evolve alongside the codebase.  Changes to modules, configuration, or deployment must be reflected here to avoid knowledge drift.

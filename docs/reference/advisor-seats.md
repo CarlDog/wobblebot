@@ -1,7 +1,7 @@
 # Advisor Seat Register
 
 **One row per LLM seat: who holds it, what evidence put them there, and
-whether the config agrees.** Created 2026-08-10 because the answer to
+the last recorded deployment/config state.** Created 2026-08-10 because the answer to
 "which model is our risk expert, and why?" required reading an ADR, three
 revs of `advisor-llm-models.md`, roadmap prose, and two profile blocks in
 `settings.yml` — which then disagreed with each other.
@@ -13,13 +13,13 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 
 ## The register
 
-| Seat | Holder | Evidence | Battery | Decided | Config status |
+| Seat | Holder | Evidence | Battery | Decided | Deployment/config status |
 |---|---|---|---|---|---|
-| **quant** (escalation) | **`xai/grok-4.5`** (Atlas) — **ASSIGNED 2026-08-12** | gen3, 8 rounds: **95% vs 84%**, **0 UNSAFE vs 10** (p=0.001); confirmed on 24 real production inputs (holds 4/24 where gpt-5-mini never held in 216) | `probe_freejudge.py` | assigned 2026-08-12 by the operator | ⚠️ local config only — **not deployed** |
-| **arbitrator** | **`claude-haiku-4-5`** — weakly; `gpt-5-mini` defensible | v1+gen2, 75 judgments: haiku **75/75**, gpt-5-mini 73/75 (**p=0.248, NOT significant**); gpt-5-mini's only 2 failures are both `never_emit_a_tighten` | `probe_arbitrator.py` | 2026-08-10, re-run 08-11, gen2 08-12 | ⚠️ **NOT wired** — `moe-advisor` profile still says `phi4:14b-q8_0` |
-| **news** | **`claude-haiku-4-5`** — recommended, not yet wired; **HELD after the 16-model matrix + red-team, 2026-08-17** | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043**. Phase B: 65 is a ceiling-tie with the field's four 66s | `probe_news.py` | 2026-08-11; held 08-17 | ⚠️ **NOT wired** — profile says `deepseek-r1:8b`, never scored |
-| **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit; **HELD after the 16-model matrix + red-team, 2026-08-17** | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH**. Phase B best challenger 54/54 lands p=0.059 uncorrected, before a 16-way selection penalty — no honest beat | `probe_risk.py` | 2026-08-12; held 08-17 | ⚠️ **NOT wired** — profile says `qwen3:8b`, never scored |
-| **gremlin** | **`qwen2.5:3b-instruct-q4_K_M`** (Ollama, default seat) — **BUILT 2026-08-17 (P4.4c)**, disabled pending operator flip | **un-batteried BY DESIGN** — the outcome ledger is its battery (ADR-035 d.4: directional calls grade against the realized move; P4.4b evaluator live). Seat picked for cheap + leap-prone (free local, temp 1.0, 12.7 tok/s hot on the NAS); discipline rule: do NOT tune or reseat until a ledger sample exists, and never because the scoreboard flatters a challenger on <30 decisive | *(the ledger)* | seat default 2026-08-17; role shipped | `advisor.gremlin.enabled: false` everywhere — operator flips it in the NAS settings.yml + restarts advise |
+| **quant** (escalation) | **`xai/grok-4.5`** (Atlas) — **ASSIGNED 2026-08-12** | gen3, 8 rounds: **95% vs 84%**, **0 UNSAFE vs 10** (p=0.001); confirmed on 24 real production inputs (holds 4/24 where gpt-5-mini never held in 216) | `probe_freejudge.py` | assigned 2026-08-12 by the operator | ✅ NAS MoE deployment active since 2026-08-17 (roadmap receipt); operator settings are authoritative |
+| **arbitrator** | **`claude-haiku-4-5`** — weakly; `gpt-5-mini` defensible | v1+gen2, 75 judgments: haiku **75/75**, gpt-5-mini 73/75 (**p=0.248, NOT significant**); gpt-5-mini's only 2 failures are both `never_emit_a_tighten` | `probe_arbitrator.py` | 2026-08-10, re-run 08-11, gen2 08-12 | ✅ NAS MoE deployment active since 2026-08-17 |
+| **news** | **`claude-haiku-4-5`** — production holder; **HELD after the 16-model matrix + red-team, 2026-08-17** | `news/gen2` 3 rounds: **65/66 (98%)**, tied with sonnet-5 (66/66, p=0.5) at **1/4.5 the cost**; beats gpt-5-mini 56/66, **p=0.0043**. Phase B: 65 is a ceiling-tie with the field's four 66s | `probe_news.py` | 2026-08-11; held 08-17 | ✅ NAS MoE deployment active since 2026-08-17 |
+| **risk** | **`gpt-5-mini`** — recommended on cost, a coin-flip on merit; **HELD after the 16-model matrix + red-team, 2026-08-17** | 3 rounds: **50/54**, `claude-haiku-4-5` 49/54 (**p=0.5**); **0 UNSAFE and 15/15 severe for BOTH**. Phase B best challenger 54/54 lands p=0.059 uncorrected, before a 16-way selection penalty — no honest beat | `probe_risk.py` | 2026-08-12; held 08-17 | ✅ NAS MoE deployment active since 2026-08-17 |
+| **gremlin** | **`qwen2.5:3b-instruct-q4_K_M`** (Ollama, default seat) — **BUILT 2026-08-17 (P4.4c)**; enabled observe-only on the NAS the same day | **un-batteried BY DESIGN** — the outcome ledger is its battery (ADR-035 d.4: directional calls grade against the realized move; P4.4b evaluator live). Seat picked for cheap + leap-prone (free local, temp 1.0, 12.7 tok/s hot on the NAS); discipline rule: do NOT tune or reseat until a ledger sample exists, and never because the scoreboard flatters a challenger on <30 decisive | *(the ledger)* | seat default 2026-08-17; role shipped | ✅ NAS observe-only deployment active since 2026-08-17; auto-apply remains off |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
 
 ## Full-field matrix (Phase B) + adversarial audit — 2026-08-17: BOTH SEATS HELD

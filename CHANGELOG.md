@@ -24,6 +24,15 @@ changes (post-merge hotfixes) land under `[Unreleased]`.
 
 ### Added
 
+- **External-repository assessments and manual operator tooling** (2026-08-27 →
+  2026-08-28). Added source-backed Ollama, OpenClaw, and NemoClaw assessments under
+  `docs/reference/`, with explicit non-fit decisions so research does not silently become
+  backlog. Added the official Atlas Cloud CLI as an optional `vendor/atlascloud-cli` git
+  submodule for shell-side balance/model/connectivity checks; WobbleBot's runtime adapter
+  still calls the Atlas Cloud API directly. Added the documented
+  `docs/reference/fixtures/gremlin-directional-forecast-prompt-2026-08-23.txt` manual
+  directional-forecast fixture. None of these artifacts expands LLM
+  authority or changes the live trading path.
 - **Anthropic prompt caching, sending half** (2026-08-16, ADR-033
   amendment — the accounting half shipped 2026-08-02).
   `AnthropicAdvisorAdapter` now ships its system prompt as a
