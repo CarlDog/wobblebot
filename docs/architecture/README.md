@@ -59,6 +59,12 @@ Each document here is a single source of truth for one architectural aspect.
   It recommends proportional deployment, supply-chain, test-lane, redaction, and readiness
   improvements while explicitly rejecting NemoClaw as a WobbleBot runtime dependency.
 
+- **[OpenChronicle repository assessment — 2026-08-29](../reference/openchronicle-repository-assessment-2026-08-29.md)**
+  Source-backed review of OpenChronicle's storage, search, provenance, and maintenance
+  patterns. It records one current WobbleBot query defect, proportional durability and
+  search candidates, P4.6 design inputs, and explicit non-fits without making
+  OpenChronicle a runtime dependency.
+
 These are evidence records, not ratified decisions or roadmap commitments. Adopted changes
 still require the normal ADR and roadmap process.
 

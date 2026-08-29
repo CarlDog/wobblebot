@@ -144,6 +144,11 @@ synthesis includes a scored ledger. The design doc must settle: model
 note from the register (a personal scoreboard, not a publishable
 benchmark).
 
+**Design input:** [OpenChronicle repository assessment —
+2026-08-29](../reference/openchronicle-repository-assessment-2026-08-29.md), especially
+its canonical-store, provenance, eligibility, and bounded-retrieval constraints. The
+assessment does not satisfy this design gate or authorize implementation.
+
 ### P4.7 — cost-honesty dashboard (M)
 
 ✅ **Shipped 2026-08-17.** The `/cost` page gained two surfaces:
