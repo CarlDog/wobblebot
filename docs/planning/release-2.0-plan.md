@@ -163,9 +163,16 @@ already true or is cheap, test-only, or documentation.
       so the release build does not republish `:latest` (fleet standard
       UNI-19). `needs: test` is unchanged, so the tag build is still
       test-gated.
-- [ ] **Deprived-environment walkthrough** for all 22 operator entry points
-      (the CLAUDE.md phase-end item; the last full baseline was 2026-05-15 for
-      the original 7). **The one gate item still outstanding.**
+- [x] **Deprived-environment walkthrough** — run 2026-08-28, not assumed from
+      the 2026-05-15 baseline. All 16 `cli/` entry points x 3 deprived
+      scenarios (bad `--config` path, no `config/` directory, unknown
+      `--profile`) = 48 checks. **47 clean, 1 real defect:** `cli/operator`
+      caught `(FileNotFoundError, ValueError)` where `load_resolved_config`
+      raises `KeyError` for an unknown profile, so it dumped a traceback and
+      exited 1 while all 14 siblings exited 2 with an actionable message.
+      Fixed (`bd4c222`) plus `tests/cli/test_deprived_env_profile.py`, which
+      pins the contract across every CLI rather than patching the one
+      instance. Sweep re-run clean: 48/48.
 - [x] **Schema-drift tests clean**, including `WOBBLEBOT_STRICT_CONFIG_DRIFT=1`
       (26 passed, 2026-08-28).
 - [ ] **`IMAGE_TAG` repointed** at the tagged build (§1b).
