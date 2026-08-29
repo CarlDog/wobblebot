@@ -26,6 +26,11 @@ a patch on top of it. They are now one `[2.0.0]` section, per
 `docs/planning/release-2.0-plan.md` §1a. Post-2.0.0 work lands under a
 fresh `[Unreleased]` heading created at that time.
 
+## [Unreleased]
+
+Nothing yet. `2.0.0` was tagged and released 2026-08-28; post-release work
+lands here.
+
 ## [2.0.0] - 2026-08-28
 
 ### Added
@@ -81,6 +86,16 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- **`cli/operator` printed a traceback instead of exiting 2 on an unknown
+  `--profile`** (2026-08-28). Found by re-running the deprived-environment
+  walkthrough for the tag gate rather than inheriting the 2026-05-15 baseline:
+  16 CLIs x 3 deprived scenarios = 48 checks, 47 clean. `cli/operator` caught
+  `(FileNotFoundError, ValueError)` while `load_resolved_config` raises
+  **`KeyError`** for an unknown profile — documented in that function's own
+  docstring — so it exited 1 with a raw traceback where all 14 siblings exited
+  2 with an actionable message. The message inside the exception was already
+  good; nothing caught it to show anyone. `tests/cli/test_deprived_env_profile.py`
+  now pins the contract across every CLI rather than patching the one instance.
 - **A config carrying an ADR-retired key is now refused, with the fix in the
   error** (2026-08-28). ADR-032 deleted `safety.emergency_stop` precisely
   because a silent dead safety knob is worse than none — but no config model

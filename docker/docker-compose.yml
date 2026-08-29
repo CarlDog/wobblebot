@@ -47,13 +47,22 @@ x-wobblebot-defaults: &wobblebot-defaults
   # docker/Dockerfile, pyproject.toml).
   #
   # IMAGE_TAG is operator-controlled via Portainer stack env. Pin to
-  # an immutable `:sha-<short>` (e.g. sha-de318e2) so Portainer's
-  # redeploy forces a real pull — `:latest` / `:main` are mutable
-  # tags and Docker's pull-image flag is unreliable against them
-  # (it skips pull when a local cache exists, even when explicitly
-  # asked to pull). Bumping IMAGE_TAG to a new SHA is the canonical
-  # "deploy a new build" action: change the env in Portainer →
-  # save → stack auto-redeploys → guaranteed fresh pull.
+  # something IMMUTABLE so Portainer's redeploy forces a real pull.
+  # Two forms qualify:
+  #   - `:sha-<short>` (e.g. sha-de318e2) — any build
+  #   - `:<X.Y.Z>` (e.g. 2.0.0) — a release build; preferred at a
+  #     release, so "what's running" answers with the version rather
+  #     than an opaque hash
+  # What does NOT qualify: `:latest` / `:main` / `:X.Y`. Those are
+  # mutable, and Docker's pull-image flag is unreliable against them
+  # (it skips the pull when a local cache exists, even when explicitly
+  # asked). Bumping IMAGE_TAG is the canonical "deploy new code"
+  # action: change the env in Portainer → save → redeploy → fresh pull.
+  #
+  # NOTE: this stack has NO auto-update (`AutoUpdate: null`) — no git
+  # poll, no webhook. Pushing to `main` deploys nothing. Compose
+  # changes need a git-stack redeploy; code changes need this bump.
+  # They are independent.
   image: ghcr.io/carldog/wobblebot:${IMAGE_TAG:-main}
   volumes:
     # Host paths default to the NAS layout under /volume1/docker/wobblebot.

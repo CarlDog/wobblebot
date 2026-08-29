@@ -11,11 +11,21 @@ rule); this section is a pointer, not a changelog.
 - **Current:** read the latest dated entry in `docs/planning/roadmap.md`; do not infer
   phase or release status from this file. `docs/planning/phase-8-summary.md` records the
   v1.0 close, while `docs/release/v1.1/README.md` retains the historically named post-tag plan.
+  Two releases exist — `v1.0.0` (2026-07-31) and `v2.0.0` (2026-08-28) — both tagged with
+  published GitHub Releases. **The `v1.1` name is historical only: that branch's work
+  shipped as `2.0.0`**, per `CHANGELOG.md`'s preamble.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
   onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
 - **Release docs:** `docs/release/v1.0-known-limitations.md`, `docs/release/v1.1/`
-  (future improvements), `docs/release/v1.0-soak-runbook.md`.
+  (future improvements), `docs/release/v1.0-soak-runbook.md`, and
+  `docs/planning/release-2.0-plan.md` (the 2.0.0 tag gate, the 2026-08-27/28
+  external-repository assessments triaged into scheduled/parked/declined, the proposed
+  2.1 phase, and a per-document plan for the documentation audit).
+- **Deploying is two explicit steps, and neither is automatic.** A push to `main` does
+  NOT reach the NAS: Portainer stack 158 has no git poll and no webhook. A git-stack
+  redeploy applies compose changes; an `IMAGE_TAG` bump applies code. Verify against
+  `ConfigHash` and the container's `org.opencontainers.image.revision` label.
 - Test counts, lint scores, src-file counts, and the real-money cost ledger are
   authoritative in the roadmap's per-stage entries — not duplicated here, to avoid drift.
 

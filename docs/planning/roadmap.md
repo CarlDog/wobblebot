@@ -490,7 +490,8 @@ the detail; the full backlog index is
    Real-money cost $0.00. Test count 2756 → 2767. **P2 COMPLETE — all six slices
    shipped 2026-08-07 → 2026-08-08.**
 
-5. **P3 — ops/observability/UX: IN PROGRESS (started 2026-08-08).**
+5. **P3 — ops/observability/UX ✅ COMPLETE (2026-08-08 → 2026-08-10), and P4 — advisor feedback ✅ BUILDABLE SCOPE COMPLETE (2026-08-16 → 2026-08-17).**
+   *(Header corrected 2026-08-28: it read "P3 IN PROGRESS" long after both phases closed. The completion receipts were always in this item's body — "P3 COMPLETE (buildable scope)" below, then the P4 kickoff and P4.1–P4.7 receipts — but the line a reader scans said otherwise. P4.6 Historian remains the one open P4 item, gated on the Q2-dump canonical scoring run.)*
    **Slice 1 — stale-heartbeat Discord push alert** ✅ **2026-08-08**
    (operator-flagged from the 2026-07-20 NAS-reboot incident — cli/live +
    cli/harvest dead 11 days while the pull-only /health looked fine): new
@@ -2099,6 +2100,64 @@ the detail; the full backlog index is
    per-coin override map — wrong in both directions) and the
    N×20-page per-symbol fetch (now one account-wide fetch per cycle).
    3513+ unit tests pass, mypy clean, pylint 10.00/10.
+
+6. **`2.0.0` RELEASED ✅ 2026-08-28 — tagged, published, and deployed.**
+   Closes the v1.1 Track. Tag `v2.0.0` → `51e7abf`; GitHub Release published;
+   image `ghcr.io/carldog/wobblebot:2.0.0` built by the tag pipeline and running
+   on the NAS since 2026-08-29 00:15 UTC, all 8 daemons healthy. Real-money cost
+   **$0.00** — no live trading changes, only deployment and config-boundary work.
+   Full gate + rationale in
+   [`docs/planning/release-2.0-plan.md`](release-2.0-plan.md); the tag ceremony's
+   checklist lives in its §2b.
+
+   - **ADR-041 — the deployment enforces the capability matrix** (PR #113). One
+     `x-wobblebot-defaults` anchor had been injecting *every* credential into
+     *all nine* services: `web`, `news`, `advise`, `operator`, `maintenance` and
+     the one-shot `tools` container each held the withdrawal-enabled Harvester
+     key, plus read-write mounts of the whole `data/` and `config/` trees.
+     ADR-003's fragmentation was enforced in the Python and merely *assumed* at
+     the container boundary. Now: Harvester key 9 services → **1**, trader 9 → 2,
+     reader 9 → 3, `/app/config` `:ro` on all eight daemons, and the terminal
+     withdrawal path moved to `docker compose run --rm harvest`. The matrix was
+     derived from the source rather than the compose file's own comments, which
+     had drifted in three places. Asserted as an allowlist by
+     `tests/deployment/test_compose_capability_matrix.py` (an *extra* credential
+     fails as loudly as a missing one) and verified live by `docker inspect`:
+     `wobblebot-live` went from 14 credentials to 2.
+   - **The v1.0 → 2.0 upgrade-survivor gate** — builds its fixture from the real
+     tagged schema (`git show v1.0.0:…`) so it cannot drift, and asserts an
+     operator-**approved** `pending_commands` row is untouched by migration.
+     **It found a real defect immediately:** a v1.0 `settings.yml` keeps
+     `safety.emergency_stop` and 2.0 ignored it *silently* (no config model sets
+     `extra="forbid"`), so ADR-032's own "a silent dead safety knob is worse than
+     none" survived the fix that retired it. Closed by a retired-key registry on
+     `WobbleBotConfig`; the live NAS config, the local checkout and
+     `settings.example.yml` were all verified clean before shipping a hard
+     failure into a `restart: unless-stopped` fleet.
+   - **Deprived-environment walkthrough re-run** rather than inherited from the
+     2026-05-15 baseline: 16 CLIs × 3 scenarios = 48 checks. 47 clean; `cli/operator`
+     caught `(FileNotFoundError, ValueError)` where `load_resolved_config` raises
+     **`KeyError`** for an unknown profile, so it printed a traceback and exited 1
+     while all 14 siblings exited 2. Fixed, plus
+     `tests/cli/test_deprived_env_profile.py` pinning the contract across every
+     CLI. Re-run 48/48.
+   - **Two CI/release-path defects, both found by checking rather than trusting.**
+     (a) The upgrade gate was *silently skipping* in CI — `actions/checkout` is
+     shallow and tagless by default, so the run read an all-green
+     `3635 passed, 10 skipped` against `3645 passed` locally. Fixed with
+     `fetch-depth: 0` **plus** `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1`, which turns that
+     skip into a hard failure so a future checkout change cannot undo it.
+     (b) `docker-publish.yml` had no `tags:` trigger and gated publishing on
+     `refs/heads/main`, so the tag ceremony would have produced **no image at all**
+     (`7c78563`).
+   - **`v1.0.0`'s GitHub Release was backfilled the same day.** The tag had existed
+     since 2026-07-31 but no Release object did, so `release_checker` — shipped
+     2026-08-01 — had been 404ing on every poll for four weeks while its fail-soft
+     path rendered the footer as "no update available". A git **tag** is not a
+     GitHub **Release**. The lesson is recorded in the plan doc: a feature can pass
+     its tests, ship green, and never function, because the tests exercise the code
+     and not the existence of the data source it reads. **Cut a Release at every
+     future tag.**
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

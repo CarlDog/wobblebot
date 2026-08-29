@@ -15,6 +15,12 @@ ADR rather than assuming.
 
 ## 0. TL;DR
 
+> **Outcome (2026-08-28/29): the ceremony ran.** `v2.0.0` is tagged, released,
+> published, and deployed; `v1.0.0`'s Release was backfilled the same day. The
+> plan below is kept as written — including the recommendations the operator
+> overruled — so the reasoning stays auditable rather than being retrofitted to
+> the result. Receipts live in `docs/planning/roadmap.md` item 6.
+
 1. **The version numbers are already settled and are off by one from the
    framing of the question.** v1 closed at the `v1.0.0` tag on 2026-07-31.
    The line currently on `main` is **2.0.0, developed but not tagged**.
@@ -95,18 +101,24 @@ include repointing `IMAGE_TAG` at the tagged build — otherwise "we released
 2.0.0" and "what's running" stay different things, which is exactly the drift
 class §5c's startup receipt exists to surface.
 
-> **Correction while you are in here.** Guardrail 1 in
-> [`docs/release/v1.1/README.md`](../release/v1.1/README.md) (line 622) says
-> the NAS stack is explicitly pinned by `IMAGE_TAG` "so a push is not a
-> redeploy." That is **stale**: Portainer stack 158 is git-managed and
-> auto-deploys on push — PR #101's DMS-alert fix was running in production
-> roughly five minutes after CI published the image, about a day before any
-> explicit `IMAGE_TAG` bump, confirmed via the container's
-> `org.opencontainers.image.revision` label. The pin is still worth setting
-> deliberately at the tag (and a manual bump is still how a docs-only compose
-> change advances `ConfigHash`), but it should not be described as what
-> *prevents* a redeploy. Fix the guardrail text as part of the documentation
-> audit.
+> **Correction, itself corrected.** This paragraph first claimed Guardrail 1
+> was stale because "stack 158 auto-deploys on push," citing PR #101 reaching
+> production five minutes after CI. **That claim was wrong**, and merging PR
+> #113 disproved it empirically: `main` moved, and the stack's `ConfigHash`
+> stayed put with all 8 containers untouched. Stack 158 has `AutoUpdate: null`
+> — no git poll, no webhook. Auto-update *was* enabled once (`Interval: 5m`)
+> and was deliberately disabled during the v1.0 soak, because it kept reviving
+> stopped `restart:"no"` containers; the "auto-deploys" note outlived the
+> setting and read as current.
+>
+> Guardrail 1 is still wrong, but for a different reason than first stated: its
+> conclusion (a push is not a redeploy) is correct while its stated cause (the
+> `IMAGE_TAG` pin) is not — a push changes nothing on the NAS regardless of the
+> pin. Deploying is two independent operator-authorized steps: a git-stack
+> redeploy for compose, an `IMAGE_TAG` bump for code. **Fixed in the guardrail
+> 2026-08-28.** Recorded at length because the failure mode is the interesting
+> part: a stale operational note is more dangerous than a missing one, and I
+> propagated it once before checking.
 
 ---
 
@@ -175,7 +187,14 @@ already true or is cheap, test-only, or documentation.
       instance. Sweep re-run clean: 48/48.
 - [x] **Schema-drift tests clean**, including `WOBBLEBOT_STRICT_CONFIG_DRIFT=1`
       (26 passed, 2026-08-28).
-- [ ] **`IMAGE_TAG` repointed** at the tagged build (§1b).
+- [x] **`IMAGE_TAG` repointed** at the tagged build (§1b) — set to `2.0.0`
+      2026-08-29 00:15 UTC; all 8 daemons recreated and healthy on
+      `ghcr.io/carldog/wobblebot:2.0.0`. Pinned to the **release tag** rather
+      than `sha-<short>`: a deliberate divergence from the compose comment's
+      advice, because that comment's real concern is *mutable* tags
+      (`:latest`/`:main`) defeating re-pull, and a release tag is immutable by
+      convention — so "what's running" now answers *2.0.0* instead of an opaque
+      hash, which is the drift this section exists to close.
 - [ ] **Documentation audit** (§7) — at minimum the disposition decisions; the
       file moves themselves can follow the tag.
 
