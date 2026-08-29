@@ -1609,7 +1609,7 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, KeyError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
     log_format = config.operator.log_format if config.operator is not None else "plain"
