@@ -5,6 +5,19 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+## Post-v2.0 Security Maintenance
+
+- **2026-09-01 — Discord probe outbound-target validation.** A public CodeQL
+  scan found that `tools/probe_discord_bot.py` could post its operator-supplied
+  webhook URL to any destination. This is an operator-only diagnostic, not a
+  daemon or user-request route, but its intended target is specifically a
+  Discord webhook. It now requires HTTPS, an official Discord host, and an
+  `/api/webhooks/<id>/<token>` path before the first outbound request; the same
+  validation stays at `post_message()` as defense in depth. Ten focused tests
+  cover four supported Discord hosts plus malformed/SSRF-shaped inputs. Full
+  gate: Black/isort, mypy (149 files), pylint 10.00/10, and 3,671 tests passed.
+  No trading, withdrawal, daemon, or deployment behavior changed.
+
 ## Phase 1 – Foundation & Sandbox ✅ Complete (2026-05-13)
 
 **Goal:** Bootstrapped skeleton of WobbleBot with no real trading risk.

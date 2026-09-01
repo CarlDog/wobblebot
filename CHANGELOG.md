@@ -28,8 +28,15 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-Nothing yet. `2.0.0` was tagged and released 2026-08-28; post-release work
-lands here.
+### Fixed
+
+- **Restricted the operator-only Discord probe to real Discord webhook
+  endpoints.** `tools/probe_discord_bot.py` now requires HTTPS, an official
+  Discord host, and the `/api/webhooks/<id>/<token>` path before it opens the
+  outbound request. This prevents a mistyped or attacker-supplied
+  `--webhook-url` from becoming an arbitrary request. Tests cover valid Discord
+  hosts plus HTTP, localhost, credential-injection, query, and malformed-path
+  rejection.
 
 ## [2.0.0] - 2026-08-28
 

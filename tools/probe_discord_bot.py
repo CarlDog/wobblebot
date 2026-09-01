@@ -50,6 +50,7 @@ import os
 import sqlite3
 import sys
 import time
+from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -74,10 +75,37 @@ DEFAULT_BATTERY: tuple[str, ...] = (
 DEFAULT_OPERATOR_DB = "data/wobblebot-operator.db"
 POLL_TIMEOUT_SEC = 120
 POLL_INTERVAL_SEC = 2
+DISCORD_WEBHOOK_HOSTS = frozenset(
+    {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"}
+)
+
+
+def validate_webhook_url(webhook_url: str) -> str:
+    """Return a canonical Discord webhook URL or reject a non-Discord target."""
+    try:
+        url = urlsplit(webhook_url)
+    except ValueError as exc:
+        raise ValueError("webhook URL is malformed") from exc
+
+    path = [segment for segment in url.path.split("/") if segment]
+    if (
+        url.scheme != "https"
+        or url.hostname not in DISCORD_WEBHOOK_HOSTS
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+        or len(path) != 4
+        or path[:2] != ["api", "webhooks"]
+        or not path[2]
+        or not path[3]
+    ):
+        raise ValueError("webhook URL must be an HTTPS Discord /api/webhooks/<id>/<token> endpoint")
+    return url.geturl()
 
 
 def post_message(webhook_url: str, content: str) -> None:
-    response = httpx.post(webhook_url, json={"content": content}, timeout=10)
+    response = httpx.post(validate_webhook_url(webhook_url), json={"content": content}, timeout=10)
     response.raise_for_status()
 
 
@@ -259,6 +287,12 @@ def main() -> int:
             "WOBBLEBOT_DISCORD_TEST_WEBHOOK_URL in .env.",
             file=sys.stderr,
         )
+        return 2
+
+    try:
+        webhook_url = validate_webhook_url(webhook_url)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
 
     if args.messages:
