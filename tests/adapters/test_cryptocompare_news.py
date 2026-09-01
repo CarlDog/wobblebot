@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -105,8 +106,10 @@ class TestFetchHappyPath:
         assert got.sentiment_score is None  # no reliable sentiment in CryptoCompare
         assert got.mentioned_coins == ["BTC", "ETH"]
         # Request shape
-        assert "min-api.cryptocompare.com" in captured["url"]
-        assert "lang=EN" in captured["url"]
+        url = urlsplit(captured["url"])
+        assert url.scheme == "https"
+        assert url.hostname == "min-api.cryptocompare.com"
+        assert parse_qs(url.query) == {"lang": ["EN"]}
         assert captured["headers"]["authorization"] == "Apikey test-key-123"
 
     async def test_multiple_items_sorted_ascending(self) -> None:
