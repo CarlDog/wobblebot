@@ -30,6 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- **Redacted configured secret values at the logging chokepoint.** Plain and
+  JSON logs now replace the nontrivial values of environment variables named
+  for keys, secrets, tokens, passwords, or webhooks before emitting messages,
+  structured extras, or exception text. This preserves Harvester diagnostics
+  while preventing upstream errors from echoing a configured credential.
+
 - **Restricted the operator-only Discord probe to real Discord webhook
   endpoints.** `tools/probe_discord_bot.py` now requires HTTPS, an official
   Discord host, and the `/api/webhooks/<id>/<token>` path before it opens the

@@ -24,6 +24,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,27 @@ _DEFAULT_RESERVED_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", None, No
     "message",
     "asctime",
 }
+_SECRET_ENV_NAME = re.compile(r"(?:API_KEY|SECRET|TOKEN|PASSWORD|WEBHOOK)(?:_|$)", re.IGNORECASE)
+
+
+def _redact_configured_secrets(value: str) -> str:
+    """Redact process-secret values without hiding their variable names."""
+    for name, secret in os.environ.items():
+        if _SECRET_ENV_NAME.search(name) and len(secret) >= 8:
+            value = value.replace(secret, "[REDACTED]")
+    return value
+
+
+class SecretRedactionFilter(logging.Filter):
+    """Protect message interpolation and JSON extras at the logging chokepoint."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_configured_secrets(record.getMessage())
+        record.args = ()
+        for key, value in record.__dict__.items():
+            if key not in _DEFAULT_RESERVED_ATTRS and isinstance(value, str):
+                record.__dict__[key] = _redact_configured_secrets(value)
+        return True
 
 
 class JsonFormatter(logging.Formatter):
@@ -54,7 +76,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = _redact_configured_secrets(self.formatException(record.exc_info))
 
         # Surface any caller-supplied extras (e.g. order_id, symbol).
         for key, value in record.__dict__.items():
@@ -93,7 +115,7 @@ class PlainExtraFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
+        base = _redact_configured_secrets(super().format(record))
         error = getattr(record, "error", None)
         if error and f": {error}" not in base and f"({error})" not in base:
             base = f"{base} (error: {error})"
@@ -149,6 +171,7 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
 
     handler = logging.StreamHandler(resolved_stream)
     handler.setFormatter(formatter)
+    handler.addFilter(SecretRedactionFilter())
     handler.set_name(_HANDLER_NAME)
 
     root = logging.getLogger("wobblebot")
@@ -187,6 +210,7 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
             utc=True,
         )
         rotating.setFormatter(formatter)
+        rotating.addFilter(SecretRedactionFilter())
         rotating.set_name(_ROTATING_HANDLER_NAME)
         root.addHandler(rotating)
 

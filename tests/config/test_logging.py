@@ -45,6 +45,33 @@ def _reset_wobblebot_logger():
 
 
 class TestPlainFormat:
+    def test_plain_format_redacts_configured_secret_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvester-secret-value")
+        buf = io.StringIO()
+        configure_logging(level="ERROR", log_format="plain", stream=buf)
+        logging.getLogger("wobblebot.test").error(
+            "upstream error: %s",
+            "harvester-secret-value",
+            extra={"error": "harvester-secret-value"},
+        )
+
+        output = buf.getvalue()
+        assert "harvester-secret-value" not in output
+        assert "[REDACTED]" in output
+
+    def test_plain_format_redacts_exception_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvester-secret-value")
+        buf = io.StringIO()
+        configure_logging(level="ERROR", log_format="plain", stream=buf)
+        try:
+            raise RuntimeError("upstream echoed harvester-secret-value")
+        except RuntimeError:
+            logging.getLogger("wobblebot.test").exception("harvest failed")
+
+        assert "harvester-secret-value" not in buf.getvalue()
+
     def test_plain_format_emits_human_readable_line(self):
         buf = io.StringIO()
         configure_logging(level="INFO", log_format="plain", stream=buf)
@@ -134,6 +161,23 @@ class TestPlainFormat:
 
 
 class TestJsonFormat:
+    def test_json_format_redacts_message_and_extra_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KRAKEN_HARVESTER_API_KEY", "harvester-secret-value")
+        buf = io.StringIO()
+        configure_logging(level="ERROR", log_format="json", stream=buf)
+        logging.getLogger("wobblebot.test").error(
+            "upstream error: %s",
+            "harvester-secret-value",
+            extra={"error": "harvester-secret-value"},
+        )
+
+        payload = json.loads(buf.getvalue())
+        assert "harvester-secret-value" not in json.dumps(payload)
+        assert payload["message"] == "upstream error: [REDACTED]"
+        assert payload["error"] == "[REDACTED]"
+
     def test_json_format_emits_one_object_per_record(self):
         buf = io.StringIO()
         configure_logging(level="INFO", log_format="json", stream=buf)
