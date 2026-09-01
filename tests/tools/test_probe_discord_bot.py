@@ -1,6 +1,7 @@
 """Input-boundary tests for the live Discord webhook probe."""
 
 import pytest
+
 from tools.probe_discord_bot import validate_webhook_url
 
 
