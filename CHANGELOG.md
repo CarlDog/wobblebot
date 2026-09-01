@@ -57,13 +57,13 @@ fresh `[Unreleased]` heading created at that time.
   remove it without deciding to publish.
 
 - **ADR-041 — the deployment enforces the capability matrix** (2026-08-28).
-  A single `x-wobblebot-defaults` YAML anchor had been injecting *every*
-  credential into *all nine* services: `web`, `news`, `advise`, `operator`,
+  A single `x-wobblebot-defaults` YAML anchor had been injecting _every_
+  credential into _all nine_ services: `web`, `news`, `advise`, `operator`,
   `maintenance`, and the one-shot `tools` container each held the
   withdrawal-enabled Harvester key alongside the reader and trader keys, every
   cloud-LLM key, the Discord token, and the web session secret — plus
   read-write mounts of the entire `data/` and `config/` trees. ADR-003's
-  financial-power fragmentation was enforced in the Python and merely *assumed*
+  financial-power fragmentation was enforced in the Python and merely _assumed_
   at the container boundary; reaching the withdrawal credential required no
   Python bug, only a foothold in any daemon. Each service now declares exactly
   what its code reads (Harvester key: 9 services → 1; trader: 9 → 2; reader:
@@ -72,7 +72,7 @@ fresh `[Unreleased]` heading created at that time.
   withdrawal path moves to `docker compose run --rm harvest …` so withdrawal
   authority appears in one service definition.
   `tests/deployment/test_compose_capability_matrix.py` asserts the matrix as an
-  allowlist — an *extra* credential fails as loudly as a missing one — with a
+  allowlist — an _extra_ credential fails as loudly as a missing one — with a
   structural guard that no shared anchor may carry a credential at all.
   Verified beyond the unit test by rendering `docker compose config` against a
   synthetic canary environment. The matrix was derived from the source, not
@@ -82,7 +82,7 @@ fresh `[Unreleased]` heading created at that time.
   `tests/deployment/test_v1_to_v2_upgrade_survivor.py`). Every migration had
   unit coverage for its own column; nothing exercised what an operator actually
   does — open a v1.0-written database with the 2.0 artifact. The fixture is
-  built from the *real* tagged schema (`git show v1.0.0:…`) rather than a
+  built from the _real_ tagged schema (`git show v1.0.0:…`) rather than a
   hand-copy that would drift, and skips rather than passing green if the tag is
   unreachable. Asserts that the database opens, integrity holds, seeded rows
   survive, a second migration pass is a no-op (an interrupted upgrade must be
@@ -112,7 +112,7 @@ fresh `[Unreleased]` heading created at that time.
   stated problem survived the fix that retired it. A `mode="before"` validator
   on `WobbleBotConfig` now rejects a named registry of retired keys (inactive
   `profiles.*` sub-trees included) and names the ADR and the superseding
-  setting. Deliberately *not* `extra="forbid"` everywhere, which would turn a
+  setting. Deliberately _not_ `extra="forbid"` everywhere, which would turn a
   targeted upgrade check into a broad compatibility break. Found by the
   upgrade-survivor gate above; the live NAS config, the local checkout, and
   `settings.example.yml` were all verified free of the key before shipping a
@@ -149,7 +149,7 @@ fresh `[Unreleased]` heading created at that time.
   prerequisite, documented at the build site).
 - **Data retention shipped** (2026-08-16, ADR-036). v1.0 pruned only
   `price_snapshots`; measurement against the live NAS at ~91 days of
-  soak showed the real growth was the *multipliers*, not the tables —
+  soak showed the real growth was the _multipliers_, not the tables —
   a rotation-less archive dir, a 7× backup rotation whose fire-on-start
   behavior burned 4 of 7 "daily" slots on deploy day, and ~200 MB of
   never-truncated WAL. New: per-table 90-day archive-then-delete for
@@ -210,7 +210,7 @@ fresh `[Unreleased]` heading created at that time.
 - **Money now renders in one dialect everywhere** (repo-quality pass,
   2026-08-15). One USD value had four costumes: web templates fixed
   `%.2f`/`%.4f`/`%.8f` with no thousands separators, Discord embeds
-  `:,.2f`/`:,.4f` *with* them, session PnL differing between two embeds,
+  `:,.2f`/`:,.4f` _with_ them, session PnL differing between two embeds,
   logs adaptive. Fixed 2dp was destructive below $1 — DOGE's grid levels
   3% apart all rendered "$0.09"; the ladder was illegible on the
   dashboard. New `fmt_usd` / `fmt_qty` in `domain/value_objects` (beside
@@ -253,13 +253,13 @@ fresh `[Unreleased]` heading created at that time.
   present/absent check with no dust tolerance to argue about, after an
   earlier quantity-versus-balance comparison produced two false
   positives from Kraken's `total`-vs-`available` semantics. A Kraken
-  trade whose order is still locally OPEN is *deferred* (the engine
+  trade whose order is still locally OPEN is _deferred_ (the engine
   persists trades only at terminal order status per ADR-023, so a
   partial fill resting on the book is persistence-pending, not a gap)
   — logged, never paged. Symbols come from `live.symbols` — the
   actually-traded set — rather than a config list of their own, so the
   check cannot drift from what is traded (the branch's first cut used
-  `grid.coins`, a per-coin *override* map that is wrong in both
+  `grid.coins`, a per-coin _override_ map that is wrong in both
   directions; caught by the pre-merge review). `Ledgers` is
   deliberately NOT consulted (staking accrual and dust conversions are
   expected noise, not a correctness signal). Reader key, read-only
@@ -345,7 +345,7 @@ fresh `[Unreleased]` heading created at that time.
   `cli/harvest`, the only module with transfer authority (ADR-003),
   whose `asyncio.gather` has no `return_exceptions`; and
   `grid_engine.cancel_open_orders`' trade-history fetch, which runs
-  *after* the cancels have executed — the exact silent-fill-loss shape
+  _after_ the cancels have executed — the exact silent-fill-loss shape
   the `save_fill` entry above closes. Nine parse sites now guard against
   a shared `_PARSE_ERRORS` tuple, shared because that exception set is a
   subtle correctness rule that had **already drifted**:
@@ -383,7 +383,7 @@ fresh `[Unreleased]` heading created at that time.
 - **Silent fill loss: an order's terminal status and its trades were
   persisted as two independent writes** (2026-08-22, found by a
   financial-correctness audit, root-caused and fixed same day).
-  `GridEngine._detect_fills` saved the order as `closed` and *then*
+  `GridEngine._detect_fills` saved the order as `closed` and _then_
   looped saving its matched trades. A failure between the two left the
   order permanently `closed` with its trade never written — and a closed
   order never becomes a fill candidate again, so nothing ever retried
@@ -461,7 +461,7 @@ fresh `[Unreleased]` heading created at that time.
   measured to the nearest open order, not the anchor.
 
 - **A paused symbol was blind to its own fills** — a real-money production
-  bug. `GridEngine.step` returned `skipped_paused` *before* fill
+  bug. `GridEngine.step` returned `skipped_paused` _before_ fill
   detection, so a BTC BUY that executed on Kraken 2026-08-11 while the
   symbol was paused sat `open` in storage for four days: no trade row, no
   counter order, three phantom "open" orders on the dashboard. A paused
@@ -480,7 +480,7 @@ fresh `[Unreleased]` heading created at that time.
 
 - **The harvester's withdraw-scope refusal named a cause the probe can't
   know.** `has_withdraw_scope() == False` proves Kraken denied
-  `WithdrawMethods` for a *valid* key — it cannot distinguish "this key
+  `WithdrawMethods` for a _valid_ key — it cannot distinguish "this key
   lacks the permission" from "this env var holds a different key than
   intended" (the second is what actually happened in production: the
   fix was minting/re-pasting the key in the Portainer stack env, and the
@@ -505,7 +505,7 @@ fresh `[Unreleased]` heading created at that time.
 
 - **Pricing entries for `claude-opus-5` and `claude-sonnet-5`**
   (`services/llm_pricing.py`), so the ADR-014 gate admits them — it
-  *raises* on an unpriced model rather than estimating, so this is what
+  _raises_ on an unpriced model rather than estimating, so this is what
   makes them runnable at all. Sonnet 5 is deliberately billed at its
   standard `$3/$15` rather than the introductory `$2/$10` in effect
   through 2026-08-31: over-pricing is this module's stated safe
@@ -913,7 +913,7 @@ slices. Full account:
 
 - **Widened the live BTC grid 1.0% → 3.0%** (`grid.default.spacing_percentage`,
   synced across `settings.example.yml` ↔ the deploy-master `settings.yml`).
-  3% is the least-bad *static default* — it survives every regime; the
+  3% is the least-bad _static default_ — it survives every regime; the
   backtest showed no static spacing beats hold over full cycles. Exposure
   unchanged ($60 = 3+3 × $10). ADR-006 park-when-offside unchanged.
 - **Documented the heuristic lookback coupling** instead of "fixing" it.
@@ -1018,6 +1018,7 @@ failure timestamps. The operator daemon was unaffected because its
 post-sweep `qwen2.5:1.5b` model finishes in seconds.
 
 **Fixes (this push):**
+
 - `config/prompts/quant.md`: new constraint #5 caps `rationale` at
   ≤2 sentences (~50 words) so the model stops well short of the
   512-token ceiling — completing in ~40–60s even on a cold load.
@@ -1317,16 +1318,16 @@ in `be46dd9`).
 Operator noticed Today's PnL on the dashboard reading $0 after
 all of today's work. Hypothesis: the timezone fix shipped earlier
 this evening (b2e972d) only converted the display layer; the
-``today_realized_pnl`` helper kept filtering by UTC day. After
+`today_realized_pnl` helper kept filtering by UTC day. After
 UTC midnight but before local midnight, cycles from earlier "today"
 in operator-tz silently fell out of the header — operator saw
 "Today: $0.00" while the cycle rows below still showed today's
 fills. Reproduced against live.db at 04:17 UTC: UTC filter
 returned 0; America/Chicago filter returned $0.1025. Hotfix
-`bec097d` adds an ``tz_name`` parameter to ``today_realized_pnl``
+`bec097d` adds an `tz_name` parameter to `today_realized_pnl`
 that scopes the day boundary by IANA timezone (defaults to UTC
 for backward compat; unknown name falls back to UTC). Status
-routes thread ``operator_tz=prefs.timezone`` through. Two
+routes thread `operator_tz=prefs.timezone` through. Two
 regression tests pin the UTC-midnight boundary case + the
 unknown-tz fallback.
 
@@ -1336,7 +1337,7 @@ since 1:32 PM start). Today's morning logging-rebalance audit
 (c9e7781) had correctly demoted "tick complete" from INFO to
 DEBUG to cut 5s-cadence noise — but the side effect was an idle
 bot looking indistinguishable from a hung process in plain format.
-`67daf68` adds a ``live.terminal_heartbeat_seconds`` knob (default
+`67daf68` adds a `live.terminal_heartbeat_seconds` knob (default
 900s = 15 min) and a periodic INFO line that proves the loop is
 alive without flooding the terminal::
 
@@ -1347,21 +1348,20 @@ the /health page; this one's just the terminal-visible equivalent.
 Also inlined the WARN-extras for the pending_commands poll WARN
 on the same path so plain-format consumers see what failed.
 
-Operator-initiated cli/live restart at 23:31 CDT (04:31 UTC May
-24) surfaced two more concerns worth logging:
+Operator-initiated cli/live restart at 23:31 CDT (04:31 UTC May 24) surfaced two more concerns worth logging:
 
-- ``startup reconciliation`` marked 5 storage-only orders as
+- `startup reconciliation` marked 5 storage-only orders as
   canceled, but live.db inspection showed those were actually 3
-  unique ``exchange_id``s with duplicate rows at different
+  unique `exchange_id`s with duplicate rows at different
   precision strings. Likely a reconciler edge case from one of
   today's restart cycles; queued for tracing.
-- ``order refused by exchange: insufficient balance`` WARN on the
+- `order refused by exchange: insufficient balance` WARN on the
   3rd SELL of the fresh grid layout. Engine handled it correctly
   (placed 3 BUYs + 2 SELLs with the BTC inventory it had;
   did not retry-loop or crash). The behavior is correct
   degraded-state for short BTC inventory; the WARN-level alarm
   over-states the severity. `a7d8f14` logs a v1.1 entry in
-  ``docs/release/v1.1/engine.md`` proposing demotion to INFO
+  `docs/release/v1.1/engine.md` proposing demotion to INFO
   with a "partial grid placed (3 BUYs + 2 SELLs of 3 target);
   BTC inventory below full SELL layout target" summary message
   so operator immediately sees the degraded-but-correct state.
@@ -1385,6 +1385,7 @@ soak that began 2026-05-18 and is currently mid-flight.
 
 **8.4.B — v1.0 documentation freeze** (2026-05-18, `f154f39`).
 Two operator-facing docs under new `docs/release/`:
+
 - `v1.0-known-limitations.md` captures the v1.0 boundary
   honestly. Architectural / operational / observability /
   tooling / process boundaries; schema notes; soak-window
@@ -1530,7 +1531,7 @@ cost stays at $0.085018.
 hotfix.** cli/live crashed at 09:18:31 with "session loss cap
 exceeded" immediately after a $10 BUY filled at the Day-4 fresh
 anchor ($77,635.90). Root cause: the `max_session_loss_usd` cap
-checked USD-balance delta only — a BUY fill *is* a USD→base
+checked USD-balance delta only — a BUY fill _is_ a USD→base
 conversion, so the first BUY of any session where
 `order_size_usd > max_session_loss_usd` would trip it. Same class
 of math error caught on Day 3 (USD-balance delta ≠ profit). Fix
@@ -1553,13 +1554,13 @@ hotfix:
 - **Engine resilience (2 more fixes).** `e936f2b` engine auto
   re-layout when no open orders remain — after the morning's
   cap-trip + restart, cli/live had grid_state but every order in
-  canceled status; _tick only handles fills, so the engine
-  ticked silently for ~1.5h. _tick now detects empty open-orders
-  + not offside and re-places the layout at the existing anchor.
-  `3ac3757` max_daily_spend_usd ignores canceled BUYs — the cap
-  was counting every BUY row created today regardless of status;
-  Day-5 churn (11 canceled rows totalling $110 notional) blocked
-  legitimate placement against a $100 cap.
+  canceled status; \_tick only handles fills, so the engine
+  ticked silently for ~1.5h. \_tick now detects empty open-orders
+  - not offside and re-places the layout at the existing anchor.
+    `3ac3757` max_daily_spend_usd ignores canceled BUYs — the cap
+    was counting every BUY row created today regardless of status;
+    Day-5 churn (11 canceled rows totalling $110 notional) blocked
+    legitimate placement against a $100 cap.
 - **Health observability (10 commits).** New `/health` page +
   Kraken SystemStatus probe with TTL cache (`d2da41a`) + dashboard
   traffic-light icon (`d938044`). Operator iteration tightened
@@ -1570,7 +1571,7 @@ hotfix:
   symbol-section framing + caption trim (`a7bd01b`), title-case
   daemon labels (`a722fd4`), colgroup column-width alignment
   (`b70e855` + `fb6e45f`), status card AGE column lock
-  (`0cb9b58`). `a544d8d` made thresholds read schedules.* so
+  (`0cb9b58`). `a544d8d` made thresholds read schedules.\* so
   operator-tuned cadences flow into the health UI without code
   changes (fixes the operator-surfaced "this should NOT be
   yellow" hardcoded-thresholds problem). `9bc4b7f` extended
@@ -1616,7 +1617,7 @@ plus the multi-week operator-driven soak that gates the v1.0.0
 tag.
 
 **No new ADR.** Release ceremony, not architectural change. The
-known-limitations doc *captures* prior ADR-deferred decisions
+known-limitations doc _captures_ prior ADR-deferred decisions
 (single-operator web auth, no separate banking adapter,
 harvester reconciler deferred, etc.) — it doesn't introduce new
 ones. Decisions ratified in `docs/planning/stage-8.4-design.md`
@@ -1625,8 +1626,8 @@ only.
 **Design ratifies 10 implementation decisions:**
 
 1. Soak duration is operator-decided, not Claude-mandated — the
-   runbook describes *what to watch for*, not *how long to
-   watch*.
+   runbook describes _what to watch for_, not _how long to
+   watch_.
 2. Low-risk soak configuration ratified in the runbook (single
    coin, conservative order_size_usd + spacing, hard caps tuned
    via cli/recalibrate, harvester enabled).
@@ -1653,12 +1654,13 @@ only.
     diff.
 
 **Slicing:** 8.4.A kickoff (this commit) → 8.4.B known-limitations
-+ future-improvements docs → 8.4.C pre-1.0 one-shot audit →
-8.4.D soak runbook → 8.4.E operator-driven multi-week soak
-(deferred from Claude-session scope) → 8.4.F post-soak release
-ceremony (`phase-8-summary.md` + CHANGELOG `[Unreleased]` →
-`[1.0.0] - YYYY-MM-DD` + `pyproject.toml` 1.0.0 + annotated
-`v1.0.0` tag).
+
+- future-improvements docs → 8.4.C pre-1.0 one-shot audit →
+  8.4.D soak runbook → 8.4.E operator-driven multi-week soak
+  (deferred from Claude-session scope) → 8.4.F post-soak release
+  ceremony (`phase-8-summary.md` + CHANGELOG `[Unreleased]` →
+  `[1.0.0] - YYYY-MM-DD` + `pyproject.toml` 1.0.0 + annotated
+  `v1.0.0` tag).
 
 **Explicitly out of scope:** new code, new tests, new ADRs, new
 features the operator asks for during the soak (logged as
@@ -1713,7 +1715,7 @@ instead of the empty-table O(1) zone. Smoke-tested locally:
 rows; `save_order` p50 0.06ms. Operator's Synology numbers will
 differ — Stage 8.4's soak test has its baseline. 11 new tests
 for the timing helpers (5 percentile_ms + 2 summarize + 3
-_profile_op + 1 _seed_fixtures).
+\_profile_op + 1 \_seed_fixtures).
 
 **Numbers.** 1785 unit tests pass (was 1763 at Stage 8.3 entry,
 +22). mypy clean across 104 src files; pylint **10.00/10**.
@@ -1768,7 +1770,8 @@ No code in this commit. Stage 8.3.B work follows.
 
 Four sub-slices closed (A kickoff already in unreleased above; B
 maintenance services; C backup service; D cli/maintenance daemon
-+ log rotation) plus this close commit (E).
+
+- log rotation) plus this close commit (E).
 
 **Fifteenth operator entry point lands:** `python -m
 wobblebot.cli.maintenance`. Long-running daemon with three
@@ -1901,10 +1904,11 @@ view clean.
   symbol should clear).
 
 **Numbers.** 1732 unit tests pass (1711 → 1732, +21: 5 persistence
-+ 16 reconciler). mypy clean across 101 src files (+1 reconciler
-module). pylint **10.00/10**; black + isort clean. **Stage 8.1
-real-money cost: $0.00** (shutdown discipline + read-only adapter
-queries; no live engine operations triggered).
+
+- 16 reconciler). mypy clean across 101 src files (+1 reconciler
+  module). pylint **10.00/10**; black + isort clean. **Stage 8.1
+  real-money cost: $0.00** (shutdown discipline + read-only adapter
+  queries; no live engine operations triggered).
 
 Stage 8.2 (Background Maintenance Worker) follows. Persistence-on-
 cancel + startup reconciliation give 8.2's maintenance worker a
@@ -2357,6 +2361,7 @@ form gets a token without per-template wiring). CSRF token rotates
 on login + logout (session-fixation guard).
 
 **Sub-slices:**
+
 - **7.1.A — Users table + domain model + StoragePort methods.**
   `domain/users.py` ships `User` + `UserCredentials` Pydantic
   models (both `frozen=True`). New `users` SQLite table with
@@ -2412,9 +2417,9 @@ on login + logout (session-fixation guard).
   `configure_logging` side effects from leaking into downstream
   caplog-based tests.
 - **7.1.E — Stage close.** Roadmap + CLAUDE.md + this CHANGELOG
-  + `config/settings.example.yml` (new `web:` block) + `.env.example`
-  (new `WOBBLEBOT_WEB_SESSION_SECRET` var) + project_state memory
-  all reflect Stage 7.1 ✅. Schema-drift tests pass clean.
+  - `config/settings.example.yml` (new `web:` block) + `.env.example`
+    (new `WOBBLEBOT_WEB_SESSION_SECRET` var) + project_state memory
+    all reflect Stage 7.1 ✅. Schema-drift tests pass clean.
 
 **Deprived-env walkthrough green** (`cli/web` exit codes, all exit
 2 with no tracebacks): bad `--config` path; bad `--profile` name;
@@ -2441,24 +2446,25 @@ money spent** across three smoke-test calls.
 
 **6.5.A — Smoke-test scaffold + audit-driven refactor.**
 
-*Audit-driven refactor pass* (Phase-6-close per the global rule).
+_Audit-driven refactor pass_ (Phase-6-close per the global rule).
 Three more shared patterns promoted out of per-provider modules
 on top of Stage 6.3.A's `execute_cloud_call` extraction:
+
 - `services/llm_pricing.estimate_cost_ceiling(provider, model,
-  prompt_text, max_tokens)` — three byte-identical copies pre-
+prompt_text, max_tokens)` — three byte-identical copies pre-
   refactor.
 - `services/llm_cloud_call.parse_advisor_recommendation(raw_text,
-  fallback_role, provider_name)` — three byte-identical copies
+fallback_role, provider_name)` — three byte-identical copies
   pre-refactor for the AdvisorPort parse path.
 - `services/llm_cloud_call.parse_intent_dict(raw_text,
-  provider_name)` — three byte-identical copies pre-refactor for
+provider_name)` — three byte-identical copies pre-refactor for
   the AssistantPort parse path.
 
 Net: ~270 LOC of mechanical duplication collapsed. Per-provider
 modules now own only their genuinely-different surface — HTTP wire
 shape, token-count normalization, response text extraction.
 
-*Operator smoke-test tool.* `tools/run_cloud_check.py` — one-shot
+_Operator smoke-test tool._ `tools/run_cloud_check.py` — one-shot
 live smoke test against any of the three cloud providers. Args:
 `--provider` / `--role` / `--model` (cheap defaults) /
 `--max-tokens 100` (low floor) / `--dry-run` (gate-disable, NOT
@@ -2466,19 +2472,19 @@ no-call) / `--daily-cap` / `--session-cap` / `--log-format`. Reads
 provider-specific API key from env; clean exit 2 on missing key.
 Persists the receipt to operator.db's `llm_calls` table.
 
-*Integration test stubs.* `tests/integration/test_cloud_llm_live.py`
+_Integration test stubs._ `tests/integration/test_cloud_llm_live.py`
 — three integration-marked tests (one per provider), each opt-in
 via the provider's API-key env var. Same shape as
 `test_kraken_trading_live.py` skip-when-key-missing pattern.
 
-*Live verification.* Operator's environment had all three keys
+_Live verification._ Operator's environment had all three keys
 loaded via `.env`; smoke test ran against each provider:
 
-  | Provider  | Model              | In   | Out | Reason | Cost USD  |
-  | --------- | ------------------ | ---- | --- | ------ | --------- |
-  | anthropic | claude-sonnet-4-6  | 1321 |  19 |      0 | 0.004248  |
-  | openai    | gpt-4o-mini        | 1171 |  15 |      0 | 0.000185  |
-  | google    | gemini-2.5-flash   | 1281 |  20 |     43 | 0.000585  |
+| Provider  | Model             | In   | Out | Reason | Cost USD |
+| --------- | ----------------- | ---- | --- | ------ | -------- |
+| anthropic | claude-sonnet-4-6 | 1321 | 19  | 0      | 0.004248 |
+| openai    | gpt-4o-mini       | 1171 | 15  | 0      | 0.000185 |
+| google    | gemini-2.5-flash  | 1281 | 20  | 43     | 0.000585 |
 
 Google's `tokens_reasoning=43` correctly normalized through the
 additive convention from `extract_google_tokens`.
@@ -2524,6 +2530,7 @@ AI is out of scope (avoids the OAuth + GCP-project ceremony for
 a hobby-tier bot).
 
 Provider-specific helpers:
+
 - `extract_google_tokens` — the simplest reasoning-token
   normalization of the three Phase 6 providers. Gemini reports
   `thoughtsTokenCount` separately from `candidatesTokenCount` and
@@ -2548,6 +2555,7 @@ Provider-specific helpers:
   maps operator→user / assistant→model on the wire.
 
 24 new unit tests focused on the Google-specific bits:
+
 - Pure helpers: cost ceiling math vs gemini-2.5-pro pricing;
   token extraction across no-thinking / additive-thinking /
   zero-thinking / empty-usage / missing-responseId;
@@ -2602,13 +2610,14 @@ ADR-014/015 flow instead of re-implementing it. Three sub-slices:
 
 **6.3.A — Shared cloud-call helper + refactor Anthropic.** New
 `services/llm_cloud_call.py`:
+
 - `CloudCallContext` frozen dataclass bundles storage +
   session_tracker + cost_config + retry_config + role + provider +
   model (the per-adapter identity).
 - `classify_error(exc) -> str` pure function promoted out of the
   Anthropic adapters where it was duplicated.
 - `execute_cloud_call(ctx, estimated_cost_usd, call_fn,
-  extract_tokens)` runs the full ADR-014/015 sequence: check_budget
+extract_tokens)` runs the full ADR-014/015 sequence: check_budget
   → retry_with_backoff(call_fn) → on success build+persist
   LLMCallRecord from extracted tokens + update tracker → on failure
   build+persist failure record with classified error_kind + re-raise.
@@ -2638,6 +2647,7 @@ classified error_kind + re-raise).
 `adapters/openai.py` with both `OpenAIAdvisorAdapter` (AdvisorPort)
 and `OpenAIAssistantAdapter` (AssistantPort). Provider-specific
 helpers:
+
 - `is_reasoning_model` — name-pattern detection (`o1`, `o3` prefixes).
   Drops `temperature` from the request body for reasoning models;
   always uses `max_completion_tokens` for forward-compat.
@@ -2720,7 +2730,8 @@ Module-level `TypeAdapter[OperatorIntent]` for the two-level
 discriminator resolution. Constructor refuses non-operator-role
 prompts + empty api_key. 17 new unit tests covering every
 OperatorIntent variant + wire-shape verification + cost-tracking
-+ retry + parse failures.
+
+- retry + parse failures.
 
 **6.2.C — CLI dispatch wiring + stage close.**
 `cli/advise._build_ollama_advisor` → `_build_advisor_adapter`
@@ -2902,45 +2913,47 @@ document. Three sub-slices:
 
 **5.7.A+B (bundled — small enough to land together).**
 
-  **TTL expirer for pending_commands.** cli/operator gains a third
-  background asyncio.Task (alongside the notification forwarder and
-  Gateway client). The expirer scans pending_commands WHERE
-  status='awaiting_confirmation' AND ttl_expires_at < now every
-  ttl_expirer_poll_seconds (default 30s) and transitions matches to
-  'expired'. Per ADR-013 decision 3 the operator's ✅/❌ reaction is
-  the ONLY way out of awaiting_confirmation, so without TTL expiry
-  abandoned commands accumulate forever. OperatorConfig gains
-  ttl_expirer_poll_seconds: float = 30.0 (positive).
+**TTL expirer for pending_commands.** cli/operator gains a third
+background asyncio.Task (alongside the notification forwarder and
+Gateway client). The expirer scans pending_commands WHERE
+status='awaiting_confirmation' AND ttl_expires_at < now every
+ttl_expirer_poll_seconds (default 30s) and transitions matches to
+'expired'. Per ADR-013 decision 3 the operator's ✅/❌ reaction is
+the ONLY way out of awaiting_confirmation, so without TTL expiry
+abandoned commands accumulate forever. OperatorConfig gains
+ttl_expirer_poll_seconds: float = 30.0 (positive).
 
-  **End-to-end integration test suite.**
-  tests/integration/test_phase5_operator_e2e.py exercises the full
-  operator-interaction round-trip without a real Discord Gateway,
-  Ollama LLM, or Kraken exchange — the test stubs the LLM and the
-  Discord transport but uses real SQLite + real GridEngine + real
-  OperatorService + real cli/operator handler functions + real
-  cli/live poll helper.
+**End-to-end integration test suite.**
+tests/integration/test_phase5_operator_e2e.py exercises the full
+operator-interaction round-trip without a real Discord Gateway,
+Ollama LLM, or Kraken exchange — the test stubs the LLM and the
+Discord transport but uses real SQLite + real GridEngine + real
+OperatorService + real cli/operator handler functions + real
+cli/live poll helper.
 
-  Five scenarios covered:
-  - test_full_pause_round_trip: "pause BTC" → confirm embed → ✅ →
-    cli/live picks up approved command → engine actually pauses →
-    row marked dispatched with success.
-  - test_reject_flow_does_not_dispatch: ❌ reaction → marked
-    rejected → cli/live's poll skips it → engine never pauses.
-  - test_multi_turn_conversation_records_history: two operator
-    messages → 4 conversation_turns; second invocation's context
-    sees the first turn pair.
-  - test_notification_persisted_and_forwarded: SqliteNotifierAdapter
-    writes → forwarder reads + posts embed + marks forwarded.
-  - test_ttl_expiry_skipped_by_dispatch: expired commands never
-    dispatch even when cli/live polls.
+Five scenarios covered:
 
-  5 + 5 new tests (5 unit for ttl_expirer + 5 integration for the
-  e2e suite). cli/operator module docstring trimmed to keep the
-  file under pylint's 1000-line cap (was 1006 after the expirer
-  addition; now 990).
+- test_full_pause_round_trip: "pause BTC" → confirm embed → ✅ →
+  cli/live picks up approved command → engine actually pauses →
+  row marked dispatched with success.
+- test_reject_flow_does_not_dispatch: ❌ reaction → marked
+  rejected → cli/live's poll skips it → engine never pauses.
+- test_multi_turn_conversation_records_history: two operator
+  messages → 4 conversation_turns; second invocation's context
+  sees the first turn pair.
+- test_notification_persisted_and_forwarded: SqliteNotifierAdapter
+  writes → forwarder reads + posts embed + marks forwarded.
+- test_ttl_expiry_skipped_by_dispatch: expired commands never
+  dispatch even when cli/live polls.
+
+5 + 5 new tests (5 unit for ttl_expirer + 5 integration for the
+e2e suite). cli/operator module docstring trimmed to keep the
+file under pylint's 1000-line cap (was 1006 after the expirer
+addition; now 990).
 
 **5.7.C — Phase 5 close.** New
 docs/planning/phase-5-summary.md (~200 lines) consolidates:
+
 - Per-stage outcomes table for all seven stages + kickoff.
 - The Phase 5 reframe story (originally seven small stages →
   one cohesive interaction-engine phase mid-kickoff).
@@ -3010,6 +3023,7 @@ CHECK rejects unknown role, upsert replaces content + intent.
 
 **5.6.B — OperatorConfig schema.** Three new Pydantic models in
 config/cli.py:
+
 - AssistantLLMConfig — provider (ollama for Phase 5), model,
   prompt_file (default config/prompts/operator.md), base_url,
   temperature (0.3 default per the operator.md hint), max_tokens
@@ -3023,40 +3037,41 @@ config/cli.py:
 - OperatorConfig composing both + operator_db (the daemon's own
   pending_commands/notifications/conversation_turns DB) + optional
   live_db/advise_db/news_db/harvest_db for cross-database queries
-  + the ADR-013 knobs (context_window_turns 10 capped 1-50,
-  confirm_ttl_seconds 300, forwarder_poll_seconds 2.0).
-WobbleBotConfig gains operator: OperatorConfig | None = None. 18
-new unit tests across defaults, required fields, bounds (temp 0-2,
-context window 1-50, positive TTL + poll), frozenness.
+  - the ADR-013 knobs (context_window_turns 10 capped 1-50,
+    confirm_ttl_seconds 300, forwarder_poll_seconds 2.0).
+    WobbleBotConfig gains operator: OperatorConfig | None = None. 18
+    new unit tests across defaults, required fields, bounds (temp 0-2,
+    context window 1-50, positive TTL + poll), frozenness.
 
 **5.6.C — cli/operator daemon.** New cli/operator entry point with
 three concurrent concerns:
 
-  Notification forwarder (background asyncio.Task):
-  _forwarder_loop polls notifications WHERE forwarded=0 every
-  forwarder_poll_seconds, posts each as a color-coded Discord embed,
-  marks forwarded on success. Per-row failures logged + batch
-  continues — losing one forward beats stopping the daemon.
+Notification forwarder (background asyncio.Task):
+\_forwarder_loop polls notifications WHERE forwarded=0 every
+forwarder_poll_seconds, posts each as a color-coded Discord embed,
+marks forwarded on success. Per-row failures logged + batch
+continues — losing one forward beats stopping the daemon.
 
-  Conversation flow (Discord on_message handler):
-  _handle_inbound_message persists the operator turn, composes a
-  ConversationContext (current message + recent N turns from
-  storage + engine state snapshot from live_storage), calls
-  AssistantPort.parse_intent, re-saves the turn with parsed
-  intent, routes via match/case:
-  - IntentCommand → write PendingCommand (awaiting_confirmation)
-    + post confirm embed; record message_id → pending_id in
+Conversation flow (Discord on_message handler):
+\_handle_inbound_message persists the operator turn, composes a
+ConversationContext (current message + recent N turns from
+storage + engine state snapshot from live_storage), calls
+AssistantPort.parse_intent, re-saves the turn with parsed
+intent, routes via match/case:
+
+- IntentCommand → write PendingCommand (awaiting_confirmation)
+  - post confirm embed; record message_id → pending_id in
     in-memory map for the reaction handler
-  - IntentQuery → OperatorService.answer_query + post result embed
-  - IntentConversational → post reply_text as plain message
-  - IntentUnparseable → surface "I couldn't parse that: <reason>"
+- IntentQuery → OperatorService.answer_query + post result embed
+- IntentConversational → post reply_text as plain message
+- IntentUnparseable → surface "I couldn't parse that: <reason>"
 
-  Confirmation flow (Discord on_raw_reaction_add handler):
-  _handle_reaction looks up the in-memory map; on hit fetches the
-  pending row and transitions awaiting_confirmation → approved
-  (✅) or rejected (❌) with the confirming user_id + timestamp.
-  Already-transitioned rows ignored (idempotency vs duplicate
-  reactions). action='remove' ignored (we only care about adds).
+Confirmation flow (Discord on_raw_reaction_add handler):
+\_handle_reaction looks up the in-memory map; on hit fetches the
+pending row and transitions awaiting_confirmation → approved
+(✅) or rejected (❌) with the confirming user_id + timestamp.
+Already-transitioned rows ignored (idempotency vs duplicate
+reactions). action='remove' ignored (we only care about adds).
 
 Per ADR-013 decision 3 cli/operator NEVER calls
 OperatorService.dispatch_command directly — every state mutation
@@ -3064,7 +3079,7 @@ crosses pending_commands so cli/live's WHERE status='approved'
 poll (Stage 5.4's ADR-002 firewall) is the only path from intent
 to engine.
 
-_main_async wires storage + assistant + stub OperatorService +
+\_main_async wires storage + assistant + stub OperatorService +
 DiscordTransport + the forwarder Task + SIGINT/SIGTERM handlers.
 discord.py's Client.start() runs the Gateway connection until
 transport.close().
@@ -3082,7 +3097,7 @@ reject / unknown-id / double-reaction-no-overwrite /
 remove-action-ignored.
 
 **5.6.D — tools/show_pending.py + close.** Operator inspection
-script in the show_*.py family pattern. Args: --db-path (default
+script in the show\_\*.py family pattern. Args: --db-path (default
 data/wobblebot-operator.db), --status (filter to one of the six
 lifecycle states), --limit (default 20), --log-format. Safe
 against the live operator DB while cli/operator is running —
@@ -3108,20 +3123,21 @@ SQLite for operator inspection. Two sub-slices + close:
 `notifications` SQLite table (id PK, level CHECK against the
 NotifierPort vocabulary, title + message + timestamp + context_json,
 forwarded flag + forwarded_at + created_at; two indexes — forwarded
-+ created_at for cli/operator's poll, timestamp for forensic
-queries). New `PersistedNotification` value object in
-`ports/notifier.py` wraps a raw `Notification` with row-level
-fields. Three new `StoragePort` methods: `save_notification` (returns
-the assigned row id), `get_notifications(forwarded=..., limit=...)`
-(ordered by created_at ASC so cli/operator forwards the oldest
-unforwarded event first), and `mark_notification_forwarded`
-(idempotent UPDATE; raises StorageError if row not found).
-`adapters/sqlite_notifier.py` — thin SqliteNotifierAdapter wrapping
-any StoragePort. `send_notification` calls
-`storage.save_notification` and wraps StorageError as NotifierError.
-`send_error_alert` synthesizes a critical Notification from the
-exception (type name as title, str(exc) or repr(exc) as message,
-operator-supplied context dict). 14 new unit tests.
+
+- created_at for cli/operator's poll, timestamp for forensic
+  queries). New `PersistedNotification` value object in
+  `ports/notifier.py` wraps a raw `Notification` with row-level
+  fields. Three new `StoragePort` methods: `save_notification` (returns
+  the assigned row id), `get_notifications(forwarded=..., limit=...)`
+  (ordered by created_at ASC so cli/operator forwards the oldest
+  unforwarded event first), and `mark_notification_forwarded`
+  (idempotent UPDATE; raises StorageError if row not found).
+  `adapters/sqlite_notifier.py` — thin SqliteNotifierAdapter wrapping
+  any StoragePort. `send_notification` calls
+  `storage.save_notification` and wraps StorageError as NotifierError.
+  `send_error_alert` synthesizes a critical Notification from the
+  exception (type name as title, str(exc) or repr(exc) as message,
+  operator-supplied context dict). 14 new unit tests.
 
 **5.5.B — cli/live + cli/harvest notification wiring.** Both CLIs
 gain an `operator_db: str | None = None` config field; when set
@@ -3132,31 +3148,33 @@ notifier can NEVER break the engine loop — Phase 5 treats
 notifications as forensic ledger entries; losing one beats stopping
 trading.
 
-  cli/live emit points:
-  - **session start** (info): symbols / tick_seconds / caps / starting_usd
-  - **per-tick fills** (info): when `StepResult.fills > 0`, one
-    notification per (symbol, tick) pair with fills + counters_placed
-    counts
-  - **cap trip** (error): right before _run_one_tick returns True
-    on session-loss-cap path
-  - **session end** (info or error depending on exit_code): ticks /
-    duration / starting+ending USD / PnL / cancellation counts
+cli/live emit points:
 
-  cli/harvest emit points:
-  - **proposal generated** (info): every non-None TransferProposal
-    in _run_cycle includes proposal_id / direction / asset / amount /
-    rationale; message text hints "Run cli/harvest --execute <id>
-    to act"
-  - **withdrawal failed** (error): when Kraken /Withdraw rejects,
-    paired with the failed TransferResult audit row
-  - **withdrawal executed** (warning, not info — money moved, the
-    operator wants it surfaced loudly): refid + destination +
-    pending status
+- **session start** (info): symbols / tick_seconds / caps / starting_usd
+- **per-tick fills** (info): when `StepResult.fills > 0`, one
+  notification per (symbol, tick) pair with fills + counters_placed
+  counts
+- **cap trip** (error): right before \_run_one_tick returns True
+  on session-loss-cap path
+- **session end** (info or error depending on exit_code): ticks /
+  duration / starting+ending USD / PnL / cancellation counts
+
+cli/harvest emit points:
+
+- **proposal generated** (info): every non-None TransferProposal
+  in \_run_cycle includes proposal_id / direction / asset / amount /
+  rationale; message text hints "Run cli/harvest --execute <id>
+  to act"
+- **withdrawal failed** (error): when Kraken /Withdraw rejects,
+  paired with the failed TransferResult audit row
+- **withdrawal executed** (warning, not info — money moved, the
+  operator wants it surfaced loudly): refid + destination +
+  pending status
 
 8 new unit tests (3 cli/live + 5 cli/harvest) covering the helper's
 no-op-on-None behavior, persistence via SqliteNotifierAdapter, error
-swallowing when the notifier raises, _run_cycle emitting on proposal
-generation, and _run_cycle staying silent in the hold band.
+swallowing when the notifier raises, \_run_cycle emitting on proposal
+generation, and \_run_cycle staying silent in the hold band.
 
 Full suite **1167** passes (was 1145 at Stage 5.4 close, +22). mypy
 clean across 68 src files. pylint **10.00/10** with no outstanding
@@ -3289,6 +3307,7 @@ constraint: never invent commands not in the catalog; emit
 `config/prompts.py`; test parametrize updated to match.
 
 **Adapter behavior:**
+
 - Constructor refuses prompts whose role != "operator" — fails
   loudly at wiring time rather than silently producing nonsense.
 - `parse_intent` builds the role-tagged message list: system prompt
@@ -3449,6 +3468,7 @@ Stage 4.5 audited the full Phase 4 path with the question "could anything move m
 Fix: new defense layer 3 in `_execute_command` refuses any proposal whose direction isn't `exchange_to_bank`, with an operator-facing message pointing them to Kraken Pro's deposit instructions. The gate now has **seven** defense layers (was six). Test added: `tests/cli/test_harvest.py::TestExecuteGuardrails::test_bank_to_exchange_refused_no_api_call` asserts `adapter.withdraw_calls == []` after refusal.
 
 Other Phase 4 paths verified end-to-end during the audit (all read-only against the operator's real account):
+
 - `cli/harvest` read $99.92 USD via the Harvester key + classified as deficit + `persistence_enabled: true` confirmed
 - `tools/show_proposals.py` reports "no proposals match" against empty table
 - `tools/show_transfers.py` reports "no results match" against empty table
@@ -3463,17 +3483,20 @@ Phase 4 stages closed: 4.1, 4.2, 4.3, 4.4, 4.5. Phase 5 entry conditions met.
 Phase 4's biggest slice. **Money can finally move** — but only when the operator explicitly says so, and only after six defense layers clear. Four sub-slices:
 
 **4.4a — `KrakenAdapter.withdraw()` + Harvester key wiring.**
+
 - Implemented `/0/private/Withdraw` against Kraken's signed API. Returns Kraken's `refid` (withdrawal reference) for forensic linking to Kraken Pro's Funding history.
 - `HarvesterConfig` gained `api_key_env_var` / `api_secret_env_var` (configurable for testing; default `KRAKEN_HARVESTER_API_KEY` / `_SECRET`) and `withdrawal_destinations: dict[str, str]` (asset → Kraken Pro destination label; the API only accepts labels from the operator's pre-registered address book).
 - `cli/harvest` switched to loading the Harvester key (Withdraw + Query Funds scopes).
 
 **4.4b — TransferResult storage + day-cap from real history.**
+
 - New `transfer_results` SQLite table (UNIQUE on `transaction_id`, CHECK on status + direction).
 - `TransferResult` gained denormalized `direction` and `asset` fields so the day-cap query stays single-table.
 - `services.harvester.compute_today_total_withdrawn_usd()` — rolling 24h sum of exchange→bank withdrawals (status != failed).
 - `cli/harvest._run_cycle` now feeds the real total to `propose_transfer()`. Pre-4.4b was always `Decimal("0")` — the day-cap was effectively never enforced.
 
 **4.4c — `cli/harvest --execute <proposal-id>` operator-approval gate.**
+
 - Mirrors the `cli/apply --commit` pattern: explicit per-call flag, multi-layer validation, persists outcome regardless of success or failure.
 - Defense chain (any failure aborts; `adapter.withdraw()` NEVER called):
   1. `HarvesterConfig.enabled=True` required.
@@ -3486,6 +3509,7 @@ Phase 4's biggest slice. **Money can finally move** — but only when the operat
 - The "**WITHDRAWAL SUBMITTED — money moved**" log message is the only place in the codebase that admits real money has moved.
 
 **4.4d — Inspection + close.**
+
 - `tools/show_transfers.py` mirrors `tools/show_proposals.py` shape (`--since-hours` / `--status` / `--direction` / `--asset` / `--limit` / `--log-format`).
 
 **No real withdrawal happened during the slice work** — every test uses a stub `withdraw()`. The first live execution is operator-triggered: $1 ACH against the "360 Performance Savings" destination once balance enters surplus band (currently $99.92 USD, in deficit; would need a deposit or threshold adjustment).
@@ -3509,7 +3533,7 @@ Phase 4's third slice. Every non-None proposal from `cli/harvest` now persists t
 
 ### Stage 4.2 — cli/harvest Read-Only Balance Monitor (2026-05-15)
 
-Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what *would* be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_READER_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
+Phase 4's second slice. Polls Kraken USD balance, runs the Stage 4.1 `propose_transfer()` decision, logs what _would_ be proposed. **No transfers, no DB writes** — zero new real-money risk over 4.1. Uses the existing read-only `KRAKEN_READER_API_KEY`; the Harvester key with Withdraw scope isn't needed until Stage 4.4.
 
 - **`HarvestConfig`** (per-CLI section): `log_format` only for now. Future stages may grow more knobs.
 - **`schedules.harvest`**: new entry in the unified schedules block; defaults to `1h` in the example yml.
@@ -3542,11 +3566,13 @@ First Phase 4 slice. Pure-domain — no I/O, no Kraken calls, no withdrawals; **
 Two small slices to remove pre-Phase-4 operational friction.
 
 **Slice 3.6a — indefinite runtime.**
+
 - `LiveConfig.max_runtime_minutes` and `ShadowConfig.max_runtime_minutes` became `Optional[float]`. `None` means "no runtime cap." Pre-3.6a the field was `Field(default=60.0, gt=0)` and operators had to bump it to a sentinel like 525600 for "effectively forever" — `0` was rejected by Pydantic, and even if allowed the loop check `elapsed >= max_runtime_seconds` would have exited on tick 1.
 - Loop logic in `cli/live._run_engine_loop` and `cli/shadow._run_loop` resolves `max_runtime_seconds` to `None` when configured and skips the per-tick comparison. SIGINT/SIGTERM, max_session_loss_usd, and the engine's safety caps still apply — this isn't a way to bypass safety.
 - `settings.example.yml` comments flag `~null~` as the run-indefinitely value.
 
 **Slice 3.6b — multi-symbol `cli/advise` with per-symbol-isolated LLM calls.**
+
 - `AdviseConfig.symbol: Symbol` → `AdviseConfig.symbols: list[Symbol]`. CLI flag `--symbol` → `--symbols` (comma-separated, matching `cli/live`/`cli/shadow`/`cli/observe`).
 - The daemon iterates serial per symbol within each tick: `for symbol in symbols: await _run_cycle(symbol=symbol)`. Each cycle builds a single-symbol `PerformanceSummary` so the LLM never sees more than one coin's context per call. Cross-contamination of opinions prevented by construction.
 - Per-symbol cycle errors swallowed at the daemon layer (one bad coin can't kill the sweep) — matches `cli/live`'s Stage 2.4 discipline.
@@ -3560,12 +3586,14 @@ Two small slices to remove pre-Phase-4 operational friction.
 End-to-end advisor-in-the-loop chain verified against live operator state, then Phase 3 closed.
 
 **Chain verification:**
+
 - **observe → metrics**: 6520 price snapshots accumulated by overnight `cli/observe` soak across BTC/USD + ETH/USD + DOGE/USD.
 - **news → summary**: one `cli/news` poll cycle pulled 131 items (CoinDesk 25 + Decrypt 37 + The Block 19 + CryptoCompare 50; matches Stage 3.2.5 closing receipt to the row).
 - **advise → suggestion**: one `cli/advise` cycle (39s wall-clock, phi4:14b-q8_0) produced `{spacing 1.1, levels±4}` with 20 news items in the summary's `recent_news`. Notable: same parameter recommendation as the previous cycle but `confidence` dropped from `high` (no news) to `medium` (news context present) — calibration shift even when proposed params hold.
 - **apply → operator review**: `cli/apply` (dry-run) correctly rejected every key with reason "auto-apply disabled" — gate default-off posture holds end-to-end.
 
 **Phase 3 close:**
+
 - Closing summary at `docs/planning/phase-3-summary.md` (mirrors Phase 2's at `phase-2-summary.md`). Captures per-stage outcomes, MoE live verification numbers, design decisions ratified across the phase, health snapshot, what was deliberately not done, Phase 4 entry conditions.
 - **Phase 3 real-money cost: $0.00** (advisor never executes per ADR-002). Running project total still **$0.08** unchanged from Phase 2 close.
 - Phase 3 stages closed: 3.0, 3.1, 3.2, 3.2.5, 3.3, 3.4a, 3.4b, 3.5 (plus the config consolidation audit). Phase 4 entry conditions met.
@@ -3789,13 +3817,13 @@ operator-facing config story.
     env-using CLIs use the helper.
 - **Verification #25 — PII scanner coverage.** Confirmed
   `.githooks/pre-commit` runs gitleaks + author-identity guard
-  + PII pattern scan (Mac/Windows + Linux user-home paths +
-  personal-email patterns). gitleaks against full git history (80
-  commits): clean. Tracked-files PII sweep: zero hits. Working-tree
-  leaks confined to operator's gitignored `.env`. Added missing
-  `*.pfx`, `*.p12`, `*.pem` patterns to `.gitignore` per
-  security.md spec. Repo is publication-ready from a PII/secret
-  standpoint.
+  - PII pattern scan (Mac/Windows + Linux user-home paths +
+    personal-email patterns). gitleaks against full git history (80
+    commits): clean. Tracked-files PII sweep: zero hits. Working-tree
+    leaks confined to operator's gitignored `.env`. Added missing
+    `*.pfx`, `*.p12`, `*.pem` patterns to `.gitignore` per
+    security.md spec. Repo is publication-ready from a PII/secret
+    standpoint.
 
 ### Phase 2 — Core Trading Engine (closed 2026-05-14)
 
@@ -3806,9 +3834,9 @@ Closing summary at [`docs/planning/phase-2-summary.md`](docs/planning/phase-2-su
   signing on `httpx` (rejected `python-kraken-sdk`). `BalanceEx` not
   `Balance` (returns `hold_trade` per asset). Asset/symbol aliasing
   in the adapter via module-level `_INTERNAL_TO_KRAKEN_ALTNAME`
-  + lazy `/0/public/Assets` cache. `pytest -m 'not integration'` is
-  the default; live integration tests opt-in. `.env` loaded
-  session-wide via `python-dotenv` in `tests/conftest.py`.
+  - lazy `/0/public/Assets` cache. `pytest -m 'not integration'` is
+    the default; live integration tests opt-in. `.env` loaded
+    session-wide via `python-dotenv` in `tests/conftest.py`.
 - **Stage 2.2 — Micro-Grid Engine** (ADR-006). Five slices: config
   schemas (`GridConfig`, `SafetyConfig`, YAML loader); pure grid
   math (`compute_grid_levels`, `next_counter_action`, `is_offside`);
@@ -3820,13 +3848,13 @@ Closing summary at [`docs/planning/phase-2-summary.md`](docs/planning/phase-2-su
 - **Stage 2.3 — Live Paper / Tiny-Size Mode.**
   `KrakenAdapter(dry_run=True)` adds `validate=true` to every
   AddOrder request (auth + pair + precision + balance + ordermin
-  + costmin validation without placing). Per-pair quantization
-  mandatory; price/volume rounded DOWN before submission. Two
-  separate Kraken keys (read-only + trade) live side-by-side in
-  `.env`. Live taker fee is 0.40%, not the mock's 0.26% — discovered
-  during the first-trade test. `cli/preflight` and `cli/live`
-  shipped. Verified live: $0.08 round-trip on the operator's
-  account, 148ms fill latency, perfect cleanup.
+  - costmin validation without placing). Per-pair quantization
+    mandatory; price/volume rounded DOWN before submission. Two
+    separate Kraken keys (read-only + trade) live side-by-side in
+    `.env`. Live taker fee is 0.40%, not the mock's 0.26% — discovered
+    during the first-trade test. `cli/preflight` and `cli/live`
+    shipped. Verified live: $0.08 round-trip on the operator's
+    account, 148ms fill latency, perfect cleanup.
 - **Stage 2.4 — Multi-Asset Support.** `cli/live` takes
   `--symbols` comma-separated. Each tick steps every symbol in
   series. Per-symbol step errors swallowed at the CLI layer (one
