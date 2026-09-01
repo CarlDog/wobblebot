@@ -11,30 +11,61 @@ set -euo pipefail
 # (e.g. a schema-drift gate) — keep sections 1-3 identical to the
 # canonical version so the fleet stays in lockstep.
 
-# Personal-domain email pattern, used in two places:
-#  - the author-identity check (step 1)
-#  - the PII pattern scan over staged content (step 3)
+# Personal-domain email pattern, used by the PII scan over staged content
+# (step 3). NOT used for the identity check — see step 1 for why a denylist
+# is the wrong shape there.
 PERSONAL_EMAIL_PATTERN='[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|icloud|me|live|aol)\.[a-z]{2,}'
 
-# 1. Author identity check
-# git's staged-content scan can't see commit metadata, so the author
-# email can leak into commit history even when file contents are clean.
-# Block personal-domain emails in the configured author identity.
+# 1. Author and committer identity check
+#
+# Allowlist, not denylist. A denylist of consumer domains can only block the
+# domains someone thought to name: the 2026-08-31 audit found a corporate
+# address as author of 81 commits in a public repo, matching nothing in the
+# consumer list, unseen for a year. Accepting only the GitHub noreply alias
+# catches every domain without naming any — which also keeps this hook safe
+# to commit publicly, since naming a domain here would publish the exact
+# string the check exists to keep out of sight.
+#
+# Both identities are checked. A commit can carry a correct noreply author
+# and a personal-domain committer (a misconfigured machine, `git commit` from
+# a stray shell); an author-only check passes those silently. That is not
+# hypothetical — half the leaks found in this repo's own history were
+# committer-side.
+#
+# Override per-clone where a different identity is genuinely required (a work
+# repo on a corporate remote) — same out-of-band mechanism as
+# fleet.internalHosts below, so no specific domain is ever committed:
+#
+#   git config fleet.allowedIdentityPattern '^[A-Za-z0-9._%+-]+@corp\.example$'
+#
+# Only the domain is constrained. Any local part is fine — a noreply address
+# cannot carry a real mailbox whatever its prefix — which keeps both the
+# `<id>+<login>` and bare `<login>` alias forms working, personal and work.
+ALLOWED_IDENTITY_PATTERN=$(git config --get fleet.allowedIdentityPattern 2>/dev/null || true)
+: "${ALLOWED_IDENTITY_PATTERN:=^[A-Za-z0-9._%+-]+@users\.noreply\.github\.com$}"
+
 echo "Checking author identity..."
-AUTHOR_IDENT=$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)
-# git var returns "Name <email> timestamp tz" — extract the email.
-AUTHOR_EMAIL=$(printf '%s' "$AUTHOR_IDENT" | sed -nE 's/.*<([^>]+)>.*/\1/p')
-if printf '%s' "$AUTHOR_EMAIL" | grep -qE "$PERSONAL_EMAIL_PATTERN"; then
-  echo "" >&2
-  echo "Commit blocked: author identity uses a personal-domain email." >&2
-  echo "  email: $AUTHOR_EMAIL" >&2
-  echo "" >&2
-  echo "Set a GitHub noreply alias for this repo:" >&2
-  echo "  git config user.email '<numeric-id>+<github-login>@users.noreply.github.com'" >&2
-  echo "" >&2
-  echo "Find your numeric id at https://api.github.com/users/<login>" >&2
-  exit 1
-fi
+for role in AUTHOR COMMITTER; do
+  ident=$(git var "GIT_${role}_IDENT" 2>/dev/null || true)
+  # git var returns "Name <email> timestamp tz" — extract the email.
+  email=$(printf '%s' "$ident" | sed -nE 's/.*<([^>]+)>.*/\1/p')
+  if ! printf '%s' "$email" | grep -qE "$ALLOWED_IDENTITY_PATTERN"; then
+    role_lc=$(printf '%s' "$role" | tr '[:upper:]' '[:lower:]')
+    echo "" >&2
+    echo "Commit blocked: $role_lc identity is not an allowed email." >&2
+    echo "  email:   ${email:-<unset>}" >&2
+    echo "  allowed: $ALLOWED_IDENTITY_PATTERN" >&2
+    echo "" >&2
+    echo "Set a GitHub noreply alias for this repo:" >&2
+    echo "  git config user.email '<numeric-id>+<github-login>@users.noreply.github.com'" >&2
+    echo "" >&2
+    echo "Find your numeric id at https://api.github.com/users/<login>" >&2
+    echo "" >&2
+    echo "If this repo legitimately needs a different identity:" >&2
+    echo "  git config fleet.allowedIdentityPattern '<regex>'" >&2
+    exit 1
+  fi
+done
 
 # 2. Secret scan via gitleaks
 if ! command -v gitleaks >/dev/null 2>&1; then
