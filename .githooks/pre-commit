@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical fleet pre-commit hook: author-identity guard + gitleaks +
+# Canonical fleet pre-commit hook: identity allowlist + gitleaks +
 # PII pattern scan. Generic by design — drop into any repo via the
 # /install-precommit-hook skill or reference/install-hooks.{sh,ps1}.
 # Contains NO repo-specific logic and NO baked-in PII: the patterns are
