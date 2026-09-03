@@ -2325,6 +2325,15 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     filed rather than built: persist `offside_since`, give the fast path a
     failure signal, settle the two render findings with a real browser.
     **Lesson: a self-reviewed same-day release is not reviewed.**
+    **Next:** the six remaining register items were each design-assessed against
+    the real code with an adversarial risk pass on 2026-09-03; the resulting build
+    order, scope decisions and blocking operator questions are in
+    `docs/planning/post-2.0.4-backlog-plan.md`. Headline: three items were
+    undersized, two register entries describe shapes that are wrong (the
+    hide-symbol preference storage is a silent-data-loss bug and the
+    starved-log-noise item is not logging-only), and the sell-side offside
+    extension is parked pending an ADR-006 amendment that must state a
+    retirement lifecycle rather than a placement rule.
     Ceremony receipts: PR #129 merged as `9217a54` (CI 3740 passed / 5
     skipped); annotated tag `v2.0.4`; tag-triggered `CI & Publish to GHCR`
     run 33807416321 with `test=success` and `build-and-push=success`; GHCR
