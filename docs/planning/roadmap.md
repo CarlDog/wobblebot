@@ -2278,6 +2278,18 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     `last_confirmed_trigger_at` in the 3-strike alert context; 3 unit tests +
     the alert e2e assertion). Gate: black/isort clean, mypy clean, pylint
     10.00/10, logging rule 1 clean.
+12. **`2.0.3` RELEASED ✅ 2026-09-03 — tagged and published; deploy is a separate
+    step.** Patch over 2.0.2 carrying item 11 (the offside badge hover popover
+    and the dead-man's-switch deadline logging). No configuration schema
+    change. Ceremony receipts: release-prep PR #126 (full gate green, 3720
+    passed / 5 skipped) merged as `d748257`; annotated tag `v2.0.3` on that
+    commit; tag-triggered `CI & Publish to GHCR` run 33798998837 with
+    `test=success` and `build-and-push=success`; GHCR version tagged `2.0.3` /
+    `sha-d748257` / `2.0` (digest `sha256:066abd34…`, 19:57 UTC); GitHub Release
+    published 19:57 UTC (<https://github.com/CarlDog/wobblebot/releases/tag/v2.0.3>).
+    **`IMAGE_TAG` on stack 158 is still `2.0.2`** — the deploy is the operator's
+    own explicit step (all 8 daemons bounce, including live) and is not part of
+    the cut.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

@@ -11,8 +11,8 @@ rule); this section is a pointer, not a changelog.
 - **Current:** read the latest dated entry in `docs/planning/roadmap.md`; do not infer
   phase or release status from this file. `docs/planning/phase-8-summary.md` records the
   v1.0 close, while `docs/release/v1.1/README.md` retains the historically named post-tag plan.
-  Four releases exist — `v1.0.0` (2026-07-31), `v2.0.0` (2026-08-28), `v2.0.1` and
-  `v2.0.2` (both 2026-09-03) — all tagged with published GitHub Releases. **The `v1.1` name is historical only: that branch's work
+  Five releases exist — `v1.0.0` (2026-07-31), `v2.0.0` (2026-08-28), and `v2.0.1`,
+  `v2.0.2`, `v2.0.3` (all 2026-09-03) — all tagged with published GitHub Releases. **The `v1.1` name is historical only: that branch's work
   shipped as `2.0.0`**, per `CHANGELOG.md`'s preamble.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
