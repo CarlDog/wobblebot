@@ -101,7 +101,15 @@ in-loop by logging Kraken's `triggerTime`, and optionally refuse to place orders
 isn't confirmed-armed. See ADR-021 + `docs/reference/kraken-api-reference.md`. Original backlog
 rationale preserved below.
 
-**Follow-up (2026-09-03 incident — a second real DMS purge):** six
+**Follow-up (2026-09-03 incident — a second real DMS purge) — item (1)
+✅ SHIPPED 2026-09-03:** `_AuthEscalation.dms_deadline_note()` logs, at
+WARNING on the FIRST failure of a streak, where Kraken's last confirmed
+auto-cancel deadline sits relative to now ("… 07:02:56Z (113s from
+now)" / "(passed 18s ago)" / "no confirmed auto-cancel deadline this
+session"), and the 3-strike critical's context now carries
+`last_confirmed_trigger_at`. Item (2), the framing predicate, stays
+open — it changes alert semantics and deserves its own look. Original
+text: six
 consecutive `CancelAllOrdersAfter` transport failures (07:01:13Z →
 07:02:37Z; Kraken public endpoints and the cloud LLM calls were fine
 throughout, and status.kraken.com listed nothing) let the 120s timer

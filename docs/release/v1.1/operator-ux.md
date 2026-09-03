@@ -613,7 +613,19 @@ there currently isn't one."
 **Trigger:** fired 2026-09-03. Small (S); ships with the fast-path
 entry above.
 
-### Offside badge tooltip — say WHY the symbol is offside (operator note 2026-09-03)
+### Offside badge tooltip — say WHY the symbol is offside — ✅ SHIPPED 2026-09-03
+
+> Shipped as `web/routes/status_offside.py` (`build_offside_explanation`
+> + `load_offside_explanations`, sibling of the banner module) feeding
+> `snapshot.offside_explanations`; `_status_card.html` wraps the
+> unchanged OFFSIDE badge with a hover/focus popover (`.offside-popover`,
+> `:hover` / `:focus-within`, tabindex on the badge for keyboard and
+> tap). The band comes from `grid_state` through `compute_grid_levels`,
+> never from open orders; no grid state or no price degrades to the
+> duration-only sentence; the old generic `title` is dropped so no
+> native tooltip doubles it. Duration is ticks × tick length (the
+> `offside_since` column stays a follow-up). 8 builder tests + 2 template
+> tests.
 
 **What:** hovering the OFFSIDE badge on a symbol card should open a
 small informational popup that explains, in plain language, why the

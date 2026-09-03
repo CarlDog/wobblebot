@@ -28,7 +28,21 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Offside badge hover popover.** The OFFSIDE badge on a symbol card keeps
+  its label; hovering or focusing it now opens a plain-language explanation:
+  which side of the band price is on and against which level, the anchor and
+  spacing that define the band, how long, and the two exits (price returns,
+  or re-anchor). The band is rebuilt from the grid state through the engine's
+  own level math, never from open orders, so a parked symbol with an empty
+  book still gets the full sentence; without a grid state or price it
+  degrades to the duration.
+- **Dead-man's-switch streak logging names the deadline.** The first failed
+  reset of a streak now logs, at WARNING, where Kraken's last confirmed
+  auto-cancel deadline sits relative to now, and the 3-strike alert carries
+  that timestamp in its context. This is the fact the 2026-09-03 post-mortem
+  could not recover.
 
 ## [2.0.2] - 2026-09-03
 
