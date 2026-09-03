@@ -30,6 +30,59 @@ fresh `[Unreleased]` heading created at that time.
 
 _Nothing yet._
 
+## [2.0.4] - 2026-09-03
+
+Seven defects found by an adversarial review of the code 2.0.2 and 2.0.3
+shipped earlier the same day. Three were live in production; two of those
+could mislead the operator or cost money. Every fix is pinned by a test
+proven to fail when the behavior is reverted.
+
+### Fixed
+
+- **A re-anchor can no longer be queued for a symbol the engine does not
+  trade.** Symbol cards render for any asset with a held balance, a wider
+  set than `live.symbols`, so the new per-card anchor button put an untraded
+  coin one click from a real grid layout: the engine would place orders it
+  never ticks, the cost-basis guard would pass its sells unguarded for want
+  of a basis, and clean shutdown would leave them live on the exchange. The
+  re-anchor route now refuses a symbol outside `live.symbols`, with the card
+  gate as defense in depth. An unknown trading set falls open, so an unwired
+  deployment is unchanged.
+- **The Discord fast path defers instead of refusing.** Its symbol pattern
+  matches any short word, so `cancel orders on all`, the phrasing the help
+  catalog and the operator prompt both advertise, was rejected with the
+  false reason "ALL is not in the active symbol set" while the model that
+  parses it correctly never saw the message. `pause everything` failed the
+  same way. A matched verb whose symbol does not resolve now falls through
+  to the model, and `cancel_open_orders` gained an explicit all-symbols
+  grammar.
+- **The offside popover no longer states two falsehoods.** It claimed the
+  engine "parks with no orders" while the same card listed the symbol's live
+  ladder below it; going offside suppresses new placement and counters but
+  never cancels standing orders, and an operator who believed the claim
+  would re-anchor and destroy a buy ladder waiting for the retrace. It also
+  rendered an in-memory tick counter as a wall-clock duration, so a symbol
+  parked for weeks read as minutes old after any restart.
+
+### Changed
+
+- **The re-anchor icon now comes from the same set as its neighbours.** It
+  was a hand-drawn outline glyph beside two filled Material icons; it is now
+  Material's own `anchor`. Attribution for Material Design Icons
+  (Apache-2.0) added to `NOTICE.md`, which had none, and the stale Lucide
+  entry corrected.
+
+### Tests
+
+- Three tests shipped in 2.0.3 passed against deliberately broken code and
+  now fail when it breaks: the dead-man's-switch deadline warning had no
+  coverage at all, the popover's band assertions were position-independent,
+  and the new alert field was only ever asserted as `None`. All twelve
+  behaviors changed here were re-verified by a mutation harness.
+
+No configuration schema change. Upgrading from 2.0.3 is an `IMAGE_TAG`
+bump; nothing else moves.
+
 ## [2.0.3] - 2026-09-03
 
 ### Added

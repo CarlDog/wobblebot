@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wobblebot"
-version = "2.0.3"
+version = "2.0.4"
 description = "Deterministic, safety-first micro-trading system using hexagonal architecture"
 authors = [
     {name = "WobbleBot Team"}
