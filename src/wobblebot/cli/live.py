@@ -542,6 +542,18 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
             return True
         return False
 
+    def dms_deadline_note(self, now: datetime) -> str:
+        """Where Kraken's last CONFIRMED auto-cancel deadline sits relative
+        to ``now``. The one fact the 2026-09-03 post-mortem could not
+        recover, because the confirmed ``trigger_at`` was DEBUG-only."""
+        if self.dms_trigger_at is None:
+            return "no confirmed auto-cancel deadline this session"
+        remaining = (self.dms_trigger_at - now).total_seconds()
+        stamp = self.dms_trigger_at.strftime("%H:%M:%SZ")
+        if remaining >= 0:
+            return f"last confirmed auto-cancel deadline {stamp} ({remaining:.0f}s from now)"
+        return f"last confirmed auto-cancel deadline {stamp} (passed {-remaining:.0f}s ago)"
+
     def note_dms_success(self) -> bool:
         """Record a successful DMS reset call specifically (the
         ``CancelAllOrdersAfter`` ping in the main loop, NOT the generic
@@ -1687,7 +1699,18 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                         extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
                     await _note_private_call_failure(exc, escalation, engine, live, notifier)
-                    if escalation.note_dms_failure():
+                    alert_now = escalation.note_dms_failure()
+                    if escalation.dms_failure_streak == 1:
+                        # 2026-09-03 follow-up: name the deadline once per
+                        # episode so a post-mortem can compare it against
+                        # the moment the book vanished.
+                        deadline_note = escalation.dms_deadline_note(datetime.now(UTC))
+                        _LOGGER.warning(
+                            "dead man's switch failure streak started; %s",
+                            deadline_note,
+                            extra={"dms_deadline_note": deadline_note},
+                        )
+                    if alert_now:
                         await notify(
                             notifier,
                             level="critical",
@@ -1702,6 +1725,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                             context={
                                 "streak": escalation.dms_failure_streak,
                                 "dms_seconds": live.dead_mans_switch_seconds,
+                                "last_confirmed_trigger_at": (
+                                    escalation.dms_trigger_at.isoformat()
+                                    if escalation.dms_trigger_at is not None
+                                    else None
+                                ),
                             },
                         )
 

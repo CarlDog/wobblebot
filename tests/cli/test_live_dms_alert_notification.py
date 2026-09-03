@@ -101,3 +101,8 @@ async def test_sustained_dms_failures_page_despite_healthy_open_orders(
     )
     assert alerts[0].notification.level == "critical"
     assert str(_DMS_FAILURE_STREAK_ALERT) in alerts[0].notification.message
+    # 2026-09-03 follow-up: the alert carries the last CONFIRMED deadline.
+    # This exchange never confirmed an arm (every ping raised), so it is
+    # honestly None rather than absent.
+    assert "last_confirmed_trigger_at" in alerts[0].notification.context
+    assert alerts[0].notification.context["last_confirmed_trigger_at"] is None

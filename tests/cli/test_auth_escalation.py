@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from wobblebot.cli._common import PermanentAuthHalt
@@ -142,3 +144,31 @@ class TestPermanentAuthHalt:
         halt.note_success()
         assert not halt.note_failure(_invalid_key())
         assert not halt.halted
+
+
+class TestDmsDeadlineNote:
+    """2026-09-03 follow-up: the first failure of a DMS streak names
+    Kraken's last CONFIRMED auto-cancel deadline at WARNING, so a
+    post-mortem can compare it against the moment the book vanished."""
+
+    def test_no_confirmed_deadline_says_so(self) -> None:
+        esc = _AuthEscalation()
+        assert esc.dms_deadline_note(datetime.now(UTC)) == (
+            "no confirmed auto-cancel deadline this session"
+        )
+
+    def test_future_deadline_reports_seconds_remaining(self) -> None:
+        esc = _AuthEscalation()
+        now = datetime(2026, 9, 3, 7, 1, 3, tzinfo=UTC)
+        esc.dms_trigger_at = now + timedelta(seconds=113)
+        assert esc.dms_deadline_note(now) == (
+            "last confirmed auto-cancel deadline 07:02:56Z (113s from now)"
+        )
+
+    def test_past_deadline_reports_seconds_elapsed(self) -> None:
+        esc = _AuthEscalation()
+        now = datetime(2026, 9, 3, 7, 3, 14, tzinfo=UTC)
+        esc.dms_trigger_at = now - timedelta(seconds=18)
+        assert esc.dms_deadline_note(now) == (
+            "last confirmed auto-cancel deadline 07:02:56Z (passed 18s ago)"
+        )
