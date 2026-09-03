@@ -672,6 +672,35 @@ badge is how the operator takes it.
 sat offside ABOVE their 08-19 bands for the whole session with the badge
 giving no hint which side or how far. Small (S).
 
+### Hide a symbol card — eye-icon visibility toggle (operator note 2026-09-03, for later review)
+
+**What:** an eye icon in each symbol card's action cluster (beside
+pause/resume and the anchor button) that hides that card from the
+dashboard; hidden cards collapse into one "N hidden symbol(s)" row with a
+per-symbol reveal. A UI-local preference in `user_preferences`, the same
+posture as the re-anchor snooze — NOT a firewall mutation; nothing in the
+engine changes.
+
+**Why:** a card renders for every symbol you have orders for, hold a
+non-zero balance in, or traded recently (`web/routes/status.py`,
+`all_symbols`). BABY/USD — not in `live.symbols`, never traded by the
+bot — appears because the observe balance snapshot carries a non-zero
+BABY balance. The operator: "BABY/USD is not an actively traded symbol …
+I don't think it deserves to be on our dashboard."
+
+**Sketch:** a `hidden_symbols` list on the user's `user_preferences`
+row, read into the snapshot; the card loop skips hidden symbols and
+renders the summary row; the eye icon posts to a UI-local route (the
+shape of `POST /commands/snooze-reanchor`); a reveal control per symbol
+on the summary row. A strong-drift banner for a hidden symbol still
+counts in the summary row with a warning tint, so nothing alarming is
+fully out of sight. Tests: hidden symbol absent from cards and present
+in the summary; a symbol with open orders can still be hidden (it is a
+view preference; revisit if that ever confuses an incident).
+
+**Trigger:** operator note 2026-09-03, explicitly "for later review, not
+today". Small to medium (S–M).
+
 ### Pause stays non-destructive (+ candidate "halt" compound)
 
 **Operator question 2026-08-09:** "should a 'pause' action also undo
