@@ -63,6 +63,7 @@ def _build_client(
     observe: SQLiteStorageAdapter | None = None,
     cool_down_minutes: float | None = None,
     live_tick_seconds: float | None = None,
+    live_symbols: tuple[Symbol, ...] | None = None,
 ) -> TestClient:
     app = create_app(
         config=WebConfig(bcrypt_cost=10),
@@ -72,6 +73,7 @@ def _build_client(
         observe_storage=observe,
         cool_down_minutes=cool_down_minutes,
         live_tick_seconds=live_tick_seconds,
+        live_symbols=live_symbols,
     )
     return TestClient(app, follow_redirects=False)
 
@@ -1846,12 +1848,20 @@ class TestOffsidePopover:
             await observe.close()
         assert ">OFFSIDE<" in body  # the label is untouched
         assert "offside-popover" in body
-        assert "is ABOVE the grid's top level" in body
-        assert "$70,028.58" in body  # band top from the engine's own level math
-        assert "$58,464.22" in body  # band bottom
+        # 2026-09-03 review, finding 6: assert the band prices IN PLACE, not
+        # as free-floating substrings. Both numbers appear twice in the
+        # sentence, so position-independent checks passed even with band_high
+        # and band_low swapped in the template.
+        assert "is ABOVE the grid's top level $70,028.58" in body
+        assert "returns to $58,464.22 to $70,028.58" in body
         assert "Anchored at $64,246.40" in body
         assert "or you re-anchor" in body
-        assert "(40128 ticks)" in body
+        # Finding 3: offside does NOT cancel standing orders.
+        assert "places no new orders and no counter-orders" in body
+        assert "Any orders already resting stay live." in body
+        assert "parks with no orders" not in body
+        # Finding 4: the duration is scoped to the session, not wall-clock.
+        assert "Parked 40128 ticks since cli/live last started" in body
         # The old generic title is gone (no doubled native tooltip).
         assert "price outside the grid band for" not in body
 
@@ -1866,8 +1876,44 @@ class TestOffsidePopover:
             login_as(client)
             body = client.get("/dashboard").text
         assert ">OFFSIDE<" in body
-        assert "Price is outside the grid band; the engine parks" in body
-        assert "Offside for 1m 0s (12 ticks)" in body
+        assert "the engine places no new orders until price returns" in body
+        assert "Parked 12 ticks since cli/live last started, about 1m 0s" in body
         # No side claimed without a band (the orders table has its own
         # "ABOVE" wording, so check the popover's phrasing specifically).
         assert "is ABOVE the grid" not in body and "is BELOW the grid" not in body
+
+
+@pytest.mark.asyncio
+class TestReanchorButtonRespectsTheTradingSet:
+    """2026-09-03 review, finding 2. Cards render for any asset with a held
+    balance — wider than ``live.symbols`` — and a re-anchor on an untraded
+    coin places orders cli/live never ticks and shutdown never cancels."""
+
+    async def test_untraded_symbol_card_gets_no_reanchor_button(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        btc = Symbol(base="BTC", quote="USD")
+        await live_storage.save_trade(_make_trade(symbol="BTC/USD"))
+        await live_storage.save_trade(_make_trade(symbol="SOL/USD"))
+        with _build_client(operator_storage, live_storage, live_symbols=(btc,)) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        # Both cards render...
+        assert "BTC/USD" in body and "SOL/USD" in body
+        # ...but only the configured one offers a re-anchor.
+        assert body.count('action="/commands/reanchor"') == 1
+        anchor_form = body.split('action="/commands/reanchor"')[1][:400]
+        assert 'value="BTC/USD"' in anchor_form
+        # The untraded symbol keeps its pause/resume control.
+        assert 'action="/commands/pause"' in body
+
+    async def test_unknown_trading_set_falls_open(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """No ``live:`` section means unknown, not "nothing is traded" — the
+        button must keep working exactly as before the guard existed."""
+        await live_storage.save_trade(_make_trade(symbol="BTC/USD"))
+        with _build_client(operator_storage, live_storage) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert body.count('action="/commands/reanchor"') == 1

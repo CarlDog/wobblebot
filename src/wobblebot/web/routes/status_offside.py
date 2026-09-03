@@ -12,8 +12,12 @@ The band is rebuilt from ``grid_state`` through
 :func:`wobblebot.domain.grid.compute_grid_levels`, the same function the
 engine logs its own "offside at X (band A - B)" WARNING from, so the
 popover and the engine agree by construction. It is deliberately NOT
-derived from open orders (the sparkline's ladder band is): an offside
-symbol has none — that is the whole point.
+derived from open orders (the sparkline's ladder band is): the band is a
+property of the ANCHOR, and an offside symbol's surviving ladder is a
+partial, one-sided remnant that would misreport it. Going offside does
+NOT cancel standing orders — ADR-006 parking suppresses new placement and
+counters only — so an offside symbol often still has live orders, and the
+popover must not claim otherwise (2026-09-03 review, finding 3).
 
 Degrades, never breaks: no ``grid_state`` row (a symbol that never
 anchored) or no current price yields a duration-only explanation; a
@@ -48,6 +52,13 @@ class OffsideExplanation:  # pylint: disable=too-many-instance-attributes
 
     symbol: Symbol
     offside_ticks: int
+    # Ticks x the configured tick length. This is time SINCE cli/live LAST
+    # STARTED, not since the symbol went offside: ``offside_ticks`` lives in
+    # GridEngine process memory and the restore path replays only ``paused``,
+    # so a restart zeroes it. The template says "since cli/live last started"
+    # for exactly that reason — do not reword it into a wall-clock claim.
+    # Persisting an ``offside_since`` column is the real fix, filed as a
+    # follow-up (2026-09-03 review, finding 4).
     offside_seconds: float
     current_price: Decimal | None
     anchor_price: Decimal | None
