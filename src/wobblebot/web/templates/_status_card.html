@@ -260,7 +260,32 @@
               {% if estate and estate.paused %}
                 <span class="engine-badge engine-badge-paused" title="engine reports this symbol paused">PAUSED</span>
               {% elif estate and estate.offside %}
-                <span class="engine-badge engine-badge-offside" title="price outside the grid band for {{ estate.offside_ticks }} ticks — engine parked">OFFSIDE</span>
+                {# Operator note 2026-09-03: the badge label stays OFFSIDE; a
+                   hover/focus popover beside it says WHY: side, band, anchor,
+                   duration, and the two exits. Facts come from
+                   snapshot.offside_explanations (grid_state + price), so the
+                   popover and the engine's own offside log line agree. #}
+                {% set oexp = snapshot.offside_explanations.get(symbol) %}
+                <span class="engine-badge-wrap">
+                  <span class="engine-badge engine-badge-offside" tabindex="0"
+                        aria-describedby="offside-pop-{{ symbol.base }}">OFFSIDE</span>
+                  <span class="offside-popover" role="tooltip" id="offside-pop-{{ symbol.base }}">
+                    {% if oexp and oexp.has_band %}
+                      {% if oexp.side == "above" %}
+                        Price {{ oexp.current_price | usd }} is ABOVE the grid's top level {{ oexp.band_high | usd }}.
+                      {% elif oexp.side == "below" %}
+                        Price {{ oexp.current_price | usd }} is BELOW the grid's bottom level {{ oexp.band_low | usd }}.
+                      {% else %}
+                        Price is outside the grid's band {{ oexp.band_low | usd }} to {{ oexp.band_high | usd }}.
+                      {% endif %}
+                      Anchored at {{ oexp.anchor_price | usd }} ({{ oexp.levels_above }} up / {{ oexp.levels_below }} down at {{ oexp.spacing_percentage }}%),
+                      the engine parks with no orders until price returns to {{ oexp.band_low | usd }} to {{ oexp.band_high | usd }}, or you re-anchor.
+                    {% else %}
+                      Price is outside the grid band; the engine parks with no orders until price returns, or you re-anchor.
+                    {% endif %}
+                    Offside for {{ (oexp.offside_seconds if oexp else none) | humanize_duration }} ({{ estate.offside_ticks }} ticks).
+                  </span>
+                </span>
               {% endif %}
               {% set price = snapshot.current_prices.get(symbol) %}
               {% if price %}
