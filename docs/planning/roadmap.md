@@ -2287,9 +2287,17 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     `test=success` and `build-and-push=success`; GHCR version tagged `2.0.3` /
     `sha-d748257` / `2.0` (digest `sha256:066abd34…`, 19:57 UTC); GitHub Release
     published 19:57 UTC (<https://github.com/CarlDog/wobblebot/releases/tag/v2.0.3>).
-    **`IMAGE_TAG` on stack 158 is still `2.0.2`** — the deploy is the operator's
-    own explicit step (all 8 daemons bounce, including live) and is not part of
-    the cut.
+    **Deployed 2026-09-03 20:02 UTC** on operator instruction: `IMAGE_TAG`
+    `2.0.2` → `2.0.3` via the stack-env update on file-based stack 158 (image
+    re-pulled; all 8 containers recreated at 20:02:14 UTC). Verified at the
+    container: `org.opencontainers.image.revision` = `d748257…`,
+    `org.opencontainers.image.version` = `2.0.3` on `wobblebot-live`; every
+    container on `ghcr.io/carldog/wobblebot:2.0.3`. cli/live closed the 2.0.2
+    session cleanly (exit 0, 650 ticks, 7 open orders cancelled, 0 failures,
+    session PnL +$0.06) and re-opened at 20:02:30 with live TradeVolume fee
+    rates 0.4%/0.8%: SOL re-laid 4/6 at 104.29, ADA 3/6 at 0.221862;
+    BTC/ETH/DOGE/XRP offside above their bands — and the OFFSIDE badges now
+    carry the hover popover that says so.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
