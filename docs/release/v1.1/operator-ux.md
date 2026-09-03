@@ -65,7 +65,18 @@ is sufficient for the operator's current workflow.
 **Trigger:** operator runs cli/live with multiple coins post-tag
 and finds equal-weighting wrong for their portfolio.
 
-### Discord command shortcuts — deterministic fast path in front of the LLM parse (ESCALATED 2026-09-03)
+### Discord command shortcuts — deterministic fast path in front of the LLM parse — ✅ SHIPPED 2026-09-03
+
+> Shipped as `services/operator_intent_fastpath.py` (`parse_fast`, called
+> by `cli/operator` before `AssistantPort.parse_intent`): a regex grammar
+> for pause / resume / reanchor (`re-anchor`, `re anchor`) / cancel orders
+> on / pause all / resume all / stop / status. A bare base resolves when
+> exactly one active symbol has it; a matched verb with an unknown symbol
+> returns `IntentUnparseable` in the prompt's own wording; an empty active
+> set makes the fast path abstain. `FAST_PATH_COMMAND_KINDS` is pinned to
+> the typed command union by the catalog-SSOT test. 32 table tests plus 3
+> daemon-level tests — the incident message `reanchor SOL/USD` now queues
+> a reanchor without the model being consulted.
 
 **What:** a deterministic parse in front of the LLM for the small,
 fixed command grammar — `pause`, `resume`, `reanchor` / `re-anchor`,
@@ -542,7 +553,15 @@ discussion that "auto-cancellation feels wrong; lean into
 banner + action button instead." Shipping order matches the
 dependency: re-anchor mechanism → action button → snooze.
 
-### Re-anchor reachable without the banner — per-symbol anchor button (operator design 2026-09-03)
+### Re-anchor reachable without the banner — per-symbol anchor button — ✅ SHIPPED 2026-09-03
+
+> Shipped as a third `inline-form` in `_status_card.html`'s
+> `symbol-actions` (anchor SVG, `icon-btn icon-btn-reanchor`), rendered
+> for every symbol card regardless of paused / offside / open orders;
+> same `hx-post` to `/commands/reanchor`, same modal, same firewall. Two
+> card tests: a paused symbol with zero open orders gets exactly one
+> re-anchor form and it is the icon's; an active symbol shows pause and
+> anchor side by side.
 
 **What:** an "anchor" icon button in each symbol's trading card,
 next to the state-aware pause/resume icon (P3 slice 6), that opens

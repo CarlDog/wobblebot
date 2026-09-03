@@ -339,6 +339,26 @@
                   </button>
                 </form>
               {% endif %}
+              {# Re-anchor (operator design 2026-09-03): rendered for EVERY
+                 symbol regardless of paused / offside / open orders. The
+                 banner's Re-anchor button exists only for symbols WITH open
+                 orders, so a held symbol with a purged book — the exact
+                 post-DMS recovery state — had no way to re-anchor from the
+                 UI. Same modal, same POST, same pending_commands firewall. #}
+              <form method="post" action="/commands/reanchor" class="inline-form"
+                    hx-post="/commands/reanchor" hx-target="#modal" hx-swap="innerHTML">
+                {{ csrf_input(request) }}
+                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                <button type="submit" class="icon-btn icon-btn-reanchor"
+                        title="Re-anchor {{ symbol.base }}/{{ symbol.quote }} at the current price (confirm required)"
+                        aria-label="Re-anchor {{ symbol.base }}/{{ symbol.quote }}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="5" r="2.5"/>
+                    <path d="M12 7.5V21M5 12h14M5 14a7 7 0 0 0 14 0"/>
+                  </svg>
+                </button>
+              </form>
             </div>
           </div>
           {% if sym_orders %}

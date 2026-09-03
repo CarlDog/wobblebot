@@ -2239,6 +2239,14 @@ dms_trigger_at` as of the START of the tick, so a same-tick
    BTC/ETH offside above their bands, DOGE and XRP offside above theirs after
    the afternoon rally. Operator daemon reconnected to Discord at 18:05:03;
    harvest logged its key-separation fail-soft line and started.
+9. **Post-purge recovery ergonomics ✅ 2026-09-03 (merged; reaches the NAS with
+   the next `IMAGE_TAG` bump).** The two operator-designed fixes from the
+   morning's incident: a deterministic Discord fast path
+   (`services/operator_intent_fastpath.py`, pinned to the command union by the
+   catalog-SSOT test; 32 table tests + 3 daemon-level tests, including the
+   incident's own `reanchor SOL/USD`) and a per-symbol anchor button in the
+   status card's actions cluster (2 card tests). Gate: black/isort clean, mypy
+   clean, pylint 10.00/10, logging rule 1 clean.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
