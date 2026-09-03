@@ -101,6 +101,30 @@ in-loop by logging Kraken's `triggerTime`, and optionally refuse to place orders
 isn't confirmed-armed. See ADR-021 + `docs/reference/kraken-api-reference.md`. Original backlog
 rationale preserved below.
 
+**Follow-up (2026-09-03 incident — a second real DMS purge):** six
+consecutive `CancelAllOrdersAfter` transport failures (07:01:13Z →
+07:02:37Z; Kraken public endpoints and the cloud LLM calls were fine
+throughout, and status.kraken.com listed nothing) let the 120s timer
+purge the remaining SOL/DOGE book at ~07:02:38Z. All three
+2026-08-20 follow-ups fired as designed (3-strike critical, recovered
+notice, 4-hourly held-symbol reminder). One did not: the book-vanish
+page's calmer "most likely Kraken's own timer" framing —
+`dms_timer_expired_this_tick` read `False` because the purge landed
+≥18s before the client-side `dms_trigger_at` deadline (NAS clock skew
+ruled out, ≤2s against a synced desktop). Two small hardening items:
+(1) log the last CONFIRMED `trigger_at` at WARNING when a failure
+streak starts — today it is DEBUG-only (`_log_dms_confirmation`), so
+a post-mortem cannot compare it to the vanish time; (2) base the
+framing on the wall-clock length of the in-progress failure streak
+(first failure of the streak → now) relative to
+`dead_mans_switch_seconds`, not solely on the confirmed-deadline
+check — a streak whose first failure was ≥ ~half the timeout ago plus
+a whole-book vanish is a DMS purge by any honest reading. (The
+existing code comment's "streak COUNT is a poor proxy" objection was
+about counts at 5s ticks; it does not apply to elapsed time, and each
+failed ping already blocks for the full 10s request timeout.) Receipt
+in the roadmap's 2026-09-03 entry.
+
 **What:** Kraken's `/0/private/CancelAllOrdersAfter` endpoint sets a
 server-side timer; if the engine doesn't ping again within N
 seconds, **Kraken auto-cancels every open order on the account**.
@@ -908,3 +932,21 @@ with zero placed there IS a retry loop, via the self-heal.
 **Why deferred:** surfaced 2026-08-09 by the first live re-anchor;
 self-resolves when funds free or price recovers, and `pause` is a
 clean manual stop. Queue behind the P3 re-anchor chain work.
+
+**Follow-up (2026-09-03, observed on XRP/USD):** the back-off works
+as shipped — retry every 60 ticks — but each retry still emits the
+per-level `refused by safety cap` WARNINGs from `_try_place`
+(safety-cap refusals were never demoted alongside the
+insufficient-balance ones), so a symbol that is starved *by
+construction* logs ~10 lines every ~6 minutes, indefinitely. XRP/USD
+after the 2026-09-02 15:57Z re-anchor to 1.33471 is the canonical
+case: three BUYs refused by `max_per_coin_inventory_usd` and all
+three SELLs deferred by the cost-basis guard (average cost 1.471
+against a band top of 1.4548) — nothing can ever place at that
+anchor, and the log carried ~2,400 lines of it per day for the 23
+hours until the operator acted. Proposed (logging half only, no
+behavior change): log the cap-refusal breakdown ONCE on entering the
+starved state (it is the same information every retry), demote the
+per-retry cap-refusal lines to DEBUG while starved, and add a "still
+starved after N retries" WARNING carrying the same breakdown so a
+permanently-starved symbol stays visible without being noisy.

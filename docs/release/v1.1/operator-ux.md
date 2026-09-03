@@ -65,20 +65,60 @@ is sufficient for the operator's current workflow.
 **Trigger:** operator runs cli/live with multiple coins post-tag
 and finds equal-weighting wrong for their portfolio.
 
-### Discord command shortcuts
+### Discord command shortcuts — deterministic fast path in front of the LLM parse (ESCALATED 2026-09-03)
 
-**What:** typed slash commands (`/pause BTC`, `/resume`, `/stop`,
-`/status`) alongside the conversational LLM path. The conversational
-path already handles these; shortcuts would skip the LLM parse for
-the common cases.
+**What:** a deterministic parse in front of the LLM for the small,
+fixed command grammar — `pause`, `resume`, `reanchor` / `re-anchor`,
+`cancel orders on`, `stop`, plus `status` — with two normalization
+rules the operator expects to hold:
 
-**Why deferred:** Stage 5.3 wired the LLM intent parser; shortcuts
-would be a parallel path. v1.0's conversational path is honest about
-its latency (Ollama parse takes 1-3s); shortcuts trade ergonomics
-for that delay.
+1. **Verb spellings are synonyms.** `reanchor`, `re-anchor`, and
+   `re anchor` must produce the same `ReanchorCommand`. Today only
+   the prompt's example wording is reliable.
+2. **A bare base symbol resolves when unambiguous.** `SOL` means
+   `SOL/USD` whenever exactly one active symbol has that base (every
+   configured pair is `*/USD` today). Reject only when the base is
+   genuinely ambiguous or not in the active set.
 
-**Trigger:** operator finds themselves typing the same phrases
-repeatedly during the soak.
+Anything the fast path matches never reaches the model; everything
+else falls through to the LLM parse unchanged. The original framing
+of this entry (typed slash commands as a parallel Discord surface)
+is subsumed — the fast path gives the same ergonomics without a
+second command surface to keep in sync.
+
+**Why escalated (2026-09-03 incident, real cost):** during recovery
+from that morning's DMS purge (SOL/USD and DOGE/USD held, books
+empty), the operator typed `reanchor SOL/USD` — the exact command
+kind the prompt teaches, with the fully-qualified symbol — and the
+1.5B operator model parsed it as
+`{"kind":"query","query":{"kind":"status"}}` and answered with the
+engine status. No command row was created, nothing happened, and
+the symbol stayed held. Six minutes later `re-anchor SOL` (the
+prompt's own example wording) parsed correctly and executed
+(`99.20 -> 104.29, placed 3/6, auto-resumed`). Same intent, same
+operator, opposite outcomes, decided by a hyphen — and the wrong
+parse first cost an Ollama timeout + retry (~85s) before answering.
+Receipt: `conversation_turns` 15:24:18Z vs 15:30:10Z, and the
+roadmap's 2026-09-03 incident entry.
+
+The catalog-SSOT test (P3 slice 4) guarantees the prompt *lists*
+`reanchor`; it cannot make a 1.5B model honor the list. A regex is
+the only thing that can, and the grammar is small enough that a
+regex is the honest tool.
+
+**Implementation sketch:** one pure function,
+`services/operator_intent_fastpath.py:
+parse_fast(text, active_symbols) -> OperatorIntent | None`, called by
+`cli/operator` before `AssistantPort.parse_intent`. Case-insensitive;
+tolerant of `re-anchor` / `re anchor` and of `SOL` vs `SOL/USD`;
+returns `None` on any doubt so the LLM path stays the fallback. Unit
+tests: a table of (text → intent) covering every verb spelling, both
+symbol forms, an ambiguous base, and an inactive symbol. The LLM
+path's own tests stay untouched.
+
+**Trigger:** fired 2026-09-03. Queue as the next P3 Discord slice,
+paired with the "Re-anchor reachable without the banner" entry
+below as one post-purge-recovery-ergonomics slice.
 
 ### Discord confirmation UX: replace emoji reactions with UI buttons
 
@@ -501,6 +541,58 @@ with other v1.1 storage changes than dropped in mid-soak.
 discussion that "auto-cancellation feels wrong; lean into
 banner + action button instead." Shipping order matches the
 dependency: re-anchor mechanism → action button → snooze.
+
+### Re-anchor reachable without the banner — per-symbol anchor button (operator design 2026-09-03)
+
+**What:** an "anchor" icon button in each symbol's trading card,
+next to the state-aware pause/resume icon (P3 slice 6), that opens
+the SAME confirmation modal the banner's Re-anchor button uses and
+posts to the SAME `POST /commands/reanchor`. Nothing new below the
+form: the `ReanchorCommand` row, `awaiting_confirmation` → approve →
+the `status='approved'` poll, and cli/live's dispatch are all
+unchanged (ADR-002 firewall intact). The operator's design, in
+their words: "an 'anchor' icon next to the pause/resume icon in
+each symbol's trading window … it would still follow the same
+pop-up confirmation workflow as the banner's."
+
+**Why (2026-09-03 incident):** the banner is the ONLY web entry
+point to `POST /commands/reanchor`, and the banner builder returns
+nothing when a symbol has no open orders
+(`web/routes/status_reanchor.py`, `if not open_orders: return []` —
+drift is computed from the ladder). After Kraken's dead-man's switch
+purged SOL/USD and DOGE/USD at 07:02Z, both symbols were held with
+empty books: exactly the state where the operator wants to re-anchor
+at the new price (SOL had moved 1.75 spacings while parked), and
+exactly the state in which no Re-anchor button can render. The
+alternatives were a plain Resume — which re-lays at the stale anchor
+and, with SOL at 104.4 against a 102.18 sell level, would have
+crossed the market as an instant taker fill — or the Discord parser,
+which mis-parsed the first attempt (entry above). Operator's words:
+"there is no method to re-anchor without a banner in the webui, and
+there currently isn't one."
+
+**Implementation sketch:**
+- `_status_card.html`: alongside the pause/resume icon, an anchor
+  icon (⚓, or an inline SVG matching the existing icon set) rendered
+  for every ACTIVE symbol regardless of open orders — its whole
+  point is the empty-book case. Same htmx wiring as the banner
+  button (`hx-post` to `/commands/reanchor`, the symbol as a hidden
+  field, the CSRF input, the modal container as target) so
+  `_modal_confirm.html` and the slice-12/13 watch + refresh flow are
+  reused verbatim. Tooltip: "Re-anchor at current price (confirm
+  required)".
+- Keep it enabled while offside-parked: the banner already renders
+  loud for a drifted-offside symbol, and re-anchor is exactly that
+  symbol's fix.
+- Tests: the status-card template test asserts the icon renders for
+  a paused symbol with zero open orders (the 09-03 state) and that
+  it targets the existing route; the route itself needs no new
+  tests. A `GET /commands/reanchor` form page (this entry's first
+  draft) is optional — the icon covers the need without a second
+  page.
+
+**Trigger:** fired 2026-09-03. Small (S); ships with the fast-path
+entry above.
 
 ### Pause stays non-destructive (+ candidate "halt" compound)
 
