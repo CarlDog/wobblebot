@@ -13,6 +13,7 @@ persisted, embeds sent, conversation turns saved).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -741,3 +742,103 @@ class TestDeterministicFastPath:
             assistant_model_name="test-model",
         )
         assert len(stub.contexts) == 1
+
+
+class TestFastPathObservability:
+    """Review follow-up 2. Only the HIT was logged, so abstain / miss /
+    never-armed were indistinguishable from the mis-parse the fast path
+    exists to prevent."""
+
+    async def test_verb_that_cannot_ground_logs_at_info_with_the_token(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        stub = _StubAssistant(IntentConversational(reply_text="hm"))
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"):
+            await _handle_inbound_message(
+                _inbound(content="reanchor XRP"),
+                operator_storage=storage,
+                live_storage=None,
+                observe_storage=None,
+                active_symbols=(Symbol(base="BTC", quote="USD"),),
+                assistant=stub,
+                operator_service=_operator_service(storage),
+                transport=_mock_transport(),
+                outbound_channel_id="100",
+                context_window_turns=10,
+                confirm_ttl_seconds=300,
+                assistant_model_name="test-model",
+            )
+        declines = [r for r in caplog.records if "could not ground" in r.getMessage()]
+        assert len(declines) == 1
+        assert "XRP" in declines[0].getMessage()
+        assert "symbol_unknown" in declines[0].getMessage()
+        # ...and it still reached the model.
+        assert len(stub.contexts) == 1
+
+    async def test_ordinary_chat_does_not_log_at_info(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Every non-command message hits the defer path; if that logged at
+        INFO the real signal would drown in channel chatter."""
+        with caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"):
+            await _handle_inbound_message(
+                _inbound(content="thanks, that worked"),
+                operator_storage=storage,
+                live_storage=None,
+                observe_storage=None,
+                active_symbols=(Symbol(base="BTC", quote="USD"),),
+                assistant=_StubAssistant(IntentConversational(reply_text="np")),
+                operator_service=_operator_service(storage),
+                transport=_mock_transport(),
+                outbound_channel_id="100",
+                context_window_turns=10,
+                confirm_ttl_seconds=300,
+                assistant_model_name="test-model",
+            )
+        assert not [r for r in caplog.records if "fast path" in r.getMessage()]
+
+    async def test_query_answered_by_the_regex_credits_the_regex_not_the_model(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """`status` IS a fast-path pattern, so the embed footer used to credit
+        the model for a message the regex answered — on the one surface the
+        operator actually reads."""
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="status"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(Symbol(base="BTC", quote="USD"),),
+            assistant=_StubAssistant(IntentConversational(reply_text="unused")),
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            assistant_model_name="qwen-test-model",
+        )
+        transport.send_embed.assert_awaited_once()
+        _, kwargs = transport.send_embed.await_args
+        assert kwargs["footer"] == "parsed by the deterministic fast path"
+
+    async def test_query_answered_by_the_model_still_credits_the_model(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="how are we doing overall?"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(Symbol(base="BTC", quote="USD"),),
+            assistant=_StubAssistant(IntentQuery(query=StatusQuery())),
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            assistant_model_name="qwen-test-model",
+        )
+        _, kwargs = transport.send_embed.await_args
+        assert kwargs["footer"] == "parsed by qwen-test-model"
