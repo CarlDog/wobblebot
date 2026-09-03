@@ -28,6 +28,10 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.1] - 2026-09-03
+
 ### Fixed
 
 - **Redacted configured secret values at the logging chokepoint.** Plain and
@@ -43,6 +47,23 @@ fresh `[Unreleased]` heading created at that time.
   `--webhook-url` from becoming an arbitrary request. Tests cover valid Discord
   hosts plus HTTP, localhost, credential-injection, query, and malformed-path
   rejection.
+
+### Changed
+
+- **Dependency bumps** (#112): starlette 1.3.1 → 1.6.0, uvicorn 0.52.1 →
+  0.52.4, httpx2 2.9.1 → 2.12.0, python-dotenv 1.2.2 → 1.2.3; dev-only mypy
+  2.3.0 → 2.3.1 and pylint 4.0.6 → 4.0.7. No configuration or behavior
+  change; the full gate passed on the bump.
+- **Pre-commit author-identity guard is now an allowlist** over both the
+  author and committer identities (repository tooling, not runtime).
+- **Docs:** the 2026-09-03 dead-man's-switch purge receipt and five register
+  entries filed from its recovery (a deterministic Discord fast path with
+  verb/symbol normalization, a per-symbol anchor button, an offside hover
+  popover, DMS framing + logging, starved-symbol log noise); CLAUDE.md's
+  deploy note now describes the file-based Portainer stack.
+
+No configuration schema change. Upgrading from 2.0.0 is an `IMAGE_TAG`
+bump; nothing else moves.
 
 ## [2.0.0] - 2026-08-28
 

@@ -5,7 +5,7 @@ A hexagonal architecture trading system for controlled "buy the dip / sell the r
 cycles on Kraken with strict safety guardrails and modular isolation.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 __author__ = "WobbleBot Team"
 
 __all__ = ["__version__", "__author__"]
