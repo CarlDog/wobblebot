@@ -77,6 +77,30 @@ and finds equal-weighting wrong for their portfolio.
 > the typed command union by the catalog-SSOT test. 32 table tests plus 3
 > daemon-level tests — the incident message `reanchor SOL/USD` now queues
 > a reanchor without the model being consulted.
+>
+> **Corrected 2.0.4 (2026-09-03 adversarial review, finding 1).** The
+> first cut hard-refused a matched verb whose symbol did not resolve,
+> returning `IntentUnparseable`. Because `_SYMBOL` matches any 2-10
+> character word, that broke `cancel orders on all` — the phrasing the
+> help catalog and `operator.md` both advertise — with the false reason
+> "ALL is not in the active symbol set", and the model that parses it
+> correctly never saw the message. Same for `pause everything`. It now
+> DEFERS (returns `None`) instead, which is what this entry's own
+> contract always claimed, and `cancel_open_orders` gained the explicit
+> all-symbols grammar it needed (it is the one command kind whose
+> all-form has no `*_all` sibling).
+>
+> **Corrected 2.0.4 (2026-09-03 adversarial review, finding 1).** The
+> first cut hard-refused a matched verb whose symbol did not resolve,
+> returning `IntentUnparseable`. Because `_SYMBOL` matches any 2-10
+> character word, that broke `cancel orders on all` — the phrasing the
+> help catalog and `operator.md` both advertise — with the false reason
+> "ALL is not in the active symbol set", and the model that parses it
+> correctly never saw the message. Same for `pause everything`. It now
+> DEFERS (returns `None`) instead, which is what this entry's own
+> contract always claimed, and `cancel_open_orders` gained the explicit
+> all-symbols grammar it needed (it is the one command kind whose
+> all-form has no `*_all` sibling).
 
 **What:** a deterministic parse in front of the LLM for the small,
 fixed command grammar — `pause`, `resume`, `reanchor` / `re-anchor`,
@@ -562,6 +586,36 @@ dependency: re-anchor mechanism → action button → snooze.
 > card tests: a paused symbol with zero open orders gets exactly one
 > re-anchor form and it is the icon's; an active symbol shows pause and
 > anchor side by side.
+>
+> **Corrected 2.0.4 (2026-09-03 adversarial review, finding 2 — the one
+> that touched money).** "Every symbol card" is a wider set than the
+> engine's: `status.py` renders a card for any asset with a non-zero held
+> balance, so a dust balance in an unconfigured pair (BABY/USD, live on
+> the operator's account) got a working re-anchor button. Nothing in the
+> chain validated it: `for_coin()` hands any unknown base a default
+> config, `_check_safety` has no membership test, the ADR-032 sell guard
+> passes an untracked coin unguarded for want of a cost basis, `cli/live`
+> only ticks `live.symbols`, and `_cancel_all_open` skips unconfigured
+> symbols on clean shutdown — orders left live on Kraken indefinitely.
+> Now refused in the ROUTE (covering the free-text form and any future
+> caller) with the template gate as defense in depth; empty
+> `live.symbols` means unknown and falls open so an unwired deployment is
+> unchanged.
+>
+> **Corrected 2.0.4 (2026-09-03 adversarial review, finding 2 — the one
+> that touched money).** "Every symbol card" is a wider set than the
+> engine's: `status.py` renders a card for any asset with a non-zero held
+> balance, so a dust balance in an unconfigured pair (BABY/USD, live on
+> the operator's account) got a working re-anchor button. Nothing in the
+> chain validated it: `for_coin()` hands any unknown base a default
+> config, `_check_safety` has no membership test, the ADR-032 sell guard
+> passes an untracked coin unguarded for want of a cost basis, `cli/live`
+> only ticks `live.symbols`, and `_cancel_all_open` skips unconfigured
+> symbols on clean shutdown — orders left live on Kraken indefinitely.
+> Now refused in the ROUTE (covering the free-text form and any future
+> caller) with the template gate as defense in depth; empty
+> `live.symbols` means unknown and falls open so an unwired deployment is
+> unchanged.
 
 **What:** an "anchor" icon button in each symbol's trading card,
 next to the state-aware pause/resume icon (P3 slice 6), that opens
@@ -626,6 +680,18 @@ entry above.
 > native tooltip doubles it. Duration is ticks × tick length (the
 > `offside_since` column stays a follow-up). 8 builder tests + 2 template
 > tests.
+>
+> **Corrected 2.0.4 (2026-09-03 adversarial review, findings 3 + 4).** The
+> shipped popover stated two falsehoods. It said the engine "parks with no
+> orders" while the same card listed the live ladder underneath: ADR-006
+> parking suppresses new placement and counters, it never cancels standing
+> orders, and an operator who believed it would re-anchor and destroy a buy
+> ladder waiting for the retrace. And "Offside for 2d 7h" was
+> `offside_ticks` times `tick_seconds`, an in-memory counter that zeroes on
+> every `cli/live` restart, so a symbol parked since 2026-08-19 read as
+> minutes old after the evening redeploy. Now: "places no new orders and no
+> counter-orders ... Any orders already resting stay live", and the duration
+> is scoped honestly to "Parked N ticks since cli/live last started".
 
 **What:** hovering the OFFSIDE badge on a symbol card should open a
 small informational popup that explains, in plain language, why the
@@ -712,6 +778,39 @@ view preference; revisit if that ever confuses an incident).
 
 **Trigger:** operator note 2026-09-03, explicitly "for later review, not
 today". Small to medium (S–M).
+
+### Follow-ups from the 2026-09-03 adversarial review (filed, not built)
+
+Three items the 2.0.4 fixes deliberately did NOT close.
+
+**1. Persist `offside_since` so the popover can state wall-clock truth.**
+2.0.4 made the duration honest by narrowing the claim to "Parked N ticks
+since cli/live last started". The real fix is a durable timestamp:
+`offside_ticks` lives in `GridEngine` process memory and the restore path
+replays only `paused`, so every restart forgets how long a symbol has
+really been parked. Shape: an `offside_since` column on `engine_state`,
+written on the offside transition, cleared on the back-onside transition,
+restored at boot alongside `paused`. Small schema change, own migration,
+and it retires the tick-count caveat everywhere. Related: `cli/live`
+accepts a `--tick-seconds` override that never reaches `settings.yml`
+while the web reads `config.live.tick_seconds`, so the "at the configured
+tick length" approximation can drift from what the engine actually ran.
+
+**2. The fast path has no failure signal.** Only the hit is logged. Abstain,
+miss, and never-armed all log nothing, and there is no startup line saying
+the fast path is armed for N symbols. A fast path that is silently inert
+(no `live:` section, or a message shape the regex does not anticipate) is
+behaviorally identical to the pre-2.0.2 state: a 1.5B mis-parse. That is
+the exact failure that cost six minutes on 2026-09-03. Shape: one INFO at
+daemon start naming the armed symbol count, and a DEBUG on the defer path
+so a post-mortem can tell "the regex declined" from "the regex never ran".
+
+**3. Two rendering findings were dismissed by reading, not by looking.** The
+mobile `overflow-x` clipping of the popover and the 15s htmx `outerHTML`
+poll closing it mid-read were both refuted from CSS and template source.
+Neither is settleable that way. They need a real browser against a real
+offside card, which is also the only way to confirm the popover's live
+appearance at all. Pairs with the standing render-and-look rule.
 
 ### Pause stays non-destructive (+ candidate "halt" compound)
 

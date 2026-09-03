@@ -2298,6 +2298,33 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     rates 0.4%/0.8%: SOL re-laid 4/6 at 104.29, ADA 3/6 at 0.221862;
     BTC/ETH/DOGE/XRP offside above their bands — and the OFFSIDE badges now
     carry the hover popover that says so.
+13. **Adversarial review of the same day's shipped code, then `2.0.4`
+    RELEASED (2026-09-03).** A 60-agent workflow reviewed the
+    `v2.0.1..HEAD` source diff across eight dimensions, then put every
+    finding through three diverse-lens refuters. 17 raised, 7 survived, 10
+    refuted with reasoning. Three survivors were live in production.
+    **The money one:** the per-card anchor button rendered for
+    held-but-untraded symbols (BABY/USD, a real dust balance on the live
+    account and an online Kraken pair at $0.0114), and nothing in the
+    button to route to `pending_commands` to `request_reanchor` chain
+    validated against `live.symbols`. `for_coin()` defaults any unknown
+    base, `_check_safety` has no membership test, the ADR-032 sell guard
+    passes an untracked coin unguarded, `cli/live` never ticks it, and
+    `_cancel_all_open` skips it on clean shutdown. Verified reachable end
+    to end, bounded at roughly $15 of unmanaged orders, gated behind two
+    operator clicks. **The capability regression:** the fast path's
+    `_SYMBOL` matches any short word, so `cancel orders on all` (advertised
+    by the help catalog and `operator.md`) was hard-refused with a false
+    reason instead of reaching the model. **The two falsehoods:** the
+    popover claimed "no orders" while the card listed the live ladder, and
+    sold a restart-scoped tick count as a wall-clock duration. **Plus three
+    tests from 2.0.3 that passed against broken code**, each proven by
+    mutation. All seven fixed; all twelve changed behaviors re-verified by
+    a mutation harness, 12 of 12 caught. Gate: 3745 passed, black/isort
+    clean, mypy clean, pylint 10.00/10, logging rule 1 clean. Follow-ups
+    filed rather than built: persist `offside_since`, give the fast path a
+    failure signal, settle the two render findings with a real browser.
+    **Lesson: a self-reviewed same-day release is not reviewed.**
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 

@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, csrf_from, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
+from wobblebot.domain.value_objects import Symbol
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 
@@ -50,6 +51,19 @@ def client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
         config=WebConfig(bcrypt_cost=10),
         operator_storage=storage,
         session_secret="x" * 64,
+    )
+    with TestClient(app, follow_redirects=False) as c:
+        yield c
+
+
+@pytest.fixture
+def configured_client(storage: SQLiteStorageAdapter) -> Iterator[TestClient]:
+    """A client whose engine trades BTC/USD only (2026-09-03 finding 2)."""
+    app = create_app(
+        config=WebConfig(bcrypt_cost=10),
+        operator_storage=storage,
+        session_secret="x" * 64,
+        live_symbols=(Symbol(base="BTC", quote="USD"),),
     )
     with TestClient(app, follow_redirects=False) as c:
         yield c
@@ -670,3 +684,48 @@ class TestCommandVocabularyAndConsequence:
         assert _is_high_consequence("reanchor") is False
         # Money-out has its own louder treatment, not this one.
         assert _is_high_consequence("execute_proposal") is False
+
+
+class TestReanchorSymbolGuard:
+    """2026-09-03 review, finding 2. The route — not just the template — must
+    refuse a re-anchor for a symbol the engine does not tend, so the free-text
+    form and any future caller are covered too."""
+
+    def test_untraded_symbol_is_refused_with_400_and_queues_nothing(
+        self, configured_client: TestClient, storage: SQLiteStorageAdapter
+    ) -> None:
+        login_as(configured_client)
+        token = csrf_from(configured_client.get("/commands/pause").text)
+        resp = configured_client.post(
+            "/commands/reanchor",
+            data={"symbol": "BABY/USD", "csrf_token": token},
+        )
+        assert resp.status_code == 400
+        # Apostrophe is HTML-escaped in the rendered form.
+        assert "configured trading symbols" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_configured_symbol_still_queues(
+        self, configured_client: TestClient, storage: SQLiteStorageAdapter
+    ) -> None:
+        login_as(configured_client)
+        token = csrf_from(configured_client.get("/commands/pause").text)
+        resp = configured_client.post(
+            "/commands/reanchor",
+            data={"symbol": "BTC/USD", "csrf_token": token},
+        )
+        assert resp.status_code in (200, 302, 303)
+        rows = await storage.get_pending_commands()
+        assert len(rows) == 1
+        assert rows[0].command.kind == "reanchor"
+
+    def test_unknown_trading_set_falls_open(self, client: TestClient) -> None:
+        """The default client passes no live_symbols — unknown, so the guard
+        must not block (no regression for an unwired deployment)."""
+        login_as(client)
+        token = csrf_from(client.get("/commands/pause").text)
+        resp = client.post(
+            "/commands/reanchor",
+            data={"symbol": "BABY/USD", "csrf_token": token},
+        )
+        assert resp.status_code != 400

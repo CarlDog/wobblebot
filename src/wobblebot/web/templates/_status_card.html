@@ -279,11 +279,11 @@
                         Price is outside the grid's band {{ oexp.band_low | usd }} to {{ oexp.band_high | usd }}.
                       {% endif %}
                       Anchored at {{ oexp.anchor_price | usd }} ({{ oexp.levels_above }} up / {{ oexp.levels_below }} down at {{ oexp.spacing_percentage }}%),
-                      the engine parks with no orders until price returns to {{ oexp.band_low | usd }} to {{ oexp.band_high | usd }}, or you re-anchor.
+                      the engine places no new orders and no counter-orders until price returns to {{ oexp.band_low | usd }} to {{ oexp.band_high | usd }}, or you re-anchor. Any orders already resting stay live.
                     {% else %}
-                      Price is outside the grid band; the engine parks with no orders until price returns, or you re-anchor.
+                      Price is outside the grid band, so the engine places no new orders until price returns, or you re-anchor. Any orders already resting stay live.
                     {% endif %}
-                    Offside for {{ (oexp.offside_seconds if oexp else none) | humanize_duration }} ({{ estate.offside_ticks }} ticks).
+                    Parked {{ estate.offside_ticks }} tick{{ "" if estate.offside_ticks == 1 else "s" }} since cli/live last started, about {{ (oexp.offside_seconds if oexp else none) | humanize_duration }} at the configured tick length.
                   </span>
                 </span>
               {% endif %}
@@ -364,12 +364,18 @@
                   </button>
                 </form>
               {% endif %}
-              {# Re-anchor (operator design 2026-09-03): rendered for EVERY
-                 symbol regardless of paused / offside / open orders. The
+              {# Re-anchor (operator design 2026-09-03): rendered for every
+                 symbol the ENGINE TENDS, regardless of paused / offside /
+                 open orders. Cards also render for held-but-untraded assets
+                 (a dust balance in a pair live.symbols omits); re-anchoring
+                 one of those places orders nothing ever manages, so it is
+                 gated here and enforced again in the route (2026-09-03
+                 review, finding 2). Empty set = unknown, falls open. The
                  banner's Re-anchor button exists only for symbols WITH open
                  orders, so a held symbol with a purged book — the exact
                  post-DMS recovery state — had no way to re-anchor from the
                  UI. Same modal, same POST, same pending_commands firewall. #}
+              {% if not configured_symbols or symbol in configured_symbols %}
               <form method="post" action="/commands/reanchor" class="inline-form"
                     hx-post="/commands/reanchor" hx-target="#modal" hx-swap="innerHTML">
                 {{ csrf_input(request) }}
@@ -377,13 +383,18 @@
                 <button type="submit" class="icon-btn icon-btn-reanchor"
                         title="Re-anchor {{ symbol.base }}/{{ symbol.quote }} at the current price (confirm required)"
                         aria-label="Re-anchor {{ symbol.base }}/{{ symbol.quote }}">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="5" r="2.5"/>
-                    <path d="M12 7.5V21M5 12h14M5 14a7 7 0 0 0 14 0"/>
+                  {# Material Design Icons ``anchor`` (Apache-2.0) — the SAME set the
+                     pause/play siblings come from (``play_arrow`` is byte-identical
+                     upstream), so it is filled + currentColor, not a stroked outline.
+                     The first cut here was a hand-drawn Lucide-style outline: correct
+                     for the navbar set in _icons.html, wrong beside these two.
+                     Attribution in NOTICE.md. #}
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M17,15l1.55,1.55c-0.96,1.69-3.33,3.04-5.55,3.37V11h3V9h-3V7.82C14.16,7.4,15,6.3,15,5c0-1.65-1.35-3-3-3S9,3.35,9,5 c0,1.3,0.84,2.4,2,2.82V9H8v2h3v8.92c-2.22-0.33-4.59-1.68-5.55-3.37L7,15l-4-3v3c0,3.88,4.92,7,9,7s9-3.12,9-7v-3L17,15z M12,4 c0.55,0,1,0.45,1,1s-0.45,1-1,1s-1-0.45-1-1S11.45,4,12,4z"/>
                   </svg>
                 </button>
               </form>
+              {% endif %}
             </div>
           </div>
           {% if sym_orders %}

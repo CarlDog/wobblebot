@@ -22,10 +22,18 @@ operator expects to hold:
    whenever exactly one active symbol has that base. A fully-qualified
    ``BASE/QUOTE`` must match an active symbol exactly.
 
-A matched verb whose symbol does NOT resolve is returned as
-``IntentUnparseable`` with the same wording the prompt teaches the
-model ("X is not in the active symbol set") — deterministic, and it
-keeps the model from guessing a symbol the engine is not trading.
+A matched verb whose symbol does NOT resolve **defers to the model**
+(returns ``None``) rather than refusing. The first cut returned
+``IntentUnparseable`` there, which broke the contract this docstring
+states: ``_SYMBOL`` matches any 2-10 character word, so ``cancel orders
+on all`` — the phrasing the help catalog and ``operator.md`` both
+advertise — captured ``all``, failed to resolve, and was hard-refused
+with the false reason "ALL is not in the active symbol set" while the
+model that parses it correctly never saw the message. Same for ``pause
+everything`` and every other verb-plus-ordinary-word phrasing. Deferring
+costs nothing: the model has the active set in its snapshot and refuses
+an unknown symbol on its own. (2026-09-03 review, finding 1.)
+
 When no active-symbol set is known (empty tuple) the fast path abstains
 entirely: it has nothing to ground a symbol against, so the model keeps
 the whole conversation.
@@ -46,7 +54,6 @@ from wobblebot.ports.operator_intents import (
     CancelOpenOrdersCommand,
     IntentCommand,
     IntentQuery,
-    IntentUnparseable,
     OperatorIntent,
     PauseAllCommand,
     PauseCommand,
@@ -70,6 +77,14 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pause", re.compile(r"^\s*pause\s+" + _SYMBOL + _END, re.IGNORECASE)),
     ("resume", re.compile(r"^\s*resume\s+" + _SYMBOL + _END, re.IGNORECASE)),
     ("reanchor", re.compile(r"^\s*re[\s-]?anchor\s+" + _SYMBOL + _END, re.IGNORECASE)),
+    # The all-symbols form of cancel_open_orders (``symbol=None``). MUST
+    # precede the symbol-taking pattern below, for the same reason
+    # pause_all precedes pause: ``all`` also matches _SYMBOL.
+    (
+        "cancel_all",
+        re.compile(r"^\s*cancel\s+(?:open\s+)?orders\s+(?:on|for)\s+all" + _END, re.IGNORECASE),
+    ),
+    ("cancel_all", re.compile(r"^\s*cancel\s+all\s+(?:open\s+)?orders" + _END, re.IGNORECASE)),
     (
         "cancel_open_orders",
         re.compile(
@@ -87,6 +102,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _NO_SYMBOL: dict[str, Callable[[], OperatorIntent]] = {
     "pause_all": lambda: IntentCommand(command=PauseAllCommand()),
     "resume_all": lambda: IntentCommand(command=ResumeAllCommand()),
+    "cancel_all": lambda: IntentCommand(command=CancelOpenOrdersCommand(symbol=None)),
     "stop": lambda: IntentCommand(command=StopCommand()),
     "status": lambda: IntentQuery(query=StatusQuery()),
 }
@@ -98,7 +114,11 @@ _WITH_SYMBOL: dict[str, Callable[[Symbol], OperatorIntent]] = {
 }
 
 FAST_PATH_COMMAND_KINDS: frozenset[str] = frozenset(
-    kind for kind, _ in _PATTERNS if kind != "status"
+    # ``cancel_all`` is a second grammar for the cancel_open_orders KIND
+    # (its ``symbol=None`` form), not a command kind of its own.
+    ("cancel_open_orders" if kind == "cancel_all" else kind)
+    for kind, _ in _PATTERNS
+    if kind != "status"
 )
 """Command kinds the fast path can emit. Pinned against the typed union
 by ``tests/config/test_operator_catalog_ssot.py`` so a new engine command
@@ -134,9 +154,9 @@ def parse_fast(text: str, active_symbols: Sequence[Symbol]) -> OperatorIntent | 
 
     Returns:
         An ``IntentCommand`` / ``IntentQuery`` when the message is exactly
-        one of the fixed forms; ``IntentUnparseable`` when the verb
-        matched but the symbol is not in the active set; ``None`` for
-        everything else.
+        one of the fixed forms; ``None`` for everything else, INCLUDING a
+        matched verb whose symbol does not resolve — that defers to the
+        model rather than refusing (2026-09-03 review, finding 1).
     """
     if not active_symbols:
         return None
@@ -146,10 +166,12 @@ def parse_fast(text: str, active_symbols: Sequence[Symbol]) -> OperatorIntent | 
             continue
         if kind in _NO_SYMBOL:
             return _NO_SYMBOL[kind]()
-        token = match.group("symbol")
-        symbol = resolve_symbol(token, active_symbols)
+        symbol = resolve_symbol(match.group("symbol"), active_symbols)
         if symbol is None:
-            return IntentUnparseable(reason=f"{token.upper()} is not in the active symbol set")
+            # Defer, do not refuse: the captured token may not be a symbol
+            # at all (``cancel orders on all``, ``pause everything``), and
+            # the model grounds against the same active set anyway.
+            return None
         return _WITH_SYMBOL[kind](symbol)
     return None
 

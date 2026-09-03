@@ -15,7 +15,6 @@ from wobblebot.ports.operator_intents import (
     CancelOpenOrdersCommand,
     IntentCommand,
     IntentQuery,
-    IntentUnparseable,
     PauseAllCommand,
     PauseCommand,
     ReanchorCommand,
@@ -78,26 +77,19 @@ class TestBareBaseResolution:
         assert resolve_symbol("sol", ACTIVE) == SOL
         assert resolve_symbol("SOL/USD", ACTIVE) == SOL
 
-    def test_bare_base_is_refused_when_ambiguous(self) -> None:
+    def test_ambiguous_bare_base_defers_to_the_model(self) -> None:
         active = (BTC, Symbol(base="BTC", quote="EUR"))
         assert resolve_symbol("BTC", active) is None
-        # The verb matched, so the operator gets a deterministic refusal —
-        # not a model guessing which BTC pair they meant.
-        assert parse_fast("pause BTC", active) == IntentUnparseable(
-            reason="BTC is not in the active symbol set"
-        )
-        # Fully-qualified still works in the ambiguous set.
+        # Defer, do not refuse — the model grounds against the same set.
+        assert parse_fast("pause BTC", active) is None
+        # Fully-qualified still resolves in the ambiguous set.
         assert parse_fast("pause BTC/EUR", active) == IntentCommand(
             command=PauseCommand(symbol=Symbol(base="BTC", quote="EUR"))
         )
 
-    def test_inactive_symbol_is_unparseable_with_the_prompts_wording(self) -> None:
-        assert parse_fast("reanchor XRP", ACTIVE) == IntentUnparseable(
-            reason="XRP is not in the active symbol set"
-        )
-        assert parse_fast("pause XRP/USD", ACTIVE) == IntentUnparseable(
-            reason="XRP/USD is not in the active symbol set"
-        )
+    def test_inactive_symbol_defers_to_the_model(self) -> None:
+        assert parse_fast("reanchor XRP", ACTIVE) is None
+        assert parse_fast("pause XRP/USD", ACTIVE) is None
 
     def test_wrong_quote_does_not_resolve(self) -> None:
         assert resolve_symbol("SOL/EUR", ACTIVE) is None
@@ -126,3 +118,49 @@ class TestAbstention:
         # conversation, exactly as before this module existed.
         assert parse_fast("reanchor SOL/USD", ()) is None
         assert parse_fast("stop", ()) is None
+
+
+class TestVerbPlusOrdinaryWordFallsThrough:
+    """2026-09-03 review, finding 1. ``_SYMBOL`` matches any 2-10 character
+    word, so a verb followed by ordinary English used to be hard-refused
+    with a false reason while the model never saw the message. Every one of
+    these must now reach the model instead."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "pause everything",
+            "resume everything",
+            "pause held",
+            "resume rest",
+            "pause both",
+            "cancel orders for everything",
+            "reanchor whatever",
+        ],
+    )
+    def test_verb_plus_prose_defers_instead_of_refusing(self, text: str) -> None:
+        assert parse_fast(text, ACTIVE) is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "cancel orders on all",
+            "cancel orders for all",
+            "cancel open orders on all",
+            "cancel open orders for all",
+            "cancel all orders",
+            "Cancel All Open Orders",
+        ],
+    )
+    def test_documented_cancel_all_phrasings_queue_the_all_symbols_form(self, text: str) -> None:
+        # operator.md and the help catalog both advertise the all-symbols
+        # form (``symbol`` omitted / null). It has no ``*_all`` sibling kind,
+        # so it needs its own grammar or ``all`` gets read as a symbol.
+        assert parse_fast(text, ACTIVE) == IntentCommand(
+            command=CancelOpenOrdersCommand(symbol=None)
+        )
+
+    def test_scoped_cancel_still_binds_its_symbol(self) -> None:
+        assert parse_fast("cancel orders on SOL", ACTIVE) == IntentCommand(
+            command=CancelOpenOrdersCommand(symbol=SOL)
+        )

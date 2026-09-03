@@ -64,14 +64,30 @@ makes zero per-page external requests.
   the maintainer's own image. Forks should replace it with their
   own.
 
-- **Lucide icon path data (inline SVG in `news.html`).** The
-  ``external-link`` icon (rendered next to news headlines when a
-  source URL is present) uses the path data from
-  [Lucide](https://lucide.dev), an MIT-licensed icon set. The SVG
-  is inlined in the template rather than bundled as a file —
-  attribution preserved here per MIT license terms. If more icons
-  are added in the future, consider shipping a single
-  ``static/icons.svg`` sprite with one shared attribution block.
+- **Lucide / Feather icon path data (inline SVG).** The navbar and
+  chrome icons — ``external-link``, ``heart-pulse``, ``settings``,
+  the ``sun``/``moon``/``monitor`` theme cycler, ``log-out``, and the
+  notification ``bell`` — use path data from
+  [Lucide](https://lucide.dev) and [Feather](https://feathericons.com),
+  both MIT-licensed icon sets. They live as Jinja macros in
+  ``src/wobblebot/web/templates/_icons.html`` (plus the bell inlined in
+  ``layout.html``) rather than bundled as files — attribution preserved
+  here per MIT license terms.
+
+- **Material Design Icons path data (inline SVG in
+  `_status_card.html`).** The per-symbol action icons on each dashboard
+  symbol card — ``play_arrow`` (resume), ``pause``, and ``anchor``
+  (re-anchor) — use path data from
+  [Material Design Icons](https://github.com/google/material-design-icons),
+  licensed under the Apache License 2.0. ``play_arrow`` and ``anchor``
+  are used verbatim; ``pause`` is redrawn as two rounded rects. A copy
+  of the Apache-2.0 license is available at
+  <https://www.apache.org/licenses/LICENSE-2.0>. These are a separate
+  icon family from the Lucide/Feather chrome icons above: filled rather
+  than stroked, deliberately, so the three action buttons match each
+  other. If the icon count grows past ~5 distinct icons per family,
+  consider shipping a single ``static/icons.svg`` sprite with one
+  shared attribution block.
 
 ## WobbleBot brand mark
 

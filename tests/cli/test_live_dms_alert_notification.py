@@ -17,7 +17,9 @@ caught even if the class logic itself stays correct.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -73,6 +75,7 @@ def _live(**overrides: object) -> LiveConfig:
 
 async def test_sustained_dms_failures_page_despite_healthy_open_orders(
     storage: SQLiteStorageAdapter,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     assert _DMS_FAILURE_STREAK_ALERT == 3, "test assumes the real threshold"
     exch = _DmsAlwaysFailingExchange(
@@ -84,7 +87,8 @@ async def test_sustained_dms_failures_page_despite_healthy_open_orders(
     exch.engine = engine
     notifier = SqliteNotifierAdapter(storage)
 
-    await _run_loop(exch, engine, _live(), storage, asyncio.Event(), notifier=notifier)
+    with caplog.at_level(logging.WARNING, logger="wobblebot.cli.live"):
+        await _run_loop(exch, engine, _live(), storage, asyncio.Event(), notifier=notifier)
 
     # At least 5 consecutive DMS-ping failures happened (past the alert
     # threshold of 3), each followed in the SAME tick by a successful
@@ -106,3 +110,64 @@ async def test_sustained_dms_failures_page_despite_healthy_open_orders(
     # honestly None rather than absent.
     assert "last_confirmed_trigger_at" in alerts[0].notification.context
     assert alerts[0].notification.context["last_confirmed_trigger_at"] is None
+
+
+class _DmsArmsOnceThenFailsExchange(MockExchangeAdapter):
+    """Confirms the DMS arm once (returning a real ``triggerTime``), then fails
+    every subsequent reset — the 2026-09-03 shape, where the switch WAS armed
+    before the stall. Exercises the non-None ``last_confirmed_trigger_at``
+    branch that the original assertion left as dead code under test."""
+
+    def __init__(self, *args: object, stop_after: int, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.dms_call_count = 0
+        self._stop_after = stop_after
+        self.engine: GridEngine | None = None
+        self.armed_at: datetime | None = None
+
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
+        self.dms_call_count += 1
+        if self.dms_call_count == 1:
+            self.armed_at = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
+            return self.armed_at
+        if self.dms_call_count >= self._stop_after and self.engine is not None:
+            self.engine.request_stop()
+        raise ExchangeError("simulated partial outage", codes=["EService:Unavailable"])
+
+
+async def test_streak_start_logs_the_last_confirmed_deadline(
+    storage: SQLiteStorageAdapter,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """2026-09-03 review, findings 5 + 7. Deleting the streak-start WARNING
+    used to leave the whole suite green, and the alert's new
+    ``last_confirmed_trigger_at`` was only ever asserted as None."""
+    exch = _DmsArmsOnceThenFailsExchange(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+        stop_after=6,
+    )
+    engine = GridEngine(exch, storage, grid_config(), safety_config())
+    exch.engine = engine
+    notifier = SqliteNotifierAdapter(storage)
+
+    with caplog.at_level(logging.WARNING, logger="wobblebot.cli.live"):
+        await _run_loop(exch, engine, _live(), storage, asyncio.Event(), notifier=notifier)
+
+    assert exch.armed_at is not None, "the fixture must confirm one arm"
+
+    # The WARNING fires, exactly once per episode, and names a REAL deadline.
+    streak_lines = [
+        r.getMessage() for r in caplog.records if "failure streak started" in r.getMessage()
+    ]
+    assert len(streak_lines) == 1, streak_lines
+    assert "last confirmed auto-cancel deadline" in streak_lines[0]
+    assert exch.armed_at.strftime("%H:%M:%SZ") in streak_lines[0]
+
+    # ...and the 3-strike page carries that same deadline, not None.
+    rows = await storage.get_notifications()
+    alerts = [r for r in rows if r.notification.title == "Dead-man's-switch resets failing"]
+    assert len(alerts) == 1
+    stamped = alerts[0].notification.context["last_confirmed_trigger_at"]
+    assert isinstance(stamped, str) and stamped.startswith(exch.armed_at.strftime("%Y-%m-%d"))
+    assert datetime.fromisoformat(stamped).tzinfo is not None, "must be tz-aware"
