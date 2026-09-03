@@ -849,7 +849,6 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         transport=transport,
         outbound_channel_id=outbound_channel_id,
         confirm_ttl_seconds=confirm_ttl_seconds,
-        assistant_model_name=assistant_model_name,
         parsed_by=parsed_by,
     )
 
@@ -864,7 +863,6 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
     transport: DiscordTransport,
     outbound_channel_id: str,
     confirm_ttl_seconds: int,
-    assistant_model_name: str,
     parsed_by: str,
 ) -> None:
     """Dispatch the parsed intent to the right handler."""
