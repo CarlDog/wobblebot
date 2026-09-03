@@ -28,6 +28,10 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.2] - 2026-09-03
+
 ### Added
 
 - **Deterministic Discord fast path for the fixed command grammar.** `pause`,
@@ -42,6 +46,15 @@ fresh `[Unreleased]` heading created at that time.
   posts to the same route as the drift banner's button, but renders for every
   symbol — including a held symbol with an empty book, which the banner can
   never show.
+
+### Changed
+
+- **Docs:** register entries for a hide-symbol eye-icon toggle (cards that
+  exist only from a held balance) and a sell-side-only extension while
+  offside-high (ADR-006 amendment candidate).
+
+No configuration schema change. Upgrading from 2.0.1 is an `IMAGE_TAG`
+bump; nothing else moves.
 
 ## [2.0.1] - 2026-09-03
 
