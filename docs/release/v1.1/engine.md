@@ -946,7 +946,9 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > **Shipped, and it was not logging-only.** `services/grid_starvation.py`
 > holds the record: `LayoutOutcome` carries a refusal breakdown and
 > `StarvationState` carries the clock plus the reasons, refreshed on every
-> retry so a summary reports what binds NOW. `_try_place` widened to return
+> retry so a summary reports what binds NOW, at WARNING as this entry's
+> original text specified — offside's heartbeat is INFO because offside is
+> a normal parked state, whereas a starved symbol cannot trade at all. `_try_place` widened to return
 > `(outcome, reason)` — the plan had ruled that out, but all THREE of its
 > refusal arms return the same bare `"refused"`, so no reason survived at all
 > and the buy-side-only variant could not be built. The per-level cap WARNING
@@ -958,8 +960,14 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > `resume_symbol` did not clear starved state, so starve → pause → resume
 > yielded no warning and a stale reason set. The summary also had to move to
 > the far side of the retry it summarizes, or it reported the previous
-> retry's reasons. Honest noise figure: ~1,152/day/symbol (864 cap + 288
-> stale-anchor), not the 2,400 first estimated.
+> retry's reasons.
+>
+> Honest noise figure, MEASURED on the live container over a 1h25m window
+> on 2026-09-03 rather than derived: **~985/day/symbol** — 4 lines per
+> retry (3 cap + 1 stale-anchor) at an observed ~5m51s retry cadence. Not
+> the 2,400 first estimated, and not the ~1,152 the slice itself assumed
+> from a nominal 5-minute retry: a tick takes longer than its 5s budget,
+> so 60 ticks is ~351s of wall clock, not 300.
 
 *Original text:* the back-off works
 as shipped — retry every 60 ticks — but each retry still emits the

@@ -51,8 +51,8 @@ fresh `[Unreleased]` heading created at that time.
   model on the one surface the operator reads.
 - **A starved symbol no longer repeats the same refusal forever.** A symbol
   that cannot place at its anchor re-emitted the identical per-level refusal
-  and stale-anchor warnings on every retry, roughly 1,150 lines a day, for a
-  condition the engine cannot resolve on its own. Those per-level lines drop
+  and stale-anchor warnings on every retry, a measured 985 lines a day, for
+  a condition the engine cannot resolve on its own. Those per-level lines drop
   to debug while the symbol is starved, and only while it is starved: a
   partial layout, and an exchange-side rejection such as an order minimum,
   stay as loud as before.

@@ -988,7 +988,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # from emitting a summary it did not earn: only a real retry
             # boundary qualifies.
             if remainder == 0 and retries % _STARVED_SUMMARY_EVERY_RETRIES == 0:
-                _LOGGER.info(
+                # WARNING, not the INFO the offside heartbeat uses. Offside is
+                # a NORMAL parked state -- price moved outside a grid that is
+                # working as designed. Starvation means the symbol cannot
+                # trade at all until someone changes a cap or the anchor. One
+                # line an hour is not noise, and without it a symbol starved
+                # for 23 hours (the 2026-09-03 XRP case) would emit exactly
+                # one WARNING at entry and nothing after.
+                _LOGGER.warning(
                     "%s still starved after %d retries (%d consecutive ticks): "
                     "placed 0/%d, binding: %s%s",
                     symbol,
@@ -1227,8 +1234,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     #
                     # INFO while starved: a starved symbol cannot place, so
                     # it cannot refresh its own anchor, so this is
-                    # permanently true and repeats on every retry (~288/day
-                    # measured). The starved WARNING and the periodic
+                    # permanently true and repeats on every retry (~246/day
+                    # measured live). The starved WARNING and the periodic
                     # summary are the operator's signal for that symbol.
                     log = _LOGGER.info if symbol in self._starved else _LOGGER.warning
                     log(
@@ -1608,8 +1615,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if not decision.ok:
             # 2026-09-03: while the symbol is STARVED this line repeats
             # verbatim on every retry, forever, for a condition the engine
-            # cannot resolve on its own — measured at ~864/day for one
-            # standing symbol. DEBUG for that case only. The reason survives
+            # cannot resolve on its own — 3 lines per retry, measured at
+            # ~738/day for XRP/USD on the live container. DEBUG for that
+            # case only. The reason survives
             # in the starved-entry WARNING and the periodic summary, which is
             # what makes the demotion safe rather than blinding. A PARTIAL
             # layout (placed > 0) is not starved and keeps the WARNING, and

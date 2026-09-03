@@ -111,10 +111,13 @@ region that Group 4 also needs). No ADR, no schema, no money.
 > and the `services/grid_starvation.py` extraction. 15 new tests, all 16
 > changed behaviors mutation-caught. Two corrections worth carrying forward:
 >
-> - **The noise figure was wrong.** ~1,152/day/symbol (864 per-level cap +
->   288 stale-anchor), not 2,400. The 2,400 came from counting the sell-guard
+> - **The noise figure was wrong twice.** Measured live: **~985/day/symbol**
+>   (~738 per-level cap + ~246 stale-anchor), not 2,400 — and not the ~1,152
+>   this slice itself assumed before measuring. The 2,400 counted sell-guard
 >   deferrals as log lines; they emit a throttled transition + heartbeat in
->   `cost_basis.py` and are essentially silent already.
+>   `cost_basis.py` and are near-silent. The ~1,152 assumed a nominal 300s
+>   retry; the live cadence is ~351s because a tick overruns its 5s budget.
+>   Both wrong numbers came from deriving instead of counting.
 > - **The summary had to move.** Emitted from the back-off gate — the obvious
 >   place — it reports the PREVIOUS retry's reasons, because the gate runs
 >   before the attempt it authorizes. It lives in the layout-outcome hook

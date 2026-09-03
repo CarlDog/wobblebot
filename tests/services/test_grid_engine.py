@@ -2394,6 +2394,9 @@ class TestStarvationLegibility:
             await engine.step(BTC_USD)
         summaries = [r for r in caplog.records if "still starved after" in r.getMessage()]
         assert len(summaries) == 1
+        # WARNING, per the register's spec: a symbol that cannot trade at all
+        # must not go quiet at WARNING level after its one entry line.
+        assert summaries[0].levelno == logging.WARNING
         assert f"{_STARVED_SUMMARY_EVERY_RETRIES} retries" in summaries[0].getMessage()
         assert "binding:" in summaries[0].getMessage()
         assert summaries[0].starved_retries == _STARVED_SUMMARY_EVERY_RETRIES
