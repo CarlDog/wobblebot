@@ -28,7 +28,30 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **The Discord fast path says why it declined.** It reports a classified
+  reason — armed or not, no match, or a command verb whose symbol could not be
+  grounded — instead of logging only its hits. The daemon announces at startup
+  whether the fast path is armed and for how many symbols, and warns when it is
+  inert. A silently inert fast path was previously indistinguishable from the
+  mis-parse it exists to prevent.
+- **An unknown symbol and an ambiguous one are now told apart**, so the
+  operator-facing wording is no longer false for the ambiguous case.
+
+### Fixed
+
+- **The Discord embed footer credits the parser that actually decided.**
+  `status` is a fast-path pattern, so regex-answered queries were crediting the
+  model on the one surface the operator reads.
+- **A book vanish during a degraded dead-man's-switch window is framed calmly.**
+  The previous predicate asked only whether Kraken's confirmed deadline had
+  passed, and the real 2026-09-03 purge landed about 18 seconds before it — so
+  the operator got "investigate before resuming" for the safety net working
+  exactly as designed. An elapsed-window predicate now frames it as the timer
+  firing when the failure streak has consumed at least half the window, shows
+  the numbers, and says to treat it as external if Kraken's own history
+  disagrees.
 
 ## [2.0.4] - 2026-09-03
 

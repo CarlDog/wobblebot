@@ -796,7 +796,12 @@ accepts a `--tick-seconds` override that never reaches `settings.yml`
 while the web reads `config.live.tick_seconds`, so the "at the configured
 tick length" approximation can drift from what the engine actually ran.
 
-**2. The fast path has no failure signal.** Only the hit is logged. Abstain,
+**2. The fast path has no failure signal.** ✅ **SHIPPED 2026-09-03.**
+`classify_fast` returns a `FastPathDecision` carrying the reason and the matched
+verb; `cli/operator` logs an armed-for-N-symbols line at startup (a WARNING when
+inert), a verb that failed to ground at INFO, and ordinary chat at DEBUG. The
+Discord embed footer credits the parser that actually decided, which it did not
+for regex-answered `status` queries. Original text: only the hit is logged. Abstain,
 miss, and never-armed all log nothing, and there is no startup line saying
 the fast path is armed for N symbols. A fast path that is silently inert
 (no `live:` section, or a message shape the regex does not anticipate) is

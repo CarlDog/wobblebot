@@ -50,9 +50,26 @@ Not a release. Next time the dashboard is open, confirm what nobody has:
    settles the two 2026-09-03 rendering findings that were refuted by reading
    CSS rather than by looking, and therefore are not settled.
 
-## Group 1 — Operator legibility
+## Group 1 — Operator legibility — ✅ SHIPPED 2026-09-03
 
 **Items:** `fastpath-signal`, `dms-framing`. No ADR, no schema, no money.
+
+> **Shipped.** `parse_fast` became `classify_fast`, returning a
+> `FastPathDecision` that names the reason (`hit`, `not_armed`, `no_match`,
+> `symbol_unknown`, `symbol_ambiguous`) and the matched verb; `parse_fast` and
+> `resolve_symbol` are gone rather than left as dead production code, with
+> `matching_symbols` as the single grounding primitive. The daemon announces at
+> startup whether the fast path is armed and for how many symbols, warns when it
+> is INERT, logs a verb that failed to ground at INFO and ordinary chat at
+> DEBUG, and the Discord footer now credits whichever parser actually decided.
+> On the DMS side, `_AuthEscalation` tracks when the current failure streak
+> began and exposes `dms_degraded_fraction`; the book-vanish page frames calm
+> when *either* the confirmed deadline has passed *or* the streak has eaten
+> `_DMS_CALM_FRAMING_FRACTION` (0.5) of the window, and it now shows the numbers
+> plus an escape hatch. 19 new tests; all ten changed behaviors mutation-caught.
+>
+> Two in-group decisions resolved as the plan required rather than deferred:
+> the footer **was** fixed, and `parse_fast` **was** retired.
 
 Together because they share a review lens rather than files: *when the daemon
 decides something, is the operator told what actually happened?* Both are the
@@ -203,10 +220,10 @@ reporter.
 
 ## Open questions — operator decisions that block
 
-1. **`hide-symbol` scope.** Restrict hiding to symbols outside `live.symbols`
-   (recommended, and assumed above), or allow any symbol and accept that the
-   summary row must then carry pause/resume/re-anchor controls? The second grows
-   the item past L and moves it behind Group 2.
+1. ~~**`hide-symbol` scope.**~~ **DECIDED 2026-09-03: restrict hiding to
+   symbols outside `live.symbols`.** Operator's call. This is the scope Group 3
+   builds, so the summary row carries no controls and the anchor button shipped
+   in 2.0.4 cannot be silently un-shipped by hiding a traded symbol.
 2. **`offside-since` for the already-parked symbols.** BTC and ETH have been
    offside since 2026-08-19. Either add a floor flag and render "parked at least
    Xh", or leave the column NULL and keep 2.0.4's tick sentence until a genuine
