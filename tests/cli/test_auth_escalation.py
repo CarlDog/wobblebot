@@ -172,3 +172,46 @@ class TestDmsDeadlineNote:
         assert esc.dms_deadline_note(now) == (
             "last confirmed auto-cancel deadline 07:02:56Z (passed 18s ago)"
         )
+
+
+class TestDmsDegradedFraction:
+    """2026-09-03 follow-up: the confirmed-deadline check alone missed the real
+    purge, which landed ~18s BEFORE the client-side deadline. An elapsed-window
+    predicate catches it."""
+
+    def test_healthy_switch_reports_zero(self) -> None:
+        esc = _AuthEscalation()
+        assert esc.dms_degraded_fraction(datetime.now(UTC), 120) == 0.0
+
+    def test_disabled_switch_reports_zero_even_mid_streak(self) -> None:
+        esc = _AuthEscalation()
+        esc.dms_streak_started_at = datetime(2026, 9, 3, 7, 1, 13, tzinfo=UTC)
+        assert esc.dms_degraded_fraction(datetime(2026, 9, 3, 7, 2, 38, tzinfo=UTC), None) == 0.0
+
+    def test_the_real_incident_lands_above_the_threshold(self) -> None:
+        from wobblebot.cli.live import _DMS_CALM_FRAMING_FRACTION
+
+        esc = _AuthEscalation()
+        # Streak began 07:01:13; the book vanished 07:02:38. 85s of a 120s window.
+        esc.dms_streak_started_at = datetime(2026, 9, 3, 7, 1, 13, tzinfo=UTC)
+        frac = esc.dms_degraded_fraction(datetime(2026, 9, 3, 7, 2, 38, tzinfo=UTC), 120)
+        assert 0.70 < frac < 0.72
+        assert frac >= _DMS_CALM_FRAMING_FRACTION, "the 2026-09-03 purge must frame as calm"
+
+    def test_a_brief_blip_stays_below_the_threshold(self) -> None:
+        from wobblebot.cli.live import _DMS_CALM_FRAMING_FRACTION
+
+        esc = _AuthEscalation()
+        esc.dms_streak_started_at = datetime(2026, 9, 3, 7, 1, 13, tzinfo=UTC)
+        frac = esc.dms_degraded_fraction(datetime(2026, 9, 3, 7, 1, 28, tzinfo=UTC), 120)
+        assert frac < _DMS_CALM_FRAMING_FRACTION, "15s of a 120s window is not a purge"
+
+    def test_the_streak_clock_starts_once_and_clears_on_recovery(self) -> None:
+        esc = _AuthEscalation()
+        esc.note_dms_failure()
+        first = esc.dms_streak_started_at
+        assert first is not None
+        esc.note_dms_failure()
+        assert esc.dms_streak_started_at == first, "the clock must not restart mid-streak"
+        esc.note_dms_success()
+        assert esc.dms_streak_started_at is None

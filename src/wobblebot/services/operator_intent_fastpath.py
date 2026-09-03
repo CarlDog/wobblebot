@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.operator_intents import (
@@ -126,54 +127,82 @@ cannot silently miss the deterministic path (or name a kind that no
 longer exists)."""
 
 
-def resolve_symbol(token: str, active_symbols: Sequence[Symbol]) -> Symbol | None:
-    """Ground ``token`` (``BTC`` or ``BTC/USD``) against the active set.
+def matching_symbols(token: str, active_symbols: Sequence[Symbol]) -> tuple[Symbol, ...]:
+    """Every active symbol ``token`` (``BTC`` or ``BTC/USD``) could mean.
 
-    Returns the matching active ``Symbol``, or ``None`` when the token is
-    not active or a bare base is ambiguous (two active symbols share it).
+    Returned as a tuple so the caller can tell the two failure modes apart:
+    empty means the token is not traded, more than one means a bare base is
+    ambiguous. Collapsing both to ``None`` produced a refusal message that
+    was false in the ambiguous case (2026-09-03 review follow-up 2).
     """
     if "/" in token:
         base, quote = token.upper().split("/", 1)
-        for sym in active_symbols:
-            if sym.base.upper() == base and sym.quote.upper() == quote:
-                return sym
-        return None
+        return tuple(
+            s for s in active_symbols if s.base.upper() == base and s.quote.upper() == quote
+        )
     base = token.upper()
-    matches = [sym for sym in active_symbols if sym.base.upper() == base]
-    return matches[0] if len(matches) == 1 else None
+    return tuple(s for s in active_symbols if s.base.upper() == base)
 
 
-def parse_fast(text: str, active_symbols: Sequence[Symbol]) -> OperatorIntent | None:
-    """Parse ``text`` deterministically, or return ``None`` to defer to the LLM.
+@dataclass(frozen=True)
+class FastPathDecision:
+    """What the fast path decided, and why — the ``why`` is the point.
+
+    Before this existed only the HIT was logged: abstain, miss and
+    never-armed all logged nothing, so a fast path that had gone silently
+    inert was indistinguishable from the 1.5B mis-parse it replaced. That
+    is the failure that cost six minutes on 2026-09-03 (review follow-up 2).
+    """
+
+    intent: OperatorIntent | None
+    reason: str
+    """One of: ``hit``, ``not_armed`` (no active symbol set — the fast path
+    is inert), ``no_match`` (not one of the fixed forms), ``symbol_unknown``
+    or ``symbol_ambiguous`` (a command VERB matched but its symbol did not
+    ground). The last two are the interesting declines: the operator was
+    issuing a command and the fast path handed it to the model."""
+
+    verb: str = ""
+    """The pattern that matched, when one did. Empty otherwise."""
+
+    token: str = ""
+    """The symbol token as typed, when a verb matched but did not ground."""
+
+
+def classify_fast(text: str, active_symbols: Sequence[Symbol]) -> FastPathDecision:
+    """Parse ``text`` deterministically, reporting WHY when it declines.
 
     Args:
         text: The operator's raw Discord message.
         active_symbols: The engine's configured trading set
-            (``config.live.symbols``). Empty means "unknown" and makes
-            this function abstain.
+            (``config.live.symbols``). Empty means "unknown" and makes the
+            fast path abstain entirely.
 
     Returns:
-        An ``IntentCommand`` / ``IntentQuery`` when the message is exactly
-        one of the fixed forms; ``None`` for everything else, INCLUDING a
-        matched verb whose symbol does not resolve — that defers to the
-        model rather than refusing (2026-09-03 review, finding 1).
+        A :class:`FastPathDecision`. ``intent`` is non-None only for
+        ``reason == "hit"``; every other reason defers to the model,
+        INCLUDING a matched verb whose symbol does not ground (2026-09-03
+        review, finding 1 — refusing there broke ``cancel orders on all``).
     """
     if not active_symbols:
-        return None
+        return FastPathDecision(intent=None, reason="not_armed")
     for kind, pattern in _PATTERNS:
         match = pattern.match(text)
         if match is None:
             continue
         if kind in _NO_SYMBOL:
-            return _NO_SYMBOL[kind]()
-        symbol = resolve_symbol(match.group("symbol"), active_symbols)
-        if symbol is None:
-            # Defer, do not refuse: the captured token may not be a symbol
-            # at all (``cancel orders on all``, ``pause everything``), and
-            # the model grounds against the same active set anyway.
-            return None
-        return _WITH_SYMBOL[kind](symbol)
-    return None
+            return FastPathDecision(intent=_NO_SYMBOL[kind](), reason="hit", verb=kind)
+        token = match.group("symbol")
+        candidates = matching_symbols(token, active_symbols)
+        if len(candidates) != 1:
+            return FastPathDecision(
+                intent=None,
+                reason="symbol_unknown" if not candidates else "symbol_ambiguous",
+                verb=kind,
+                token=token,
+            )
+        return FastPathDecision(intent=_WITH_SYMBOL[kind](candidates[0]), reason="hit", verb=kind)
+    return FastPathDecision(intent=None, reason="no_match")
 
 
-__all__ = ("FAST_PATH_COMMAND_KINDS", "parse_fast", "resolve_symbol")
+__all__ = ("FAST_PATH_COMMAND_KINDS", "FastPathDecision", "classify_fast", "matching_symbols")

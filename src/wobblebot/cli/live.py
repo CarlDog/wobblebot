@@ -428,6 +428,23 @@ _PERMANENT_AUTH_STRIKES = 3
 # "your book is about to die server-side" critical page.
 _DMS_FAILURE_STREAK_ALERT = 3
 
+_DMS_CALM_FRAMING_FRACTION = 0.5
+"""How much of the dead-man's-switch window an in-progress failure streak must
+have consumed before a book vanish is framed as Kraken's own timer firing.
+
+Measured against the 2026-09-03 incident: the streak ran 07:01:13 -> 07:02:38,
+85s of a 120s window, so the purge landed at 0.71 of the window. The confirmed-
+deadline check alone missed it (the purge preceded the client-side deadline by
+about 18s) and the operator got "investigate before resuming" for the safety net
+working as designed. 0.5 catches that with margin; a threshold above ~0.70 would
+not have. Raising it buys margin against Kraken firing EARLY in the window at the
+cost of reverting to the alarming framing.
+
+This is elapsed WALL CLOCK, not a failure count. The count was rejected as a
+proxy for good reason (see ``dms_trigger_at``) — at a 5s tick even the alert
+threshold of 3 is ~15s — but that objection is about counts, not duration, and
+each failed ping already blocks for the full request timeout."""
+
 
 class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
     """ADR-037 per-session escalation state for cli/live's private calls.
@@ -462,6 +479,12 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
         # untouched by failures, so it still reflects the true deadline
         # while it's being missed.
         self.dms_trigger_at: datetime | None = None
+        # When the CURRENT unbroken run of DMS reset failures began. Wall
+        # clock, so it survives ticks the loop skips entirely (``in_backoff``
+        # returns before the OpenOrders fetch, and a skipped tick would
+        # destroy a per-tick counter). ``None`` whenever the switch is
+        # healthy. Added 2026-09-03 for the calm-framing predicate.
+        self.dms_streak_started_at: datetime | None = None
         # Per-TICK evidence (not per-session) that ``dms_trigger_at`` had
         # already passed as of the START of this tick's DMS ping — i.e.
         # BEFORE a same-tick success could push it back out. Snapshotting
@@ -474,6 +497,10 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
         # (DMS disabled, or ``auth_paused``) and falsely reassure on a
         # vanish that has no DMS evidence backing it this tick.
         self.dms_timer_expired_this_tick = False
+        # Companion per-tick snapshot: the fraction of the DMS window the
+        # in-progress failure streak had consumed as of the START of this
+        # tick. Reset unconditionally each iteration, same as the flag above.
+        self.dms_degraded_fraction_this_tick = 0.0
         self.permanent_auth_strikes = 0
         self.auth_paused = False
 
@@ -537,6 +564,8 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
         skip the alert or double-fire it.
         """
         self.dms_failure_streak += 1
+        if self.dms_streak_started_at is None:
+            self.dms_streak_started_at = datetime.now(UTC)
         if self.dms_failure_streak >= _DMS_FAILURE_STREAK_ALERT and not self.dms_alerted:
             self.dms_alerted = True
             return True
@@ -554,6 +583,19 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
             return f"last confirmed auto-cancel deadline {stamp} ({remaining:.0f}s from now)"
         return f"last confirmed auto-cancel deadline {stamp} (passed {-remaining:.0f}s ago)"
 
+    def dms_degraded_fraction(self, now: datetime, window_seconds: int | None) -> float:
+        """How much of the DMS window the in-progress failure streak has eaten.
+
+        ``0.0`` when the switch is healthy or disabled. Values at or above
+        :data:`_DMS_CALM_FRAMING_FRACTION` mean Kraken's server-side timer
+        plausibly fired on its own, which is what the book-vanish page frames
+        on. Uncapped deliberately: a value above 1.0 says the window was
+        exceeded outright and reads that way in the log.
+        """
+        if self.dms_streak_started_at is None or not window_seconds:
+            return 0.0
+        return (now - self.dms_streak_started_at).total_seconds() / window_seconds
+
     def note_dms_success(self) -> bool:
         """Record a successful DMS reset call specifically (the
         ``CancelAllOrdersAfter`` ping in the main loop, NOT the generic
@@ -563,6 +605,7 @@ class _AuthEscalation:  # pylint: disable=too-many-instance-attributes
         exactly when this ends a DMS-failure alert episode."""
         recovered = self.dms_alerted
         self.dms_failure_streak = 0
+        self.dms_streak_started_at = None
         self.dms_alerted = False
         self.permanent_auth_strikes = 0
         self.backoff_seconds = 0.0
@@ -951,14 +994,28 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 dms_timer_expired = (
                     escalation.dms_timer_expired_this_tick if escalation is not None else False
                 )
-                if dms_timer_expired:
+                dms_degraded_fraction = (
+                    escalation.dms_degraded_fraction_this_tick if escalation is not None else 0.0
+                )
+                # Either predicate is enough. The confirmed-deadline check
+                # answers "could the timer have fired by now"; it missed the
+                # 2026-09-03 purge, which landed ~18s BEFORE the client-side
+                # deadline, so the operator got the alarming framing for the
+                # safety net working exactly as designed. The elapsed-window
+                # fraction catches that case: 85s of a 120s window had already
+                # been eaten by the failure streak when the book went.
+                dms_window_degraded = dms_degraded_fraction >= _DMS_CALM_FRAMING_FRACTION
+                if dms_timer_expired or dms_window_degraded:
+                    window = live.dead_mans_switch_seconds
                     message = (
                         f"Kraken's dead-man's-switch reset was failing ({dms_streak} "
-                        "consecutive failures) immediately before this — orders were "
+                        f"consecutive failures, {dms_degraded_fraction:.0%} of the "
+                        f"{window}s window) immediately before this — orders were "
                         "most likely auto-cancelled by Kraken's own safety timer during "
                         f"an API disruption, not an external action. Placement is HELD "
                         f"for {symbol} until you resume it (Discord: 'resume {symbol}'). "
-                        "Resume when ready."
+                        "Resume when ready; if Kraken's own order history disagrees with "
+                        "these numbers, treat it as an external cancel instead."
                     )
                 else:
                     message = (
@@ -978,6 +1035,8 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                         "tick": tick,
                         "dms_failure_streak": dms_streak,
                         "dms_timer_expired": dms_timer_expired,
+                        "dms_degraded_fraction": round(dms_degraded_fraction, 3),
+                        "dms_window_degraded": dms_window_degraded,
                     },
                 )
             # ADR-038 fee-drift tripwire: page once per symbol per
@@ -1662,6 +1721,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # its early-exit conditions) can skip setting it. A book-vanish
             # message must never see stale True evidence from a prior tick.
             escalation.dms_timer_expired_this_tick = False
+            # Same snapshot-before-the-ping discipline as the deadline check
+            # below, and for the same reason: a same-tick recovery must not
+            # erase evidence of the episode that just ended.
+            escalation.dms_degraded_fraction_this_tick = escalation.dms_degraded_fraction(
+                datetime.now(UTC), live.dead_mans_switch_seconds
+            )
             if live.dead_mans_switch_seconds is not None and not escalation.auth_paused:
                 # Snapshot BEFORE this tick's ping call: if Kraken's last
                 # CONFIRMED promise has already passed, the server-side

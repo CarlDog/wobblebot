@@ -109,10 +109,13 @@ from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.notification_embed_render import render_notification_embed
-from wobblebot.services.operator_intent_fastpath import parse_fast
+from wobblebot.services.operator_intent_fastpath import classify_fast
 from wobblebot.services.operator_service import OperatorService
 
 _LOGGER = logging.getLogger("wobblebot.cli.operator")
+
+_FAST_PATH_PARSER_NAME = "the deterministic fast path"
+"""What the Discord footer credits when the regex, not the model, decided."""
 
 
 # --------------------------------------------------------------------- #
@@ -753,18 +756,51 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     )
 
     # Deterministic fast path (2026-09-03 recovery ergonomics): the fixed
-    # command grammar never reaches the model. ``None`` means "not one of
-    # the fixed forms" and the LLM parse below proceeds exactly as before.
-    fast_intent = parse_fast(message.content, active_symbols)
+    # command grammar never reaches the model. Anything it declines falls
+    # through to the LLM parse below, exactly as before it existed.
+    decision = classify_fast(message.content, active_symbols)
+    parsed_by = _FAST_PATH_PARSER_NAME if decision.intent is not None else assistant_model_name
     intent: OperatorIntent
-    if fast_intent is not None:
-        intent = fast_intent
+    if decision.intent is not None:
+        intent = decision.intent
         _LOGGER.info(
-            "operator message parsed deterministically (parse_path=fast, intent_kind=%s)",
-            fast_intent.kind,
-            extra={"parse_path": "fast", "intent_kind": fast_intent.kind},
+            "operator message parsed deterministically (parse_path=fast, verb=%s, "
+            "intent_kind=%s)",
+            decision.verb,
+            decision.intent.kind,
+            extra={
+                "parse_path": "fast",
+                "verb": decision.verb,
+                "intent_kind": decision.intent.kind,
+            },
         )
     else:
+        # Review follow-up 2: the DECLINE is the diagnostic half. A verb that
+        # matched and failed to ground is logged at INFO — the operator was
+        # issuing a command and the model is now guessing at it. Everything
+        # else is ordinary chat and stays at DEBUG so the channel's normal
+        # traffic does not drown the signal.
+        if decision.reason in ("symbol_unknown", "symbol_ambiguous"):
+            _LOGGER.info(
+                "fast path matched %r but could not ground %r (reason=%s); deferring to %s",
+                decision.verb,
+                decision.token,
+                decision.reason,
+                assistant_model_name,
+                extra={
+                    "parse_path": "deferred",
+                    "verb": decision.verb,
+                    "token": decision.token,
+                    "reason": decision.reason,
+                },
+            )
+        else:
+            _LOGGER.debug(
+                "fast path declined (reason=%s); deferring to %s",
+                decision.reason,
+                assistant_model_name,
+                extra={"parse_path": "deferred", "reason": decision.reason},
+            )
         try:
             intent = await assistant.parse_intent(context)
         except AssistantError as exc:
@@ -813,7 +849,7 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         transport=transport,
         outbound_channel_id=outbound_channel_id,
         confirm_ttl_seconds=confirm_ttl_seconds,
-        assistant_model_name=assistant_model_name,
+        parsed_by=parsed_by,
     )
 
 
@@ -827,7 +863,7 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
     transport: DiscordTransport,
     outbound_channel_id: str,
     confirm_ttl_seconds: int,
-    assistant_model_name: str,
+    parsed_by: str,
 ) -> None:
     """Dispatch the parsed intent to the right handler."""
     match intent:
@@ -844,13 +880,13 @@ async def _route_intent(  # pylint: disable=too-many-arguments,too-many-locals
         case IntentQuery():
             await _handle_query_intent(
                 intent=intent,
+                parsed_by=parsed_by,
                 channel_id=channel_id,
                 user_id=user_id,
                 operator_storage=operator_storage,
                 operator_service=operator_service,
                 transport=transport,
                 outbound_channel_id=outbound_channel_id,
-                assistant_model_name=assistant_model_name,
             )
         case IntentConversational():
             await _handle_conversational(
@@ -963,7 +999,7 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
     operator_service: OperatorService,
     transport: DiscordTransport,
     outbound_channel_id: str,
-    assistant_model_name: str,
+    parsed_by: str,
 ) -> None:
     """Answer a Query via OperatorService and post an embed."""
     try:
@@ -985,7 +1021,10 @@ async def _handle_query_intent(  # pylint: disable=too-many-arguments
         return
 
     embed_kwargs = render_query_embed(result)
-    embed_kwargs["footer"] = f"parsed by {assistant_model_name}"
+    # Review follow-up 2: name the parser that ACTUALLY decided. ``status``
+    # is a fast-path pattern, so this footer used to credit the model for
+    # messages the regex answered — on the one surface the operator reads.
+    embed_kwargs["footer"] = f"parsed by {parsed_by}"
     try:
         await transport.send_embed(outbound_channel_id, **embed_kwargs)
     except DiscordTransportError as exc:
@@ -1537,6 +1576,29 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         ),
         name="operator-history-backfill",
     )
+
+    # Review follow-up 2: say out loud whether the deterministic fast path is
+    # armed. With no ``live:`` section active_symbols is empty and the fast
+    # path abstains on every message — behaviorally identical to not having
+    # it, and previously silent. An inert fast path is the failure it exists
+    # to prevent, so it announces itself either way.
+    if active_symbols:
+        _LOGGER.info(
+            "deterministic fast path armed for %d symbol(s): %s",
+            len(active_symbols),
+            ", ".join(str(s) for s in active_symbols),
+            extra={
+                "fast_path_armed": True,
+                "fast_path_symbol_count": len(active_symbols),
+            },
+        )
+    else:
+        _LOGGER.warning(
+            "deterministic fast path INERT: armed for %d symbols, so every operator "
+            "message goes to the model (check config.live.symbols)",
+            len(active_symbols),
+            extra={"fast_path_armed": False, "fast_path_symbol_count": len(active_symbols)},
+        )
 
     _LOGGER.info(
         "operator daemon starting (outbound_channel_id=%s, allowed_user_ids=%s, "

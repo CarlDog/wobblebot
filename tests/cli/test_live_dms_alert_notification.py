@@ -171,3 +171,64 @@ async def test_streak_start_logs_the_last_confirmed_deadline(
     stamped = alerts[0].notification.context["last_confirmed_trigger_at"]
     assert isinstance(stamped, str) and stamped.startswith(exch.armed_at.strftime("%Y-%m-%d"))
     assert datetime.fromisoformat(stamped).tzinfo is not None, "must be tz-aware"
+
+
+class _DmsFailsThenVanishesExchange(MockExchangeAdapter):
+    """DMS reset fails from the first call; after ``vanish_after`` pings the
+    book is cancelled on the EXCHANGE ONLY, so the next tick sees it gone.
+    Drives the real ``_run_loop`` wiring rather than hand-setting escalation
+    fields — the 2026-09-03 review's lesson was that a test pinning the
+    message while stubbing its input does not pin the input."""
+
+    def __init__(self, *args: object, vanish_after: int, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.dms_call_count = 0
+        self._vanish_after = vanish_after
+        self.engine: GridEngine | None = None
+        self.storage: SQLiteStorageAdapter | None = None
+        self._vanished = False
+
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
+        self.dms_call_count += 1
+        if self.dms_call_count >= self._vanish_after and not self._vanished:
+            self._vanished = True
+            assert self.storage is not None
+            for order in await self.storage.get_open_orders(symbol=BTC_USD):
+                self.inject_partial_cancel(order, filled_amount=Decimal("0"))
+        elif self._vanished and self.engine is not None:
+            self.engine.request_stop()
+        raise ExchangeError("simulated stall", codes=["EService:Unavailable"])
+
+
+async def test_the_vanish_page_carries_a_real_computed_window_fraction(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """The elapsed-window fraction must be COMPUTED by the loop, not merely
+    rendered. Hardcoding the per-tick snapshot to 0.0 has to fail here."""
+    exch = _DmsFailsThenVanishesExchange(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+        vanish_after=3,
+    )
+    engine = GridEngine(exch, storage, grid_config(), safety_config())
+    exch.engine = engine
+    exch.storage = storage
+    notifier = SqliteNotifierAdapter(storage)
+
+    # The config floor is a 10s window, so slow the tick down until a handful
+    # of them is a measurable fraction of it (~1.5s of 10s here). Worth the
+    # couple of seconds: this is the only test that exercises the computation.
+    await _run_loop(
+        exch,
+        engine,
+        _live(tick_seconds=0.5, dead_mans_switch_seconds=10),
+        storage,
+        asyncio.Event(),
+        notifier=notifier,
+    )
+
+    rows = await storage.get_notifications()
+    vanish = [r for r in rows if r.notification.title.startswith("Book vanished")]
+    assert vanish, "the fixture must actually vanish the book"
+    frac = vanish[0].notification.context["dms_degraded_fraction"]
+    assert frac > 0, "the loop must compute the fraction, not leave it at zero"
