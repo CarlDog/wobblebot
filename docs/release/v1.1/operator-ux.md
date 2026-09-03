@@ -594,6 +594,57 @@ there currently isn't one."
 **Trigger:** fired 2026-09-03. Small (S); ships with the fast-path
 entry above.
 
+### Offside badge tooltip — say WHY the symbol is offside (operator note 2026-09-03)
+
+**What:** hovering the OFFSIDE badge on a symbol card should explain, in
+plain language, why the engine considers the symbol offside and what
+clears it. Today the badge's `title` is generic — "price outside the grid
+band for N ticks — engine parked" — which names neither the side, the
+band, nor the exit. The operator's ask, verbatim: "hovering over the
+'offside' badge on the dashboard should inform the user WHY it's
+considered offside, in a concise, easy to understand message."
+
+**Proposed message shape** (numbers formatted like the rest of the card;
+one sentence for the cause, one for the consequence and the two exits):
+
+> Price $80,812 is ABOVE the grid's top level $70,029. The grid is
+> anchored at $64,246 (3 levels × 3%), so the engine parks — no orders —
+> until price returns to $58,464–$70,029 or you re-anchor. Offside for
+> ~2d 8h.
+
+or "… is BELOW the grid's bottom level $0.2236 …" for the other side.
+
+**Where the facts come from (all already available to `cli/web`):**
+- Side + bounds: `grid_state` (`reference_price`, `spacing_percentage`,
+  `levels_above` / `levels_below`) through `domain.grid.compute_grid_levels`
+  — the same numbers the engine logs in its own "offside at X (band A -
+  B)" WARNING, so the tooltip and the log agree by construction. Do NOT
+  derive the band from open orders (the sparkline's ladder band does) —
+  an offside symbol has none, which is the whole point.
+- Current price: `snapshot.current_prices[symbol]` (already on the card).
+- Duration: `engine_state.offside_ticks × live.tick_seconds` is an
+  estimate that survives restarts only as a tick count. Persisting an
+  `offside_since` timestamp on the `engine_state` row is the honest
+  version and is a one-column addition; ship the tick-based estimate
+  first if the column is out of scope for the slice.
+
+**Implementation sketch:** a small pure helper in `web/routes/status.py`
+(next to the sparkline builder) returning an `OffsideExplanation`
+(side, current, low, high, anchor, spacing, levels, since) for each
+offside symbol in the snapshot; the template renders it into the badge's
+`title`, and — per the mobile CSS pass — as a tap-to-reveal on touch,
+where `title` never shows. Tests: above-band, below-band, and a
+stale/absent `engine_state` row (renders nothing — the same posture the
+badge itself takes).
+
+**Relation:** pairs with the per-symbol anchor button entry above — the
+tooltip names re-anchor as one of the two exits; the button beside the
+badge is how the operator takes it.
+
+**Trigger:** operator note 2026-09-03, on a day BTC/USD and ETH/USD had
+sat offside ABOVE their 08-19 bands for the whole session with the badge
+giving no hint which side or how far. Small (S).
+
 ### Pause stays non-destructive (+ candidate "halt" compound)
 
 **Operator question 2026-08-09:** "should a 'pause' action also undo
