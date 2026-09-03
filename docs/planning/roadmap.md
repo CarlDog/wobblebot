@@ -2247,6 +2247,20 @@ dms_trigger_at` as of the START of the tick, so a same-tick
    incident's own `reanchor SOL/USD`) and a per-symbol anchor button in the
    status card's actions cluster (2 card tests). Gate: black/isort clean, mypy
    clean, pylint 10.00/10, logging rule 1 clean.
+10. **`2.0.2` RELEASED ✅ 2026-09-03 — tagged and published; deploy is a separate
+    step.** Patch over 2.0.1 carrying item 9 (the deterministic Discord fast
+    path and the per-symbol re-anchor button) plus two register entries filed
+    the same day (hide-symbol eye-icon toggle; sell-side-only extension while
+    offside-high, an ADR-006 amendment candidate). No configuration schema
+    change. Ceremony receipts: release-prep PR #122 (`5d63a77`; full gate green,
+    3707 passed / 5 skipped) merged as `76819c6`; annotated tag `v2.0.2` on that
+    commit; tag-triggered `CI & Publish to GHCR` run 33792564621 with
+    `test=success` and `build-and-push=success`; GHCR version tagged `2.0.2` /
+    `sha-76819c6` / `2.0` (digest `sha256:1d1f6f0a…`, 18:52 UTC); GitHub Release
+    published 18:52 UTC (<https://github.com/CarlDog/wobblebot/releases/tag/v2.0.2>).
+    **`IMAGE_TAG` on stack 158 is still `2.0.1`** — the deploy is the operator's
+    own explicit step (all 8 daemons bounce, including live) and is not part of
+    the cut.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
