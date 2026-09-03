@@ -28,6 +28,10 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.3] - 2026-09-03
+
 ### Added
 
 - **Offside badge hover popover.** The OFFSIDE badge on a symbol card keeps
@@ -43,6 +47,9 @@ fresh `[Unreleased]` heading created at that time.
   auto-cancel deadline sits relative to now, and the 3-strike alert carries
   that timestamp in its context. This is the fact the 2026-09-03 post-mortem
   could not recover.
+
+No configuration schema change. Upgrading from 2.0.2 is an `IMAGE_TAG`
+bump; nothing else moves.
 
 ## [2.0.2] - 2026-09-03
 
