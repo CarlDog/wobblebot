@@ -596,13 +596,18 @@ entry above.
 
 ### Offside badge tooltip — say WHY the symbol is offside (operator note 2026-09-03)
 
-**What:** hovering the OFFSIDE badge on a symbol card should explain, in
-plain language, why the engine considers the symbol offside and what
-clears it. Today the badge's `title` is generic — "price outside the grid
-band for N ticks — engine parked" — which names neither the side, the
-band, nor the exit. The operator's ask, verbatim: "hovering over the
-'offside' badge on the dashboard should inform the user WHY it's
-considered offside, in a concise, easy to understand message."
+**What:** hovering the OFFSIDE badge on a symbol card should open a
+small informational popup that explains, in plain language, why the
+engine considers the symbol offside and what clears it. **The badge
+itself does not change — it still reads OFFSIDE.** This is an
+additional hover popover beside the badge, not a replacement of the
+label, and not the browser's bare `title` tooltip (today's `title` is
+generic — "price outside the grid band for N ticks — engine parked" —
+and names neither the side, the band, nor the exit). The operator's
+ask, verbatim: "hovering over the 'offside' badge on the dashboard
+should inform the user WHY it's considered offside, in a concise, easy
+to understand message" — and, clarifying: "Don't replace the 'OFFSIDE'
+text … it should have a popup informational bit on hover."
 
 **Proposed message shape** (numbers formatted like the rest of the card;
 one sentence for the cause, one for the consequence and the two exits):
@@ -631,11 +636,14 @@ or "… is BELOW the grid's bottom level $0.2236 …" for the other side.
 **Implementation sketch:** a small pure helper in `web/routes/status.py`
 (next to the sparkline builder) returning an `OffsideExplanation`
 (side, current, low, high, anchor, spacing, levels, since) for each
-offside symbol in the snapshot; the template renders it into the badge's
-`title`, and — per the mobile CSS pass — as a tap-to-reveal on touch,
-where `title` never shows. Tests: above-band, below-band, and a
-stale/absent `engine_state` row (renders nothing — the same posture the
-badge itself takes).
+offside symbol in the snapshot; the template renders it as a small
+popover anchored to the badge (a wrapper with CSS `:hover` /
+`:focus-within`, same visual family as the re-anchor banner), leaving
+the OFFSIDE label untouched. A `title` fallback is fine but is not the
+primary surface — native tooltips are delayed, unstyled, and invisible
+on touch, where the popover opens on tap instead. Tests: above-band,
+below-band, and a stale/absent `engine_state` row (renders nothing —
+the same posture the badge itself takes).
 
 **Relation:** pairs with the per-symbol anchor button entry above — the
 tooltip names re-anchor as one of the two exits; the button beside the
