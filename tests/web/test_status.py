@@ -1760,3 +1760,43 @@ class TestFillFlash:
             body = client.get("/dashboard").text
         assert "Recent Fills (Last 1)" in body  # the row DID render
         assert "fill-fresh" not in body
+
+
+@pytest.mark.asyncio
+class TestReanchorIconButton:
+    """Per-symbol anchor button (operator design 2026-09-03). The drift
+    banner's Re-anchor button exists only for symbols WITH open orders,
+    so a held symbol with a purged book — the post-DMS recovery state —
+    had no UI path to re-anchor. The card icon renders for every symbol,
+    open orders or not, and posts to the SAME route the banner uses."""
+
+    async def test_paused_symbol_with_no_open_orders_still_gets_the_reanchor_form(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        # A recent trade makes the card render; there are NO open orders,
+        # so no banner can exist — every re-anchor form on the page is
+        # the card icon's.
+        await live_storage.save_trade(_make_trade())
+        await operator_storage.save_engine_state(_engine_row(paused=True, age_seconds=2))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "reanchor-banner" not in resp.text
+            assert resp.text.count('action="/commands/reanchor"') == 1
+            assert "icon-btn-reanchor" in resp.text
+            assert 'name="symbol" value="BTC/USD"' in resp.text
+            # The state-aware pause/resume icon is untouched.
+            assert 'action="/commands/resume"' in resp.text
+
+    async def test_active_symbol_renders_pause_and_reanchor_side_by_side(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(_engine_row(paused=False, age_seconds=2))
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            resp = client.get("/dashboard")
+            assert 'action="/commands/pause"' in resp.text
+            assert "icon-btn-reanchor" in resp.text
+            assert 'hx-post="/commands/reanchor" hx-target="#modal"' in resp.text
