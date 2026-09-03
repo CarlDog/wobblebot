@@ -950,3 +950,57 @@ starved state (it is the same information every retry), demote the
 per-retry cap-refusal lines to DEBUG while starved, and add a "still
 starved after N retries" WARNING carrying the same breakdown so a
 permanently-starved symbol stays visible without being noisy.
+
+### Sell-side-only extension while offside-high — take profit into strength (operator question 2026-09-03; ADR-006 amendment)
+
+**The question, verbatim:** "When the selling price is favorable to our
+held inventory, can offside clear one side of activity and hold the
+rest?"
+
+**Today: no.** Offside is per-symbol and all-or-nothing — `_tick` does
+no re-layout and places no counters while `offside`, and leaves
+whatever is already resting. On the way UP the sell side clears itself:
+the ladder's sells fill as price climbs through them (DOGE/USD's 0.0885
+sell filled at 15:52Z on 2026-09-03, right before the symbol went
+offside above its band). Once price is above the top level there is
+nothing left to sell into — the engine creates no new sell levels above
+price, and a fill detected while offside gets no counter. Held
+inventory that would now sell at a profit just sits. The buys below
+keep resting, which is correct.
+
+**Proposed:** while a symbol is offside ABOVE its band and the cost-basis
+guard says a sell at the current price would be profitable, lay fresh
+SELL levels at +1, +2, +3 spacings above the current price (a trailing
+sell ladder) and leave the buy side parked exactly as ADR-006 requires.
+Nothing about the buy side changes — no re-centering, no fresh buys on
+the way down — so the trend-chasing scenario ADR-006 rejects is
+untouched; this is taking profit into strength, the opposite trade. The
+cost-basis guard (ADR-032) already vetoes loss sells, and the inventory
+caps (ADR-039) are relieved, not strained, by every fill.
+
+**Why it needs an ADR, not a slice:** ADR-006 decision 1 ("stay parked;
+rejected: automatic re-centering") is ratified, and this is a partial,
+one-sided re-centering. The amendment should state the asymmetry
+explicitly — sells may extend, buys never do — and pin it with a test
+that an offside-LOW symbol places nothing (the mirror case is exactly
+the loss-averaging the stranded-capital HOLD ruling forbids). It
+interacts with ADR-031: a manual re-anchor is today's equivalent
+(SOL/USD's 2026-09-03 re-anchor at 104.29 produced three sells above
+price and buys the caps refused); the proposal automates that sell half
+only, and leaves the anchor where it is so a return to onside finds the
+original grid intact.
+
+**Open questions for the ADR:**
+1. Cadence while it keeps rallying — extend once per band exit, or
+   ratchet upward as each +1 fills?
+2. Size — the standard `order_size_usd` per level, capped by held
+   inventory above cost.
+3. Anchor — unchanged (the extension is a ladder ABOVE the band, not a
+   new grid).
+4. Dashboard — the OFFSIDE badge should say the extension is live
+   ("3 sells trailing above"), which the offside-popover entry in
+   `operator-ux.md` can carry.
+
+**Trigger:** operator question 2026-09-03, on a day BTC, ETH, DOGE and XRP
+all sat offside ABOVE their bands with sellable inventory. Medium (M) +
+ADR.

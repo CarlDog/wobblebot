@@ -568,6 +568,7 @@ next time its file is touched (trigger noted where sharper):
 - **Auto-pause on news-role HIGH risk** — after the P4 evaluator + calibrated threshold + **ADR-002 ratified-with-exception**; consumes the P1 Kraken-status feed.
 - **Confidence-driven grid extension** — post-P4 + regime detector + 60–90d data + own ADR; hard `max_extension_budget_usd`; no auto-apply.
 - **Bot learning** (discussion stub) — after 60–90d of outcome data makes the shape choice data-informed (RL rejected).
+- **Sell-side-only extension while offside-high** *(operator question 2026-09-03)* — take profit into strength: when a symbol is offside ABOVE its band and the cost-basis guard says a sell would be profitable, lay fresh SELL levels above the current price and leave the buy side parked. ADR-006 amendment (a partial, one-sided re-centering; the buy side never extends, pinned by an offside-LOW-places-nothing test). Detail in `engine.md`.
 
 ### Regime / Oracle track (PARKED per 2026-05-30 — heuristic detection doesn't beat hold)
 - **Market regime detector** — research produces detection that beats buy-and-hold **and** a 60–90d shadow-run validates it before any consumer wires into `cli/live`. Consumes OHLC+TA (P2).
