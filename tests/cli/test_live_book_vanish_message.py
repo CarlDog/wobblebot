@@ -102,12 +102,15 @@ async def test_message_cites_dms_when_timer_had_expired(storage: SQLiteStorageAd
 
     notification = await _vanish_notification(storage)
     message = notification.message
-    assert "dead-man's-switch reset was failing (7 consecutive failures)" in message
+    assert "dead-man's-switch reset was failing (7 consecutive failures" in message
     assert "not an external action" in message
     assert "Resume when ready" in message
     assert "Investigate before resuming" not in message
     assert notification.context["dms_failure_streak"] == 7
     assert notification.context["dms_timer_expired"] is True
+    # The confirmed-deadline path alone still frames calm, with no elapsed-window
+    # evidence to show: this fixture never ran a real streak clock.
+    assert notification.context["dms_window_degraded"] is False
 
 
 async def test_message_stays_sharp_when_dms_was_healthy(storage: SQLiteStorageAdapter) -> None:
@@ -262,3 +265,56 @@ async def test_same_tick_dms_recovery_still_gets_the_reassuring_framing(
     # The point of the fix: this held despite the streak never having
     # risen at all -- pure count-based evidence would have missed it.
     assert notification.context["dms_failure_streak"] == 0
+
+
+async def test_message_frames_calm_from_the_elapsed_window_alone(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """2026-09-03: the purge landed ~18s BEFORE the client-side deadline, so the
+    confirmed-deadline check read False and the operator got the alarming
+    framing for the safety net working exactly as designed. The elapsed-window
+    predicate is what catches that, on its own."""
+    exchange = _exchange()
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    notifier = SqliteNotifierAdapter(storage)
+    await _vanish_the_book(exchange, engine, storage)
+
+    escalation = _AuthEscalation()
+    escalation.dms_failure_streak = 6
+    escalation.dms_timer_expired_this_tick = False  # the deadline had NOT passed
+    escalation.dms_degraded_fraction_this_tick = 0.71  # 85s of a 120s window
+
+    await _run_one_tick(
+        exchange, engine, _live(), 1, Decimal("100000"), notifier, escalation=escalation
+    )
+
+    notification = await _vanish_notification(storage)
+    assert "not an external action" in notification.message
+    assert "71% of the" in notification.message
+    assert "Investigate before resuming" not in notification.message
+    assert notification.context["dms_timer_expired"] is False
+    assert notification.context["dms_window_degraded"] is True
+    assert notification.context["dms_degraded_fraction"] == 0.71
+
+
+async def test_a_brief_blip_still_frames_sharp(storage: SQLiteStorageAdapter) -> None:
+    """Below the threshold the sharp framing must survive — a whole-book vanish
+    with only a moment of DMS trouble is not evidence of a purge."""
+    exchange = _exchange()
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    notifier = SqliteNotifierAdapter(storage)
+    await _vanish_the_book(exchange, engine, storage)
+
+    escalation = _AuthEscalation()
+    escalation.dms_failure_streak = 2
+    escalation.dms_timer_expired_this_tick = False
+    escalation.dms_degraded_fraction_this_tick = 0.12
+
+    await _run_one_tick(
+        exchange, engine, _live(), 1, Decimal("100000"), notifier, escalation=escalation
+    )
+
+    notification = await _vanish_notification(storage)
+    assert "Investigate before resuming" in notification.message
+    assert "not an external action" not in notification.message
+    assert notification.context["dms_window_degraded"] is False
