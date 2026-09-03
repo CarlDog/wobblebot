@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -17,11 +18,16 @@ from tests.fixtures import safety_config as _safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import CoinGridConfig
+from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
-from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.grid_engine import (
+    _STARVED_RETRY_EVERY_TICKS,
+    _STARVED_SUMMARY_EVERY_RETRIES,
+    GridEngine,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -2214,6 +2220,18 @@ class TestStarvationBackoff:
     """A layout that places 0/N enters a back-off instead of the old
     every-tick silent retry loop; any placement clears it."""
 
+    @staticmethod
+    def _one_tick_before_retry(engine: GridEngine, symbol: Symbol = BTC_USD) -> None:
+        """Park the starved clock one tick short of the next retry boundary.
+
+        Reaches into ``_starved`` rather than stepping 59 times: the point
+        under test is the boundary, not the counting. Uses ``replace`` so the
+        state's captured reasons survive the fast-forward.
+        """
+        engine._starved[symbol] = replace(
+            engine._starved[symbol], ticks=_STARVED_RETRY_EVERY_TICKS - 1
+        )
+
     def _broke_exchange(self) -> MockExchangeAdapter:
         # No USD (BUYs refused) and no BTC (SELLs refused): 0/6 placeable.
         return MockExchangeAdapter(
@@ -2239,29 +2257,24 @@ class TestStarvationBackoff:
         assert len(starved_warns) == 1  # transition WARN once, not per tick
 
     async def test_retry_fires_on_the_retry_tick(self, storage: SQLiteStorageAdapter) -> None:
-        from wobblebot.services.grid_engine import _STARVED_RETRY_EVERY_TICKS
-
         engine = GridEngine(self._broke_exchange(), storage, _grid_config(), _safety_config())
         await engine.step(BTC_USD)  # starve
-        # Fast-forward to one tick before the retry boundary.
-        engine._starved_ticks[BTC_USD] = _STARVED_RETRY_EVERY_TICKS - 1
+        self._one_tick_before_retry(engine)
         result = await engine.step(BTC_USD)
         assert result.refusals == 6  # the retry attempted (and re-failed)
 
     async def test_funded_retry_recovers_and_clears(
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from wobblebot.services.grid_engine import _STARVED_RETRY_EVERY_TICKS
-
         exchange = self._broke_exchange()
         engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
         await engine.step(BTC_USD)  # starve
         exchange._balances["USD"] = Decimal("100")  # funds free up
-        engine._starved_ticks[BTC_USD] = _STARVED_RETRY_EVERY_TICKS - 1
+        self._one_tick_before_retry(engine)
         with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
             result = await engine.step(BTC_USD)
         assert result.placed == 3  # the 3 BUYs now fit
-        assert BTC_USD not in engine._starved_ticks
+        assert BTC_USD not in engine._starved
         assert any("recovered from starvation" in r.getMessage() for r in caplog.records)
 
     async def test_partial_placement_never_starves(self, storage: SQLiteStorageAdapter) -> None:
@@ -2272,7 +2285,7 @@ class TestStarvationBackoff:
         engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
         result = await engine.step(BTC_USD)
         assert result.placed == 3  # BUYs fit, SELLs refused
-        assert BTC_USD not in engine._starved_ticks
+        assert BTC_USD not in engine._starved
 
     async def test_zero_placement_reanchor_enters_backoff(
         self, storage: SQLiteStorageAdapter
@@ -2281,10 +2294,201 @@ class TestStarvationBackoff:
         the next tick a busy loop."""
         engine = GridEngine(self._broke_exchange(), storage, _grid_config(), _safety_config())
         await engine.step(BTC_USD)  # initialize starved state exists
-        engine._starved_ticks.pop(BTC_USD, None)  # isolate the reanchor path
+        engine._starved.pop(BTC_USD, None)  # isolate the reanchor path
         ok, message = await engine.request_reanchor(BTC_USD)
         assert ok is True
         assert "placed 0/6" in message
-        assert engine._starved_ticks.get(BTC_USD) == 1
+        assert engine._starved[BTC_USD].ticks == 1
         follow_up = await engine.step(BTC_USD)
         assert follow_up.refusals == 0  # backed off, no attempt
+
+
+# ---------------------------------------------------------------------------
+# Starvation legibility (2026-09-03) — the entry WARNING and the periodic
+# summary carry the reasons the demoted per-level lines used to carry.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestStarvationLegibility:
+    """Demoting the per-level refusal to DEBUG while starved is only safe
+    because the reason survives elsewhere. These tests pin BOTH halves."""
+
+    def _capped_exchange(self) -> MockExchangeAdapter:
+        """Funded, but every level will be refused by a safety cap."""
+        return MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+
+    def _capped_config(self) -> SafetyConfig:
+        """A per-coin exposure cap below one order refuses every level.
+
+        Chosen over the order-count cap because every cap is schema-bound
+        to ``gt=0``, so no cap can be set to a flat zero. This one is
+        checked before the BUY-only arms and so refuses SELLs too, which
+        is what makes all six levels come back with one identical reason.
+        """
+        return _safety_config(max_per_coin="0.01")
+
+    async def test_the_starved_warning_names_the_binding_reason(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+        assert result.placed == 0
+        starved = [r for r in caplog.records if "layout starved" in r.getMessage()]
+        assert len(starved) == 1
+        # The reason must be IN the message, not only in extra= (rule 1).
+        assert "binding:" in starved[0].getMessage()
+        assert "x6" in starved[0].getMessage()
+        assert sum(starved[0].refusal_reasons.values()) == 6
+
+    async def test_per_level_cap_refusals_go_quiet_only_once_starved(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The FIRST layout is not yet starved, so its per-level refusals
+        still WARN; the retry, now starved, emits none."""
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+            first_pass = [r for r in caplog.records if "refused by safety cap" in r.getMessage()]
+            caplog.clear()
+            TestStarvationBackoff._one_tick_before_retry(engine)
+            await engine.step(BTC_USD)
+            retry_pass = [r for r in caplog.records if "refused by safety cap" in r.getMessage()]
+        assert len(first_pass) == 6  # entry layout stays loud
+        assert retry_pass == []  # the forever-repeating retry does not
+
+    async def test_a_partial_layout_keeps_the_per_level_warning(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """placed > 0 is not starved, so nothing is demoted — the demotion
+        must not quietly swallow a real partial-placement refusal."""
+        engine = GridEngine(
+            self._capped_exchange(),
+            storage,
+            _grid_config(),
+            _safety_config(max_orders=3),
+        )
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            result = await engine.step(BTC_USD)
+        assert result.placed == 3
+        assert BTC_USD not in engine._starved
+        assert [r for r in caplog.records if "refused by safety cap" in r.getMessage()]
+
+    async def test_the_periodic_summary_fires_and_names_the_reason(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The old heartbeat was unreachable: it counted ticks against 240
+        while the retry gate counted them against 60, and 240 % 60 == 0, so
+        the retry always returned first. Count in RETRIES instead."""
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        await engine.step(BTC_USD)  # starve
+        engine._starved[BTC_USD] = replace(
+            engine._starved[BTC_USD],
+            ticks=_STARVED_RETRY_EVERY_TICKS * _STARVED_SUMMARY_EVERY_RETRIES - 1,
+        )
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+        summaries = [r for r in caplog.records if "still starved after" in r.getMessage()]
+        assert len(summaries) == 1
+        assert f"{_STARVED_SUMMARY_EVERY_RETRIES} retries" in summaries[0].getMessage()
+        assert "binding:" in summaries[0].getMessage()
+        assert summaries[0].starved_retries == _STARVED_SUMMARY_EVERY_RETRIES
+
+    async def test_an_ordinary_retry_stays_silent(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        await engine.step(BTC_USD)
+        TestStarvationBackoff._one_tick_before_retry(engine)
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+        assert not [r for r in caplog.records if "still starved after" in r.getMessage()]
+
+    async def test_the_summary_reports_this_retrys_reason_not_the_entry_one(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Conditions move while a symbol is starved. A summary quoting an
+        hour-old reason sends the operator after the wrong thing."""
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("0"), "BTC": Decimal("0")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await engine.step(BTC_USD)  # starved on insufficient balance
+        assert "insufficient_balance" in engine._starved[BTC_USD].reasons
+        # Money arrives, but a cap now refuses everything instead.
+        exchange._balances["USD"] = Decimal("100000")
+        # Swapping the private config is the seam here: no exchange state can
+        # move a refusal from the balance arm to the cap arm on its own.
+        engine._safety = _safety_config(max_per_coin="0.01")
+        engine._starved[BTC_USD] = replace(
+            engine._starved[BTC_USD],
+            ticks=_STARVED_RETRY_EVERY_TICKS * _STARVED_SUMMARY_EVERY_RETRIES - 1,
+        )
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+        summary = [r for r in caplog.records if "still starved after" in r.getMessage()][0]
+        assert "max_per_coin_exposure_usd" in summary.getMessage()
+        assert "insufficient_balance" not in summary.getMessage()
+        assert engine._starved[BTC_USD].ticks == (
+            _STARVED_RETRY_EVERY_TICKS * _STARVED_SUMMARY_EVERY_RETRIES
+        )  # the clock is NOT reset by the refresh
+
+    async def test_a_reanchor_mid_backoff_does_not_emit_a_summary(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An operator re-anchor also refreshes the starved record, and its
+        tick count can sit on a retry MULTIPLE without being on a retry
+        BOUNDARY. Without the remainder guard it would emit an hourly
+        summary it did not earn, in the middle of the back-off."""
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        await engine.step(BTC_USD)  # starve
+        engine._starved[BTC_USD] = replace(
+            engine._starved[BTC_USD],
+            ticks=_STARVED_RETRY_EVERY_TICKS * _STARVED_SUMMARY_EVERY_RETRIES + 5,
+        )
+        with caplog.at_level(logging.INFO, logger="wobblebot.services.grid_engine"):
+            ok, message = await engine.request_reanchor(BTC_USD)
+        assert ok is True
+        assert "placed 0/6" in message  # the re-anchor really did re-starve
+        assert not [r for r in caplog.records if "still starved after" in r.getMessage()]
+
+    async def test_resume_clears_the_starved_clock(self, storage: SQLiteStorageAdapter) -> None:
+        """A symbol starved and then paused would otherwise resume into up
+        to 59 ticks of silence with no WARNING, because the entry warning is
+        guarded on the symbol being absent from the starved map."""
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        await engine.step(BTC_USD)
+        engine._starved[BTC_USD] = replace(engine._starved[BTC_USD], ticks=30)
+        engine.pause_symbol(BTC_USD)
+        assert engine.resume_symbol(BTC_USD) is True
+        assert BTC_USD not in engine._starved
+
+    async def test_a_starved_symbol_does_not_re_warn_about_its_stale_anchor(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A starved symbol cannot place, so it cannot refresh its own
+        anchor — the stale-anchor WARNING is permanently true and would
+        repeat on every retry forever."""
+        await storage.save_grid_state(
+            GridState(
+                symbol=BTC_USD,
+                reference_price=Decimal("50000"),
+                spacing_percentage=Decimal("1.0"),
+                levels_above=3,
+                levels_below=3,
+                created_at=Timestamp(dt=datetime.now(UTC) - timedelta(hours=25)),
+            )
+        )
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        with caplog.at_level(logging.WARNING, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)  # stale anchor, WARNs, then starves
+            assert any("stale anchor" in r.getMessage() for r in caplog.records)
+            caplog.clear()
+            TestStarvationBackoff._one_tick_before_retry(engine)
+            await engine.step(BTC_USD)
+        assert not any("stale anchor" in r.getMessage() for r in caplog.records)
