@@ -2325,6 +2325,15 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     filed rather than built: persist `offside_since`, give the fast path a
     failure signal, settle the two render findings with a real browser.
     **Lesson: a self-reviewed same-day release is not reviewed.**
+    Ceremony receipts: PR #129 merged as `9217a54` (CI 3740 passed / 5
+    skipped); annotated tag `v2.0.4`; tag-triggered `CI & Publish to GHCR`
+    run 33807416321 with `test=success` and `build-and-push=success`; GHCR
+    version tagged `2.0.4` / `sha-9217a54` / `2.0` (digest
+    `sha256:1ff2c6f9...`, 21:24 UTC); GitHub Release published 21:24 UTC.
+    **`IMAGE_TAG` on stack 158 is still `2.0.3`** - the deploy is the
+    operator's own explicit step and is not part of the cut. Until it
+    lands, the one live exposure is the untraded-symbol anchor button, and
+    the interim control is simply not clicking it on the BABY/USD card.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
