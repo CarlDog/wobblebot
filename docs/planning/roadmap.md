@@ -2226,9 +2226,19 @@ dms_trigger_at` as of the START of the tick, so a same-tick
    `build-and-push=success`; GHCR version tagged `2.0.1` / `sha-796c3a3` /
    `2.0` (digest `sha256:456e7cff…`, 17:45 UTC); GitHub Release published
    17:46 UTC (<https://github.com/CarlDog/wobblebot/releases/tag/v2.0.1>).
-   **`IMAGE_TAG` on stack 158 is still `2.0.0`** — the deploy is the operator's
-   own explicit step (all 8 daemons bounce, including live) and is not part
-   of the cut.
+   **Deployed 2026-09-03 18:04 UTC** on operator instruction: `IMAGE_TAG`
+   `2.0.0` → `2.0.1` via the stack-env update on file-based stack 158 (image
+   re-pulled; all 8 containers recreated at 18:04:41 UTC). Verified at the
+   container, not the toast: `org.opencontainers.image.revision` =
+   `796c3a3…`, `org.opencontainers.image.version` = `2.0.1` on
+   `wobblebot-live`; every container on `ghcr.io/carldog/wobblebot:2.0.1`.
+   cli/live closed the prior session cleanly (exit 0, 41,900 ticks, 7 open
+   orders cancelled, 0 failures, session PnL +$13.73) and re-opened at
+   18:04:55 with live TradeVolume fee rates 0.4%/0.8%, SOL re-laid 4/6 at the
+   104.29 anchor, ADA 3/6 at the operator's 17:14 re-anchor (0.221862);
+   BTC/ETH offside above their bands, DOGE and XRP offside above theirs after
+   the afternoon rally. Operator daemon reconnected to Discord at 18:05:03;
+   harvest logged its key-separation fail-soft line and started.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
