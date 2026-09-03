@@ -50,6 +50,7 @@ from wobblebot.ports.operator import (
     IntentUnparseable,
     OperatorIntent,
     PauseCommand,
+    ReanchorCommand,
     StatusQuery,
     StopCommand,
 )
@@ -657,3 +658,86 @@ class TestComposeEngineStateSnapshot:
             live_storage=storage, observe_storage=None, active_symbols=()
         )
         assert snap.total_usd_balance == 12.34
+
+
+class TestDeterministicFastPath:
+    """The fixed command grammar never reaches the model (2026-09-03).
+
+    On the incident day the 1.5B model parsed ``reanchor SOL/USD`` as a
+    status query. With the fast path in front of it, that exact message
+    produces a ``reanchor`` pending row and the assistant is never
+    consulted; prose still goes to the model; and with no active-symbol
+    set the fast path abstains so the model keeps the conversation.
+    """
+
+    async def test_exact_command_bypasses_the_model_and_queues_the_command(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        sol = Symbol(base="SOL", quote="USD")
+        # The model WOULD have answered with a status query — the incident.
+        stub = _StubAssistant(IntentQuery(query=StatusQuery()))
+        transport = _mock_transport()
+        await _handle_inbound_message(
+            _inbound(content="reanchor SOL/USD"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(sol,),
+            assistant=stub,
+            operator_service=_operator_service(storage),
+            transport=transport,
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            assistant_model_name="test-model",
+        )
+        assert stub.contexts == []  # never consulted
+        pendings = await storage.get_pending_commands()
+        assert len(pendings) == 1
+        assert pendings[0].status == "awaiting_confirmation"
+        assert pendings[0].command == ReanchorCommand(symbol=sol)
+        transport.send_confirmation.assert_awaited_once()
+        # The persisted operator turn carries the deterministic intent.
+        turns = await storage.get_conversation_turns("C-1", "U-1")
+        operator_turns = [t for t in turns if t.role == "operator"]
+        assert operator_turns and isinstance(operator_turns[0].intent, IntentCommand)
+
+    async def test_prose_still_goes_to_the_model(self, storage: SQLiteStorageAdapter) -> None:
+        stub = _StubAssistant(IntentConversational(reply_text="hi"))
+        await _handle_inbound_message(
+            _inbound(content="hey, how are things looking today?"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(Symbol(base="SOL", quote="USD"),),
+            assistant=stub,
+            operator_service=_operator_service(storage),
+            transport=_mock_transport(),
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            assistant_model_name="test-model",
+        )
+        assert len(stub.contexts) == 1
+
+    async def test_without_an_active_symbol_set_the_model_keeps_the_conversation(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        stub = _StubAssistant(
+            IntentCommand(command=PauseCommand(symbol=Symbol(base="BTC", quote="USD")))
+        )
+        await _handle_inbound_message(
+            _inbound(content="pause BTC"),
+            operator_storage=storage,
+            live_storage=None,
+            observe_storage=None,
+            active_symbols=(),
+            assistant=stub,
+            operator_service=_operator_service(storage),
+            transport=_mock_transport(),
+            outbound_channel_id="100",
+            context_window_turns=10,
+            confirm_ttl_seconds=300,
+            assistant_model_name="test-model",
+        )
+        assert len(stub.contexts) == 1

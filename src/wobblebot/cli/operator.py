@@ -109,6 +109,7 @@ from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.notification_embed_render import render_notification_embed
+from wobblebot.services.operator_intent_fastpath import parse_fast
 from wobblebot.services.operator_service import OperatorService
 
 _LOGGER = logging.getLogger("wobblebot.cli.operator")
@@ -751,26 +752,39 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
         engine_state_snapshot=snapshot,
     )
 
-    try:
-        intent = await assistant.parse_intent(context)
-    except AssistantError as exc:
-        # Embed the error text in the message itself — plain-format logs
-        # drop the `extra` dict, which silently swallows the underlying
-        # AssistantError detail (network failure / JSON extract error /
-        # schema validation). Keep the structured fields for JSON-format
-        # consumers.
-        _LOGGER.error(
-            "assistant parse failed: %s: %s",
-            type(exc).__name__,
-            exc,
-            extra={"channel_id": message.channel_id, "error": str(exc)},
+    # Deterministic fast path (2026-09-03 recovery ergonomics): the fixed
+    # command grammar never reaches the model. ``None`` means "not one of
+    # the fixed forms" and the LLM parse below proceeds exactly as before.
+    fast_intent = parse_fast(message.content, active_symbols)
+    intent: OperatorIntent
+    if fast_intent is not None:
+        intent = fast_intent
+        _LOGGER.info(
+            "operator message parsed deterministically (parse_path=fast, intent_kind=%s)",
+            fast_intent.kind,
+            extra={"parse_path": "fast", "intent_kind": fast_intent.kind},
         )
-        await _safe_send_message(
-            transport,
-            outbound_channel_id,
-            f"Sorry, I couldn't process that. ({type(exc).__name__})",
-        )
-        return
+    else:
+        try:
+            intent = await assistant.parse_intent(context)
+        except AssistantError as exc:
+            # Embed the error text in the message itself — plain-format logs
+            # drop the `extra` dict, which silently swallows the underlying
+            # AssistantError detail (network failure / JSON extract error /
+            # schema validation). Keep the structured fields for JSON-format
+            # consumers.
+            _LOGGER.error(
+                "assistant parse failed: %s: %s",
+                type(exc).__name__,
+                exc,
+                extra={"channel_id": message.channel_id, "error": str(exc)},
+            )
+            await _safe_send_message(
+                transport,
+                outbound_channel_id,
+                f"Sorry, I couldn't process that. ({type(exc).__name__})",
+            )
+            return
 
     # Re-save the operator turn with the parsed intent attached.
     parsed_turn = operator_turn.model_copy(update={"intent": intent})

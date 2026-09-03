@@ -25,6 +25,7 @@ from typing import get_args
 import pytest
 
 from wobblebot.ports.operator import OperatorCommand, OperatorQuery
+from wobblebot.services.operator_intent_fastpath import FAST_PATH_COMMAND_KINDS
 from wobblebot.services.operator_service import _HELP_ENTRIES
 
 pytestmark = pytest.mark.unit
@@ -66,3 +67,10 @@ class TestCatalogSSOT:
         commands = _union_kinds(OperatorCommand)
         queries = _union_kinds(OperatorQuery)
         assert not commands & queries
+
+    def test_fast_path_covers_every_engine_command_kind(self) -> None:
+        """A fourth copy of the vocabulary (2026-09-03): the deterministic
+        fast path in front of the LLM. A new engine command must get a
+        fixed-grammar form (or an explicit decision here), and the fast
+        path must not name a kind the union no longer has."""
+        assert FAST_PATH_COMMAND_KINDS == _union_kinds(OperatorCommand)
