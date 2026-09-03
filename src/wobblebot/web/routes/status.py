@@ -65,6 +65,7 @@ from wobblebot.web.dependencies import (
     get_reanchor_min_severity,
     get_templates,
 )
+from wobblebot.web.routes.status_offside import OffsideExplanation, load_offside_explanations
 from wobblebot.web.routes.status_reanchor import (
     ReanchorRecommendation,
     load_reanchor_recommendations,
@@ -254,6 +255,11 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # paused/offside ONLY from entries present here; absence renders
     # nothing new.
     engine_states: dict[Symbol, EngineStateRow] = field(default_factory=dict)
+    # Operator note 2026-09-03: WHY each offside symbol is offside (side,
+    # band, anchor, duration) for the badge's hover popover. Keyed like
+    # ``engine_states`` and built only from its FRESH offside rows, so a
+    # popover can never outlive the badge it explains.
+    offside_explanations: dict[Symbol, OffsideExplanation] = field(default_factory=dict)
     # Per-symbol held inventory (P3 slice 21) — the second half of the
     # buying-power item, whose aggregate strip shipped 2026-06-03. Same
     # observe.db balance snapshot the strip uses, split per symbol via
@@ -693,6 +699,12 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     engine_states = await _load_engine_states(
         operator_storage, tick_seconds=live_tick_seconds, now=now
     )
+    offside_explanations = await load_offside_explanations(
+        live_storage,
+        engine_states,
+        prices,
+        live_tick_seconds if live_tick_seconds is not None else _DEFAULT_TICK_SECONDS,
+    )
     last_cap_trip_age: float | None = None
     cool_down = check_cool_down(
         last_cap_trip.tripped_at if last_cap_trip else None,
@@ -732,6 +744,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         cool_down_active=cool_down.active,
         cool_down_resumes_at=cool_down.resumes_at,
         engine_states=engine_states,
+        offside_explanations=offside_explanations,
         held_inventory=held_inventory,
         trade_ages=trade_ages,
         fills_summary=fills_summary,

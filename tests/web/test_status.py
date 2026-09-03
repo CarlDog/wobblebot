@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
+from wobblebot.domain.grid import GridState
 from wobblebot.domain.models import Balance, Order, Trade
 from wobblebot.domain.value_objects import Amount, Price, Symbol, Timestamp
 from wobblebot.ports.operator import CommandResult, PendingCommand, ReanchorCommand
@@ -1800,3 +1801,73 @@ class TestReanchorIconButton:
             assert 'action="/commands/pause"' in resp.text
             assert "icon-btn-reanchor" in resp.text
             assert 'hx-post="/commands/reanchor" hx-target="#modal"' in resp.text
+
+
+@pytest.mark.asyncio
+class TestOffsidePopover:
+    """Operator note 2026-09-03: the OFFSIDE label stays; a hover/focus
+    popover beside it says WHY. Facts come from grid_state + the observe
+    price, never from open orders, so a parked symbol with an empty book
+    still gets the full sentence."""
+
+    async def test_above_band_popover_names_side_level_anchor_and_exits(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        observe = SQLiteStorageAdapter(":memory:")
+        await observe.connect()
+        try:
+            btc = Symbol(base="BTC", quote="USD")
+            # Card exists via a recent trade; NO open orders (the parked state).
+            await live_storage.save_trade(_make_trade())
+            await live_storage.save_grid_state(
+                GridState(
+                    symbol=btc,
+                    reference_price=Decimal("64246.4"),
+                    spacing_percentage=Decimal("3.0"),
+                    levels_above=3,
+                    levels_below=3,
+                    created_at=Timestamp(dt=datetime.now(UTC) - timedelta(days=15)),
+                )
+            )
+            await observe.save_price_snapshot(
+                btc,
+                Price(amount=Decimal("81174.30"), currency="USD"),
+                Timestamp(dt=datetime.now(UTC)),
+            )
+            await operator_storage.save_engine_state(
+                _engine_row(offside=True, offside_ticks=40128, age_seconds=1)
+            )
+            with _build_client(
+                operator_storage, live_storage, observe=observe, live_tick_seconds=5.0
+            ) as client:
+                login_as(client)
+                body = client.get("/dashboard").text
+        finally:
+            await observe.close()
+        assert ">OFFSIDE<" in body  # the label is untouched
+        assert "offside-popover" in body
+        assert "is ABOVE the grid's top level" in body
+        assert "$70,028.58" in body  # band top from the engine's own level math
+        assert "$58,464.22" in body  # band bottom
+        assert "Anchored at $64,246.40" in body
+        assert "or you re-anchor" in body
+        assert "(40128 ticks)" in body
+        # The old generic title is gone (no doubled native tooltip).
+        assert "price outside the grid band for" not in body
+
+    async def test_no_grid_state_degrades_to_duration_only_but_keeps_the_label(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order())
+        await operator_storage.save_engine_state(
+            _engine_row(offside=True, offside_ticks=12, age_seconds=1)
+        )
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+        assert ">OFFSIDE<" in body
+        assert "Price is outside the grid band; the engine parks" in body
+        assert "Offside for 1m 0s (12 ticks)" in body
+        # No side claimed without a band (the orders table has its own
+        # "ABOVE" wording, so check the popover's phrasing specifically).
+        assert "is ABOVE the grid" not in body and "is BELOW the grid" not in body

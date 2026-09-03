@@ -2270,6 +2270,14 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     BTC/ETH/DOGE/XRP offside above their bands. Operator daemon reconnected to
     Discord at 18:58:29 — the deterministic fast path is now live in front of
     the model, and the per-symbol anchor button is on every card.
+11. **Offside popover + DMS deadline logging ✅ 2026-09-03 (merged; reaches the
+    NAS with the next `IMAGE_TAG` bump).** The operator's offside-badge note
+    (label unchanged; hover/focus popover with side, band, anchor, duration,
+    exits — `web/routes/status_offside.py`, 8 builder + 2 template tests) and
+    the logging half of the DMS follow-up (`dms_deadline_note` at streak start,
+    `last_confirmed_trigger_at` in the 3-strike alert context; 3 unit tests +
+    the alert e2e assertion). Gate: black/isort clean, mypy clean, pylint
+    10.00/10, logging rule 1 clean.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
