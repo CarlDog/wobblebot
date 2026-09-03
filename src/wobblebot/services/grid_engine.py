@@ -146,9 +146,12 @@ _STARVED_RETRY_EVERY_TICKS = 60
 # every retry. That is why it drops to INFO while starved.
 _STALE_ANCHOR_AGE = timedelta(hours=24)
 
-# How often (in RETRIES, not ticks) to emit the still-starved summary. At
-# the 5s tick and the 60-tick back-off that is one line an hour per starved
-# symbol. It MUST be counted in retries: the previous heartbeat counted
+# How often (in RETRIES, not ticks) to emit the still-starved summary. The
+# nominal arithmetic is 12 x 60 ticks x 5s = one line an hour per starved
+# symbol; measured on the live container 2026-09-03 the retry cadence is
+# ~5m51s rather than 5m, because a tick overruns its budget, so it is closer
+# to one line every 70 minutes. Either way the point is the order of
+# magnitude, not the exact period. It MUST be counted in retries: the previous heartbeat counted
 # ticks against _OFFSIDE_SUMMARY_EVERY_TICKS (240) while the retry gate
 # counted the same ticks against 60, and since 240 is an exact multiple of
 # 60 the retry branch always matched first and returned. That heartbeat was
