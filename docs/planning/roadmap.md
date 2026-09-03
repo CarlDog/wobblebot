@@ -2330,10 +2330,20 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     run 33807416321 with `test=success` and `build-and-push=success`; GHCR
     version tagged `2.0.4` / `sha-9217a54` / `2.0` (digest
     `sha256:1ff2c6f9...`, 21:24 UTC); GitHub Release published 21:24 UTC.
-    **`IMAGE_TAG` on stack 158 is still `2.0.3`** - the deploy is the
-    operator's own explicit step and is not part of the cut. Until it
-    lands, the one live exposure is the untraded-symbol anchor button, and
-    the interim control is simply not clicking it on the BABY/USD card.
+    **Deployed 2026-09-03 21:50 UTC** on operator instruction: `IMAGE_TAG`
+    `2.0.3` -> `2.0.4` via the stack-env update on file-based stack 158
+    (image re-pulled; all 8 containers recreated at 21:50:24 UTC). Verified
+    at the container: `org.opencontainers.image.revision` = `9217a54...`,
+    version `2.0.4`, which is exactly the merge commit CI tested. The
+    untraded-symbol exposure is closed; the interim "do not click the
+    BABY/USD anchor" control is retired. cli/live re-opened at 21:50:38
+    with live TradeVolume fee rates 0.4%/0.8%.
+
+    Still unverified END TO END, and worth doing on the next dashboard
+    visit: that BABY/USD now renders without an anchor button, that a
+    `reanchor <symbol>` message actually queues a row in production, and
+    the popover's live appearance (the two rendering findings were refuted
+    by reading CSS, which cannot settle them).
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
