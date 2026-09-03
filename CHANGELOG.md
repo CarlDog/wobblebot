@@ -38,12 +38,33 @@ fresh `[Unreleased]` heading created at that time.
   mis-parse it exists to prevent.
 - **An unknown symbol and an ambiguous one are now told apart**, so the
   operator-facing wording is no longer false for the ambiguous case.
+- **A starved symbol now says what is blocking it, and stops repeating.** A
+  layout that places nothing records which cap or condition refused each
+  level. That breakdown appears once when the symbol enters the starved
+  state, and again in a periodic summary about once an hour, naming what is
+  binding at that moment rather than what was binding when it started.
 
 ### Fixed
 
 - **The Discord embed footer credits the parser that actually decided.**
   `status` is a fast-path pattern, so regex-answered queries were crediting the
   model on the one surface the operator reads.
+- **A starved symbol no longer repeats the same refusal forever.** A symbol
+  that cannot place at its anchor re-emitted the identical per-level refusal
+  and stale-anchor warnings on every retry, roughly 1,150 lines a day, for a
+  condition the engine cannot resolve on its own. Those per-level lines drop
+  to debug while the symbol is starved, and only while it is starved: a
+  partial layout, and an exchange-side rejection such as an order minimum,
+  stay as loud as before.
+- **The periodic still-starved summary now actually fires.** It counted ticks
+  against a threshold that was an exact multiple of the retry interval, so
+  the retry branch always matched first and the summary was unreachable from
+  the day it was written. It is counted in retries now.
+- **Resuming a paused symbol clears its starved state.** Pausing froze the
+  back-off clock, so a symbol starved and then paused would resume into up to
+  five minutes of silence with no warning at all, because the entry warning
+  only fires for a symbol that is not already starved. That is how the
+  2026-09-03 incident ended.
 - **A book vanish during a degraded dead-man's-switch window is framed calmly.**
   The previous predicate asked only whether Kraken's confirmed deadline had
   passed, and the real 2026-09-03 purge landed about 18 seconds before it — so

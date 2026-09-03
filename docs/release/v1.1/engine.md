@@ -941,7 +941,27 @@ with zero placed there IS a retry loop, via the self-heal.
 self-resolves when funds free or price recovers, and `pause` is a
 clean manual stop. Queue behind the P3 re-anchor chain work.
 
-**Follow-up (2026-09-03, observed on XRP/USD):** the back-off works
+**Follow-up (2026-09-03, observed on XRP/USD) — ✅ SHIPPED 2026-09-03.**
+
+> **Shipped, and it was not logging-only.** `services/grid_starvation.py`
+> holds the record: `LayoutOutcome` carries a refusal breakdown and
+> `StarvationState` carries the clock plus the reasons, refreshed on every
+> retry so a summary reports what binds NOW. `_try_place` widened to return
+> `(outcome, reason)` — the plan had ruled that out, but all THREE of its
+> refusal arms return the same bare `"refused"`, so no reason survived at all
+> and the buy-side-only variant could not be built. The per-level cap WARNING
+> and the stale-anchor WARNING drop to DEBUG/INFO **only while starved**: a
+> partial layout keeps them, and the exchange-side ordermin arm is untouched.
+> Two latent bugs came with it — the periodic heartbeat counted ticks against
+> 240 while the retry gate counted them against 60, and 240 % 60 == 0, so the
+> retry always returned first and the heartbeat had never once fired; and
+> `resume_symbol` did not clear starved state, so starve → pause → resume
+> yielded no warning and a stale reason set. The summary also had to move to
+> the far side of the retry it summarizes, or it reported the previous
+> retry's reasons. Honest noise figure: ~1,152/day/symbol (864 cap + 288
+> stale-anchor), not the 2,400 first estimated.
+
+*Original text:* the back-off works
 as shipped — retry every 60 ticks — but each retry still emits the
 per-level `refused by safety cap` WARNINGs from `_try_place`
 (safety-cap refusals were never demoted alongside the

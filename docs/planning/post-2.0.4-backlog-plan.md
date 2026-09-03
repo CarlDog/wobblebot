@@ -100,10 +100,26 @@ Scope decisions that came out of the assessment:
 - Split `docs/release/v1.1/README.md`'s single follow-ups row into three
   sub-rows here, once, so later groups edit only their own line.
 
-## Group 2 — Starvation log noise
+## Group 2 — Starvation log noise — ✅ SHIPPED 2026-09-03
 
 **Item:** `starved-log-noise`, alone (it owns the `grid_engine.py` starvation
 region that Group 4 also needs). No ADR, no schema, no money.
+
+> **Shipped, with one decision below reversed.** Everything the plan called
+> for landed: the entry breakdown, the per-retry demotion, the revived
+> summary, the stale-anchor demotion and comment correction, the resume clear,
+> and the `services/grid_starvation.py` extraction. 15 new tests, all 16
+> changed behaviors mutation-caught. Two corrections worth carrying forward:
+>
+> - **The noise figure was wrong.** ~1,152/day/symbol (864 per-level cap +
+>   288 stale-anchor), not 2,400. The 2,400 came from counting the sell-guard
+>   deferrals as log lines; they emit a throttled transition + heartbeat in
+>   `cost_basis.py` and are essentially silent already.
+> - **The summary had to move.** Emitted from the back-off gate — the obvious
+>   place — it reports the PREVIOUS retry's reasons, because the gate runs
+>   before the attempt it authorizes. It lives in the layout-outcome hook
+>   instead, guarded on a zero remainder so an operator re-anchor landing
+>   mid-back-off cannot emit one it did not earn.
 
 - **It is not "logging only" — say so in the commit and to the reviewer.** It
   necessarily repairs a latent bug: the "still starved" heartbeat's tick
@@ -112,12 +128,21 @@ region that Group 4 also needs). No ADR, no schema, no money.
   retry gate, so it fires once per 60-tick retry: another ~288 WARN/day forever
   for a symbol starved by construction. Its "fix flow doesn't exist yet" comment
   is stale — re-anchor shipped — so demote it and correct the comment together.
-- **Buy-side cap reasons only; no `_try_place` signature change.** The sell path
-  discards its assessment and returns a bare `"sell_deferred"`, so a reason adds
-  nothing over the count already in the entry WARNING. Threading the sell
-  reasons out reshapes exactly the signature Group 4 needs — **this decision is
-  what keeps Groups 2 and 4 separable.** Note in the slice that sell-side
-  reasons ride along with Group 4.
+- ~~**Buy-side cap reasons only; no `_try_place` signature change.**~~
+  **REVERSED 2026-09-03 by verification, before any code was written.** The
+  premise was that buy-side reasons already survive and only the sell reason
+  is discarded. They do not: `_try_place` returns a bare `_PlaceOutcome`
+  literal, so ALL THREE of its refusal arms collapse to `"refused"` and no
+  reason reaches the caller at all. A buy-side-only breakdown was therefore
+  unbuildable without widening the signature, which is what shipped:
+  `_try_place` returns `(outcome, reason)` and `_place_layout` returns a
+  `LayoutOutcome`.
+  **This does not merge Groups 2 and 4.** The separability the decision was
+  protecting survives for a different reason than the one stated: the sell
+  path returns an empty reason and is not counted in the breakdown at all,
+  because `SellGuard.assess` already logs its own throttled transition and
+  heartbeat with the numbers. Group 4 threads the sell *assessment* out, which
+  is still its own change on top of this shape.
 - **Clear the new state at both existing sites**, and fix the resume-into-silence
   bug this shape introduces: `resume_symbol` clears hold reasons but not starved
   state, and pause short-circuits before the tick, so starve → pause → resume
