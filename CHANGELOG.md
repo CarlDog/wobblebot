@@ -28,7 +28,20 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Deterministic Discord fast path for the fixed command grammar.** `pause`,
+  `resume`, `reanchor` / `re-anchor` / `re anchor`, `cancel orders on`,
+  `pause all`, `resume all`, `stop`, and `status` are parsed by a regex before
+  the operator model sees them; a bare base symbol (`SOL`) resolves to the
+  single active `SOL/USD`. Anything else still goes to the model unchanged.
+  On 2026-09-03 the 1.5B model parsed `reanchor SOL/USD` as a status query
+  during purge recovery; that exact message now queues the command.
+- **Per-symbol re-anchor button on the dashboard.** An anchor icon beside
+  each symbol card's pause/resume icon opens the same confirmation modal and
+  posts to the same route as the drift banner's button, but renders for every
+  symbol — including a held symbol with an empty book, which the banner can
+  never show.
 
 ## [2.0.1] - 2026-09-03
 
