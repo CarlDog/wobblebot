@@ -20,6 +20,7 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 from wobblebot.config.cli import ReanchorSeverity, WebConfig
+from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.storage import StoragePort
 
 
@@ -115,6 +116,18 @@ def get_withdrawal_destinations(request: Request) -> dict[str, str]:
     """
     destinations: dict[str, str] = request.app.state.withdrawal_destinations
     return destinations
+
+
+def get_live_symbols(request: Request) -> frozenset[Symbol]:
+    """The engine's configured trading set (``config.live.symbols``).
+
+    Empty means UNKNOWN (``cli/web`` started without a ``live:`` section),
+    not "nothing is traded" — callers fail OPEN on empty so an unwired
+    deployment keeps working exactly as before this guard existed. See
+    ``commands.reanchor_submit`` for the one consumer that enforces it.
+    """
+    symbols: frozenset[Symbol] = request.app.state.live_symbols
+    return symbols
 
 
 def get_templates(request: Request) -> Jinja2Templates:

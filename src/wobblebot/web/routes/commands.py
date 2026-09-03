@@ -59,6 +59,7 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_harvest_storage,
+    get_live_symbols,
     get_operator_storage,
     get_templates,
     get_withdrawal_destinations,
@@ -317,6 +318,7 @@ async def reanchor_submit(
     storage: StoragePort = Depends(get_operator_storage),
     templates: Jinja2Templates = Depends(get_templates),
     prefs: UserPreferences = Depends(get_user_preferences),
+    configured: frozenset[Symbol] = Depends(get_live_symbols),
 ) -> Response:
     """Banner "Re-anchor" button (ADR-031, P3 banner slice).
 
@@ -340,6 +342,34 @@ async def reanchor_submit(
                 "username": user.username,
                 "needs_symbol": True,
                 "error": f"Invalid symbol: {exc}",
+            },
+            status_code=400,
+        )
+    # 2026-09-03 review, finding 2. Symbol cards render for any asset with
+    # a held balance, which is WIDER than the engine's trading set, and the
+    # per-card anchor button made an untraded symbol one click from a real
+    # layout: for_coin() hands any unknown base a default config, the sell
+    # guard passes it unguarded for want of a cost basis, cli/live never
+    # ticks it, and _cancel_all_open skips it on clean shutdown — orders
+    # left live on Kraken indefinitely. Enforced HERE rather than in the
+    # template so the free-text form and any future caller are covered too.
+    # Empty ``configured`` means unknown (no live: section) and falls open.
+    if configured and parsed not in configured:
+        return templates.TemplateResponse(
+            request,
+            "command_form.html",
+            {
+                "page_title": "Re-anchor symbol",
+                "verb": "reanchor",
+                "verb_label": "Re-anchor",
+                "form_action": "/commands/reanchor",
+                "username": user.username,
+                "needs_symbol": True,
+                "error": (
+                    f"{parsed} is not one of the engine's configured trading symbols, "
+                    "so cli/live would never tend a grid placed on it. Add it to "
+                    "live.symbols first if you mean to trade it."
+                ),
             },
             status_code=400,
         )

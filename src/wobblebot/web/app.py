@@ -15,7 +15,7 @@ mint a token.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from functools import partial
@@ -34,7 +34,7 @@ from starlette.types import Scope
 
 from wobblebot import __version__
 from wobblebot.config.cli import TradingMode, WebConfig
-from wobblebot.domain.value_objects import fmt_decimal, fmt_qty, fmt_usd
+from wobblebot.domain.value_objects import Symbol, fmt_decimal, fmt_qty, fmt_usd
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
@@ -207,7 +207,7 @@ def _release_check_status(request: Request) -> ReleaseCheckResult | None:
     return getattr(request.app.state, "release_check_result", None)
 
 
-def create_app(  # pylint: disable=too-many-arguments,too-many-locals
+def create_app(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
     *,
     config: WebConfig,
     trading_mode: TradingMode = "live",
@@ -223,6 +223,7 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
     cool_down_minutes: float | None = None,
     live_tick_seconds: float | None = None,
+    live_symbols: Sequence[Symbol] | None = None,
     withdrawal_destinations: Mapping[str, str] | None = None,
 ) -> FastAPI:
     """Build a FastAPI instance wired to the provided storage adapters.
@@ -330,6 +331,12 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # `application.mode` source — drives the dashboard mode-badge. The
     # same UI is reused across modes (no separate shadow page).
     templates.env.globals["trading_mode"] = trading_mode
+    # 2026-09-03 review, finding 2: the re-anchor button is only offered
+    # for symbols the ENGINE actually tends. Cards render for any held
+    # balance, which is a wider set — a re-anchor on an untraded coin
+    # places orders cli/live never ticks and shutdown never cancels.
+    # Empty = unknown (no live: section) and the template falls open.
+    templates.env.globals["configured_symbols"] = frozenset(live_symbols or ())
     # Stage 8.4 follow-up — timezone-aware timestamp filter. Routes
     # pass the operator's tz preference (loaded from
     # user_preferences) as ``operator_tz`` in context; templates
@@ -378,6 +385,7 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals
     # currency in units of the WRITER's tick cadence, threaded through
     # like cool_down_minutes (lives on LiveConfig, not WebConfig).
     app.state.live_tick_seconds = live_tick_seconds
+    app.state.live_symbols = frozenset(live_symbols or ())
     # Operator's attention floor for re-anchor banners. Read straight off
     # WebConfig rather than threaded as a create_app parameter — unlike
     # the two above, this one is genuinely a dashboard presentation knob.

@@ -266,6 +266,7 @@ async def _bootstrap_app(
         harvest_storage=optionals["harvest"],
         observe_storage=optionals["observe"],
         news_storage=optionals["news"],
+        live_symbols=config.live.symbols if config.live is not None else None,
         kraken_health_probe=kraken_probe,
         llm_health_checker=llm_checker,
         daemon_health_thresholds=daemon_thresholds,
