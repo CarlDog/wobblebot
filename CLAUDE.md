@@ -23,9 +23,10 @@ rule); this section is a pointer, not a changelog.
   external-repository assessments triaged into scheduled/parked/declined, the proposed
   2.1 phase, and a per-document plan for the documentation audit).
 - **Deploying is two explicit steps, and neither is automatic.** A push to `main` does
-  NOT reach the NAS: Portainer stack 158 has no git poll and no webhook. A git-stack
-  redeploy applies compose changes; an `IMAGE_TAG` bump applies code. Verify against
-  `ConfigHash` and the container's `org.opencontainers.image.revision` label.
+  NOT reach the NAS: Portainer stack 158 is a file-based stack (deliberately detached
+  from git 2026-08-31; no git poll, no webhook). A stack-file update + redeploy applies
+  compose changes; an `IMAGE_TAG` bump applies code. Verify against `StackFileVersion`
+  and the container's `org.opencontainers.image.revision` label.
 - Test counts, lint scores, src-file counts, and the real-money cost ledger are
   authoritative in the roadmap's per-stage entries — not duplicated here, to avoid drift.
 
