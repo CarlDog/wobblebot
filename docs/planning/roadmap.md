@@ -2186,6 +2186,36 @@ dms_trigger_at` as of the START of the tick, so a same-tick
      its tests, ship green, and never function, because the tests exercise the code
      and not the existence of the data source it reads. **Cut a Release at every
      future tag.**
+7. **Second real DMS purge — alerting held, recovery ergonomics did not** ✅ **2026-09-03**
+   (production incident; diagnosed same day from the NAS container logs and
+   `operator.db`; no code change; four gaps filed). Six consecutive
+   `CancelAllOrdersAfter` transport failures (07:01:13–07:02:37 UTC, ~16.7s
+   apart; Kraken's public endpoints, the cloud advisor calls, and
+   status.kraken.com were all clean → a private-endpoint-only stall) let
+   Kraken's 120s timer purge the remaining book. SOL/USD (3 sells) and DOGE/USD
+   (1 sell) vanished at 07:02:38 and both HELD under ADR-037; XRP/USD was
+   already 0/6 by construction (buys inventory-capped, every sell below its
+   1.471 average cost at a 1.4548 band top) and BTC/ETH/ADA were offside-parked,
+   so the account carried **zero open orders from 07:02 until the operator
+   resumed at 15:30 UTC**. **The 2026-08-20 follow-ups worked:** the 3-strike
+   DMS critical fired at 07:01:46, "Kraken API recovered" at 07:02:45, and the
+   4-hourly held-symbol reminder at 11:02 and 15:02. The calmer DMS-purge
+   framing did NOT trigger — `dms_timer_expired_this_tick` read False because
+   the purge landed ≥18s before the client-side deadline (NAS clock skew ruled
+   out, ≤2s). Recovery then exposed two ergonomics gaps: the 1.5B operator model
+   parsed `reanchor SOL/USD` as a status query (no command row created;
+   `re-anchor SOL` six minutes later parsed and executed), and the web UI's only
+   re-anchor entry is the drift banner, which cannot render for a symbol with an
+   empty book — exactly the post-purge state. Recovery: `re-anchor SOL` via
+   Discord → `99.20 → 104.29, placed 3/6, auto-resumed` (15:30:31); DOGE resumed
+   from the web (15:31:25, 1/6). Filed in `docs/release/v1.1/`: Discord
+   deterministic fast path + verb/symbol normalization (`reanchor` ≡
+   `re-anchor`, bare `SOL` ≡ `SOL/USD` when unambiguous); a per-symbol anchor
+   button beside the pause/resume icon, same modal, same route (operator's
+   design); DMS framing + confirmed-`trigger_at` WARN logging; starved-symbol
+   cap-refusal log noise (~2,400 lines/day on XRP). Reminder for future
+   receipts: stack 158 is file-based (not git-managed) since 2026-08-31 by
+   operator decision, so "redeploy the git stack" no longer describes a deploy.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
