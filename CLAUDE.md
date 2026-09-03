@@ -27,6 +27,18 @@ rule); this section is a pointer, not a changelog.
   from git 2026-08-31; no git poll, no webhook). A stack-file update + redeploy applies
   compose changes; an `IMAGE_TAG` bump applies code. Verify against `StackFileVersion`
   and the container's `org.opencontainers.image.revision` label.
+- **An adversarial review gates every code deploy** — the standing rule lives at
+  `~/.claude/rules/pre-deploy-review.md`; read it before shipping. Before an
+  `IMAGE_TAG` bump carrying code you authored, run the multi-dimension review
+  against the diff and resolve or explicitly accept every confirmed finding.
+  Docs-only deploys skip it, but say the skip out loud. Any test claiming to pin a
+  behavior is mutation-verified first: revert the behavior, prove the test goes red,
+  restore. **Ratified 2026-09-03**, after a post-hoc review of the already-deployed
+  2.0.2/2.0.3 raised 17 findings of which 7 survived refutation — a UI scope defect
+  that could place unmanaged real orders, a regression that broke a documented
+  command, two falsehoods rendered to the operator, and three same-day tests that
+  passed against deliberately broken code. All of it had shipped green through CI,
+  lint, mypy and a full suite; see roadmap item 13.
 - Test counts, lint scores, src-file counts, and the real-money cost ledger are
   authoritative in the roadmap's per-stage entries — not duplicated here, to avoid drift.
 
