@@ -2216,6 +2216,19 @@ dms_trigger_at` as of the START of the tick, so a same-tick
    cap-refusal log noise (~2,400 lines/day on XRP). Reminder for future
    receipts: stack 158 is file-based (not git-managed) since 2026-08-31 by
    operator decision, so "redeploy the git stack" no longer describes a deploy.
+8. **`2.0.1` RELEASED ✅ 2026-09-03 — tagged and published; deploy is a separate step.**
+   Patch over 2.0.0: secret-value redaction at the logging chokepoint
+   (`3e5d83e`), Discord probe outbound-target validation (`78f7b1e`), and the
+   #112 dependency bumps (`35bb4ad`). No configuration schema change. Ceremony
+   receipts: release-prep PR #116 (`33e56e0`; full gate green) merged as
+   `796c3a3`; annotated tag `v2.0.1` on that commit; tag-triggered
+   `CI & Publish to GHCR` run 33786060645 with `test=success` and
+   `build-and-push=success`; GHCR version tagged `2.0.1` / `sha-796c3a3` /
+   `2.0` (digest `sha256:456e7cff…`, 17:45 UTC); GitHub Release published
+   17:46 UTC (<https://github.com/CarlDog/wobblebot/releases/tag/v2.0.1>).
+   **`IMAGE_TAG` on stack 158 is still `2.0.0`** — the deploy is the operator's
+   own explicit step (all 8 daemons bounce, including live) and is not part
+   of the cut.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
