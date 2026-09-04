@@ -470,6 +470,65 @@ async def snooze_reanchor_submit(
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/hide-symbol")
+async def hide_symbol_submit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    _request: Request,
+    _csrf: None = Depends(require_csrf_token),
+    symbol: str = Form(..., min_length=1, max_length=32),
+    hidden: bool = Form(True),
+    user: User = Depends(require_user),
+    storage: StoragePort = Depends(get_operator_storage),
+    configured: frozenset[Symbol] = Depends(get_live_symbols),
+) -> Response:
+    """Eye toggle on a symbol card — deliberately UI-local, like Snooze.
+
+    Writes ``hidden_symbols`` directly rather than through
+    ``pending_commands``: hiding a card moves no money and touches no
+    engine state, so the ADR-002 firewall does not apply. Still auth +
+    CSRF gated like every other mutation. Per user, because two
+    operators must not fight over one visibility list.
+
+    **A symbol the engine trades cannot be hidden.** Pause, resume and
+    re-anchor exist only inside the card, so hiding a configured symbol
+    would silently un-ship the anchor button added in 2.0.4 and leave no
+    surface to stop a symbol that is trading. The motivating case needs
+    none of that: BABY/USD is not in ``live.symbols`` and was never
+    traded — its card comes from a dust balance in the observe snapshot.
+
+    Enforced HERE and not only in the template, so a hand-rolled POST is
+    covered too.
+
+    Empty ``configured`` means unknown (no ``live:`` section) and falls
+    CLOSED — the opposite of ``reanchor_submit``, deliberately. There,
+    refusing on unknown would break a working deployment for a command the
+    engine validates again anyway. Here, allowing on unknown lets an
+    operator hide a card that may be carrying the only pause and re-anchor
+    controls for a symbol trading real money, and the template's own eye
+    gate already falls closed — the two must agree or a rendered button
+    disagrees with the route behind it.
+    """
+    try:
+        parsed = _parse_symbol(symbol)
+    except ValueError:
+        return HTMLResponse("Invalid symbol", status_code=400)
+    if hidden and (not configured or parsed in configured):
+        detail = (
+            "is traded by the engine"
+            if configured
+            else "cannot be confirmed as untraded (cli/web has no live: section)"
+        )
+        return HTMLResponse(
+            f"{parsed} {detail} and cannot be hidden: its card carries the "
+            "pause, resume and re-anchor controls.",
+            status_code=400,
+        )
+    # Same assert as settings.py / auth.get_user_preferences: a user that
+    # reached require_user is persisted, so id is set.
+    assert user.id is not None
+    await storage.set_symbol_hidden(user.id, parsed, hidden)
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+
 # --------------------------------------------------------------------- #
 # Confirm flow                                                          #
 # --------------------------------------------------------------------- #

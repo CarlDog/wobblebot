@@ -749,6 +749,7 @@ def _engine_row(
     offside: bool = False,
     offside_ticks: int = 0,
     age_seconds: float = 0.0,
+    offside_since_hours: float | None = None,
 ):  # type: ignore[no-untyped-def]
     from wobblebot.domain.engine_state import EngineStateRow
 
@@ -761,6 +762,11 @@ def _engine_row(
         reference_price=Decimal("30000"),
         anchored_at=datetime.now(UTC) - timedelta(hours=1),
         updated_at=datetime.now(UTC) - timedelta(seconds=age_seconds),
+        offside_since=(
+            datetime.now(UTC) - timedelta(hours=offside_since_hours)
+            if offside_since_hours is not None
+            else None
+        ),
     )
 
 
@@ -828,18 +834,20 @@ class TestEngineStateBadges:
             assert "engine-badge-paused" in resp.text
             assert "PAUSED" in resp.text
 
-    async def test_offside_badge_renders_with_tick_count(
+    async def test_offside_badge_renders(
         self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
     ) -> None:
         await live_storage.save_order(_make_order())
         await operator_storage.save_engine_state(
-            _engine_row(offside=True, offside_ticks=12, age_seconds=1)
+            _engine_row(offside=True, offside_ticks=12, age_seconds=1, offside_since_hours=1.0)
         )
         with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
             login_as(client)
             resp = client.get("/dashboard")
             assert "engine-badge-offside" in resp.text
-            assert "12 ticks" in resp.text
+            # No tick count anywhere: it only ever meant "since cli/live last
+            # started" and reads as a duration the operator should not trust.
+            assert "12 ticks" not in resp.text
 
     async def test_stale_row_renders_no_badge(
         self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
@@ -1837,7 +1845,9 @@ class TestOffsidePopover:
                 Timestamp(dt=datetime.now(UTC)),
             )
             await operator_storage.save_engine_state(
-                _engine_row(offside=True, offside_ticks=40128, age_seconds=1)
+                _engine_row(
+                    offside=True, offside_ticks=40128, age_seconds=1, offside_since_hours=380.0
+                )
             )
             with _build_client(
                 operator_storage, live_storage, observe=observe, live_tick_seconds=5.0
@@ -1860,8 +1870,12 @@ class TestOffsidePopover:
         assert "places no new orders and no counter-orders" in body
         assert "Any orders already resting stay live." in body
         assert "parks with no orders" not in body
-        # Finding 4: the duration is scoped to the session, not wall-clock.
-        assert "Parked 40128 ticks since cli/live last started" in body
+        # Group 3: wall-clock from the persisted start, not ticks x cadence.
+        # 380h is ~15.8 days — the real BTC case, which the tick count
+        # rendered as a couple of hours.
+        assert "Parked since " in body
+        assert "15d" in body
+        assert "since cli/live last started" not in body
         # The old generic title is gone (no doubled native tooltip).
         assert "price outside the grid band for" not in body
 
@@ -1870,14 +1884,15 @@ class TestOffsidePopover:
     ) -> None:
         await live_storage.save_order(_make_order())
         await operator_storage.save_engine_state(
-            _engine_row(offside=True, offside_ticks=12, age_seconds=1)
+            _engine_row(offside=True, offside_ticks=12, age_seconds=1, offside_since_hours=1.0)
         )
         with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
             login_as(client)
             body = client.get("/dashboard").text
         assert ">OFFSIDE<" in body
         assert "the engine places no new orders until price returns" in body
-        assert "Parked 12 ticks since cli/live last started, about 1m 0s" in body
+        assert "Parked since " in body
+        assert "about 1h 0m ago" in body
         # No side claimed without a band (the orders table has its own
         # "ABOVE" wording, so check the popover's phrasing specifically).
         assert "is ABOVE the grid" not in body and "is BELOW the grid" not in body

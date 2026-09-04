@@ -44,8 +44,25 @@ fresh `[Unreleased]` heading created at that time.
   state, and again in a periodic summary about once an hour, naming what is
   binding at that moment rather than what was binding when it started.
 
+- **A symbol card can be hidden.** An eye toggle on any symbol the engine
+  does not trade collapses its card into a one-line "N hidden" summary, with
+  a one-click reveal. A card renders for anything you hold or once traded, so
+  a dust balance in an untraded pair had no way off the dashboard. Symbols
+  the engine DOES trade cannot be hidden — pause, resume and re-anchor live
+  inside the card. A hidden symbol that still has resting orders is named and
+  tinted in the summary rather than disappearing: nothing cancels orders on a
+  symbol the engine does not manage.
+
 ### Fixed
 
+- **The offside popover states wall-clock truth.** It said "Parked N ticks
+  since cli/live last started", which reset on every deploy. On the evening
+  of 2026-09-03 it read "about 1h 0m" for a symbol that had been parked
+  since 19 August — roughly 380 times short.
+  The engine now records when an offside episode began and restores it across
+  restarts, so the popover states an actual date and duration. An episode
+  that began before this was recorded says exactly that instead of guessing;
+  those fill in the next time the symbol re-enters its band and leaves again.
 - **The Discord embed footer credits the parser that actually decided.**
   `status` is a fast-path pattern, so regex-answered queries were crediting the
   model on the one surface the operator reads.

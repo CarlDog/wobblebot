@@ -9,7 +9,7 @@ cadence while ANY symbol remains paused, and stays quiet otherwise.
 Filters on ``engine.is_paused(symbol)`` rather than ``hold_reason(symbol)
 == "book_vanish"``. A code-review pass caught that ``hold_reason`` is
 in-memory only — ADR-030's ``engine_state`` persists ``paused: bool``
-but never the reason, and ``_restore_paused_symbols`` calls
+but never the reason, and ``_restore_engine_state`` calls
 ``pause_symbol`` on restart with no reason to restore — so a book-vanish
 hold that survives a restart would read as ``hold_reason() is None`` and
 silently drop out of a narrower filter, defeating this reminder for
@@ -172,7 +172,7 @@ async def test_multiple_paused_symbols_get_one_aggregate_notification(
 async def test_restart_survivor_book_vanish_hold_still_gets_reminded(
     storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Code-review regression: after a restart, ``_restore_paused_symbols``
+    """Code-review regression: after a restart, ``_restore_engine_state``
     calls ``pause_symbol`` with no reason to restore, so a book-vanish
     hold that survived the restart reads as paused with
     ``hold_reason() is None`` -- exactly like a plain operator pause.

@@ -750,6 +750,36 @@ badge is how the operator takes it.
 sat offside ABOVE their 08-19 bands for the whole session with the badge
 giving no hint which side or how far. Small (S).
 
+### Hide a symbol card — eye-icon visibility toggle — ✅ SHIPPED 2026-09-04
+
+> **Shipped, with two corrections to the sketch below.** Storage is its OWN
+> `hidden_symbols` table, not a `user_preferences` list: preference writes go
+> through a full-row upsert rebuilt from the timezone form alone, so a field
+> on that model would be blanked by every timezone save — a silent data loss
+> a naive test of the hide feature would never catch. And the hidden set is
+> applied to the CARD LOOP'S ITERABLE only; `snapshot.symbols` stays whole,
+> because the price fetch, sparklines, account value, realized P&L and the
+> fills tables all derive from it and a view preference that moved reported
+> P&L is the worst outcome this item could produce.
+>
+> Per the operator's scope call, hiding is restricted to symbols outside
+> `live.symbols`, enforced in the route and not only by omitting the button.
+> Revealing is deliberately NOT restricted, so a symbol hidden while untraded
+> and since added to the trading set cannot be stranded out of sight.
+>
+> The sketch's "strong-drift banner still counts with a warning tint" became
+> something sharper: a hidden symbol with RESTING ORDERS is named and tinted.
+> Hiding is limited to symbols the engine does not trade — exactly the ones
+> `cli/live` never ticks and clean shutdown never cancels — so an order
+> resting on one is capital nothing is managing.
+>
+> Rendering it in a browser caught what no assertion could: the summary was a
+> `<p>`, and `<form>` is flow content, so an HTML5 parser closes the paragraph
+> at the first form. The container rendered empty and every rule scoped under
+> it stopped applying, with all eleven substring tests green.
+
+*Original sketch:*
+
 ### Hide a symbol card — eye-icon visibility toggle (operator note 2026-09-03, for later review)
 
 **What:** an eye icon in each symbol card's action cluster (beside
@@ -784,6 +814,20 @@ today". Small to medium (S–M).
 Three items the 2.0.4 fixes deliberately did NOT close.
 
 **1. Persist `offside_since` so the popover can state wall-clock truth.**
+✅ **SHIPPED 2026-09-04.** Column on `engine_state`, written only on a
+transition the engine actually watched, restored at boot alongside `paused`,
+and the tick sentence DELETED rather than reworded. The restore is what makes
+it correct, not a nicety: the transition WARNING fires at `consecutive == 1`,
+which after a restart is a first observation, so without the seed the first
+tick would stamp the boot time — production logs that line for BTC and ETH
+within six seconds of every daemon start. Captured before building, from
+the live container: "BTC/USD still offside at 81190.1; parked (720
+consecutive ticks)" at 2026-09-03T23:01:23Z, 71 minutes into that daemon —
+so the popover read "about 1h 0m" for a symbol parked since the 2026-08-19
+anchor, ~380x short.
+The seeding path this entry suggests is impossible — the engine's own
+transition WARNING goes to a file that rotates at 7 days. A start nothing
+observed renders as an explicit unknown instead. *Original text:*
 2.0.4 made the duration honest by narrowing the claim to "Parked N ticks
 since cli/live last started". The real fix is a durable timestamp:
 `offside_ticks` lives in `GridEngine` process memory and the restore path

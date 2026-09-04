@@ -76,18 +76,20 @@ makes zero per-page external requests.
 
 - **Material Design Icons path data (inline SVG in
   `_status_card.html`).** The per-symbol action icons on each dashboard
-  symbol card — ``play_arrow`` (resume), ``pause``, and ``anchor``
-  (re-anchor) — use path data from
+  symbol card — ``play_arrow`` (resume), ``pause``, ``anchor``
+  (re-anchor), and ``visibility_off`` (hide) — use path data from
   [Material Design Icons](https://github.com/google/material-design-icons),
   licensed under the Apache License 2.0. ``play_arrow`` and ``anchor``
-  are used verbatim; ``pause`` is redrawn as two rounded rects. A copy
+  are used verbatim, as is ``visibility_off``; ``pause`` is redrawn as
+  two rounded rects. A copy
   of the Apache-2.0 license is available at
   <https://www.apache.org/licenses/LICENSE-2.0>. These are a separate
   icon family from the Lucide/Feather chrome icons above: filled rather
   than stroked, deliberately, so the three action buttons match each
-  other. If the icon count grows past ~5 distinct icons per family,
-  consider shipping a single ``static/icons.svg`` sprite with one
-  shared attribution block.
+  other. At four distinct icons this family is one short of the ~5
+  threshold at which a single ``static/icons.svg`` sprite with one
+  shared attribution block becomes the better shape; the next icon
+  added here should do that rather than inline a fifth path.
 
 ## WobbleBot brand mark
 

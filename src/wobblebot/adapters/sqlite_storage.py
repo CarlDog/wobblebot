@@ -34,6 +34,7 @@ import aiosqlite
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_suggestions_expert_opinions,
     migrate_advisor_suggestions_news_materially_drove,
+    migrate_engine_state_offside_since,
     migrate_llm_calls_cache_token_columns,
     migrate_llm_calls_trace_id,
     migrate_news_items_publisher_url,
@@ -87,6 +88,29 @@ from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.adapters.sqlite_storage")
+
+# How long a connect() waits for another process's write transaction
+# before giving up. sqlite3's own default is 5s, which the compose
+# stack's simultaneous cold start exceeds -- see connect().
+_BUSY_TIMEOUT_MS = 30_000
+
+
+def _parse_optional_utc(raw: str | None) -> datetime | None:
+    """Parse a nullable ISO timestamp column, degrading to ``None``.
+
+    For columns whose absence is already a rendered state, so a corrupt
+    value must not take the row down with it. ``get_engine_states``'s
+    main parse block drops the whole row on failure, and cli/live's boot
+    restore reads those rows to replay operator pauses — a bad
+    visibility timestamp there would silently resume real trading.
+    """
+    if raw is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
@@ -152,6 +176,34 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # it at execute() time; setting it on a cursor afterward is
             # unreliable and version-dependent in aiosqlite.
             self._conn.row_factory = aiosqlite.Row
+            # FIRST, before anything that can block. connect() runs
+            # executescript(SCHEMA) plus every migration inside a write
+            # transaction, and the eight daemons in the compose stack open
+            # operator.db within ~10s of each other on every deploy. Four
+            # simultaneous opens of one file reproducibly raise "database is
+            # locked" against sqlite3's 5s default (measured 2026-09-04 while
+            # adding the engine_state migration) -- and connect() turns that
+            # into a StorageError, which under `restart: unless-stopped`
+            # crash-loops the daemon instead of degrading it.
+            #
+            # Ordering is load-bearing: the lock reproduces on
+            # `journal_mode = WAL`, which needs an exclusive lock to switch a
+            # fresh DB out of delete mode. Set below that line, this PRAGMA
+            # never runs on the connection that loses. Pre-existing on main;
+            # a new migration only lengthens the window.
+            #
+            # What is PROVEN and what is not, so the next reader does not
+            # over-trust this (2026-09-04 review). Proven: four simultaneous
+            # opens of a DELETE-mode file raise "database is locked", on this
+            # branch and on unmodified main alike. NOT proven: that 30s beats
+            # the 5s default on a WAL file, which is what production has --
+            # the concurrency test alongside this seeds WAL to match
+            # production, and there the 5s default already suffices, so that
+            # test does NOT pin this value and a mutant setting it to 0
+            # passes or fails on scheduling. This is a widened margin for
+            # eight daemons opening a NAS-backed file at once, not a fix for
+            # a demonstrated production failure. Judge it as such.
+            await self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             await self._conn.execute("PRAGMA foreign_keys = ON")
             if self._db_path not in (":memory:", ""):
                 await self._conn.execute("PRAGMA journal_mode = WAL")
@@ -171,6 +223,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_price_snapshots_unique(self._conn)
             await migrate_transfer_results_unique_proposal_id(self._conn)
             await migrate_notifications_read_at(self._conn)
+            await migrate_engine_state_offside_since(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -1858,15 +1911,17 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 """
                 INSERT INTO engine_state (
                     symbol_base, symbol_quote, paused, offside,
-                    offside_ticks, reference_price, anchored_at, updated_at
+                    offside_ticks, reference_price, anchored_at,
+                    offside_since, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol_base, symbol_quote) DO UPDATE SET
                     paused = excluded.paused,
                     offside = excluded.offside,
                     offside_ticks = excluded.offside_ticks,
                     reference_price = excluded.reference_price,
                     anchored_at = excluded.anchored_at,
+                    offside_since = excluded.offside_since,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -1879,6 +1934,11 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     (
                         row.anchored_at.astimezone(UTC).isoformat()
                         if row.anchored_at is not None
+                        else None
+                    ),
+                    (
+                        row.offside_since.astimezone(UTC).isoformat()
+                        if row.offside_since is not None
                         else None
                     ),
                     row.updated_at.astimezone(UTC).isoformat(),
@@ -1900,7 +1960,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         try:
             async with conn.execute("""
                 SELECT symbol_base, symbol_quote, paused, offside,
-                       offside_ticks, reference_price, anchored_at, updated_at
+                       offside_ticks, reference_price, anchored_at,
+                       offside_since, updated_at
                 FROM engine_state
                 """) as cursor:
                 rows = await cursor.fetchall()
@@ -1922,6 +1983,21 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 )
             except (ValueError, ArithmeticError):
                 continue
+            # Both of these degrade the ROW rather than dropping it, and
+            # both sit outside the block above on purpose. That block's
+            # `continue` discards the whole row, and cli/live's boot
+            # restore reads these rows to replay operator pauses — losing
+            # one silently resumes real trading on a symbol someone
+            # deliberately stopped. A bad tick count costs a duration; a
+            # dropped row costs a pause. (offside_ticks was previously
+            # parsed bare out here, so a corrupt integer raised ValueError
+            # straight out of a StoragePort method, past the StorageError
+            # the port contract promises. Fixed 2026-09-04.)
+            try:
+                offside_ticks = int(db_row["offside_ticks"])
+            except (TypeError, ValueError):
+                offside_ticks = 0
+            offside_since = _parse_optional_utc(db_row["offside_since"])
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=UTC)
             if anchored_at is not None and anchored_at.tzinfo is None:
@@ -1931,13 +2007,58 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     symbol=Symbol(base=db_row["symbol_base"], quote=db_row["symbol_quote"]),
                     paused=bool(db_row["paused"]),
                     offside=bool(db_row["offside"]),
-                    offside_ticks=int(db_row["offside_ticks"]),
+                    offside_ticks=offside_ticks,
                     reference_price=reference_price,
                     anchored_at=anchored_at,
                     updated_at=updated_at,
+                    offside_since=offside_since,
                 )
             )
         return out
+
+    async def set_symbol_hidden(self, user_id: int, symbol: Symbol, hidden: bool) -> None:
+        """Hide or reveal one symbol's card for one user (UI-local).
+
+        Insert-or-ignore / delete rather than a stored boolean: absence
+        IS visible, so the table only ever holds what the operator
+        actively hid and a reveal leaves nothing behind.
+        """
+        conn = self._require_conn()
+        try:
+            if hidden:
+                await conn.execute(
+                    """
+                    INSERT INTO hidden_symbols (user_id, symbol_base, symbol_quote, hidden_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id, symbol_base, symbol_quote) DO NOTHING
+                    """,
+                    (user_id, symbol.base, symbol.quote, datetime.now(UTC).isoformat()),
+                )
+            else:
+                await conn.execute(
+                    "DELETE FROM hidden_symbols "
+                    "WHERE user_id = ? AND symbol_base = ? AND symbol_quote = ?",
+                    (user_id, symbol.base, symbol.quote),
+                )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to set hidden={hidden} for {symbol} (user {user_id}): {exc}"
+            ) from exc
+
+    async def get_hidden_symbols(self, user_id: int) -> frozenset[Symbol]:
+        """Return one user's hidden symbols; empty when nothing is hidden."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                "SELECT symbol_base, symbol_quote FROM hidden_symbols WHERE user_id = ?",
+                (user_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to read hidden symbols for user {user_id}: {exc}") from exc
+        return frozenset(Symbol(base=row["symbol_base"], quote=row["symbol_quote"]) for row in rows)
 
     async def save_reanchor_snooze(self, symbol: Symbol, snoozed_until: datetime) -> None:
         """Upsert one symbol's banner-snooze expiry (P3 banner button).

@@ -1334,6 +1334,45 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def set_symbol_hidden(self, user_id: int, symbol: Symbol, hidden: bool) -> None:
+        """Hide or reveal one symbol's dashboard card for one user.
+
+        UI-local visibility, the same posture as
+        :meth:`save_reanchor_snooze`: hiding a card moves no money and
+        touches no engine state, so it never crosses the ADR-002
+        firewall. Per user, because two operators must not fight over
+        one visibility list.
+
+        Idempotent in both directions — hiding an already-hidden symbol
+        and revealing a visible one are both no-ops.
+
+        Args:
+            user_id: The operator whose dashboard this affects.
+            symbol: The symbol whose card to hide or reveal.
+            hidden: ``True`` hides, ``False`` reveals.
+
+        Raises:
+            StorageError: On write failure.
+        """
+
+    @abstractmethod
+    async def get_hidden_symbols(self, user_id: int) -> frozenset[Symbol]:
+        """Return the symbols this user has hidden from the dashboard.
+
+        Storage reports what was written and applies no policy — the
+        caller decides which symbols are eligible to be hidden. A symbol
+        no longer eligible (it joined ``live.symbols`` since being
+        hidden) still comes back here and is neutralized by the reader,
+        so a configuration change can never strand a card out of sight.
+
+        Returns:
+            The hidden set; empty when the user has hidden nothing.
+
+        Raises:
+            StorageError: On retrieval failure.
+        """
+
+    @abstractmethod
     async def save_status_report_taken(
         self, channel_id: str, user_id: str, taken_at: datetime
     ) -> None:

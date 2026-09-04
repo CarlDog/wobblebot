@@ -31,7 +31,10 @@ __all__ = ("EngineStateRow",)
 
 
 @dataclass(frozen=True)
-class EngineStateRow:
+class EngineStateRow:  # pylint: disable=too-many-instance-attributes
+    # One attribute per column of a single flat visibility row — the
+    # same posture as OffsideExplanation's disable. Grouping them into
+    # sub-objects would add structure the table does not have.
     """One symbol's engine-visibility state at ``updated_at``.
 
     ``reference_price`` / ``anchored_at`` are ``None`` until the
@@ -41,6 +44,27 @@ class EngineStateRow:
     paused symbol still reports its true offside state (StepResult's
     ``offside`` field is False on every non-"stepped" action and must
     not feed this row).
+
+    ``offside_since`` is the wall-clock start of the CURRENT offside
+    episode, and is the field a duration should be rendered from.
+    ``offside_ticks`` can only ever say "since cli/live last started" —
+    it lives in process memory, so a deploy resets it. Captured evidence:
+    at 2026-09-03T23:01:23Z cli/live logged "BTC/USD still offside at
+    81190.1; parked (720 consecutive ticks)", 71 minutes into that
+    daemon — so the popover read "about 1h 0m" at the configured 5.0s
+    tick for a symbol parked since the 2026-08-19 anchor, understating
+    by ~380x. (That line is emitted from inside ``_tick``'s ``if
+    offside:`` block, which a paused symbol never reaches, so it also
+    proves the count was not frozen by a pause.)
+
+    ``offside_since`` is ``None`` in two honest cases: the symbol is
+    onside, or it is offside from an episode whose start nothing
+    observed (a row predating the column, or a daemon that first saw
+    the symbol already outside its band). It is NEVER the boot time of
+    the process that noticed — only a witnessed onside->offside
+    transition writes it. That distinction is the whole feature: a
+    stamp at first observation would assert a confident wrong date,
+    which is the class of defect 2.0.4 was cut to remove.
     """
 
     symbol: Symbol
@@ -50,3 +74,4 @@ class EngineStateRow:
     reference_price: Decimal | None
     anchored_at: datetime | None
     updated_at: datetime
+    offside_since: datetime | None = None

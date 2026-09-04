@@ -188,10 +188,80 @@ region that Group 4 also needs). No ADR, no schema, no money.
   sell guard already lives outside the engine. Realistic add is 100–140 lines
   against a file already at 1,664.
 
-## Group 3 — Persisted per-symbol state
+## Group 3 — Persisted per-symbol state — ✅ SHIPPED 2026-09-04
 
 **Items:** `offside-since`, `hide-symbol`. No ADR. **One migration carrying
 both.** No money.
+
+> **Shipped.** Four commits: a pre-existing `connect()` lock fix found on the
+> way, the storage layer, the offside-since behavior, and the hide toggle.
+> A pre-implementation verification pass checked every claim below against
+> the code, and a pre-merge adversarial review of the diff found four more
+> defects; corrections from both are recorded inline. **49 new tests**
+> (counted, not summed — the per-commit counts in three of the messages are
+> inflated), 18/18 mutants caught, suite 3834.
+>
+> **Four defects the pre-merge review found, all fixed:**
+> 1. A symbol hidden while untraded and since added to `live.symbols` stayed
+>    hidden — taking pause, resume and re-anchor with it and rendering "the
+>    engine does not manage this symbol" over a symbol being actively
+>    traded. 2.0.4's anchor-button defect inverted. `get_hidden_symbols`'s
+>    own docstring already promised the reader neutralizes this; it did not.
+> 2. `restore_offside` seeded an episode for a coin with `enabled: false`,
+>    whose tick returns before the `is_offside` recompute — a permanent
+>    OFFSIDE badge over a duration that grows on every 15s poll and that
+>    nothing can re-check. Its "cannot outlive one tick" docstring was false
+>    for the disabled, paused and wide-spread paths.
+> 3. The hide route fell OPEN on an unknown `configured` set while its own
+>    template gate fell CLOSED — a page with no eye button in front of a
+>    route that would have accepted the POST. Both fall closed now, and the
+>    comment claiming it matched `reanchor_submit` was wrong: that one falls
+>    open, deliberately and for a different reason.
+> 4. Fixing #2 introduced a second bug the fix's own test caught:
+>    `for_coin(str(symbol))` looks up a pair against a base-keyed map and
+>    never matches, so the guard was inert.
+>
+> **The "summary row must reproduce the OFFSIDE badge" requirement is
+> DISSOLVED, not met** — and since that requirement is this section's stated
+> reason for grouping the two items, say so rather than leave an unmet
+> obligation on the page. `_emit_engine_states` writes `engine_state` rows
+> only for `live.symbols`, and after the neutralization fix the hidden set
+> is disjoint from the configured set, so a hidden symbol has no row, no
+> badge, and nothing to reproduce. The grouping still earned itself: both
+> items co-edit the same card and the same header cluster.
+>
+> **Pre-deploy gate, because it cannot be done from a dev machine.** The
+> ALTER has never run against the real production `operator.db` with its six
+> live rows — the migration test builds a synthetic 2.0-era file. Before the
+> `IMAGE_TAG` bump that carries this: copy
+> `/volume1/docker/wobblebot/data/*operator*.db`, open it twice with
+> `SQLiteStorageAdapter.connect()`, then check `PRAGMA table_info(engine_state)`
+> for `offside_since` and `PRAGMA integrity_check`. This rides alongside the
+> standing adversarial review in `~/.claude/rules/pre-deploy-review.md`, not
+> instead of it.
+>
+> **One claim withdrawn rather than defended.** `busy_timeout` is a widened
+> margin, not a proven fix: the DELETE-mode race reproduces on main, but the
+> shipped concurrency test seeds WAL to match production, where sqlite3's 5s
+> default already suffices. Its mutant flipped between runs, so it was
+> removed — a mutant that flips reads as coverage and is worse than none.
+>
+> - **"One migration carrying both" was wrong.** `hidden_symbols` is a new
+>   table, so `CREATE TABLE IF NOT EXISTS` in SCHEMA covers it and it needs
+>   no migration function at all. Only `offside_since` needs an ALTER. Said
+>   here so the absence does not later read as an oversight.
+> - **The naive "write on the offside transition" would have produced the
+>   exact lie the plan warned about**, by a route the plan did not name. The
+>   transition WARNING fires at `consecutive == 1`, and after a restart that
+>   is a FIRST OBSERVATION, not a transition — production logs it for BTC and
+>   ETH within six seconds of every daemon start. The boot restore is
+>   therefore load-bearing for correctness, not polish, and the write rule is
+>   `prev.since if prev is not None else now`, never `prev.since or now`.
+> - **`tests/deployment/test_v1_to_v2_upgrade_survivor.py` looks like
+>   migration coverage for this and provides none** — its fixture rebuilds
+>   the real v1.0.0 schema, which has no `engine_state` table, so SCHEMA
+>   creates it already carrying the column and the ALTER never runs. A new
+>   file builds a genuinely 2.0-era operator.db instead.
 
 Together because they genuinely co-edit: both add port methods, adapter
 implementations and DDL, and both touch the card's badge/header cluster. The
@@ -282,11 +352,32 @@ reporter.
    symbols outside `live.symbols`.** Operator's call. This is the scope Group 3
    builds, so the summary row carries no controls and the anchor button shipped
    in 2.0.4 cannot be silently un-shipped by hiding a traded symbol.
-2. **`offside-since` for the already-parked symbols.** BTC and ETH have been
-   offside since 2026-08-19. Either add a floor flag and render "parked at least
-   Xh", or leave the column NULL and keep 2.0.4's tick sentence until a genuine
-   transition is observed. Related: seed those two rows by hand from the engine's
-   own first-transition WARNING, or let them fill in naturally?
+2. ~~**`offside-since` for the already-parked symbols.**~~ **RESOLVED
+   2026-09-04 by measurement — no operator decision was needed, and the
+   question as posed had a false premise.**
+   - **The "seed by hand from the engine's own first-transition WARNING"
+     branch is unanswerable.** That line goes to a rotating file with 7-day
+     retention; 2026-08-19 is 15 days back and nothing else persists it.
+   - **Keeping the tick sentence was not the neutral option it looks like.**
+     The captured evidence is a live log line, not arithmetic: at
+     2026-09-03T23:01:23Z, 71 minutes into a daemon up since 21:50Z,
+     cli/live logged "BTC/USD still offside at 81190.1; parked (720
+     consecutive ticks)" — so the popover read "about 1h 0m" at the
+     configured 5.0s tick, for a symbol parked since the 2026-08-19 anchor.
+     ~380x short, and Group 3's own deploy would have reset it to "1 tick,
+     about 5s". (That line comes from inside `_tick`'s `if offside:` block,
+     which a paused symbol never reaches, so the count was not frozen by a
+     pause — the one reading that would have made ticks x cadence
+     meaningless.) A true-but-misleading number is
+     the same class 2.0.4 was cut to remove, so it is deleted, not kept as a
+     fallback.
+   - **A floor could only come from replaying `ohlc_bars` against the band**,
+     which proves "price outside the band since T" and NOT "the engine was
+     parked since T" — four deploys on 2026-09-03 alone mean the engine was
+     down across parts of any such window. Not built. `anchored_at` yields a
+     CEILING, not a floor, and would render backwards if used for "at least".
+   - **Shipped:** NULL renders as an explicit unknown, and fills in for real
+     the next time the symbol re-enters its band and leaves again.
 3. **`dms-framing` threshold.** How much of the dead-man's-switch window must a
    failure streak consume before the calm framing is used? Kraken fired at ~0.85
    of the window on the one observed event; anything below that fixes

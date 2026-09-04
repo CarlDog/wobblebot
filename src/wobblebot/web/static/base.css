@@ -808,6 +808,55 @@ h2 {
   height: 16px;
 }
 
+/* Hidden-symbol summary (Group 3). One quiet line under the cards —
+   never a silent omission: the count is always stated and every hidden
+   symbol reveals in one click. A hidden symbol that still has RESTING
+   ORDERS is tinted and called out, because hiding is restricted to
+   symbols the engine does not trade, and those are exactly the ones
+   cli/live never ticks and clean shutdown never cancels. Hiding the
+   card must not also hide unmanaged capital. */
+.hidden-summary {
+  margin: 8px 0 16px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.hidden-symbol {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.hidden-symbol .link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+  text-decoration: underline dotted;
+  cursor: pointer;
+  font: inherit;
+}
+
+.hidden-symbol .link-btn:hover {
+  color: var(--text-primary);
+}
+
+.hidden-symbol-warn .link-btn,
+.hidden-orders-note {
+  /* --tag-warn-text, not --color-warn: this is TEXT, and --color-warn
+     (#b06000) has no dark override because its other uses are borders
+     and button backgrounds. --tag-warn-text is the theme-aware pair. */
+  color: var(--tag-warn-text);
+}
+
+.hidden-orders-note {
+  font-weight: 600;
+}
+
 .market-ticker {
   margin-right: 16px;
 }

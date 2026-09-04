@@ -365,6 +365,12 @@ class _FailingStorage(StoragePort):
     async def save_reanchor_snooze(self, symbol, snoozed_until):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def set_symbol_hidden(self, user_id, symbol, hidden):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+    async def get_hidden_symbols(self, user_id):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
     async def get_reanchor_snoozes(self):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
