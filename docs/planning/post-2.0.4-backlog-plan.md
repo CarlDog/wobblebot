@@ -121,8 +121,26 @@ region that Group 4 also needs). No ADR, no schema, no money.
 > - **The summary had to move.** Emitted from the back-off gate — the obvious
 >   place — it reports the PREVIOUS retry's reasons, because the gate runs
 >   before the attempt it authorizes. It lives in the layout-outcome hook
->   instead, guarded on a zero remainder so an operator re-anchor landing
->   mid-back-off cannot emit one it did not earn.
+>   instead, guarded on a zero remainder.
+> - **A pre-merge adversarial review found four more, all confirmed against
+>   the code and all fixed here.** Worth carrying forward as a pattern: every
+>   one was a case where the demotion's *blast radius* was wider than the
+>   compensating signal's.
+>   1. The demotion was gated on the SYMBOL, so it also silenced the ADR-023
+>      counter-order path — which no `LayoutOutcome` covers. A recovery
+>      counter blocked by a cap went silent for the session while its filled
+>      inventory sat with no exit order. It is now a `quiet_refusals`
+>      parameter the layout asks for, so the gate is greppable per caller.
+>   2. A PARTIAL recovery *is* demoted: the state is cleared after the layout
+>      runs, not before. Its surviving refusals went to DEBUG and their record
+>      was then discarded, so they appeared nowhere at any level. The recovery
+>      line now names them at WARNING when any remain.
+>   3. `request_reanchor` did not clear the starved clock. `resume_symbol`
+>      does, but returns early for a symbol that was never paused — the common
+>      case. So the operator's own fix flow produced no WARNING and no reason.
+>   4. The summary-cadence test derived its setup from the same constants its
+>      assertions read, so it stayed green for any value of either. Literals
+>      now, with a guard line naming the coupling.
 
 - **It is not "logging only" — say so in the commit and to the reviewer.** It
   necessarily repairs a latent bug: the "still starved" heartbeat's tick

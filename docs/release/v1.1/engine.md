@@ -947,13 +947,28 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > holds the record: `LayoutOutcome` carries a refusal breakdown and
 > `StarvationState` carries the clock plus the reasons, refreshed on every
 > retry so a summary reports what binds NOW, at WARNING as this entry's
-> original text specified — offside's heartbeat is INFO because offside is
-> a normal parked state, whereas a starved symbol cannot trade at all. `_try_place` widened to return
+> original text specified. An adversarial review before merge moved the
+> demotion from being implied by the symbol's starved state to being asked
+> for by the layout: `_try_place` is shared with the ADR-023 counter-order
+> path, which no `LayoutOutcome` covers, so a symbol-gated demotion silenced
+> a stuck recovery counter with nothing replacing it. The same review found
+> that a PARTIAL recovery is demoted too (the state is cleared after the
+> layout runs, not before), so the recovery line now names the surviving
+> refusals at WARNING; and that `request_reanchor` must clear the starved
+> clock explicitly, since `resume_symbol` returns early for the common case
+> of a starved symbol that was never paused.
+>
+> The summary is WARNING, not the INFO the offside heartbeat uses: offside is
+> a normal parked state, whereas a starved symbol cannot trade at all.
+> `_try_place` widened to return
 > `(outcome, reason)` — the plan had ruled that out, but all THREE of its
 > refusal arms return the same bare `"refused"`, so no reason survived at all
 > and the buy-side-only variant could not be built. The per-level cap WARNING
 > and the stale-anchor WARNING drop to DEBUG/INFO **only while starved**: a
-> partial layout keeps them, and the exchange-side ordermin arm is untouched.
+> never-starved partial layout keeps them, the counter-order path keeps them,
+> and the exchange-side ordermin arm is untouched. A starved symbol's PARTIAL
+> recovery is the one case that is demoted and then loses its record, which is
+> why that tick gets its own aggregate WARNING.
 > Two latent bugs came with it — the periodic heartbeat counted ticks against
 > 240 while the retry gate counted them against 60, and 240 % 60 == 0, so the
 > retry always returned first and the heartbeat had never once fired; and

@@ -861,6 +861,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         await self._storage.save_grid_state(state)
         self._offside_ticks.pop(symbol, None)
         resumed = self.resume_symbol(symbol)
+        # 2026-09-03 review: clear the starved clock too. ``resume_symbol``
+        # already does, but it returns early for a symbol that was never
+        # paused — the COMMON case, since a starved symbol keeps ticking.
+        # Without this a re-anchor of a stuck symbol lays out with the
+        # demotion still on and takes ``_note_layout_outcome``'s refresh
+        # branch, so a 0/N re-anchor emits nothing at WARNING and names no
+        # reason. The operator re-anchors precisely because the symbol is
+        # stuck, and would learn nothing about why it still is. It also makes
+        # the tick count match ``StarvationState``'s own docstring, which
+        # already says the clock resets on intervention.
+        self._starved.pop(symbol, None)
         levels = compute_grid_levels(
             reference_price=state.reference_price,
             spacing_percentage=state.spacing_percentage,
@@ -909,16 +920,21 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         with an identical per-outcome tally that would otherwise drift.
 
         ``LayoutOutcome.reasons`` attributes each refusal and sums to
-        ``refusals``. It is what makes the starved-state DEBUG demotion in
-        ``_try_place`` safe: the detail leaves the per-level lines and
-        survives in the starved WARNING and the periodic summary instead.
+        ``refusals``. It is what makes the DEBUG demotion this method asks
+        ``_try_place`` for safe: the detail leaves the per-level lines and
+        survives in the starved WARNING, the periodic summary, or the
+        partial-recovery WARNING instead. This is the ONLY caller that asks
+        for the demotion, because it is the only one that builds that record.
         """
         placed = 0
         refusals = 0
         sells_deferred = 0
         reasons: Counter[str] = Counter()
+        # Sampled once, before the loop: a symbol already in the back-off is
+        # re-attempting a layout whose refusals the starved record carries.
+        quiet = symbol in self._starved
         for level in levels:
-            outcome, reason = await self._try_place(symbol, level, coin_cfg)
+            outcome, reason = await self._try_place(symbol, level, coin_cfg, quiet_refusals=quiet)
             if outcome == "placed":
                 placed += 1
             elif outcome == "sell_deferred":
@@ -970,17 +986,39 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """
         if outcome.placed > 0 or target == 0:
             if self._starved.pop(symbol, None) is not None:
-                _LOGGER.info(
-                    "%s recovered from starvation: placed %d/%d",
-                    symbol,
-                    outcome.placed,
-                    target,
-                    extra={
-                        "symbol": str(symbol),
-                        "levels_placed": outcome.placed,
-                        "target_levels": target,
-                    },
-                )
+                recovery_extra = {
+                    "symbol": str(symbol),
+                    "levels_placed": outcome.placed,
+                    "target_levels": target,
+                    "refusals": outcome.refusals,
+                    "refusal_reasons": dict(outcome.reasons),
+                }
+                if outcome.refusals:
+                    # The recovering layout ran while the symbol was STILL
+                    # starved (this hook runs after ``_place_layout``), so its
+                    # surviving refusals went to DEBUG — and the record that
+                    # would otherwise carry them is discarded on the line
+                    # above. This is the only place those reasons are ever
+                    # named. A never-starved partial layout does not reach
+                    # here at all and keeps its per-level WARNINGs.
+                    _LOGGER.warning(
+                        "%s recovered from starvation only partially: placed %d/%d, "
+                        "%d still refused; binding: %s",
+                        symbol,
+                        outcome.placed,
+                        target,
+                        outcome.refusals,
+                        describe_reasons(outcome.reasons),
+                        extra=recovery_extra,
+                    )
+                else:
+                    _LOGGER.info(
+                        "%s recovered from starvation: placed %d/%d",
+                        symbol,
+                        outcome.placed,
+                        target,
+                        extra=recovery_extra,
+                    )
             return
         existing = self._starved.get(symbol)
         if existing is not None:
@@ -1578,6 +1616,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         level: GridLevel,
         coin_cfg: CoinGridConfig,
         amount: Amount | None = None,
+        *,
+        quiet_refusals: bool = False,
     ) -> tuple[_PlaceOutcome, str]:
         """Run safety checks then place. Refusals/deferrals are logged
         and never raise.
@@ -1616,17 +1656,25 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """
         decision = await self._check_safety(symbol, level, coin_cfg)
         if not decision.ok:
-            # 2026-09-03: while the symbol is STARVED this line repeats
+            # 2026-09-03: while a symbol is starved this line repeats
             # verbatim on every retry, forever, for a condition the engine
             # cannot resolve on its own — 3 lines per retry, measured at
-            # ~738/day for XRP/USD on the live container. DEBUG for that
-            # case only. The reason survives
-            # in the starved-entry WARNING and the periodic summary, which is
-            # what makes the demotion safe rather than blinding. A PARTIAL
-            # layout (placed > 0) is not starved and keeps the WARNING, and
-            # this deliberately does not touch the other two refusal arms
+            # ~738/day for XRP/USD on the live container.
+            #
+            # The CALLER decides, not this method. Gating on
+            # ``symbol in self._starved`` here reads the same for the layout
+            # and for the two counter-order call sites, and no LayoutOutcome
+            # covers those: their reason is discarded, so they would go quiet
+            # with nothing replacing it. An ADR-023 recovery counter blocked
+            # by a cap would then be invisible for the life of the session
+            # while its filled inventory sat with no exit order. Only
+            # ``_place_layout`` passes True, and only because the starved
+            # WARNING, the periodic summary and the partial-recovery WARNING
+            # carry the reason it suppresses.
+            #
+            # This deliberately does not touch the other two refusal arms
             # below: an exchange-side ordermin rejection stays loud.
-            log = _LOGGER.debug if symbol in self._starved else _LOGGER.warning
+            log = _LOGGER.debug if quiet_refusals else _LOGGER.warning
             log(
                 "%s %s @ %s refused by safety cap: %s",
                 symbol,

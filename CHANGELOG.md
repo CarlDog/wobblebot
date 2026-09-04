@@ -53,9 +53,19 @@ fresh `[Unreleased]` heading created at that time.
   that cannot place at its anchor re-emitted the identical per-level refusal
   and stale-anchor warnings on every retry, a measured 985 lines a day, for
   a condition the engine cannot resolve on its own. Those per-level lines drop
-  to debug while the symbol is starved, and only while it is starved: a
-  partial layout, and an exchange-side rejection such as an order minimum,
-  stay as loud as before.
+  to debug, but only for the layout that is starving and only while it is
+  starving. A layout that was never starved keeps them, an exchange-side
+  rejection such as an order minimum stays loud, and a queued counter-order
+  for a recovered fill stays loud because nothing else would report it.
+- **A layout that only partially recovers now says what still blocked it.**
+  Its surviving refusals were attempted while the symbol was still starved,
+  so they went to debug, and the record naming them is discarded by the
+  recovery itself. One warning now reports them before that happens.
+- **Re-anchoring a starved symbol re-announces the problem.** Resuming a
+  paused symbol cleared the starved state, but an operator re-anchors a stuck
+  symbol far more often than they pause it first, and that path did not. A
+  re-anchor that still places nothing now names the blocking reason instead
+  of refreshing the record silently.
 - **The periodic still-starved summary now actually fires.** It counted ticks
   against a threshold that was an exact multiple of the retry interval, so
   the retry branch always matched first and the summary was unreachable from
