@@ -2624,6 +2624,50 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     Final: pylint 10.00, mypy clean, 3870 passed. **Nothing deployed** — an
     `IMAGE_TAG` bump carrying the code changes needs the review gate first.
 
+16. **`2.0.6` — the audit's own findings, fixed** ✅ 2026-09-04.
+    Item 15's release-close audit produced 23 confirmed findings; this is the
+    release that closes them, plus what a pre-deploy review then found in the
+    fixes themselves.
+
+    **Shipped:** the config-load contract centralized across all sixteen entry
+    points (a directory `--config` or a malformed settings.yml were raw
+    tracebacks); the capital report's total-vs-available conflation split into
+    two questions at two severities; `cli/live`'s exit-code list completed;
+    four `docs/implementation/` guides superseded; two guards that scanned
+    nothing repaired; the strict-drift default moved into tracked code; the
+    LLM seam made one-directional; the audit row typed; five dead constants
+    removed.
+
+    **The pre-deploy gate earned its place.** 11 dimensions, 72 agents, 20
+    findings, 7 surviving three-lens refutation, verdict "nothing blocks". It
+    found a real defect in THIS release's own capital fix — the informational
+    line sat below `_emit`'s early return and was built and discarded in
+    exactly the case it was written for, so a false warning had been replaced
+    by silence. Three dimensions found it independently and the completeness
+    critic reproduced it by EXECUTING `_emit`. Six service-level tests and a
+    4-of-4 mutation pass had gone green over it, because none of them called
+    the function that decides what the operator is told;
+    `cli/maintenance_capital.py` had no test module at all. It has one now.
+
+    **Four false claims of mine, disproved by execution rather than
+    argument:** that a missing cloud key had crash-looped `cli/advise` at
+    v2.0.5 (the reviewer ran BOTH revisions — byte-identical `rc=2` and a
+    clean logged ERROR, no traceback either time, and the new handler is
+    unreachable because advise.py catches the subclass first); that compose
+    runs seven daemons under `unless-stopped` (six — live, harvest and tools
+    are `"no"`); that a malformed YAML meant "a crash-loop instead of a clean
+    exit 2" (`unless-stopped` restarts on ANY exit code, so the fix buys a
+    readable message, not an escape from looping); and a Makefile comment
+    that, after the strict-drift default flip, instructed the exact opposite
+    of what it promised.
+
+    **Also caught by CI, not by me:** I reported the branch green while
+    `CI & Publish to GHCR` was red on the same SHA. Two mistakes — `isort`
+    run on `src/` but checked on `src/ tests/`, and `pylint` read through
+    `tail -3`, so a 10.00/10 score hid an exit code of 4. The recorded rule is
+    to take the verdict from the exit code, and it was violated on the exact
+    tool it was written about. Every gate is now re-run reading exit codes.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

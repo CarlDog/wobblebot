@@ -30,6 +30,81 @@ fresh `[Unreleased]` heading created at that time.
 
 _Nothing yet._
 
+## [2.0.6] - 2026-09-04
+
+A correctness release with no new features. Every item is either a defect
+found by auditing 2.0.5, or a claim in the codebase that turned out to be
+false when someone measured it instead of reading it.
+
+Numbered 2.0.6 rather than 2.1.0: `2.1.0` stays reserved for the
+deployment & lifecycle-integrity phase in `docs/planning/release-2.0-plan.md`.
+
+### Fixed — operator-facing
+
+- **All sixteen CLI entry points emitted a raw traceback** for a directory
+  `--config` or a malformed `settings.yml`. `IsADirectoryError` and
+  `PermissionError` are `OSError`, neither is `FileNotFoundError`; and
+  `yaml.YAMLError` is not a `ValueError`. The contract is now
+  `_common.CONFIG_LOAD_ERRORS`, in one place, beside `missing_section_exit`
+  whose docstring already recorded why this must not be hand-copied.
+- **The capital report told the operator a sellable position could not be
+  sold.** Its ordermin check reads `available` — correctly, for "can a NEW
+  sell be placed" — while the rendered sentence described the whole
+  position. DOGE held 293.64 with 262.10 committed to resting orders
+  against an ordermin of 50, and paged daily as unsellable. `ExitViability`
+  now asks the two questions separately: `position_unexitable` (total,
+  warns and notifies) and `free_balance_short` (available, logged at INFO
+  and never notified, because it is what a working grid looks like).
+- **`cli/live`'s documented exit codes were incomplete in both places that
+  stated them.** Exit 4 (the ADR-024 cool-down) was documented nowhere, and
+  exit 1 has two distinct causes, so an operator could not tell a risk stop
+  from a refusal to boot. `--help` renders this docstring verbatim.
+- **Four `docs/implementation/` guides still declared the system did not
+  exist**, describing commands and a config schema that were never built.
+  Superseded in place rather than deleted — real documents link to them.
+
+### Fixed — guards that reported green while checking nothing
+
+- The repo-wide rule-1 logging guard **scanned zero files** from any working
+  directory but the repo root: a relative root plus `[] == []`. Now rooted
+  absolutely from `__file__`, with an assertion that the root resolves.
+- The offside popover branch **BTC and ETH actually render in production**
+  was pinned only at DTO level, on a different attribute than the template
+  gates on. Now rendered in a test; the mutant that relaxes the gate turns
+  the new test red and leaves the old one green.
+- The schema-drift strict mode was armed **only by an untracked `.env`**,
+  and went silently dead the day that file was deleted. It now defaults ON
+  in tracked code. Wiring it into CI was measured and deliberately NOT
+  done: every check it gates skips when the operator file is absent, and
+  operator files are gitignored, so the `env:` line would have been inert.
+- A **key defined twice in `.env`** was invisible to the drift tests, which
+  collapse keys into a `set`. python-dotenv is last-wins, so the DOCUMENTED
+  definition was the dead one — rotating a key where the docs say to would
+  have done nothing.
+
+### Changed — internal
+
+- `services/` no longer imports any adapter for the LLM plumbing. The JSON
+  extractor moved down into `services/llm_cloud_call.py`, making the
+  sanctioned seam one-directional; `services/simulator.py` ->
+  `adapters/mock_exchange` remains as a separate deliberate edge.
+- `AppliedSuggestion.applied_keys` / `rejected_keys` are typed
+  `list[AppliedKey]` / `list[RejectedKey]`, models the code already had.
+  On-disk JSON is unchanged, so no migration.
+- Five module constants with no producer removed; `ShutdownPhase` restored
+  in the five CLIs that had drifted to `list[tuple[str, Any]]`.
+
+### Process
+
+Gated by the ratified pre-deploy adversarial review (11 dimensions, 72
+agents, 20 findings, 7 surviving three-lens refutation). It caught a defect
+in this release's own capital-report fix — the informational line sat below
+an early return and was built and discarded in exactly the case it was
+written for — plus four false claims in comments and docstrings, each
+disproved by executing both revisions rather than by argument. All fixed
+here. The seven lessons this cycle produced were also ported into
+`~/.claude/rules/pre-deploy-review.md`, which had never received them.
+
 ## [2.0.5] - 2026-09-04
 
 Operator legibility, three slices deep. The theme is the same one 2.0.4 was
