@@ -41,9 +41,11 @@ from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     PermanentAuthHalt,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     emit_heartbeat,
     identity,
     install_signal_handlers,
@@ -590,9 +592,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = (
         args.log_format

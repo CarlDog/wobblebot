@@ -53,7 +53,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import time
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -63,8 +62,10 @@ from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     identity,
     install_signal_handlers,
     load_operator_env,
@@ -622,9 +623,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.shadow.log_format if config.shadow else "plain"
     log_file_path = config.shadow.log_file_path if config.shadow else None

@@ -50,8 +50,11 @@ from wobblebot.adapters.ollama import OllamaAdapter
 from wobblebot.adapters.openai import OpenAIAdvisorAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
+    OperatorConfigError,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     identity,
     install_signal_handlers,
     load_operator_env,
@@ -146,9 +149,19 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
     Both messages stay specific: the deprived-env discipline is that an
     operator sees exactly which block or which variable is missing, never
     a KeyError or a generic failure.
+
+    Raises ``OperatorConfigError`` (a ``ValueError`` subclass) rather than
+    bare ``ValueError`` so ``run_with_clean_exit`` turns it into exit 2
+    with the message. This runs inside ``_main_async``, four frames below
+    main()'s config-load handler, and a bare ValueError there reached the
+    operator as a traceback — then crash-looped under
+    ``restart: unless-stopped``. Found 2026-09-04: `.env.example` told
+    operators ATLASCLOUD_API_KEY was inert while the deployed `cpu-only`
+    profile required it, so this was the live failure mode for anyone
+    provisioning a fresh host from the documented example.
     """
     if cloud_wiring is None:
-        raise ValueError(
+        raise OperatorConfigError(
             f"{provider.capitalize()} provider configured but settings.yml has no "
             "`llm:` block. Phase 6 / ADR-014 requires cost-cap config for cloud "
             "providers; add an `llm:` block and ensure operator.operator_db "
@@ -157,7 +170,7 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
     key_var = _CLOUD_KEY_ENV[provider]
     api_key = os.environ.get(key_var)
     if not api_key:
-        raise ValueError(
+        raise OperatorConfigError(
             f"{key_var} missing from environment; required when " f"advisor.provider=='{provider}'."
         )
     return api_key
@@ -894,9 +907,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.advise.log_format if config.advise else "plain"
     log_file_path = config.advise.log_file_path if config.advise else None

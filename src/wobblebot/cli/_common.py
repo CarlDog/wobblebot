@@ -42,6 +42,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn, Protocol, TypeVar
 
+import yaml
 from dotenv import find_dotenv, load_dotenv
 
 from wobblebot.adapters.kraken_exchange import is_permanent_auth_error
@@ -142,6 +143,56 @@ def parse_symbol_csv(raw: str) -> list[str]:
 def identity(value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
+
+
+# The exception classes a config load can legitimately raise at an
+# operator. Centralized for the same reason `missing_section_exit` below
+# is: until 2026-09-04 this tuple was hand-copied into all sixteen entry
+# points, and every copy was missing the same two classes.
+#
+# `OSError` is the umbrella, not a widening for its own sake: `path.open()`
+# raises `IsADirectoryError` for `--config config` (a natural typo, since
+# every doc says `config/settings.yml`) and `PermissionError` for an
+# unreadable file. Both are OSError, NEITHER is FileNotFoundError, so the
+# old tuple let them out as a raw traceback. `yaml.YAMLError` is likewise
+# not a ValueError — its MRO is (YAMLError, Exception, BaseException,
+# object) — so a hand-edited malformed settings.yml did the same. That one
+# matters most: docker-compose runs seven daemons under
+# `restart: unless-stopped`, so one bad character in a 1000-line YAML file
+# turned into a crash-loop instead of a clean exit 2.
+CONFIG_LOAD_ERRORS: tuple[type[Exception], ...] = (
+    OSError,  # covers FileNotFoundError, IsADirectoryError, PermissionError
+    KeyError,  # unknown --profile
+    ValueError,  # YAML root is not a mapping
+    yaml.YAMLError,  # malformed YAML
+)
+
+
+class OperatorConfigError(ValueError):
+    """A config precondition an operator can fix, raised from inside the
+    async body and surfaced by :func:`run_with_clean_exit` as exit 2.
+
+    Subclasses ``ValueError`` deliberately: every existing caller that
+    catches ``ValueError`` keeps working unchanged, so this narrows what
+    ``run_with_clean_exit`` has to catch without widening what anything
+    else does. Raising bare ``ValueError`` from the async body instead
+    produces a traceback, because that function only ever caught
+    ``KeyboardInterrupt`` — which is how a missing ATLASCLOUD_API_KEY
+    crash-looped cli/advise rather than telling the operator which
+    variable to set.
+    """
+
+
+def config_load_exit(exc: BaseException) -> int:
+    """Report a failed config load on stderr; return exit code 2.
+
+    The load half of the deprived-env contract, paired with
+    :data:`CONFIG_LOAD_ERRORS`. Writes to raw stderr rather than a logger
+    because every call site runs BEFORE ``configure_logging`` — the log
+    format is read from the config that just failed to load.
+    """
+    sys.stderr.write(f"error: {exc}\n")
+    return 2
 
 
 def missing_section_exit(logger: logging.Logger, section: str) -> int:
@@ -629,6 +680,13 @@ def run_with_clean_exit(
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt at top level; exiting clean")
         rc = 0
+    except OperatorConfigError as exc:
+        # A precondition the operator can fix, raised too deep to reach
+        # main()'s config-load handler. Same exit code and same stderr
+        # shape as that handler, so the two paths are indistinguishable
+        # to whoever is reading the terminal.
+        sys.stderr.write(f"error: {exc}\n")
+        rc = 2
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(rc)

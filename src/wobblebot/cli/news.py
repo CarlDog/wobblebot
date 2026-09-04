@@ -45,8 +45,10 @@ from wobblebot.adapters.kraken_status_news import KrakenStatusAdapter
 from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     emit_heartbeat,
     identity,
     install_signal_handlers,
@@ -397,9 +399,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.news.log_format if config.news else "plain"
     log_file_path = config.news.log_file_path if config.news else None

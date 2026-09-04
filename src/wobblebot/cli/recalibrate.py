@@ -49,7 +49,12 @@ from pathlib import Path
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
-from wobblebot.cli._common import add_config_args, load_operator_env
+from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
+    add_config_args,
+    config_load_exit,
+    load_operator_env,
+)
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
@@ -283,9 +288,8 @@ def main(argv: list[str] | None = None) -> int:
             profile_name=args.profile,
             cli_overrides={},
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format: Any = args.log_format if args.log_format is not None else "plain"
     configure_logging(log_format=log_format)

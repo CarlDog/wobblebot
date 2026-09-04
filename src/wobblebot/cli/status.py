@@ -31,14 +31,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 from typing import Any
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     identity,
     load_operator_env,
     missing_section_exit,
@@ -160,9 +161,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.status.log_format if config.status else "plain"
     configure_logging(log_format=log_format)

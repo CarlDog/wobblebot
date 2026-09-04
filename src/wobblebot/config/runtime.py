@@ -58,10 +58,19 @@ def load_resolved_config(
         FileNotFoundError: ``config_path`` explicitly passed but missing,
             or discovery exhausted (neither settings.yml nor
             settings.example.yml exists).
+        IsADirectoryError: ``config_path`` names a directory.
+        OSError: The config file exists but cannot be read (permissions).
+        yaml.YAMLError: The file is not parseable YAML.
         ValueError: YAML file's root is not a mapping.
         KeyError: ``profile_name`` was provided but not found.
         pydantic.ValidationError: Final merged config fails schema
             validation (missing required sections, bad types, etc.).
+
+    Callers catch :data:`wobblebot.cli._common.CONFIG_LOAD_ERRORS` rather
+    than restating this list; the two drifted apart once already (the
+    OSError and yaml.YAMLError rows above were added 2026-09-04 after an
+    audit found all sixteen entry points emitting a raw traceback for a
+    directory ``--config`` or a malformed settings.yml).
     """
     resolved_path = _discover_config_path(config_path)
     raw = _load_yaml(resolved_path)
@@ -75,6 +84,16 @@ def _discover_config_path(config_path: Path | None) -> Path:
     if config_path is not None:
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
+        if config_path.is_dir():
+            # Named explicitly because `--config config` is the natural
+            # typo: every doc in the repo refers to `config/settings.yml`.
+            # Without this the operator gets IsADirectoryError, or on
+            # Windows a PermissionError errno 13, which reads as a
+            # filesystem-ACL problem rather than "you named the folder".
+            raise IsADirectoryError(
+                f"Config path is a directory, not a file: {config_path} "
+                f"(did you mean {config_path / 'settings.yml'}?)"
+            )
         return config_path
     if _DEFAULT_CONFIG.exists():
         return _DEFAULT_CONFIG

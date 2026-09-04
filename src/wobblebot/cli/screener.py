@@ -35,8 +35,10 @@ from datetime import UTC, datetime, timedelta
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     identity,
     load_operator_env,
     missing_section_exit,
@@ -227,9 +229,8 @@ def main() -> int:
                 },
             ),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     # Configure logging BEFORE the missing-section check, defaulting the
     # format when the section that would carry it is absent — the same

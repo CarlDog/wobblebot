@@ -102,8 +102,10 @@ from typing import Any
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     PermanentAuthHalt,
     add_config_args,
+    config_load_exit,
     emit_heartbeat,
     install_signal_handlers,
     load_operator_env,
@@ -816,9 +818,8 @@ def main(argv: list[str] | None = None) -> int:
             profile_name=args.profile,
             cli_overrides={},
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format: Any = (
         args.log_format

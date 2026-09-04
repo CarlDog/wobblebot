@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -42,10 +41,12 @@ from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
     PermanentAuthHalt,
     ShutdownPhase,
     add_config_args,
     collect_overrides,
+    config_load_exit,
     identity,
     install_signal_handlers,
     load_operator_env,
@@ -663,9 +664,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.observe.log_format if config.observe else "plain"
     log_file_path = config.observe.log_file_path if config.observe else None

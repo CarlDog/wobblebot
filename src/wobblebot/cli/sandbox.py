@@ -27,13 +27,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 from decimal import Decimal
 from typing import Any
 
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli._common import add_config_args, collect_overrides, identity, missing_section_exit
+from wobblebot.cli._common import (
+    CONFIG_LOAD_ERRORS,
+    add_config_args,
+    collect_overrides,
+    config_load_exit,
+    identity,
+    missing_section_exit,
+)
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
@@ -112,9 +118,8 @@ def main() -> int:
             profile_name=args.profile,
             cli_overrides=_build_overrides(args),
         )
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
+    except CONFIG_LOAD_ERRORS as exc:
+        return config_load_exit(exc)
 
     log_format = config.sandbox.log_format if config.sandbox else "plain"
     configure_logging(log_format=log_format)
