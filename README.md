@@ -211,7 +211,7 @@ make check                   # all of the above + tests
 
 ### Schema-drift safety net
 
-If you edit `config/settings.example.yml` or `.env.example`, the tests in `tests/config/test_schema_drift.py` enforce that operator copies stay in sync. Set `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` to fail (instead of warn) when an operator file is missing keys the example documents — useful in CI.
+If you edit `config/settings.example.yml` or `.env.example`, the tests in `tests/config/test_schema_drift.py` enforce that operator copies stay in sync. Set `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` to fail (instead of warn) when an operator file is missing keys the example documents. The repo's own `.env` sets it and `tests/conftest.py` loads that, so it is already active for local runs; it is deliberately **not** wired into CI yet (a queued audit finding from 2026-09-04 — the previous wording here said "useful in CI", which read as though it were).
 
 ---
 

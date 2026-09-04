@@ -171,6 +171,11 @@ live:
     - BTC/USD
   db: "data/wobblebot-live.db"
   tick_seconds: 5.0
+  terminal_heartbeat_seconds: 900.0   # how often the "still alive" line prints to the
+                                      # terminal/container log. Cosmetic only — trading
+                                      # cadence is tick_seconds. Added to this example
+                                      # 2026-09-04: the knob has always existed on
+                                      # LiveConfig, but was undiscoverable from here.
   max_runtime_minutes: 60.0           # session-level kill switch; ~null~ = run indefinitely
   max_session_loss_usd: 5.0           # mark-to-market portfolio drop (USD) that aborts the session
   # ADR-021: server-side dead man's switch (Kraken CancelAllOrdersAfter),

@@ -26,8 +26,20 @@ or set ``live.symbols:`` in the YAML. Each tick steps every symbol in
 series; per-symbol asyncio.Lock keeps them re-entrant-safe.
 
 On shutdown (any reason): every open order for every configured
-symbol is cancelled in the ``finally`` block. Exit codes: 0 clean
-(signal/runtime), 1 loss-cap tripped, 2 missing credentials.
+symbol is cancelled in the ``finally`` block.
+
+Exit codes:
+
+* ``0`` — clean stop (signal, or ``max_runtime_minutes`` reached).
+* ``1`` — **two causes**: the session loss cap tripped mid-run, or startup
+  reconciliation failed and the daemon refused to start. Both are "stop and
+  look", but only the first means money moved.
+* ``2`` — missing trade credentials, or a missing/unloadable config.
+* ``4`` — a session-loss-cap cool-down is still in effect (ADR-024); the
+  daemon refused to start and will resume after the window.
+
+(Exit 4 was undocumented until the 2026-09-04 release-close audit, and this
+docstring claimed 1 meant only the loss cap.)
 
 Loads trade credentials from ``KRAKEN_TRADER_API_KEY`` /
 ``KRAKEN_TRADER_API_SECRET``.

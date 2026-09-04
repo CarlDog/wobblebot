@@ -1,9 +1,17 @@
 # Operator Guide
 
-> **Status: forward-looking design doc.** Describes the Phase 2+ target
-> system. None of the commands, configs, schemas, or endpoints below exist
-> yet. Current code (Phase 1.3) runs only via the test suite. Track real
-> progress in [docs/planning/roadmap.md](../planning/roadmap.md).
+> **Status: HISTORICAL design sketch, superseded. Do not follow this
+> document.** Written before the system was built, when it ran only via the
+> test suite. WobbleBot has been in production since `v1.0.0` (2026-07-31)
+> and is on the patch line above `v2.0.0`; the commands, config keys and
+> endpoints below were a Phase-2 target and many were never built, or were
+> built with different names. Kept because real documents link here and the
+> design reasoning is still worth reading — NOT because it describes
+> anything that exists.
+>
+> **Authoritative instead:** `CLAUDE.md`'s "Operator entry points" index for
+> what actually exists, each module's own `--help` for how to drive it, and
+> [docs/planning/roadmap.md](../planning/roadmap.md) for current state.
 
 This guide is for the person operating WobbleBot in day‑to‑day use.  It describes the mental model, configuration basics, typical workflows, and emergency procedures.  It supplements the `deployment-guide.md` and `operations.md` with a focus on the operator’s perspective.
 

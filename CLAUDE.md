@@ -64,7 +64,7 @@ module's `--help` and the roadmap stage that shipped it.
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
 - `cli.status` — read-only Kraken price + balance check.
 - `cli.preflight` — one engine step via Kraken `validate=true` (nothing placed). **Run before every live session.**
-- `cli.live` — **real-money** multi-asset grid trading. `--symbols` comma-list; hard caps; clean SIGINT cancels every open order. Exit codes: 0 clean / 1 loss-cap / 2 missing creds.
+- `cli.live` — **real-money** multi-asset grid trading. `--symbols` comma-list; hard caps; clean SIGINT cancels every open order. Exit codes: 0 clean / **1 loss-cap tripped OR startup reconciliation failed** / 2 missing creds or config / **4 session-loss-cap cool-down in effect, refusing to start (ADR-024)**. Corrected 2026-09-04: exit 4 was undocumented here and in the module, and exit 1 has two causes, so an operator seeing 1 could not tell a risk stop from a refusal to boot.
 - `cli.observe` — read-only price/balance data collection.
 - `cli.lurker` — one-line alias of `cli.observe` today (own `__main__`); reserved to grow advisor commentary on pure observation later.
 - `cli.news` — long-running news poller (RSS + Kraken status feed; CryptoCompare retired 2026-07-31, paid-only upstream — off by default everywhere); persists `news_items` with `(source, external_id)` dedup; feeds the advisor.
@@ -148,7 +148,8 @@ tests/         # Mirrors src/ structure
 - `domain/` must not import from `adapters/`, `services/`, or `cli/`. Run `grep -r "from wobblebot.adapters" src/wobblebot/domain/` — output should be empty.
 - Dependencies flow inward only: adapters depend on ports, services depend on ports + domain, nothing depends on adapters.
 - All cross-module wiring happens via constructor dependency injection of port interfaces.
-- **Documented exception — LLM plumbing.** The cloud-LLM adapters (`adapters/openai.py`, `anthropic.py`, `google.py`, their `*_assistant.py` variants) and `adapters/moe_advisor.py` import shared *leaf* helpers from `services/` (`llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry`, `aggregators`). This bends "nothing flows out of adapters" but creates **no import cycle** — those helpers never import the adapters back — and centralizes one cost-gate / retry / pricing implementation instead of copying it per provider. This is the one sanctioned outward edge; new LLM adapters may reuse these helpers, but don't introduce fresh adapter→service dependencies outside this plumbing.
+- **Documented exception — LLM plumbing.** The cloud-LLM adapters (`adapters/openai.py`, `anthropic.py`, `google.py`, their `*_assistant.py` variants) and `adapters/moe_advisor.py` import shared *leaf* helpers from `services/` (`llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry`, `aggregators`). This bends "nothing flows out of adapters" and centralizes one cost-gate / retry / pricing implementation instead of copying it per provider. This is the one sanctioned outward edge; new LLM adapters may reuse these helpers, but don't introduce fresh adapter→service dependencies outside this plumbing.
+  **Corrected 2026-09-04 (release-close audit):** this bullet used to justify itself with "creates **no import cycle** — those helpers never import the adapters back." That reason was false. `services/llm_cloud_call.py` imports `OllamaJsonExtractError` / `extract_last_json_object` from `adapters/ollama.py`, and `services/simulator.py` imports `adapters/mock_exchange`, so the seam is **bidirectional**. There is still no cycle — `adapters/ollama.py` imports only `config/`, `domain/` and `ports/`, verified by grep — but it is cycle-free by accident rather than by the stated rule, and a future import in `adapters/ollama.py` would close the loop with nothing to catch it. Queued fix: `extract_last_json_object` is a pure text function whose own docstring calls it "port-agnostic," so it belongs in `services/`, not in an adapter; moving it removes the LLM-plumbing half of the violation and makes this bullet's original claim true. `simulator.py`→`mock_exchange` is a separate, deliberate edge (a simulator needs a fake exchange) and is not covered by the LLM exception at all.
 
 ### Financial Power Fragmentation (Safety Design)
 
@@ -256,11 +257,16 @@ to every project. The wobblebot-specific items below extend it:
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their
   example counterparts. `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` turns the
-  non-strict direction from a warning into a failure — but note it is set
-  in **no workflow**: verified 2026-09-04, it appears zero times under
-  `.github/`, so today that direction only ever prints into captured
-  stdout and reaches nobody on a green run. Set it locally when editing
-  either example file. Wiring it into CI is a queued audit finding.
+  non-strict direction (operator file missing a key the example documents)
+  from a printed warning into a hard failure. **Where it is actually on,
+  verified 2026-09-04:** the operator's `.env` sets it and
+  `tests/conftest.py` calls `load_dotenv()`, so it is LIVE for local runs —
+  add a key to either example file and the drift test goes red on your
+  machine. It is set in **no workflow**, though: zero occurrences under
+  `.github/`, and CI has no operator `.env` to load, so in CI that
+  direction prints into captured stdout and reaches nobody. Practical
+  consequence: local runs catch example/operator drift, CI does not.
+  Wiring it into CI is a queued audit finding.
 - **`settings.example.yml` reflects reality.** The drift test catches KEY
   drift but **not** value/comment staleness or dead pairs (`grid.coins.*`
   is exempt) — verified 2026-06-04 after the example silently carried stale
