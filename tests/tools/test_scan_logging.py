@@ -21,7 +21,16 @@ from tools.scan_logging import scan_decimal, scan_rule1
 
 pytestmark = pytest.mark.unit
 
-_PACKAGE_ROOT = pathlib.Path("src/wobblebot")
+# Absolute, derived from this file — NOT the relative "src/wobblebot".
+# A relative root is silently empty whenever pytest is invoked from
+# anywhere but the repo root, and `scan_rule1` returns [] for a path that
+# does not exist, so the repo-wide guard below asserted [] == [] and
+# reported green while scanning zero files. Verified from a different cwd
+# by the 2026-09-04 release-close audit. The `is_dir` assertion is the
+# other half: if this path ever stops resolving, the guard must fail
+# loudly rather than quietly pass.
+_PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[2] / "src" / "wobblebot"
+assert _PACKAGE_ROOT.is_dir(), f"logging guard root did not resolve: {_PACKAGE_ROOT}"
 
 
 def _write(tmp_path: pathlib.Path, source: str) -> pathlib.Path:

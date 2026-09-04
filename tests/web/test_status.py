@@ -1897,6 +1897,44 @@ class TestOffsidePopover:
         # "ABOVE" wording, so check the popover's phrasing specifically).
         assert "is ABOVE the grid" not in body and "is BELOW the grid" not in body
 
+    async def test_an_unobserved_start_renders_the_unknown_sentence(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The branch BTC and ETH render in production TODAY.
+
+        Added 2026-09-04 by the release-close audit, which found this branch
+        pinned only at DTO level: `tests/web/test_status_offside.py` asserts
+        `offside_seconds is None`, while the template gates on a DIFFERENT
+        attribute, `offside_since`. Nothing tied the assertion to the
+        condition that actually decides what the operator reads.
+
+        That gap matters here more than almost anywhere else. Both live
+        symbols carry a NULL `offside_since` by design — their episodes began
+        before the column existed — so the ONLY branch production renders for
+        them was the one branch no test rendered. This is the same slot that
+        shipped a ~380x understatement in 2.0.3, and the ratified pre-deploy
+        rule is explicit that a claim about rendering is not settled by
+        reading.
+        """
+        await live_storage.save_order(_make_order())
+        # offside_since_hours omitted -> offside_since is None: production.
+        await operator_storage.save_engine_state(
+            _engine_row(offside=True, offside_ticks=12, age_seconds=1)
+        )
+        with _build_client(operator_storage, live_storage, live_tick_seconds=5.0) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+
+        assert ">OFFSIDE<" in body  # the label is unconditional
+        assert "so how long it has been parked is unknown" in body
+        assert "comes back inside its band and leaves again" in body
+        # The failure mode this whole column exists to prevent: a confident
+        # time where there is no observation to support one.
+        assert "Parked since " not in body
+        # And specifically NOT the sentence 2.0.4 rendered, which turned a
+        # restart-scoped tick count into a wall-clock claim.
+        assert "since cli/live last started" not in body
+
 
 @pytest.mark.asyncio
 class TestReanchorButtonRespectsTheTradingSet:
