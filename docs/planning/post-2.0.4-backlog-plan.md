@@ -133,8 +133,10 @@ region that Group 4 also needs). No ADR, no schema, no money.
 >      parameter the caller passes, so the gate is greppable per call site.
 >      **Both the finding and its dissenting refuter were right, about
 >      different things**, and the first fix took only the finding: making
->      that path loud again restored ~17k lines/day, since ADR-023 retries
->      every tick outside the back-off — 17x the noise being removed, burying
+>      that path loud again restored ~14,800 lines/day (the review said 17k,
+>      off the nominal 5s tick; this is off the measured 5.85s one), since
+>      ADR-023 retries every tick outside the back-off — 15x the noise being
+>      removed, burying
 >      the summary the slice exists to surface. The counter must be VISIBLE
 >      (the finding) without being PER-TICK (the dissent), so it announces
 >      once per counter with the order id and the binding reason, cleared

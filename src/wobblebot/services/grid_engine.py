@@ -279,12 +279,19 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # Counter ids whose refusal has already been announced this process.
         # Per ADR-023 a refused counter is retried EVERY tick and never
         # discarded, and that retry is not behind the starvation back-off, so
-        # an unthrottled WARNING there is ~17k lines/day at the 5s cadence for
-        # one permanently blocked counter -- 17x the noise this slice removes,
-        # and it would bury the summary the slice exists to surface. Warn on
-        # the transition, then DEBUG, mirroring SellGuard and the offside
-        # heartbeat. Bounded by _pending_counter_ids: entries are only added
-        # for ids in that set and dropped whenever one leaves it.
+        # an unthrottled WARNING there is ~14,800 lines/day for one
+        # permanently blocked counter -- 15x the noise this slice removes, and
+        # it would bury the summary the slice exists to surface. (Derived from
+        # the tick cadence MEASURED live on 2026-09-03, ~5.85s, not the
+        # nominal 5s: 86400/5.85. The nominal rate gives 17,280, which is the
+        # figure the review quoted.) Warn on the transition, then DEBUG,
+        # mirroring SellGuard and the offside heartbeat.
+        #
+        # Bounded by _pending_counter_ids: entries are only added for ids in
+        # that set and dropped whenever one leaves it. Per-process and
+        # in-memory ON PURPOSE, like _starved -- a restart re-announces every
+        # still-blocked counter once, which is what a fresh operator reading a
+        # fresh log needs. Do not persist it.
         self._counter_refusal_warned: set[UUID] = set()
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
@@ -1414,8 +1421,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         That every-tick retry is why a refusal is announced ONCE, by this
         method, with ``_try_place`` kept quiet throughout. The retry is not
         behind the starvation back-off, so a per-level WARNING here would be
-        ~17k lines/day at the 5s cadence for one blocked counter — 17x the
-        noise this slice removes, burying the summary it exists to surface.
+        ~14,800 lines/day for one blocked counter — 15x the noise this slice
+        removes, burying the summary it exists to surface.
         Nor can it be gated on the symbol being starved: a counter can be
         blocked while the layout places fine. So the announcement carries
         the order id AND the binding reason, and ``_counter_refusal_warned``

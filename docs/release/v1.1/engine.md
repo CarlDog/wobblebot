@@ -953,7 +953,8 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > path, which no `LayoutOutcome` covers, so a symbol-gated demotion silenced
 > a stuck recovery counter with nothing replacing it. That path cannot simply
 > stay loud either — the dissenting refuter on that same finding measured it
-> at ~17k lines/day, since ADR-023 retries every tick outside the back-off —
+> at ~17k lines/day off the nominal 5s tick (~14,800 off the measured 5.85s
+> one), since ADR-023 retries every tick outside the back-off —
 > so it gets a once-per-counter announcement carrying the order id and the
 > binding reason, with the per-level line quiet throughout. The same review found
 > that a PARTIAL recovery is demoted too (the state is cleared after the

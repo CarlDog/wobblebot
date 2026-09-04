@@ -62,7 +62,7 @@ fresh `[Unreleased]` heading created at that time.
   discarded, so it sat behind a cap silently while the filled inventory had
   no exit order. It now announces itself once with the blocking reason, then
   stays quiet until it places. Warning on every attempt instead would be
-  roughly seventeen thousand lines a day, far more than this release
+  roughly fifteen thousand lines a day, fifteen times what this release
   removes.
 - **A layout that only partially recovers now says what still blocked it.**
   Its surviving refusals were attempted while the symbol was still starved,
