@@ -2502,6 +2502,98 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     18-trade backfill corrected BTC's basis (23->41 trades, +2.81%) and
     nothing has regressed since.
 
+15. **Release-close audit at the 2.0.5 boundary** ✅ 2026-09-04.
+    Not a phase transition — Phase 8 still runs to Phase 9 below, and this is
+    an internal boundary like the 2026-08-10 "P3 close audit". Run because the
+    post-2.0.4 backlog closed except for its parked group.
+
+    **Shape:** 12 read-only dimensions in parallel, every finding then put
+    through three refuters with different lenses (does the code actually say
+    this / is it already a ratified decision / would a maintainer act on it),
+    majority rules and default-refuted, closed by a completeness critic.
+    127 agents, 0 errors. **38 findings raised, 23 survived, 15 killed.**
+    The already-decided lens earned its place: this codebase deliberately
+    ratifies things that look like smells, and without it the panel would
+    have rediscovered ADR-004 and the sanctioned LLM edge.
+
+    **Baseline was clean, so the audit was never about hygiene:** pylint
+    10.00/10, mypy strict clean over 152 files, black + isort clean over 390,
+    3834 tests passing at 86.51% coverage — up from 3026 at the 2026-08-10
+    audit, so nothing had been deleted to keep the build green.
+
+    **The completeness critic overturned one kill, and it was right.** The
+    panel refuted "the schema-drift strict mode is documented as armed and is
+    actually disarmed"; the critic showed the identical shape had SURVIVED as
+    a separate finding, and that another surviving finding leaned on that same
+    weakness as load-bearing. Shipped. Recorded because it is the second time
+    the minority verdict was the useful paragraph.
+
+    **Fixed (commits `b0ac30e`, `80dbffb`, `f504f8f`, `a634f3b`):**
+
+    - Six documents asserting a checkable falsehood. CLAUDE.md said five
+      releases where `git tag -l` returns seven (rewritten count-free — blame
+      shows the line was hand-maintained five times, then lapsed twice);
+      `.env.example` said the Atlas key was "NOT wired into any daemon" while
+      `settings.yml` sets `provider: atlas` and every container runs
+      `--profile cpu-only`; the prompt index named four of six committed
+      prompts; five-vs-seven maintenance tasks in three places, including
+      `cli/maintenance.py` contradicting ITSELF (header seven, body five —
+      ground truth is seven `run_poll_loop` calls).
+    - **All sixteen entry points emitted a raw traceback** for a directory
+      `--config` or a malformed `settings.yml`. `IsADirectoryError` /
+      `PermissionError` are `OSError`, NEITHER is `FileNotFoundError`; and
+      `yaml.YAMLError` is not a `ValueError`. Under `restart: unless-stopped`
+      that made one bad character in a 1000-line YAML an indefinite
+      crash-loop rather than a clean stop. Centralized as
+      `_common.CONFIG_LOAD_ERRORS`, next to `missing_section_exit` whose
+      docstring already recorded why this contract must live in one place.
+      Paired in ONE commit with the cloud-key precondition (the critic's
+      call): the same exception class was caught legibly on the config path
+      and fatal on the adapter-construction path, in the same function.
+    - Two guards reporting green while checking nothing. The repo-wide rule-1
+      logging guard scanned ZERO files from any cwd but the repo root
+      (relative root + `[] == []`); and the offside popover branch BTC and ETH
+      render in production was pinned only at DTO level, on a DIFFERENT
+      attribute from the one the template gates on.
+    - Four guides still saying "Current code (Phase 1.3) runs only via the
+      test suite". Superseded in place rather than deleted (real inbound
+      links) or rewritten (would invent content).
+    - `cli/live`'s exit-code contract, incomplete in BOTH places that state
+      it: exit 4 (ADR-024 cool-down) was documented nowhere, and exit 1 has
+      two causes.
+    - The architecture bullet justified the sanctioned LLM seam with "those
+      helpers never import the adapters back" — false. No cycle exists, but
+      by accident rather than by the stated rule.
+
+    **Mutation-verified 6 of 6**, and one initially ESCAPED with the test
+    wrong rather than the code: asserting `"directory" in stderr` passed with
+    the guard deleted, because pytest builds `tmp_path` from the test's own
+    name and that name contained the word. A test pinning its own name.
+    Separately, the popover mutant proved the finding's own claim — with the
+    template gate relaxed the new rendered test goes red and the pre-existing
+    DTO test stays green.
+
+    **A correction to this same day's work:** the claim that
+    `WOBBLEBOT_STRICT_CONFIG_DRIFT` "reaches nobody on a green run" was half
+    right. It is absent from every workflow, but the repo `.env` sets it and
+    `tests/conftest.py` calls `load_dotenv()`, so it is LIVE locally — found
+    by tripping it. Local runs catch example/operator drift; CI does not.
+
+    **Filed, not fixed, so each is a decision:** the `extract_last_json_object`
+    move that would make the architecture bullet's original claim true; wiring
+    strict drift into CI; a test module importing sibling private helpers.
+    **Operator action, untouched deliberately:** the repo `.env` defines
+    `KRAKEN_READER_API_KEY`/`_SECRET` twice with DIFFERENT values (lines 21/22
+    and 138/139) — later wins, so the documented pair loses, and rotating the
+    key on line 21 would silently do nothing. Read-only key, so no order risk.
+    Picking the survivor needs a live check only the operator can make.
+
+    Lessons ported to `~/.claude/rules/pre-deploy-review.md` (`80ef6de`, 77
+    lines): the cycle's seven amendments had landed ONLY in machine-local
+    auto-memory, while that memory's own text called the rule canonical.
+    Final: pylint 10.00, mypy clean, 3870 passed. **Nothing deployed** — an
+    `IMAGE_TAG` bump carrying the code changes needs the review gate first.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
