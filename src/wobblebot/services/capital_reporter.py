@@ -80,21 +80,57 @@ class EntryViability:
 
 @dataclass(frozen=True)
 class ExitViability:
-    """Can the held position be sold as a single order?
+    """Two different questions about one position, deliberately kept apart.
 
-    A position below ``ordermin`` is unsellable in one order regardless
-    of order sizing — the asset is stranded until the position grows.
+    ``total_quantity`` is everything held. ``available_quantity`` is the
+    part not already committed to resting orders. Until 2026-09-04 this
+    class carried ONE number and a single ``blocked`` flag, the caller fed
+    it ``available``, and the rendered sentence described ``total`` — so a
+    position of 293.64 DOGE with 262.10 locked was reported as one that
+    "cannot be sold as a single order". It was entirely sellable.
+
+    Neither field was the wrong choice; conflating them was. ``available``
+    is right for "can a NEW sell be placed right now" — the comment at the
+    call site records a real false-all-clear risk from using ``total``
+    there — and ``total`` is right for "is this position strandable at
+    all". Both now exist, each with its own predicate and its own
+    operator-facing sentence, and the old ambiguous ``blocked`` is gone so
+    no caller can inherit the conflation by accident.
     """
 
     symbol: Symbol
-    held_quantity: Decimal
+    total_quantity: Decimal
     ordermin: Decimal
     source: HeldSource
+    # None on the replay path: `replay_average_cost` reconstructs a
+    # POSITION from fills and has no notion of what an exchange currently
+    # has locked. Unknown, deliberately not defaulted to total or to zero
+    # — either would manufacture a finding or suppress one.
+    available_quantity: Decimal | None = None
 
     @property
-    def blocked(self) -> bool:
-        # A zero position is not a finding: nothing to exit.
-        return Decimal(0) < self.held_quantity < self.ordermin
+    def position_unexitable(self) -> bool:
+        """The position itself is too small to sell in one order.
+
+        The genuinely alarming case: capital stranded until the position
+        grows. A zero position is not a finding — there is nothing to
+        exit.
+        """
+        return Decimal(0) < self.total_quantity < self.ordermin
+
+    @property
+    def free_balance_short(self) -> bool:
+        """No NEW sell can be backed by free balance right now.
+
+        NOT an alarm on its own: in a working grid most inventory is
+        committed to resting orders by design, so this is the normal
+        steady state rather than a defect. Excludes the unexitable case,
+        which is strictly worse and reported separately. Unknown (replay
+        source) reports False rather than guessing.
+        """
+        if self.available_quantity is None or self.position_unexitable:
+            return False
+        return Decimal(0) < self.available_quantity < self.ordermin
 
 
 @dataclass(frozen=True)
@@ -196,11 +232,18 @@ def check_entry_viability(  # pylint: disable=too-many-arguments
 def check_exit_viability(
     symbol: Symbol,
     *,
-    held_quantity: Decimal,
+    total_quantity: Decimal,
     limits: PairLimits,
     source: HeldSource,
+    available_quantity: Decimal | None = None,
 ) -> ExitViability:
-    """Is the held position large enough to sell in one order?
+    """Capture both exit questions for one position.
+
+    ``total_quantity`` answers "could this position be exited at all";
+    ``available_quantity`` answers "can a NEW sell be placed against free
+    balance right now". Pass both from an exchange balance. Leave
+    ``available_quantity`` as ``None`` on the replay path, where only a
+    reconstructed position exists — see :class:`ExitViability`.
 
     ``source`` records where the quantity came from. The exchange
     balance is authoritative — it is what ``ordermin`` is judged
@@ -210,7 +253,8 @@ def check_exit_viability(
     """
     return ExitViability(
         symbol=symbol,
-        held_quantity=held_quantity,
+        total_quantity=total_quantity,
+        available_quantity=available_quantity,
         ordermin=limits.ordermin,
         source=source,
     )
@@ -274,12 +318,46 @@ class CapitalReport:
         return tuple(e for e in self.entry if e.blocked)
 
     @property
-    def blocked_exits(self) -> tuple[ExitViability, ...]:
-        return tuple(x for x in self.exits if x.blocked)
+    def unexitable_positions(self) -> tuple[ExitViability, ...]:
+        """Stranded capital — actionable, and worth a notification."""
+        return tuple(x for x in self.exits if x.position_unexitable)
+
+    @property
+    def committed_positions(self) -> tuple[ExitViability, ...]:
+        """Sellable positions whose free balance is currently below
+        ordermin. Informational: this is what a working grid looks like."""
+        return tuple(x for x in self.exits if x.free_balance_short)
 
     @property
     def has_findings(self) -> bool:
-        return bool(self.blocked_entries or self.blocked_exits)
+        # Deliberately excludes committed_positions: those are not
+        # findings, and counting them here is what made the daily report
+        # notify about DOGE every day for a condition needing no action.
+        return bool(self.blocked_entries or self.unexitable_positions)
+
+
+def summarize_committed(report: CapitalReport) -> Sequence[str]:
+    """Lines for positions that are sellable but currently committed.
+
+    Kept OUT of :func:`summarize` on purpose. Those lines are logged at
+    WARNING and pushed to a notification because they need an operator to
+    do something; these need nobody to do anything — a grid with its
+    inventory working is supposed to look like this. Before the two were
+    separated, DOGE produced a daily page saying its position "cannot be
+    sold" while holding 293.64 against an ordermin of 50.
+    """
+    lines: list[str] = []
+    for held in report.committed_positions:
+        available = held.available_quantity
+        assert available is not None  # free_balance_short implies known
+        lines.append(
+            f"{held.symbol}: {available} of {held.total_quantity} free "
+            f"({held.total_quantity - available} committed to resting orders), "
+            f"below ordermin {held.ordermin} — no NEW sell can be placed until "
+            f"something fills or an order is cancelled. The position itself is "
+            f"exitable; this is normal for a working grid."
+        )
+    return lines
 
 
 def summarize(report: CapitalReport) -> Sequence[str]:
@@ -298,10 +376,11 @@ def summarize(report: CapitalReport) -> Sequence[str]:
             f"(ordermin {item.ordermin}, costmin {item.costmin}); "
             f"needs >= {required} to clear all levels"
         )
-    for held in report.blocked_exits:
+    for held in report.unexitable_positions:
         lines.append(
-            f"{held.symbol}: held {held.held_quantity} is below ordermin {held.ordermin} "
-            f"({held.source} balance) — the position cannot be sold as a single order"
+            f"{held.symbol}: position {held.total_quantity} is below ordermin "
+            f"{held.ordermin} ({held.source} balance) — it cannot be sold as a "
+            f"single order at any size"
         )
     cap = report.cap
     if cap is not None:

@@ -46,8 +46,15 @@ Long-running daemon with seven concurrent scheduled tasks:
 - **capital report** — ADR-040 stage 1 (2026-08-22): three read-only
   viability checks on ``schedules.maintenance_capital`` cadence
   (default daily). (1) does ``order_size_usd`` clear ``ordermin`` /
-  ``costmin`` at every grid level; (2) is the HELD position itself
-  above ``ordermin`` (a position below it cannot be sold at all);
+  ``costmin`` at every grid level; (2) TWO separate exit questions,
+  isolated 2026-09-04 — is the TOTAL position above ``ordermin`` (below
+  it, capital is stranded: warned + notified), and separately is the
+  AVAILABLE balance above it (below that, no NEW sell can be placed
+  because inventory is committed to resting orders: logged at INFO,
+  never notified, because it is what a working grid looks like). The
+  two were previously one number: the check read ``available`` while
+  the sentence described the position, so a DOGE holding of 293.64
+  against an ordermin of 50 paged daily as unsellable;
   (3) is ``max_daily_spend_usd`` consumption tracking NET capital
   deployed, or is it charging for round-trips that already returned.
   Deliberately computes each condition rather than reading the

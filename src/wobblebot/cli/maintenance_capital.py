@@ -48,6 +48,7 @@ from wobblebot.config.grid import GridConfig
 from wobblebot.config.kraken import KrakenConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.cost_basis import replay_average_cost
+from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import PairLimits, Symbol
 from wobblebot.ports.exceptions import StorageError, WobbleBotPortError
 from wobblebot.ports.notifier import NotifierPort
@@ -58,6 +59,7 @@ from wobblebot.services.capital_reporter import (
     check_exit_viability,
     compute_cap_honesty,
     summarize,
+    summarize_committed,
 )
 from wobblebot.services.exposure import daily_spend_usd
 
@@ -154,7 +156,7 @@ async def _held_quantities(
     storage: StoragePort,
     symbols: list[Symbol],
     halt: PermanentAuthHalt,
-) -> dict[Symbol, tuple[Decimal, str]]:
+) -> dict[Symbol, tuple[Decimal, Decimal | None, str]]:
     """Held base quantity per symbol, exchange-first.
 
     ADR-040 decision: the EXCHANGE balance is authoritative for exit
@@ -167,21 +169,31 @@ async def _held_quantities(
     One ``get_balances`` call for the whole account, never one per
     symbol.
     """
-    held: dict[Symbol, tuple[Decimal, str]] = {}
-    balances: dict[str, Decimal] = {}
+    # symbol -> (total, available_or_None, source). available is None on the
+    # replay path, which reconstructs a position and knows nothing of locks.
+    held: dict[Symbol, tuple[Decimal, Decimal | None, str]] = {}
+    # asset -> the whole Balance: the exit check needs total AND available,
+    # which answer different questions (see ExitViability).
+    balances: dict[str, Balance] = {}
     try:
         for balance in await exchange.get_balances():
-            # AVAILABLE, not total. The question this check asks is "can
-            # a NEW sell order be placed against what's free" -- quantity
-            # already locked in resting SELL orders is committed and
-            # cannot back another order. Using total was a real
-            # false-all-clear risk: XRP currently shows total 8.42 with
-            # 6.24 locked, so a symbol holding most of its position in
-            # open sells would have reported "sellable" on a free
-            # balance that is actually dust. Same total-vs-available
-            # trap that produced a wrong first hypothesis during the
-            # 2026-08-22 fill-loss investigation.
-            balances[balance.asset] = balance.available
+            # BOTH, kept apart (2026-09-04). The original note here was
+            # right that AVAILABLE is the correct field for "can a NEW
+            # sell be placed against what's free" -- quantity locked in
+            # resting SELL orders is committed and cannot back another
+            # order, and using total there was a real false-all-clear
+            # risk (a symbol holding most of its position in open sells
+            # would report "sellable" on a free balance that is actually
+            # dust; same total-vs-available trap as the 2026-08-22
+            # fill-loss investigation's wrong first hypothesis).
+            #
+            # What was wrong is that only available was carried while the
+            # rendered sentence described the position -- so DOGE, with
+            # 293.64 held and 262.10 locked, paged daily as a position
+            # that "cannot be sold as a single order". Both fields now
+            # travel to ExitViability, which asks the two questions
+            # separately.
+            balances[balance.asset] = balance
         halt.note_success()
     except WobbleBotPortError as exc:
         _LOGGER.warning(
@@ -209,7 +221,8 @@ async def _held_quantities(
 
     for symbol in symbols:
         if symbol.base in balances:
-            held[symbol] = (balances[symbol.base], "exchange")
+            found = balances[symbol.base]
+            held[symbol] = (found.total, found.available, "exchange")
             continue
         try:
             trades = await storage.get_trades(symbol=symbol, limit=_TRADE_FETCH_LIMIT)
@@ -221,7 +234,7 @@ async def _held_quantities(
                 extra={"symbol": str(symbol), "error": str(exc)},
             )
             continue
-        held[symbol] = (replay_average_cost(trades).quantity, "replay")
+        held[symbol] = (replay_average_cost(trades).quantity, None, "replay")
     return held
 
 
@@ -282,11 +295,12 @@ async def _build_report(  # pylint: disable=too-many-locals
                 )
             )
         if symbol in held:
-            quantity, source = held[symbol]
+            total_qty, available_qty, source = held[symbol]
             exits.append(
                 check_exit_viability(
                     symbol,
-                    held_quantity=quantity,
+                    total_quantity=total_qty,
+                    available_quantity=available_qty,
                     limits=limits,
                     source="exchange" if source == "exchange" else "replay",
                 )
@@ -328,6 +342,12 @@ async def _emit(report: CapitalReport, notifier: NotifierPort | None) -> int:
         )
         return 0
 
+    # Sellable-but-committed positions: logged, never notified. They need
+    # no action -- a grid with its inventory deployed is supposed to look
+    # like this -- and paging on them is what made DOGE a daily false alarm.
+    for line in summarize_committed(report):
+        _LOGGER.info("CAPITAL (informational): %s", line, extra={"finding": line})
+
     sampled_hour = datetime.now(UTC).strftime("%H:%MZ")
     for line in lines:
         _LOGGER.warning("CAPITAL: %s", line, extra={"finding": line})
@@ -339,7 +359,10 @@ async def _emit(report: CapitalReport, notifier: NotifierPort | None) -> int:
         context={
             "finding_count": len(lines),
             "blocked_entries": len(report.blocked_entries),
-            "blocked_exits": len(report.blocked_exits),
+            # Only the actionable class. committed_positions are logged
+            # at INFO and deliberately excluded from the notification.
+            "unexitable_positions": len(report.unexitable_positions),
+            "committed_positions": len(report.committed_positions),
             "sampled_at_utc": sampled_hour,
         },
     )

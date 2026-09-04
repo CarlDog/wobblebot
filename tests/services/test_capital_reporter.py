@@ -36,6 +36,7 @@ from wobblebot.services.capital_reporter import (
     CapitalReport,
     check_entry_viability,
     check_exit_viability,
+    summarize_committed,
     compute_cap_honesty,
     summarize,
     utc_day_start,
@@ -99,11 +100,11 @@ class TestReproducesKnownFindings:
         """
         result = check_exit_viability(
             _SOL,
-            held_quantity=Decimal("0.05876515"),
+            total_quantity=Decimal("0.05876515"),
             limits=_SOL_LIMITS,
             source="exchange",
         )
-        assert result.blocked
+        assert result.position_unexitable
         assert result.source == "exchange"
 
     def test_daily_cap_charges_21x_the_capital_that_moved(self) -> None:
@@ -207,23 +208,23 @@ class TestExitViability:
         """Nothing held means nothing stranded — reporting it would be
         noise on every symbol the bot has fully sold out of."""
         result = check_exit_viability(
-            _SOL, held_quantity=Decimal("0"), limits=_SOL_LIMITS, source="exchange"
+            _SOL, total_quantity=Decimal("0"), limits=_SOL_LIMITS, source="exchange"
         )
-        assert not result.blocked
+        assert not result.position_unexitable
 
     def test_position_at_the_minimum_is_sellable(self) -> None:
         result = check_exit_viability(
-            _SOL, held_quantity=Decimal("0.06"), limits=_SOL_LIMITS, source="exchange"
+            _SOL, total_quantity=Decimal("0.06"), limits=_SOL_LIMITS, source="exchange"
         )
-        assert not result.blocked
+        assert not result.position_unexitable
 
     def test_replay_source_is_carried_through(self) -> None:
         """The 2026-08-22 incident proved replay can disagree with the
         exchange, so a finding must say which number it used."""
         result = check_exit_viability(
-            _SOL, held_quantity=Decimal("0.01"), limits=_SOL_LIMITS, source="replay"
+            _SOL, total_quantity=Decimal("0.01"), limits=_SOL_LIMITS, source="replay"
         )
-        assert result.blocked
+        assert result.position_unexitable
         assert result.source == "replay"
 
 
@@ -279,7 +280,7 @@ class TestSummarize:
             limits=_SOL_LIMITS,
         )
         exit_ = check_exit_viability(
-            _SOL, held_quantity=Decimal("0.05876515"), limits=_SOL_LIMITS, source="exchange"
+            _SOL, total_quantity=Decimal("0.05876515"), limits=_SOL_LIMITS, source="exchange"
         )
         report = CapitalReport(entry=(entry,), exits=(exit_,), cap=None)
         lines = list(summarize(report))
@@ -322,3 +323,121 @@ def test_trade_cost_not_order_notional(side: str) -> None:
     )
     total = cap.gross_bought_usd + cap.gross_sold_usd
     assert total == Decimal("42")
+
+
+class TestTotalAndAvailableAreDifferentQuestions:
+    """The 2026-09-04 isolation, pinned with the account's real numbers.
+
+    Before this, ExitViability carried ONE quantity. The caller fed it
+    `available` — correctly, for "can a NEW sell be placed" — while the
+    rendered sentence described the whole position. DOGE held 293.64
+    against an ordermin of 50 with 262.10 locked in resting orders, and
+    was paged daily as a position that "cannot be sold as a single order".
+    It was entirely sellable. Neither field was wrong; conflating them was.
+    """
+
+    # DOGE at 2026-09-04T19:45Z, read from the live account.
+    _DOGE = Symbol(base="DOGE", quote="USD")
+    _DOGE_LIMITS = PairLimits(
+        symbol=Symbol(base="DOGE", quote="USD"), ordermin=Decimal("50"), costmin=Decimal("0.5")
+    )
+    _TOTAL = Decimal("293.64029343")
+    _AVAILABLE = Decimal("31.54235586")
+
+    def _doge(self) -> object:
+        return check_exit_viability(
+            self._DOGE,
+            total_quantity=self._TOTAL,
+            available_quantity=self._AVAILABLE,
+            limits=self._DOGE_LIMITS,
+            source="exchange",
+        )
+
+    def test_a_committed_position_is_not_reported_as_unexitable(self) -> None:
+        """The defect this change exists to remove."""
+        result = self._doge()
+        assert not result.position_unexitable, (
+            "293.64 DOGE against an ordermin of 50 is sellable; only the FREE "
+            "balance is short, and calling that unexitable is a false alarm"
+        )
+        assert result.free_balance_short
+
+    def test_a_genuinely_stranded_position_still_fires(self) -> None:
+        """The guard must not be softened into uselessness: when the whole
+        position really is below ordermin, that is still the alarm."""
+        result = check_exit_viability(
+            self._DOGE,
+            total_quantity=Decimal("31.54235586"),
+            available_quantity=Decimal("31.54235586"),
+            limits=self._DOGE_LIMITS,
+            source="exchange",
+        )
+        assert result.position_unexitable
+
+    def test_unexitable_subsumes_free_balance_short(self) -> None:
+        """One condition per position, so the operator never gets two lines
+        describing the same thing at two severities."""
+        result = check_exit_viability(
+            self._DOGE,
+            total_quantity=Decimal("10"),
+            available_quantity=Decimal("5"),
+            limits=self._DOGE_LIMITS,
+            source="exchange",
+        )
+        assert result.position_unexitable
+        assert not result.free_balance_short
+
+    def test_replay_source_reports_unknown_rather_than_guessing(self) -> None:
+        """`replay_average_cost` reconstructs a POSITION from fills and knows
+        nothing about exchange locks. Defaulting available to total would
+        manufacture an all-clear; defaulting it to zero would manufacture a
+        finding. It stays None and the free-balance question goes unanswered."""
+        result = check_exit_viability(
+            self._DOGE,
+            total_quantity=Decimal("40"),
+            limits=self._DOGE_LIMITS,
+            source="replay",
+        )
+        assert result.available_quantity is None
+        assert not result.free_balance_short
+        assert result.position_unexitable  # the total question still answers
+
+    def test_a_committed_position_does_not_trigger_a_notification(self) -> None:
+        """has_findings drives the operator page. A working grid holding its
+        inventory in resting orders must not page daily."""
+        report = CapitalReport(entry=(), exits=(self._doge(),), cap=None)
+        assert report.committed_positions
+        assert not report.unexitable_positions
+        assert not report.has_findings, "a committed position is not a finding"
+
+    def test_the_two_conditions_render_different_sentences(self) -> None:
+        """Same position, two questions — the operator must be able to tell
+        which one they are being told about."""
+        committed = CapitalReport(entry=(), exits=(self._doge(),), cap=None)
+        assert summarize(committed) == [], "committed positions are not warnings"
+        info = summarize_committed(committed)
+        assert len(info) == 1
+        assert "committed to resting orders" in info[0]
+        assert "The position itself is exitable" in info[0]
+
+        stranded = CapitalReport(
+            entry=(),
+            exits=(
+                check_exit_viability(
+                    self._DOGE,
+                    total_quantity=Decimal("31.5"),
+                    available_quantity=Decimal("31.5"),
+                    limits=self._DOGE_LIMITS,
+                    source="exchange",
+                ),
+            ),
+            cap=None,
+        )
+        warn = summarize(stranded)
+        assert len(warn) == 1
+        assert "cannot be sold as a single order at any size" in warn[0]
+        # Names the POSITION, not "held". The original defect was a word
+        # describing the wrong quantity, so the noun carries the meaning:
+        # "held" is what an operator reads as ambiguous between the two.
+        assert "position 31.5 is below ordermin" in warn[0]
+        assert summarize_committed(stranded) == []
