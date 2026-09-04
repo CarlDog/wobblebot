@@ -2583,14 +2583,24 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     `tests/conftest.py` calls `load_dotenv()`, so it is LIVE locally — found
     by tripping it. Local runs catch example/operator drift; CI does not.
 
-    **Filed, not fixed, so each is a decision:** the `extract_last_json_object`
-    move that would make the architecture bullet's original claim true; wiring
-    strict drift into CI; a test module importing sibling private helpers.
-    **Operator action, untouched deliberately:** the repo `.env` defines
-    `KRAKEN_READER_API_KEY`/`_SECRET` twice with DIFFERENT values (lines 21/22
-    and 138/139) — later wins, so the documented pair loses, and rotating the
-    key on line 21 would silently do nothing. Read-only key, so no order risk.
-    Picking the survivor needs a live check only the operator can make.
+    **The remaining nine were then worked through on operator instruction**
+    (`bd9a536`, `da6bd54`, `62b5141`, `aa1eb10`), so this paragraph's original
+    "filed, not fixed" list is superseded: the `extract_last_json_object` move
+    landed — it HAD to, since finding 14 could not be fixed without it — five
+    dead constants went, the ShutdownPhase alias was restored in five CLIs,
+    the audit row is typed, and the duplicate-env-key guard exists.
+    Still open by choice: wiring strict drift into CI, and a test module
+    importing sibling private helpers (both filed in the v1.1 register).
+
+    **The one operator item, now half-closed.** The repo `.env` defined
+    `KRAKEN_READER_API_KEY`/`_SECRET` twice with DIFFERENT values — later
+    wins, so the DOCUMENTED pair was the dead one and rotating the key there
+    would have done nothing. The inert pair was deleted, which is provably
+    safe without knowing which credential is "right" because dotenv already
+    said which one was doing the work; effective values hashed before and
+    after are byte-identical. The live pair still sits outside the documented
+    section, because moving it would mean handling the secret — that last
+    step is the operator's.
 
     Lessons ported to `~/.claude/rules/pre-deploy-review.md` (`80ef6de`, 77
     lines): the cycle's seven amendments had landed ONLY in machine-local
