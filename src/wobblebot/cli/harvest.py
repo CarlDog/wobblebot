@@ -32,7 +32,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 import time
 from decimal import Decimal
 from typing import Any

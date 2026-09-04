@@ -56,7 +56,6 @@ import argparse
 import asyncio
 import logging
 import math
-import sys
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta

@@ -36,9 +36,9 @@ from wobblebot.services.capital_reporter import (
     CapitalReport,
     check_entry_viability,
     check_exit_viability,
-    summarize_committed,
     compute_cap_honesty,
     summarize,
+    summarize_committed,
     utc_day_start,
 )
 
