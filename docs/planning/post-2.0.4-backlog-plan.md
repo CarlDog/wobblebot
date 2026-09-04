@@ -40,15 +40,44 @@ anyway.
 
 ---
 
-## Group 0 — Three looks, no code
+## Group 0 — Three looks, no code — ◐ TWO SETTLED, ONE STILL NEEDS THE OPERATOR
 
-Not a release. Next time the dashboard is open, confirm what nobody has:
+Not a release. Status as of 2026-09-04; `cli/web` publishes to
+`127.0.0.1:28080` on the NAS, so the live page is reachable only from the NAS
+or the operator's own browser — item 1 below cannot be closed from a dev
+machine, and is recorded as open rather than assumed.
 
-1. BABY/USD renders **without** an anchor button (the 2.0.4 route guard).
-2. A `reanchor <symbol>` Discord message actually queues a row in production.
-3. The offside popover's live appearance on a real offside card — which also
-   settles the two 2026-09-03 rendering findings that were refuted by reading
-   CSS rather than by looking, and therefore are not settled.
+1. **BABY/USD renders without an anchor button.** ◐ *Facts settled, the look
+   is not.* The only real risk was `configured_symbols` being empty in the
+   deployed web container, which makes both the template gate and the route
+   guard fall open. Checked against the operator's real `config/settings.yml`:
+   the `live:` section is present with six symbols (BTC, ETH, SOL, XRP, DOGE,
+   ADA), BABY is not among them, and no coin is disabled. The deployed set is
+   corroborated by the live logs, which show those same symbols ticking. Both
+   gates are covered by tests. What remains is only "does the rendered page
+   agree", which needs eyes on the live dashboard.
+2. **A `reanchor <symbol>` Discord message queues a row in production.**
+   ✅ *Confirmed by the operator on 2026-09-03*, end to end: the message went
+   through, the command was approved, and SOL re-anchored. No captured
+   artifact — `wobblebot-operator` restarted at 21:50Z for the Group 2 deploy
+   and its logs no longer reach back that far — so this is the operator's
+   own report of the outcome, which is stronger evidence than a log line but
+   is not independently reproducible from here.
+3. **The offside popover's live appearance.** ✅ *Settled 2026-09-04, against
+   the markup that ships NEXT rather than 2.0.4's.* Deliberate: Group 3
+   deleted the tick-count sentence 2.0.4 rendered, so inspecting the deployed
+   version would have settled a question about markup that no longer exists.
+   Rendered through the real routes and template with BTC's actual production
+   values — price 81190.1, band 58,464.22–70,028.58, anchor 64,246.40 at 3%,
+   anchored 2026-08-19T04:06:58Z — in both branches (known start, and the
+   unknown start BTC actually has), at 1100px and at 375px mobile.
+   Measured, not eyeballed: the popover is 300px wide, positioned below the
+   badge at `z-index: 30`, does not overflow the viewport at either width
+   (right edge 434/1100 and 362/375), and introduces no horizontal document
+   scroll. It DOES overlap the orders table beneath it, which is inherent to
+   an absolutely-positioned hover tooltip and is the intended behavior. The
+   two 2026-09-03 rendering findings that were refuted by reading CSS are
+   settled by looking, for this markup.
 
 ## Group 1 — Operator legibility — ✅ SHIPPED 2026-09-03
 
