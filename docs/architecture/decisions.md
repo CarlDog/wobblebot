@@ -3369,6 +3369,179 @@ this complements); ADR-034; `docker/docker-compose.yml`;
 `docs/reference/nemoclaw-repository-assessment-2026-08-28.md` (Candidate 1);
 `docs/planning/release-2.0-plan.md` §3 (B1-1), §5a.
 
-<!-- ADR-041 is the last in this file; new ADRs append below. -->
+## ADR-042 — Offside-High Sell Extension: A Lifecycle, Not a Placement Rule
+
+**Status:** **PROPOSED — not ratified, and not implementable yet.** This amends
+ADR-006 decision 1 ("stay parked"). It requires operator ratification, and
+ratification requires gate 1 below to have cleared. No code may be scheduled
+against this ADR until both happen. Written 2026-09-04 because the backlog plan
+recommends writing the ADR *before* scheduling the work, so the lifecycle
+problem is solved on paper rather than discovered on a money path.
+**Date:** 2026-09-04 (proposed)
+
+**Context:** The operator asked, 2026-09-03: *"When the selling price is
+favorable to our held inventory, can offside clear one side of activity and hold
+the rest?"*
+
+Today the answer is no. ADR-006 decision 1 parks the whole symbol when price
+leaves the grid window: no new orders and no counter-orders on either side. When
+price runs *above* the band (offside-high) that is symmetric but not
+symmetrically justified. A BUY placed above the band would be chasing a trend,
+which is exactly what decision 1 exists to prevent. A SELL against inventory the
+bot already holds, at a price above its cost basis, is the opposite trade — it
+realizes a gain on a position that exists, and refusing it means holding through
+a rally with the ladder's own sells already exhausted.
+
+On 2026-09-03 four symbols were offside-high simultaneously. BTC has been parked
+above its band since the 2026-08-19 anchor, roughly sixteen days.
+
+An assessment and a risk pass over the proposal found four design holes. One is
+not a detail:
+
+> **Nothing cancels resting extension sells when price falls back into the
+> band.** "At most N per episode" reads as a bound and is not one — each new
+> offside-high episode adds up to N more orders that sit above the band
+> indefinitely, each billing a *full* order size against the exposure caps
+> regardless of its actual size. It compounds silently, across restarts, on a
+> money path, and it presents weeks later as "the grid stopped placing orders"
+> with nothing pointing back at this feature.
+
+That is why this ADR specifies a **lifecycle** — when an extension order is
+born, what keeps it alive, and what retires it — rather than a placement rule.
+A placement rule is the shape of the bug.
+
+**Decision:**
+
+1. **The asymmetry is the whole feature, and it is one-directional.**
+   While a symbol is offside-HIGH, the engine may place SELL orders above the
+   band ("extension sells"). It may never place BUYs outside the band, in either
+   direction, and it may never place SELLs while offside-LOW. ADR-006 decision
+   1's reasoning is unchanged for every case except this one: a sell against
+   held inventory at a profit is not a trend chase, and the position it closes
+   already exists.
+
+2. **An extension order belongs to the episode that created it, and dies with
+   that episode.** When price re-enters the band — the same transition that
+   clears `offside_since` — every open extension order for that symbol is
+   cancelled. Not "may be", not "on the next re-anchor": cancelled, on the
+   transition, as part of it.
+
+   This gives up upside, and that is the trade being made deliberately. An
+   extension sell that survives its episode is an order the operator never
+   reasoned about, resting above a band the engine is once again trading
+   normally, consuming exposure headroom. ADR-006's own posture applies: a
+   controlled loss of upside beats an uncontrolled accumulation.
+
+3. **A hard ceiling on simultaneous extension orders per symbol, independent of
+   episode count.** `max_extension_orders_per_symbol` bounds how many extension
+   orders may be open for one symbol at any instant, regardless of how many
+   episodes have run. Decision 2 should make the ceiling unreachable in normal
+   operation; the ceiling exists for when it does not — a crash between cancel
+   and restart, a cancel that the exchange rejects, a bug. Belt and braces on a
+   money path, and the brace is the one that survives a process death.
+
+   On reaching the ceiling the engine places nothing further and logs once per
+   episode. It does not retire the oldest to make room: silently rotating
+   orders the operator cannot see is a worse failure than declining to place.
+
+4. **Three more retirement triggers, all of which must cancel, not merely stop
+   placing.**
+   - **The sell guard is disabled.** The eligibility predicate consumes the
+     ADR-032 cost basis; with `sell_guard.enabled` false there is no basis to
+     consult and no way to know an extension is profitable. Extensions are
+     therefore gated on the guard being enabled, and disabling it retires any
+     that are open. A feature whose safety argument can be switched off from
+     config must notice when it has been.
+   - **A re-anchor.** It rebuilds the band around current price, so the episode
+     that justified the extension is over by construction — the same reasoning
+     that already makes re-anchor clear `offside_since`.
+   - **Clean shutdown.** `cli/live`'s SIGINT path cancels every open order for
+     configured symbols; extension orders are open orders and are covered by
+     it. Stated explicitly because the whole point of this ADR is that these
+     orders have an owner.
+
+5. **The cost-basis desync is a precondition, not a caveat.** The profit
+   predicate reads the same cost basis as the ADR-032 sell guard, so a desync
+   corrupts both identically — and a *too-low* basis makes an unprofitable
+   extension look profitable, which is the direction that costs money. The
+   2026-08-22 audit found a real BTC gap of 0.00053613 (~2.8%), caused by
+   `tools/first_real_trade.py` writing only to its own JSONL and never to
+   `live.db`. Gate 1 below is that gap being closed and staying closed.
+
+6. **Pending recovery counters are a different population and are not touched.**
+   The proposal's "discard band-illegal pending counters" rule is **rejected**:
+   it breaks ADR-031 and ADR-023 decision 4 by dropping legitimate recovery
+   counters on an unrelated path. A recovery counter is never converted into an
+   extension order, never counted against the extension ceiling, and never
+   discarded for being outside the band. The two populations are distinguished
+   by origin, not by price.
+
+**Rejected:**
+
+- **"At most N per episode."** The original proposal. It is not a bound — see
+  Context. Decision 3's ceiling is per-symbol-per-instant for exactly this
+  reason.
+- **Retiring the oldest extension order to make room at the ceiling.** Rotating
+  orders the operator never sees, on a money path, to preserve an ability to
+  place more. Declining to place is the honest failure.
+- **Letting extension sells outlive their episode because they might still be
+  profitable.** This is the unbounded-accumulation bug wearing an optimization's
+  clothes.
+- **Symmetric extension (buys below the band while offside-low).** Directly
+  contradicts ADR-006 decision 1's reasoning and converts a controlled losing
+  scenario into an uncontrolled one. Not deferred — rejected.
+
+**Consequences:**
+
+Four gates, in order. Nothing is scheduled until they are met.
+
+1. **A clean `tools/reconcile_trade_history.py` bill across all six symbols.**
+   Until that clears, decision 5 makes the profit predicate unsafe by
+   construction. This gate blocks ratification of this ADR, not just the code.
+2. **This ADR ratified by the operator**, including the margin question below.
+3. **Replay validation via `tools/auditor.py` over a real multi-episode rally
+   window.** Shadow mode is not a substitute: you cannot choose the window at
+   live-tape cadence, and the lifecycle bug only appears across *consecutive*
+   episodes.
+4. **Ship behind a config gate defaulting off, enabled for one symbol first.**
+
+The test that pins the lifecycle: run two consecutive offside-high episodes with
+a return-to-band between them, and assert the open-order count returns to the
+band ladder's. Its mutation is the retirement trigger of decision 2 — remove it,
+and the second episode's count must go red. A test that only exercises one
+episode does not pin this ADR's central claim.
+
+**Still open — two operator decisions, not one.**
+
+1. **Does the operator accept losing a profitable resting sell at band re-entry
+   in exchange for the bound?** Decision 2 deliberately forfeits realized profit
+   on inventory the operator holds: an extension sell that would have filled
+   above cost basis is cancelled the moment price re-enters the band. The draft
+   argues that is the right default — an order nobody reasoned about, resting
+   above a band the engine is trading normally, consuming exposure headroom — but
+   it is a decision about the operator's own money and is surfaced rather than
+   settled here. The alternatives are a narrower trigger (retire only on
+   re-anchor and shutdown, accepting slower accumulation) or a grace window
+   (retire N ticks after re-entry rather than on the transition). Both weaken
+   the bound; neither is unreasonable.
+2. **The net margin required per extension sell** (backlog plan open question 4).
+   Note the fee accounting is already net of both legs, so a threshold quoted
+   "on top of the round-trip fee" would double-count.
+
+**Also un-grepped, and silently divergent the moment the engine can trade
+outside the band** — each needs an audit as part of the work, not after it:
+the backtest tools' own inlined offside checks; the sweep-order price helper (a
+symbol with a live extension ladder would rank as far-from-fill and be
+de-prioritised for funding exactly while it is the one trading); and the capital
+reporter.
+
+**References:** ADR-006 decision 1 (stay parked, amended here), ADR-023 decision
+4 and ADR-031 (recovery counters, protected by decision 6), ADR-032 (the sell
+guard and cost basis this depends on), ADR-039 (the inventory caps extension
+orders bill against). Backlog plan: `docs/planning/post-2.0.4-backlog-plan.md`
+Group 4. Operator's question and the four holes:
+`docs/release/v1.1/engine.md`.
+
+<!-- ADR-042 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
 

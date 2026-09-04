@@ -40,15 +40,55 @@ anyway.
 
 ---
 
-## Group 0 — Three looks, no code
+## Group 0 — Three looks, no code — ◐ TWO SETTLED, ONE STILL NEEDS THE OPERATOR
 
-Not a release. Next time the dashboard is open, confirm what nobody has:
+Not a release. Status as of 2026-09-04; `cli/web` publishes to
+`127.0.0.1:28080` on the NAS, so the live page is reachable only from the NAS
+or the operator's own browser — item 1 below cannot be closed from a dev
+machine, and is recorded as open rather than assumed.
 
-1. BABY/USD renders **without** an anchor button (the 2.0.4 route guard).
-2. A `reanchor <symbol>` Discord message actually queues a row in production.
-3. The offside popover's live appearance on a real offside card — which also
-   settles the two 2026-09-03 rendering findings that were refuted by reading
-   CSS rather than by looking, and therefore are not settled.
+1. **BABY/USD renders without an anchor button.** ✅ *Settled 2026-09-04, same
+   caveat as item 3 — against this markup, by rendering, not against the
+   deployed page.* Two halves. The config half: checked against the operator's
+   real `config/settings.yml` — `live:` present with six symbols (BTC, ETH,
+   SOL, XRP, DOGE, ADA), BABY absent, no coin disabled, corroborated by the
+   live logs showing those six ticking. That was the only real risk, because an
+   empty `configured_symbols` makes both the template gate and the route guard
+   fall open. The render half: the dashboard was rendered with a BABY order and
+   `live_symbols=(BTC,)`, confirming `Re-anchor BTC/USD` present and
+   `Re-anchor BABY/USD` absent — now asserted in
+   `test_the_eye_renders_only_for_an_untraded_symbol` and mutation-verified
+   (ungate the anchor, the test goes red).
+
+   **One thing the render surfaced, filed rather than fixed:** *pause* is NOT
+   gated the way re-anchor is, so `Pause BABY/USD` renders for an untraded
+   symbol. Pausing one is a no-op — `cli/live` never ticks it — so it moves no
+   money, but it is a control presented as if it does something. Pre-existing
+   (2.0.4 gated only the anchor button), and largely dissolved in practice now
+   that the same card can be hidden outright. Asserted as current behavior in
+   that test so a future change to it is deliberate.
+2. **A `reanchor <symbol>` Discord message queues a row in production.**
+   ✅ *Confirmed by the operator on 2026-09-03*, end to end: the message went
+   through, the command was approved, and SOL re-anchored. No captured
+   artifact — `wobblebot-operator` restarted at 21:50Z for the Group 2 deploy
+   and its logs no longer reach back that far — so this is the operator's
+   own report of the outcome, which is stronger evidence than a log line but
+   is not independently reproducible from here.
+3. **The offside popover's live appearance.** ✅ *Settled 2026-09-04, against
+   the markup that ships NEXT rather than 2.0.4's.* Deliberate: Group 3
+   deleted the tick-count sentence 2.0.4 rendered, so inspecting the deployed
+   version would have settled a question about markup that no longer exists.
+   Rendered through the real routes and template with BTC's actual production
+   values — price 81190.1, band 58,464.22–70,028.58, anchor 64,246.40 at 3%,
+   anchored 2026-08-19T04:06:58Z — in both branches (known start, and the
+   unknown start BTC actually has), at 1100px and at 375px mobile.
+   Measured, not eyeballed: the popover is 300px wide, positioned below the
+   badge at `z-index: 30`, does not overflow the viewport at either width
+   (right edge 434/1100 and 362/375), and introduces no horizontal document
+   scroll. It DOES overlap the orders table beneath it, which is inherent to
+   an absolutely-positioned hover tooltip and is the intended behavior. The
+   two 2026-09-03 rendering findings that were refuted by reading CSS are
+   settled by looking, for this markup.
 
 ## Group 1 — Operator legibility — ✅ SHIPPED 2026-09-03
 
@@ -328,6 +368,14 @@ Gates, in order:
    placement rule**: the asymmetry (sells may extend, buys never), an explicit
    retirement trigger, and a hard ceiling on simultaneous extension orders per
    symbol that is independent of episode count.
+   **◐ DRAFTED 2026-09-04 as ADR-042, status PROPOSED — not ratified.** It
+   specifies four retirement triggers rather than one (episode end, sell guard
+   disabled, re-anchor, clean shutdown), makes the per-symbol-per-instant
+   ceiling a brace that survives a process death rather than the primary bound,
+   and REJECTS the proposal's "discard band-illegal pending counters" rule
+   outright as an ADR-031/ADR-023 violation. Note the ordering: gate 1 blocks
+   *ratification of the ADR*, not merely the code, because decision 5 makes the
+   profit predicate unsafe by construction until the cost basis reconciles.
 3. Replay validation via `tools/auditor.py` over a real **multi-episode** rally
    window. Shadow mode is not a substitute, because you cannot choose the window
    at live-tape cadence.
