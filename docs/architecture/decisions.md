@@ -3511,10 +3511,22 @@ band ladder's. Its mutation is the retirement trigger of decision 2 — remove i
 and the second episode's count must go red. A test that only exercises one
 episode does not pin this ADR's central claim.
 
-**Still open, and an operator decision (backlog plan open question 4):** the net
-margin required per extension sell. Note the fee accounting is already net of
-both legs, so a threshold quoted "on top of the round-trip fee" would
-double-count.
+**Still open — two operator decisions, not one.**
+
+1. **Does the operator accept losing a profitable resting sell at band re-entry
+   in exchange for the bound?** Decision 2 deliberately forfeits realized profit
+   on inventory the operator holds: an extension sell that would have filled
+   above cost basis is cancelled the moment price re-enters the band. The draft
+   argues that is the right default — an order nobody reasoned about, resting
+   above a band the engine is trading normally, consuming exposure headroom — but
+   it is a decision about the operator's own money and is surfaced rather than
+   settled here. The alternatives are a narrower trigger (retire only on
+   re-anchor and shutdown, accepting slower accumulation) or a grace window
+   (retire N ticks after re-entry rather than on the transition). Both weaken
+   the bound; neither is unreasonable.
+2. **The net margin required per extension sell** (backlog plan open question 4).
+   Note the fee accounting is already net of both legs, so a threshold quoted
+   "on top of the round-trip fee" would double-count.
 
 **Also un-grepped, and silently divergent the moment the engine can trade
 outside the band** — each needs an audit as part of the work, not after it:

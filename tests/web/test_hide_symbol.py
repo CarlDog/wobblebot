@@ -199,12 +199,29 @@ class TestHideEndToEnd:
     async def test_the_eye_renders_only_for_an_untraded_symbol(
         self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
     ) -> None:
+        """The eye and the anchor are exact mirrors of each other.
+
+        Also closes Group 0 item 1 for this markup: the 2.0.4 route guard
+        gates the anchor button on `configured_symbols`, and nobody had
+        confirmed the rendered page agrees. Asserted here rather than left
+        to a look at the live dashboard, which is reachable only from the
+        NAS.
+        """
         await self._seed(live_storage)
         with _build_client(operator_storage, live_storage, live_symbols=(_BTC,)) as client:
             login_as(client)
             body = client.get("/dashboard").text
             assert 'aria-label="Hide BABY/USD"' in body
             assert 'aria-label="Hide BTC/USD"' not in body
+            # The mirror: re-anchor is offered for the traded symbol only.
+            assert 'aria-label="Re-anchor BTC/USD"' in body
+            assert 'aria-label="Re-anchor BABY/USD"' not in body
+            # NOT a mirror, and pre-existing: pause is ungated, so it renders
+            # for an untraded symbol too. Pausing one is a no-op (cli/live
+            # never ticks it), so it moves no money — but it is a control
+            # presented as if it does something. Asserted as the CURRENT
+            # behavior, not as desired behavior; filed in the v1.1 register.
+            assert 'aria-label="Pause BABY/USD"' in body
 
     async def test_revealing_a_configured_symbol_is_allowed(
         self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter

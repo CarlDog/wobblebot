@@ -47,15 +47,26 @@ Not a release. Status as of 2026-09-04; `cli/web` publishes to
 or the operator's own browser — item 1 below cannot be closed from a dev
 machine, and is recorded as open rather than assumed.
 
-1. **BABY/USD renders without an anchor button.** ◐ *Facts settled, the look
-   is not.* The only real risk was `configured_symbols` being empty in the
-   deployed web container, which makes both the template gate and the route
-   guard fall open. Checked against the operator's real `config/settings.yml`:
-   the `live:` section is present with six symbols (BTC, ETH, SOL, XRP, DOGE,
-   ADA), BABY is not among them, and no coin is disabled. The deployed set is
-   corroborated by the live logs, which show those same symbols ticking. Both
-   gates are covered by tests. What remains is only "does the rendered page
-   agree", which needs eyes on the live dashboard.
+1. **BABY/USD renders without an anchor button.** ✅ *Settled 2026-09-04, same
+   caveat as item 3 — against this markup, by rendering, not against the
+   deployed page.* Two halves. The config half: checked against the operator's
+   real `config/settings.yml` — `live:` present with six symbols (BTC, ETH,
+   SOL, XRP, DOGE, ADA), BABY absent, no coin disabled, corroborated by the
+   live logs showing those six ticking. That was the only real risk, because an
+   empty `configured_symbols` makes both the template gate and the route guard
+   fall open. The render half: the dashboard was rendered with a BABY order and
+   `live_symbols=(BTC,)`, confirming `Re-anchor BTC/USD` present and
+   `Re-anchor BABY/USD` absent — now asserted in
+   `test_the_eye_renders_only_for_an_untraded_symbol` and mutation-verified
+   (ungate the anchor, the test goes red).
+
+   **One thing the render surfaced, filed rather than fixed:** *pause* is NOT
+   gated the way re-anchor is, so `Pause BABY/USD` renders for an untraded
+   symbol. Pausing one is a no-op — `cli/live` never ticks it — so it moves no
+   money, but it is a control presented as if it does something. Pre-existing
+   (2.0.4 gated only the anchor button), and largely dissolved in practice now
+   that the same card can be hidden outright. Asserted as current behavior in
+   that test so a future change to it is deliberate.
 2. **A `reanchor <symbol>` Discord message queues a row in production.**
    ✅ *Confirmed by the operator on 2026-09-03*, end to end: the message went
    through, the command was approved, and SOL re-anchored. No captured
