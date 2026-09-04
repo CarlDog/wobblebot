@@ -71,12 +71,22 @@ class TestLoadHiddenSymbols:
     async def test_unwired_storage_hides_nothing(self) -> None:
         from wobblebot.web.routes.status import _load_hidden_symbols
 
-        assert await _load_hidden_symbols(None, 1) == frozenset()
+        assert await _load_hidden_symbols(None, 1, frozenset()) == frozenset()
 
     async def test_no_user_hides_nothing(self) -> None:
+        """Exercises the user_id guard specifically. Passing None storage
+        too would short-circuit on the first clause and pin nothing — the
+        reviewer's catch, and a real one."""
         from wobblebot.web.routes.status import _load_hidden_symbols
 
-        assert await _load_hidden_symbols(None, None) == frozenset()
+        class _NeverCalled:
+            async def get_hidden_symbols(self, user_id: int) -> frozenset[Symbol]:
+                raise AssertionError("storage must not be consulted without a user")
+
+        assert (
+            await _load_hidden_symbols(_NeverCalled(), None, frozenset())  # type: ignore[arg-type]
+            == frozenset()
+        )
 
     async def test_a_storage_failure_shows_every_card(self) -> None:
         """The safe direction. A hide feature that fails by hiding things
@@ -88,7 +98,7 @@ class TestLoadHiddenSymbols:
             async def get_hidden_symbols(self, user_id: int) -> frozenset[Symbol]:
                 raise StorageError("nope")
 
-        assert await _load_hidden_symbols(_Boom(), 1) == frozenset()  # type: ignore[arg-type]
+        assert await _load_hidden_symbols(_Boom(), 1, frozenset()) == frozenset()  # type: ignore[arg-type]
 
 
 @pytest_asyncio.fixture
@@ -242,3 +252,87 @@ class TestHideEndToEnd:
 
         assert '<div class="hidden-summary">' in body
         assert '<p class="hidden-summary">' not in body
+
+
+@pytest.mark.asyncio
+class TestAConfiguredSymbolIsNeutralizedByTheReader:
+    """The write guard blocks HIDING a configured symbol; it cannot block a
+    symbol becoming configured later. Without a reader-side intersection the
+    card stays gone — taking pause, resume and re-anchor with it, and
+    rendering "the engine does not manage this symbol" over a symbol the
+    engine is actively trading. That is 2.0.4's anchor-button defect
+    inverted, and ``StoragePort.get_hidden_symbols`` already promises the
+    reader does this."""
+
+    async def test_a_hidden_symbol_that_became_configured_comes_back(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order(symbol="BTC/USD"))
+        await live_storage.save_order(_make_order(symbol="BABY/USD", price="0.0114"))
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC,)) as client:
+            login_as(client)
+            _post(client, "/commands/hide-symbol", symbol="BABY/USD", hidden="true")
+            assert "hidden-summary" in client.get("/dashboard").text
+
+        # BABY joins the trading set on the next deploy. The row survives.
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC, _BABY)) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+            assert "hidden-summary" not in body
+            # The controls are back — this is the half that matters.
+            assert 'aria-label="Pause BABY/USD"' in body
+            assert 'aria-label="Re-anchor BABY/USD"' in body
+            assert "the engine does not manage this symbol" not in body
+
+    async def test_the_stored_row_is_untouched_so_dropping_it_re_hides(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Neutralized in the reader, not deleted: a symbol removed from the
+        trading set again returns to being hidden, which is what the
+        operator asked for the first time."""
+        await live_storage.save_order(_make_order(symbol="BABY/USD", price="0.0114"))
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC,)) as client:
+            login_as(client)
+            _post(client, "/commands/hide-symbol", symbol="BABY/USD", hidden="true")
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC, _BABY)) as client:
+            login_as(client)
+            assert "hidden-summary" not in client.get("/dashboard").text
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC,)) as client:
+            login_as(client)
+            assert "hidden-summary" in client.get("/dashboard").text
+
+
+@pytest.mark.asyncio
+class TestUnknownConfiguredSetFallsClosed:
+    """The eye gate and the route must agree. The template already fell
+    closed on an unknown set; the route fell open, so a rendered page with
+    no eye button sat in front of a route that would have accepted the POST
+    anyway. Falling closed is the safe direction here — unlike re-anchor,
+    where refusing on unknown breaks a working deployment for a command the
+    engine re-validates."""
+
+    async def test_no_eye_and_no_accepted_post_without_a_live_section(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        await live_storage.save_order(_make_order(symbol="BABY/USD", price="0.0114"))
+        with _build_client(operator_storage, live_storage, live_symbols=None) as client:
+            login_as(client)
+            body = client.get("/dashboard").text
+            assert 'aria-label="Hide BABY/USD"' not in body
+            resp = _post(client, "/commands/hide-symbol", symbol="BABY/USD", hidden="true")
+            assert resp.status_code == 400
+            assert "cannot be confirmed as untraded" in resp.text
+
+    async def test_revealing_still_works_without_a_live_section(
+        self, operator_storage: SQLiteStorageAdapter, live_storage: SQLiteStorageAdapter
+    ) -> None:
+        """Only hiding falls closed. A reveal must never be refused, or an
+        unwired cli/web could strand a card hidden forever."""
+        await live_storage.save_order(_make_order(symbol="BABY/USD", price="0.0114"))
+        with _build_client(operator_storage, live_storage, live_symbols=(_BTC,)) as client:
+            login_as(client)
+            _post(client, "/commands/hide-symbol", symbol="BABY/USD", hidden="true")
+        with _build_client(operator_storage, live_storage, live_symbols=None) as client:
+            login_as(client)
+            resp = _post(client, "/commands/hide-symbol", symbol="BABY/USD", hidden="false")
+            assert resp.status_code == 303

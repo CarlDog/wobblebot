@@ -496,17 +496,30 @@ async def hide_symbol_submit(  # pylint: disable=too-many-arguments,too-many-pos
     traded — its card comes from a dust balance in the observe snapshot.
 
     Enforced HERE and not only in the template, so a hand-rolled POST is
-    covered too. Empty ``configured`` means unknown (no ``live:``
-    section) and falls open, matching ``reanchor_submit``.
+    covered too.
+
+    Empty ``configured`` means unknown (no ``live:`` section) and falls
+    CLOSED — the opposite of ``reanchor_submit``, deliberately. There,
+    refusing on unknown would break a working deployment for a command the
+    engine validates again anyway. Here, allowing on unknown lets an
+    operator hide a card that may be carrying the only pause and re-anchor
+    controls for a symbol trading real money, and the template's own eye
+    gate already falls closed — the two must agree or a rendered button
+    disagrees with the route behind it.
     """
     try:
         parsed = _parse_symbol(symbol)
     except ValueError:
         return HTMLResponse("Invalid symbol", status_code=400)
-    if hidden and parsed in configured:
+    if hidden and (not configured or parsed in configured):
+        detail = (
+            "is traded by the engine"
+            if configured
+            else "cannot be confirmed as untraded (cli/web has no live: section)"
+        )
         return HTMLResponse(
-            f"{parsed} is traded by the engine and cannot be hidden: "
-            "its card carries the pause, resume and re-anchor controls.",
+            f"{parsed} {detail} and cannot be hidden: its card carries the "
+            "pause, resume and re-anchor controls.",
             status_code=400,
         )
     # Same assert as settings.py / auth.get_user_preferences: a user that

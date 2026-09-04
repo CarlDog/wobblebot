@@ -191,6 +191,18 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # fresh DB out of delete mode. Set below that line, this PRAGMA
             # never runs on the connection that loses. Pre-existing on main;
             # a new migration only lengthens the window.
+            #
+            # What is PROVEN and what is not, so the next reader does not
+            # over-trust this (2026-09-04 review). Proven: four simultaneous
+            # opens of a DELETE-mode file raise "database is locked", on this
+            # branch and on unmodified main alike. NOT proven: that 30s beats
+            # the 5s default on a WAL file, which is what production has --
+            # the concurrency test alongside this seeds WAL to match
+            # production, and there the 5s default already suffices, so that
+            # test does NOT pin this value and a mutant setting it to 0
+            # passes or fails on scheduling. This is a widened margin for
+            # eight daemons opening a NAS-backed file at once, not a fix for
+            # a demonstrated production failure. Judge it as such.
             await self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             await self._conn.execute("PRAGMA foreign_keys = ON")
             if self._db_path not in (":memory:", ""):

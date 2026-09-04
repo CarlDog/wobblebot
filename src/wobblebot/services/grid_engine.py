@@ -628,9 +628,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         Without this the first tick after every deploy looks like a fresh
         onside->offside transition and stamps ``since`` with the boot
         time — turning a symbol parked for weeks into one parked for
-        seconds. The seed is falsifiable rather than trusted: the first
-        tick recomputes ``is_offside`` and clears this the moment price is
-        back inside the band, so a stale row cannot outlive one tick.
+        seconds.
+
+        The seed is falsifiable rather than trusted, but only on the path
+        that reaches ``_tick``: that is where ``is_offside`` is recomputed
+        and the episode dropped. ``_step_unlocked`` returns before it for a
+        disabled coin, a paused symbol and a wide-spread skip, so a seed
+        for one of those is never re-checked. A PAUSED symbol is fine — the
+        badge renders PAUSED and no duration reaches the operator — and a
+        spread skip is transient by construction, but a DISABLED coin can
+        never tick again, which is why ``cli/live`` refuses to seed one.
         """
         self._offside[symbol] = OffsideState(ticks=max(ticks, 1), since=since)
 

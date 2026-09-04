@@ -1483,6 +1483,7 @@ async def _restore_engine_state(
     engine: GridEngine,
     symbols: list[Symbol],
     operator_storage: StoragePort | None,
+    grid_config: GridConfig | None = None,
 ) -> None:
     """Re-apply pauses AND offside episodes from ``engine_state`` at startup.
 
@@ -1496,9 +1497,15 @@ async def _restore_engine_state(
     can be wall-clock truth instead of "since cli/live last started"; that
     only works if a restart re-seeds the running episode, because otherwise
     the first tick reads as a fresh transition and stamps the boot time.
-    Unlike the pause, the offside seed IS falsifiable: the next tick
-    recomputes ``is_offside`` and drops it the moment price is back inside
-    the band, so a stale row cannot survive one tick.
+
+    Unlike the pause, the offside seed is falsifiable — but only for a coin
+    whose tick actually runs. ``_step_unlocked`` returns before the
+    ``is_offside`` recompute for a DISABLED coin, and ``enabled: false`` is
+    the documented way to stop a coin while leaving it in ``live.symbols``,
+    so seeding one would leave a permanent OFFSIDE badge over a growing
+    "Parked since" duration that nothing can ever re-check or clear. Those
+    are skipped here. A paused symbol also skips the recompute, but its
+    badge renders PAUSED and no duration reaches the operator.
 
     **No freshness guard, deliberately.** ``get_engine_states`` returns
     rows regardless of age and leaves the guard to each consumer, because
@@ -1545,7 +1552,8 @@ async def _restore_engine_state(
         # onside->offside transition and stamping `since` with the boot
         # time — which would turn a symbol parked for weeks into one
         # parked for seconds on every deploy.
-        if row.offside:
+        enabled = grid_config is None or grid_config.for_coin(row.symbol.base).enabled
+        if row.offside and enabled:
             engine.restore_offside(row.symbol, row.offside_ticks, row.offside_since)
             restored_offside.append(
                 f"{row.symbol} (since {row.offside_since.isoformat()})"
@@ -2231,7 +2239,9 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         # Before the first tick: re-apply pauses the operator set in a
         # previous session. Until 2026-08-12 a restart silently resumed
         # trading on every paused symbol.
-        await _restore_engine_state(engine, list(config.live.symbols), operator_storage)
+        await _restore_engine_state(
+            engine, list(config.live.symbols), operator_storage, config.grid
+        )
 
     observe_storage = await _open_observe_storage(config.live.observe_db)
 

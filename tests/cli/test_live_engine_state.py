@@ -411,3 +411,59 @@ class TestOffsideSinceRoundTrip:
         [row] = [r for r in await operator_storage.get_engine_states() if r.symbol == BTC_USD]
         assert row.offside is True
         assert row.offside_since == original
+
+    async def test_a_disabled_coin_is_not_seeded(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The seed is only safe because the next tick can falsify it — and
+        a disabled coin's tick never runs.
+
+        ``_step_unlocked`` returns ``skipped_disabled`` before the
+        ``is_offside`` recompute, and ``enabled: false`` is the documented
+        way to stop a coin while leaving it in ``live.symbols``. Seeding one
+        would leave a permanent OFFSIDE badge over a "Parked since"
+        duration that grows on every 15s dashboard poll and that nothing
+        can ever re-check or clear — a confident falsehood about a symbol
+        the engine has stopped touching.
+        """
+        from wobblebot.config.grid import CoinGridConfig
+
+        engine, exchange = await self._park_btc(storage)
+        await _emit_engine_states(engine, [BTC_USD], storage, operator_storage)
+        [row] = [r for r in await operator_storage.get_engine_states() if r.symbol == BTC_USD]
+        assert row.offside is True and row.offside_since is not None
+
+        disabled = _grid_config(
+            coins={
+                "BTC": CoinGridConfig(
+                    enabled=False,
+                    spacing_percentage=Decimal("1.0"),
+                    levels_above=3,
+                    levels_below=3,
+                    order_size_usd=Decimal("10"),
+                )
+            }
+        )
+        restarted = GridEngine(exchange, storage, disabled, _safety_config())
+        await _restore_engine_state(restarted, [BTC_USD], operator_storage, disabled)
+        assert restarted.offside_ticks(BTC_USD) == 0
+        assert restarted.offside_since(BTC_USD) is None
+
+        result = await restarted.step(BTC_USD)
+        assert result.action == "skipped_disabled"
+        await _emit_engine_states(restarted, [BTC_USD], storage, operator_storage)
+        [after] = [r for r in await operator_storage.get_engine_states() if r.symbol == BTC_USD]
+        assert after.offside is False
+        assert after.offside_since is None
+
+    async def test_an_enabled_coin_is_still_seeded(
+        self, storage: SQLiteStorageAdapter, operator_storage: SQLiteStorageAdapter
+    ) -> None:
+        """The control for the test above: the skip is about `enabled`, not
+        a blanket refusal to restore."""
+        engine, exchange = await self._park_btc(storage)
+        original = engine.offside_since(BTC_USD)
+        await _emit_engine_states(engine, [BTC_USD], storage, operator_storage)
+        restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        await _restore_engine_state(restarted, [BTC_USD], operator_storage, _grid_config())
+        assert restarted.offside_since(BTC_USD) == original

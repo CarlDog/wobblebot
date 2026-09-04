@@ -244,8 +244,10 @@
          - inline pause + resume icon buttons (still state-unaware;
            the state-aware button slice consumes the same table later)
          - filtered open-orders table #}
-      {# The hidden set is applied HERE and nowhere else. snapshot.symbols
-         itself is untouched, so every number derived from it — the price
+      {# The hidden set reaches the TEMPLATE only — here, and the summary
+         row below that lists what was hidden. Nothing in the snapshot
+         builder consumes it. snapshot.symbols itself is untouched, so
+         every number derived from it — the price
          fetch, sparklines, account value, realized P&L, the fills tables —
          is identical whether a card is hidden or not. A view preference
          that moved reported P&L would be the worst outcome this feature

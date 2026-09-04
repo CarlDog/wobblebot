@@ -59,6 +59,7 @@ from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_cool_down_minutes,
     get_live_storage,
+    get_live_symbols,
     get_live_tick_seconds,
     get_observe_storage,
     get_operator_storage,
@@ -614,6 +615,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     live_tick_seconds: float | None = None,
     reanchor_min_severity: ReanchorSeverity = "mild",
     hidden_for_user_id: int | None = None,
+    configured: frozenset[Symbol] = frozenset(),
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -705,7 +707,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         operator_storage, prices
     )
 
-    hidden = await _load_hidden_symbols(operator_storage, hidden_for_user_id)
+    hidden = await _load_hidden_symbols(operator_storage, hidden_for_user_id, configured)
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
         operator_storage, tick_seconds=live_tick_seconds, now=now
@@ -763,9 +765,23 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
 
 
 async def _load_hidden_symbols(
-    operator_storage: StoragePort | None, user_id: int | None
+    operator_storage: StoragePort | None, user_id: int | None, configured: frozenset[Symbol]
 ) -> frozenset[Symbol]:
     """This operator's hidden card set; empty on anything unexpected.
+
+    A configured symbol is NEUTRALIZED here, not refused at write time.
+    Only hiding is blocked at the route, so a symbol hidden while untraded
+    and since added to ``live.symbols`` still has a row — and without this
+    intersection its card would stay gone, taking the pause, resume and
+    re-anchor controls with it and rendering "the engine does not manage
+    this symbol, so nothing will cancel it" over a symbol the engine is
+    actively trading. That is 2.0.4's anchor-button defect inverted, and
+    ``StoragePort.get_hidden_symbols`` already promises this neutralization
+    happens in the reader.
+
+    Empty ``configured`` means UNKNOWN (``cli/web`` started with no
+    ``live:`` section), so nothing is neutralized — matching how the route
+    and template treat the same emptiness.
 
     Degrades rather than failing: a storage error here means every card
     renders, which is the safe direction — the failure mode of a hide
@@ -775,7 +791,7 @@ async def _load_hidden_symbols(
     if operator_storage is None or user_id is None:
         return frozenset()
     try:
-        return await operator_storage.get_hidden_symbols(user_id)
+        return await operator_storage.get_hidden_symbols(user_id) - configured
     except StorageError as exc:
         _LOGGER.warning(
             "hidden-symbol lookup failed for user %s; showing every card: %s",
@@ -856,6 +872,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
     operator_storage: StoragePort = Depends(get_operator_storage),
     live_tick_seconds: float | None = Depends(get_live_tick_seconds),
     reanchor_min_severity: ReanchorSeverity = Depends(get_reanchor_min_severity),
+    configured: frozenset[Symbol] = Depends(get_live_symbols),
 ) -> Response:
     """Combined dashboard — cost card + open orders + recent fills.
 
@@ -872,6 +889,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
         live_tick_seconds=live_tick_seconds,
         reanchor_min_severity=reanchor_min_severity,
         hidden_for_user_id=user.id,
+        configured=configured,
     )
     return templates.TemplateResponse(
         request,
@@ -897,6 +915,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
     operator_storage: StoragePort = Depends(get_operator_storage),
     live_tick_seconds: float | None = Depends(get_live_tick_seconds),
     reanchor_min_severity: ReanchorSeverity = Depends(get_reanchor_min_severity),
+    configured: frozenset[Symbol] = Depends(get_live_symbols),
 ) -> Response:
     """HTMX fragment — open-orders + recent-fills card without chrome.
 
@@ -915,6 +934,7 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
         # only in the browser would be wiped within one swap. This is why
         # the preference is persisted rather than client-side.
         hidden_for_user_id=user.id,
+        configured=configured,
     )
     return templates.TemplateResponse(
         request,

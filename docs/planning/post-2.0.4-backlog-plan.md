@@ -196,8 +196,36 @@ both.** No money.
 > **Shipped.** Four commits: a pre-existing `connect()` lock fix found on the
 > way, the storage layer, the offside-since behavior, and the hide toggle.
 > A pre-implementation verification pass checked every claim below against
-> the code; three corrections are recorded inline. 68 new tests, 15/15
-> mutants caught, suite 3828.
+> the code, and a pre-merge adversarial review of the diff found four more
+> defects; corrections from both are recorded inline. **49 new tests**
+> (counted, not summed — the per-commit counts in three of the messages are
+> inflated), 18/18 mutants caught, suite 3834.
+>
+> **Four defects the pre-merge review found, all fixed:**
+> 1. A symbol hidden while untraded and since added to `live.symbols` stayed
+>    hidden — taking pause, resume and re-anchor with it and rendering "the
+>    engine does not manage this symbol" over a symbol being actively
+>    traded. 2.0.4's anchor-button defect inverted. `get_hidden_symbols`'s
+>    own docstring already promised the reader neutralizes this; it did not.
+> 2. `restore_offside` seeded an episode for a coin with `enabled: false`,
+>    whose tick returns before the `is_offside` recompute — a permanent
+>    OFFSIDE badge over a duration that grows on every 15s poll and that
+>    nothing can re-check. Its "cannot outlive one tick" docstring was false
+>    for the disabled, paused and wide-spread paths.
+> 3. The hide route fell OPEN on an unknown `configured` set while its own
+>    template gate fell CLOSED — a page with no eye button in front of a
+>    route that would have accepted the POST. Both fall closed now, and the
+>    comment claiming it matched `reanchor_submit` was wrong: that one falls
+>    open, deliberately and for a different reason.
+> 4. Fixing #2 introduced a second bug the fix's own test caught:
+>    `for_coin(str(symbol))` looks up a pair against a base-keyed map and
+>    never matches, so the guard was inert.
+>
+> **One claim withdrawn rather than defended.** `busy_timeout` is a widened
+> margin, not a proven fix: the DELETE-mode race reproduces on main, but the
+> shipped concurrency test seeds WAL to match production, where sqlite3's 5s
+> default already suffices. Its mutant flipped between runs, so it was
+> removed — a mutant that flips reads as coverage and is worse than none.
 >
 > - **"One migration carrying both" was wrong.** `hidden_symbols` is a new
 >   table, so `CREATE TABLE IF NOT EXISTS` in SCHEMA covers it and it needs
