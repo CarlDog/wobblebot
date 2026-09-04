@@ -35,7 +35,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -46,6 +45,7 @@ from wobblebot.adapters.rss_news import RssNewsAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
+    ShutdownPhase,
     add_config_args,
     collect_overrides,
     config_load_exit,
@@ -365,7 +365,7 @@ async def _main_async(config: WobbleBotConfig) -> int:
             operator_storage=operator_storage,
         )
     finally:
-        phases: list[tuple[str, Any]] = [
+        phases: list[ShutdownPhase] = [
             ("close_news_sources", _close_all_sources),
             ("close_news_storage", storage.close),
         ]

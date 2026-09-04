@@ -71,8 +71,6 @@ COLOR_WARNING = 0xF39C12  # amber
 COLOR_ERROR = 0xE74C3C  # red
 COLOR_PENDING = 0xF1C40F  # yellow — for confirmation embeds awaiting operator click
 
-CONFIRM_EMOJI = "✅"
-REJECT_EMOJI = "❌"
 ACK_EMOJI = "👀"  # bot acknowledges a parsed inbound message
 WARN_EMOJI = "⚠️"  # bot flags an unparseable inbound message
 

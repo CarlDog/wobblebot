@@ -58,6 +58,7 @@ from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
+    ShutdownPhase,
     add_config_args,
     config_load_exit,
     emit_heartbeat,
@@ -1648,7 +1649,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             if aclose is not None:
                 await aclose()
 
-        phases: list[tuple[str, Any]] = [
+        phases: list[ShutdownPhase] = [
             ("cancel_background_tasks", _cancel_background_tasks),
             ("close_assistant", _close_assistant),
             ("close_operator_storage", operator_storage.close),

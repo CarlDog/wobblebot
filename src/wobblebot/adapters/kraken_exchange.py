@@ -74,8 +74,6 @@ from wobblebot.domain.value_objects import (
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.exchange import ExchangePort
 
-_API_VERSION = "0"
-
 # TradesHistory returns ~50 trades per page, account-wide (no pair filter).
 # A busy multi-symbol account can push a target symbol's trades past the
 # first page, so get_trade_history paginates via `ofs` — bounded by this

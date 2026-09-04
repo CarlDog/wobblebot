@@ -72,6 +72,7 @@ from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
+    ShutdownPhase,
     add_config_args,
     collect_overrides,
     config_load_exit,
@@ -2287,7 +2288,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         # Kraken cancels complete — worse than the original problem.
         # Resource closes here are safe to timeout-bound because by the
         # time we reach this point, orders have already been cancelled.
-        phases: list[tuple[str, Any]] = [
+        phases: list[ShutdownPhase] = [
             ("close_kraken_adapter", adapter.aclose),
             ("close_live_storage", storage.close),
         ]

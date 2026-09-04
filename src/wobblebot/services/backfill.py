@@ -37,8 +37,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime
 
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
@@ -257,9 +256,3 @@ __all__ = (
     "backfill_range",
     "synthesize_snapshots",
 )
-
-
-# Helpers exposed for unit testing -- keep _private to discourage
-# accidental cross-module use.
-_DECIMAL_ZERO = Decimal("0")
-_ONE_MINUTE = timedelta(minutes=1)

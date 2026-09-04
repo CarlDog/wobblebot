@@ -35,8 +35,6 @@ from pydantic import ValidationError
 from wobblebot.adapters.discord_confirm_view import CUSTOM_ID_TEMPLATE
 from wobblebot.adapters.discord_transport import (
     COLOR_PENDING,
-    CONFIRM_EMOJI,
-    REJECT_EMOJI,
     DiscordTransport,
     DiscordTransportConfig,
     DiscordTransportError,
@@ -72,7 +70,7 @@ def _reaction(
     *,
     user_id: str = "42",
     channel_id: str = "100",
-    emoji: str = CONFIRM_EMOJI,
+    emoji: str = "✅",  # literal: nothing in production defines this
     action: str = "add",
     message_id: str = "m-1",
 ) -> ReactionEvent:

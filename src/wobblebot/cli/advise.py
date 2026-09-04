@@ -52,6 +52,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
     OperatorConfigError,
+    ShutdownPhase,
     add_config_args,
     collect_overrides,
     config_load_exit,
@@ -822,7 +823,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
                 if aclose is not None:
                     await aclose()
 
-        phases: list[tuple[str, Any]] = [
+        phases: list[ShutdownPhase] = [
             ("close_advisors", _close_advisors),
             ("close_observe_storage", observe_storage.close),
             ("close_news_storage", news_storage.close),

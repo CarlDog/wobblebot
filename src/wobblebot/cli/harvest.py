@@ -43,6 +43,7 @@ from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
     PermanentAuthHalt,
+    ShutdownPhase,
     add_config_args,
     collect_overrides,
     config_load_exit,
@@ -549,7 +550,7 @@ async def _main_async(  # pylint: disable=too-many-return-statements,too-many-br
             if aclose is not None:
                 await aclose()
 
-        phases: list[tuple[str, Any]] = [("close_kraken_adapter", _close_adapter)]
+        phases: list[ShutdownPhase] = [("close_kraken_adapter", _close_adapter)]
         if storage is not None:
             phases.append(("close_harvest_storage", storage.close))
         if operator_storage is not None:
