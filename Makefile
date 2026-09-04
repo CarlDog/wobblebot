@@ -26,7 +26,11 @@ PIP := .venv/Scripts/pip.exe
 # nothing to flag. A stale checkout defeats this guard entirely. Keep
 # the working copy current.
 #
-# Unset it for one run if you deliberately want a key omitted.
+# Strict is now the DEFAULT (2026-09-04), so unsetting this no longer
+# relaxes anything -- set it to 0 for one run if you deliberately want a
+# key omitted. This line is kept as an explicit statement of intent rather
+# than a switch. (The old comment told you to unset it, which after the
+# default flip produced the opposite of what it promised.)
 export WOBBLEBOT_STRICT_CONFIG_DRIFT := 1
 
 help: ## Show this help message

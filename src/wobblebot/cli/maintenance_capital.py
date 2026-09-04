@@ -330,23 +330,38 @@ async def _emit(report: CapitalReport, notifier: NotifierPort | None) -> int:
     effective = report if cap_material else CapitalReport(report.entry, report.exits, None)
     lines = summarize(effective)
 
+    # Sellable-but-committed positions: logged, never notified. They need no
+    # action -- a grid with its inventory deployed is supposed to look like
+    # this -- and paging on them is what made DOGE a daily false alarm.
+    #
+    # ABOVE the clean-report early return, and that ordering is the whole
+    # point. This loop first sat below it, which made it dead code in
+    # precisely the case it exists for: a committed position is excluded
+    # from `lines` by construction, so a report whose ONLY content was a
+    # committed position returned early and the operator was told "capital
+    # report clean" while this line was built and discarded. Caught by the
+    # 2026-09-04 pre-deploy review, which executed _emit against the live
+    # DOGE numbers rather than reading it.
+    committed = summarize_committed(report)
+    for line in committed:
+        _LOGGER.info("CAPITAL (informational): %s", line, extra={"finding": line})
+
     if not lines:
         _LOGGER.info(
-            "capital report clean (symbols_checked=%s, cap_consumed=%s)",
+            "capital report clean (symbols_checked=%s, cap_consumed=%s, committed_positions=%s)",
             len(report.entry),
             f"{consumed:.0%}" if consumed is not None else "n/a",
+            len(committed),
             extra={
                 "symbols_checked": len(report.entry),
                 "cap_consumed": str(consumed) if consumed is not None else None,
+                # Qualifies "clean": nothing needs action, but say plainly
+                # whether anything was reported informationally, so the word
+                # is not read as "nothing to see".
+                "committed_positions": len(committed),
             },
         )
         return 0
-
-    # Sellable-but-committed positions: logged, never notified. They need
-    # no action -- a grid with its inventory deployed is supposed to look
-    # like this -- and paging on them is what made DOGE a daily false alarm.
-    for line in summarize_committed(report):
-        _LOGGER.info("CAPITAL (informational): %s", line, extra={"finding": line})
 
     sampled_hour = datetime.now(UTC).strftime("%H:%MZ")
     for line in lines:

@@ -2596,8 +2596,17 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     landed — it HAD to, since finding 14 could not be fixed without it — five
     dead constants went, the ShutdownPhase alias was restored in five CLIs,
     the audit row is typed, and the duplicate-env-key guard exists.
-    Still open by choice: wiring strict drift into CI, and a test module
-    importing sibling private helpers (both filed in the v1.1 register).
+    **Strict drift was NOT wired into CI, and that is the resolution rather
+    than an omission** (`6951d28`): measured before implementing, the
+    `env:` line would have been inert — every check it gates skips when the
+    operator file is absent, both operator files are gitignored, and no
+    workflow creates them. What was actually broken was that the guard's
+    liveness depended on an untracked `.env`; it now defaults ON in tracked
+    code. The one item genuinely still open is a test module importing
+    sibling private helpers. (This paragraph said the CI item was open
+    until the 2.0.5..main pre-deploy review caught it contradicting four
+    other documents in the same diff — commit ordering: it was written
+    before the measurement that settled the question.)
 
     **The one operator item, now half-closed.** The repo `.env` defined
     `KRAKEN_READER_API_KEY`/`_SECRET` twice with DIFFERENT values — later

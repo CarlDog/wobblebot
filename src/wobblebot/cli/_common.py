@@ -156,10 +156,16 @@ def identity(value: T) -> T:
 # unreadable file. Both are OSError, NEITHER is FileNotFoundError, so the
 # old tuple let them out as a raw traceback. `yaml.YAMLError` is likewise
 # not a ValueError — its MRO is (YAMLError, Exception, BaseException,
-# object) — so a hand-edited malformed settings.yml did the same. That one
-# matters most: docker-compose runs seven daemons under
-# `restart: unless-stopped`, so one bad character in a 1000-line YAML file
-# turned into a crash-loop instead of a clean exit 2.
+# object) — so a hand-edited malformed settings.yml did the same.
+#
+# What that fix buys, stated accurately after the 2026-09-04 pre-deploy
+# review corrected an earlier overclaim here: it buys a READABLE MESSAGE,
+# not an escape from restarting. Six of the nine compose services inherit
+# `restart: unless-stopped` (live, harvest and tools override it to "no"),
+# and `unless-stopped` restarts on ANY exit code — so a malformed
+# settings.yml loops whether the daemon dies on a traceback or exits 2.
+# The difference the operator actually gets is one line naming the file
+# and the parse error, repeated, instead of a stack trace repeated.
 CONFIG_LOAD_ERRORS: tuple[type[Exception], ...] = (
     OSError,  # covers FileNotFoundError, IsADirectoryError, PermissionError
     KeyError,  # unknown --profile
@@ -175,11 +181,26 @@ class OperatorConfigError(ValueError):
     Subclasses ``ValueError`` deliberately: every existing caller that
     catches ``ValueError`` keeps working unchanged, so this narrows what
     ``run_with_clean_exit`` has to catch without widening what anything
-    else does. Raising bare ``ValueError`` from the async body instead
-    produces a traceback, because that function only ever caught
-    ``KeyboardInterrupt`` — which is how a missing ATLASCLOUD_API_KEY
-    crash-looped cli/advise rather than telling the operator which
-    variable to set.
+    else does.
+
+    **This branch is currently a backstop, not a live path, and the
+    original version of this docstring was wrong about why it exists.**
+    The 2026-09-04 pre-deploy review ran cli/advise with the cloud key
+    unset on both v2.0.5 and this revision and got byte-identical output:
+    ``rc=2`` with ``[ERROR] wobblebot.cli.advise: advisor setup failed:
+    ... missing from environment``. No traceback on either. The only two
+    raise sites are in ``cli/advise._require_cloud_key``, and every path
+    to them runs inside that module's own pre-existing
+    ``except (ValueError, FileNotFoundError)``, which catches this
+    subclass first — so the handler in :func:`run_with_clean_exit` does
+    not run today, and the ``error: `` stderr shape it produces is not
+    what an operator sees for this failure.
+
+    Kept anyway, because the type is worth having: a named exception says
+    "operator-fixable precondition" where a bare ``ValueError`` says
+    nothing, and any FUTURE raise site outside that try block gets a
+    clean exit 2 instead of a traceback. Do not cite it as the thing that
+    fixed a crash-loop; nothing crash-looped.
     """
 
 
@@ -682,9 +703,14 @@ def run_with_clean_exit(
         rc = 0
     except OperatorConfigError as exc:
         # A precondition the operator can fix, raised too deep to reach
-        # main()'s config-load handler. Same exit code and same stderr
-        # shape as that handler, so the two paths are indistinguishable
-        # to whoever is reading the terminal.
+        # main()'s config-load handler. Same exit code and stderr shape as
+        # that handler.
+        #
+        # NOT currently reached: cli/advise's own
+        # `except (ValueError, FileNotFoundError)` absorbs the only two
+        # raise sites first, and emits a logger ERROR rather than this
+        # `error: ` line. See OperatorConfigError's docstring — the
+        # 2026-09-04 review proved this by running both revisions.
         sys.stderr.write(f"error: {exc}\n")
         rc = 2
     sys.stdout.flush()

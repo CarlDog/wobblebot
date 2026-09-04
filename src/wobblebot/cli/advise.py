@@ -151,14 +151,24 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
     a KeyError or a generic failure.
 
     Raises ``OperatorConfigError`` (a ``ValueError`` subclass) rather than
-    bare ``ValueError`` so ``run_with_clean_exit`` turns it into exit 2
-    with the message. This runs inside ``_main_async``, four frames below
-    main()'s config-load handler, and a bare ValueError there reached the
-    operator as a traceback — then crash-looped under
-    ``restart: unless-stopped``. Found 2026-09-04: `.env.example` told
-    operators ATLASCLOUD_API_KEY was inert while the deployed `cpu-only`
-    profile required it, so this was the live failure mode for anyone
-    provisioning a fresh host from the documented example.
+    bare ``ValueError``: the name says "operator-fixable precondition"
+    where a bare ValueError says nothing, and the subclass is caught by
+    ``run_with_clean_exit`` for any future raise site not already wrapped.
+
+    **Not a bug fix, and an earlier version of this paragraph said it was.**
+    It claimed a bare ValueError here "reached the operator as a traceback
+    — then crash-looped". The 2026-09-04 pre-deploy review ran this exact
+    scenario on v2.0.5 and on the fix with the key unset and got identical
+    results: rc=2 and a clean ``advisor setup failed: ...`` logged ERROR,
+    no traceback either time. The block at the bottom of this module
+    already catches ``(ValueError, FileNotFoundError)`` around
+    ``_build_advisor``, and it still does — this subclass passes through
+    it unchanged.
+
+    What WAS real on 2026-09-04: `.env.example` told operators
+    ATLASCLOUD_API_KEY was inert while the deployed `cpu-only` profile
+    required it. That was a documentation defect, fixed in the example
+    file, and nothing about this exception type addressed it.
     """
     if cloud_wiring is None:
         raise OperatorConfigError(

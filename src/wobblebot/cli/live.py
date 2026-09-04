@@ -34,7 +34,12 @@ Exit codes:
 * ``1`` — **two causes**: the session loss cap tripped mid-run, or startup
   reconciliation failed and the daemon refused to start. Both are "stop and
   look", but only the first means money moved.
-* ``2`` — missing trade credentials, or a missing/unloadable config.
+* ``2`` — missing trade credentials, a missing/unloadable config, or
+  startup symbol validation failed (Kraken's AssetPairs was unreachable,
+  or no configured symbol is tradeable). The third cause lives in
+  ``cli/_common.partition_or_exit`` and was missing from this list until
+  the 2026-09-04 pre-deploy review; ``--help`` renders this docstring
+  verbatim, so the omission reached operators.
 * ``4`` — a session-loss-cap cool-down is still in effect (ADR-024); the
   daemon refused to start and will resume after the window.
 

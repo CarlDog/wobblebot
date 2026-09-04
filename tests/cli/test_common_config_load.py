@@ -140,16 +140,23 @@ def test_a_malformed_settings_yml_exits_2_without_a_traceback(
 class TestPreconditionRaisedFromTheAsyncBody:
     """A config precondition too deep to reach ``main()``'s handler.
 
-    ``_require_cloud_key`` runs inside ``_main_async``, four frames below the
-    config-load ``except``. It used to raise a bare ``ValueError`` there, and
-    ``run_with_clean_exit`` only ever caught ``KeyboardInterrupt`` — so a
-    missing ``ATLASCLOUD_API_KEY`` reached the operator as a traceback and
-    then crash-looped under ``restart: unless-stopped``.
+    These tests drive :func:`run_with_clean_exit` directly, which is the
+    only way to reach this branch — **it is a backstop, not a live path.**
 
-    That was live: ``.env.example`` told operators the Atlas key was inert
-    while the deployed ``cpu-only`` profile set ``provider: atlas``, so this
-    was the failure mode for anyone provisioning a host from the documented
-    example file.
+    An earlier version of this docstring claimed a missing
+    ``ATLASCLOUD_API_KEY`` had reached the operator as a traceback and
+    crash-looped. The 2026-09-04 pre-deploy review disproved that by
+    running cli/advise on both v2.0.5 and this revision with the key
+    unset: byte-identical ``rc=2`` and a clean logged ERROR on each.
+    ``cli/advise`` catches the only two raise sites in its own
+    ``except (ValueError, FileNotFoundError)`` before this handler sees
+    them.
+
+    What is still worth pinning here: IF something raises
+    ``OperatorConfigError`` from an async body that is not so wrapped, it
+    exits 2 with the message rather than a traceback — and an unrelated
+    ``ValueError`` still crashes, which is the narrowing that makes the
+    dedicated subclass worth having.
     """
 
     def _run(self, exc: BaseException, monkeypatch: pytest.MonkeyPatch) -> int:
