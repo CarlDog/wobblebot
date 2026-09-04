@@ -244,7 +244,14 @@
          - inline pause + resume icon buttons (still state-unaware;
            the state-aware button slice consumes the same table later)
          - filtered open-orders table #}
-      {% for symbol in snapshot.symbols %}
+      {# The hidden set is applied HERE and nowhere else. snapshot.symbols
+         itself is untouched, so every number derived from it — the price
+         fetch, sparklines, account value, realized P&L, the fills tables —
+         is identical whether a card is hidden or not. A view preference
+         that moved reported P&L would be the worst outcome this feature
+         could have; applying it to the loop iterable alone makes that
+         impossible by construction rather than by care. #}
+      {% for symbol in snapshot.symbols if symbol not in snapshot.hidden_symbols %}
         {% set sym_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
         {# Stage 8.4.E follow-up 2026-05-22 — every symbol section now
            gets the framed card-on-card look regardless of order count.
@@ -404,6 +411,38 @@
                 </button>
               </form>
               {% endif %}
+              {# Hide (operator note 2026-09-03): only for symbols the engine
+                 does NOT trade. Pause, resume and re-anchor live inside this
+                 card, so hiding a configured symbol would silently un-ship
+                 them and leave no surface to stop something that is trading.
+                 The motivating case needs none of that — BABY/USD is absent
+                 from live.symbols and was never traded; its card comes from
+                 a dust balance in the observe snapshot. Enforced again in
+                 the route, so a hand-rolled POST is covered. Empty
+                 configured_symbols means unknown and falls open, matching
+                 the re-anchor gate above.
+
+                 A plain form, NOT hx-post: this copies Snooze 24h, the
+                 other UI-local write, and returns a 303 to "/". The modal
+                 idiom belongs to the firewalled commands. #}
+              {% if configured_symbols and symbol not in configured_symbols %}
+              <form method="post" action="/commands/hide-symbol" class="inline-form">
+                {{ csrf_input(request) }}
+                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                <input type="hidden" name="hidden" value="true">
+                <button type="submit" class="icon-btn icon-btn-hide"
+                        title="Hide {{ symbol.base }}/{{ symbol.quote }} from the dashboard (it is not traded by the engine)"
+                        aria-label="Hide {{ symbol.base }}/{{ symbol.quote }}">
+                  {# Material Design Icons ``visibility_off`` (Apache-2.0) — the
+                     same filled family as the pause / play / anchor siblings
+                     beside it, not the stroked navbar set. Attribution in
+                     NOTICE.md. #}
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M12,7c2.76,0,5,2.24,5,5c0,0.65-0.13,1.26-0.36,1.83l2.92,2.92c1.51-1.26,2.7-2.89,3.43-4.75 c-1.73-4.39-6-7.5-11-7.5c-1.4,0-2.74,0.25-3.98,0.7l2.16,2.16C10.74,7.13,11.35,7,12,7z M2,4.27l2.28,2.28l0.46,0.46 C3.08,8.3,1.78,10.02,1,12c1.73,4.39,6,7.5,11,7.5c1.55,0,3.03-0.3,4.38-0.84l0.42,0.42L19.73,22L21,20.73L3.27,3L2,4.27z M7.53,9.8 l1.55,1.55c-0.05,0.21-0.08,0.43-0.08,0.65c0,1.66,1.34,3,3,3c0.22,0,0.44-0.03,0.65-0.08l1.55,1.55 c-0.67,0.33-1.41,0.53-2.2,0.53c-2.76,0-5-2.24-5-5C7,11.21,7.2,10.47,7.53,9.8z M11.84,9.02l3.15,3.15l0.02-0.16 c0-1.66-1.34-3-3-3L11.84,9.02z"/>
+                  </svg>
+                </button>
+              </form>
+              {% endif %}
             </div>
           </div>
           {% if sym_orders %}
@@ -448,6 +487,43 @@
           {% endif %}
         </section>
       {% endfor %}
+
+      {# Hidden-symbol summary. Never a silent omission: the count is always
+         stated, each symbol can be revealed in one click, and a hidden
+         symbol that still has resting orders is named explicitly.
+
+         That last part is the safety half. Hiding is restricted to symbols
+         the engine does NOT trade, which are exactly the ones cli/live
+         never ticks and clean shutdown never cancels — so an order resting
+         on one is capital nothing is managing. Hiding the card must not
+         also hide that. #}
+      {% set hidden_here = snapshot.symbols | select("in", snapshot.hidden_symbols) | list %}
+      {% if hidden_here %}
+        {# A DIV, not a P. <form> is flow content and <p> accepts only
+           phrasing content, so the parser CLOSES the paragraph at the
+           first <form> — the styling container ends up empty and every
+           rule scoped under .hidden-summary silently stops applying.
+           Caught by rendering it; substring assertions cannot see it. #}
+        <div class="hidden-summary">
+          {{ hidden_here | length }} symbol{{ "" if hidden_here | length == 1 else "s" }} hidden:
+          {% for symbol in hidden_here %}
+            {% set hidden_orders = snapshot.orders_by_symbol.get(symbol, ()) %}
+            <span class="hidden-symbol{{ ' hidden-symbol-warn' if hidden_orders else '' }}">
+              <form method="post" action="/commands/hide-symbol" class="inline-form">
+                {{ csrf_input(request) }}
+                <input type="hidden" name="symbol" value="{{ symbol.base }}/{{ symbol.quote }}">
+                <input type="hidden" name="hidden" value="false">
+                <button type="submit" class="link-btn"
+                        title="Show {{ symbol.base }}/{{ symbol.quote }} again"
+                        aria-label="Show {{ symbol.base }}/{{ symbol.quote }}">{{ symbol.base }}/{{ symbol.quote }}</button>
+              </form>
+              {% if hidden_orders %}
+                <strong class="hidden-orders-note">{{ hidden_orders | length }} resting order{{ "" if hidden_orders | length == 1 else "s" }} — the engine does not manage this symbol, so nothing will cancel {{ "it" if hidden_orders | length == 1 else "them" }}</strong>
+              {% endif %}
+            </span>
+          {% endfor %}
+        </div>
+      {% endif %}
 
       <h2 class="card-subtitle">Recent Fills (Last {{ snapshot.recent_trades|length }})</h2>
       {% if snapshot.fills_summary %}

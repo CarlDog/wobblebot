@@ -197,6 +197,15 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # Open orders grouped by symbol — saves the template from
     # filtering ``snapshot.open_orders`` N times per render.
     orders_by_symbol: dict[Symbol, tuple[Order, ...]] = field(default_factory=dict)
+    # Symbols this operator has hidden from the card list. Kept SEPARATE
+    # from ``symbols`` on purpose, and read by exactly one thing: the
+    # template's card loop. Filtering the union upstream would move real
+    # numbers — the price fetch, the sparklines, account value, realized
+    # P&L and the fills tables all derive from it — and a view preference
+    # that changes reported P&L is the worst outcome this feature can
+    # produce. Applied only to the loop iterable, that is impossible by
+    # construction rather than by care.
+    hidden_symbols: frozenset[Symbol] = frozenset()
     # Completed BUY→SELL cycles reconstructed via FIFO matching
     # against ``recent_trades``. Newest-first; may be empty when no
     # cycles have completed yet. Template renders these in the
@@ -604,6 +613,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     operator_storage: StoragePort | None = None,
     live_tick_seconds: float | None = None,
     reanchor_min_severity: ReanchorSeverity = "mild",
+    hidden_for_user_id: int | None = None,
 ) -> StatusSnapshot:
     """Pull open orders + recent fills + current prices; degrade gracefully.
 
@@ -695,6 +705,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         operator_storage, prices
     )
 
+    hidden = await _load_hidden_symbols(operator_storage, hidden_for_user_id)
     last_cap_trip = await _load_last_cap_trip(live_storage)
     engine_states = await _load_engine_states(
         operator_storage, tick_seconds=live_tick_seconds, now=now
@@ -727,6 +738,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         reanchor_recommendations=reanchor_recs,
         symbols=all_symbols,
         orders_by_symbol=orders_by_symbol,
+        hidden_symbols=hidden,
         recent_cycles=cycles[:_RECENT_CYCLES_DISPLAY],
         today_realized_pnl=today_pnl,
         lifetime_realized_pnl=lifetime_pnl,
@@ -748,6 +760,30 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         trade_ages=trade_ages,
         fills_summary=fills_summary,
     )
+
+
+async def _load_hidden_symbols(
+    operator_storage: StoragePort | None, user_id: int | None
+) -> frozenset[Symbol]:
+    """This operator's hidden card set; empty on anything unexpected.
+
+    Degrades rather than failing: a storage error here means every card
+    renders, which is the safe direction — the failure mode of a hide
+    feature must be showing too much, never hiding something the operator
+    needed to see.
+    """
+    if operator_storage is None or user_id is None:
+        return frozenset()
+    try:
+        return await operator_storage.get_hidden_symbols(user_id)
+    except StorageError as exc:
+        _LOGGER.warning(
+            "hidden-symbol lookup failed for user %s; showing every card: %s",
+            user_id,
+            exc,
+            extra={"user_id": user_id, "error": str(exc)},
+        )
+        return frozenset()
 
 
 async def _load_last_cap_trip(live_storage: StoragePort) -> CapTripRecord | None:
@@ -835,6 +871,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
         operator_storage=operator_storage,
         live_tick_seconds=live_tick_seconds,
         reanchor_min_severity=reanchor_min_severity,
+        hidden_for_user_id=user.id,
     )
     return templates.TemplateResponse(
         request,
@@ -851,7 +888,7 @@ async def dashboard(  # pylint: disable=too-many-arguments,too-many-positional-a
 @router.get("/status/card", response_class=HTMLResponse)
 async def status_card(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request: Request,
-    user: User = Depends(require_user),  # pylint: disable=unused-argument
+    user: User = Depends(require_user),
     live_storage: StoragePort | None = Depends(get_live_storage),
     observe_storage: StoragePort | None = Depends(get_observe_storage),
     prefs: UserPreferences = Depends(get_user_preferences),
@@ -874,6 +911,10 @@ async def status_card(  # pylint: disable=too-many-arguments,too-many-positional
         operator_storage=operator_storage,
         live_tick_seconds=live_tick_seconds,
         reanchor_min_severity=reanchor_min_severity,
+        # The 15s HTMX poll replaces the whole card, so a hide that lived
+        # only in the browser would be wiped within one swap. This is why
+        # the preference is persisted rather than client-side.
+        hidden_for_user_id=user.id,
     )
     return templates.TemplateResponse(
         request,
