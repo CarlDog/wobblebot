@@ -820,8 +820,11 @@ and the tick sentence DELETED rather than reworded. The restore is what makes
 it correct, not a nicety: the transition WARNING fires at `consecutive == 1`,
 which after a restart is a first observation, so without the seed the first
 tick would stamp the boot time — production logs that line for BTC and ETH
-within six seconds of every daemon start. Measured before building: the
-popover was rendering "about 2h 55m" for a symbol parked since 2026-08-19.
+within six seconds of every daemon start. Captured before building, from
+the live container: "BTC/USD still offside at 81190.1; parked (720
+consecutive ticks)" at 2026-09-03T23:01:23Z, 71 minutes into that daemon —
+so the popover read "about 1h 0m" for a symbol parked since the 2026-08-19
+anchor, ~380x short.
 The seeding path this entry suggests is impossible — the engine's own
 transition WARNING goes to a file that rotates at 7 days. A start nothing
 observed renders as an explicit unknown instead. *Original text:*

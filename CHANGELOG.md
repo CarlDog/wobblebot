@@ -56,8 +56,9 @@ fresh `[Unreleased]` heading created at that time.
 ### Fixed
 
 - **The offside popover states wall-clock truth.** It said "Parked N ticks
-  since cli/live last started", which reset on every deploy — measured
-  2026-09-04, it read "about 2h 55m" for a symbol parked since 2026-08-19.
+  since cli/live last started", which reset on every deploy. On the evening
+  of 2026-09-03 it read "about 1h 0m" for a symbol that had been parked
+  since 19 August — roughly 380 times short.
   The engine now records when an offside episode began and restores it across
   restarts, so the popover states an actual date and duration. An episode
   that began before this was recorded says exactly that instead of guessing;

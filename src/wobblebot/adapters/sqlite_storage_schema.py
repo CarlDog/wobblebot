@@ -491,9 +491,12 @@ CREATE TABLE IF NOT EXISTS cap_trips (
 -- offside_since (2026-09-04): wall-clock start of the CURRENT offside
 -- episode, restored into the engine at boot so a restart no longer
 -- forgets it. offside_ticks alone could only ever say "since cli/live
--- last started" — measured 2026-09-04, that read "about 2h 55m" for a
--- symbol parked since 2026-08-19, understating by ~125x right after a
--- deploy. NULL means "offside, but this episode began before the
+-- last started". The captured evidence is one live log line: at
+-- 2026-09-03T23:01:23Z, 71 minutes into a daemon that had been up since
+-- 21:50Z, cli/live logged "BTC/USD still offside at 81190.1; parked (720
+-- consecutive ticks)" — so the popover read "about 1h 0m" at the
+-- configured 5.0s tick, for a symbol parked since the 2026-08-19 anchor.
+-- An understatement of ~380x, and it resets to "1 tick" on every deploy. NULL means "offside, but this episode began before the
 -- column existed (or before this row's daemon could observe its
 -- start)" -- an honest unknown, never a stamp of the boot time. Only
 -- an observed onside->offside transition writes it.

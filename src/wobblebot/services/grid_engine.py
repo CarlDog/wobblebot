@@ -108,9 +108,10 @@ class OffsideState:
     ``ticks`` counts consecutive offside ticks in THIS process and drives
     the transition + heartbeat log cadence. ``since`` is the wall-clock
     start of the episode and is the only field a duration may be rendered
-    from — ``ticks`` resets on every deploy, and measured 2026-09-04 that
-    made the dashboard say "about 2h 55m" for a symbol parked since
-    2026-08-19.
+    from — ``ticks`` resets on every deploy. Captured 2026-09-03T23:01:23Z:
+    "BTC/USD still offside at 81190.1; parked (720 consecutive ticks)", 71
+    minutes into that daemon, which the dashboard rendered as "about 1h 0m"
+    for a symbol parked since the 2026-08-19 anchor — ~380x short.
 
     ``since`` is ``None`` for an episode whose start nothing observed: a
     row written before the column existed, or a symbol this process found

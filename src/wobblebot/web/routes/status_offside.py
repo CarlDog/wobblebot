@@ -60,9 +60,11 @@ class OffsideExplanation:  # pylint: disable=too-many-instance-attributes
     # start (a row predating the column, or a daemon that found the symbol
     # already outside its band). Group 3 replaced the previous
     # ``offside_seconds`` — ticks x the configured tick length — because
-    # that number could only ever mean "since cli/live last started", and
-    # measured 2026-09-04 it read "about 2h 55m" for a symbol parked since
-    # 2026-08-19, understating by ~125x right after a deploy.
+    # that number could only ever mean "since cli/live last started".
+    # Captured 2026-09-03T23:01:23Z, 71 minutes into that daemon: "BTC/USD
+    # still offside at 81190.1; parked (720 consecutive ticks)" — rendered
+    # as "about 1h 0m" for a symbol parked since the 2026-08-19 anchor,
+    # ~380x short, and back to "1 tick" after the next deploy.
     #
     # None is rendered as an explicit unknown, never as a substituted time.
     # ``offside_ticks`` is kept for the tick-count phrasing on that branch

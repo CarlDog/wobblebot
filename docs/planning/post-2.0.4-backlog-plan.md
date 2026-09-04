@@ -221,6 +221,25 @@ both.** No money.
 >    `for_coin(str(symbol))` looks up a pair against a base-keyed map and
 >    never matches, so the guard was inert.
 >
+> **The "summary row must reproduce the OFFSIDE badge" requirement is
+> DISSOLVED, not met** — and since that requirement is this section's stated
+> reason for grouping the two items, say so rather than leave an unmet
+> obligation on the page. `_emit_engine_states` writes `engine_state` rows
+> only for `live.symbols`, and after the neutralization fix the hidden set
+> is disjoint from the configured set, so a hidden symbol has no row, no
+> badge, and nothing to reproduce. The grouping still earned itself: both
+> items co-edit the same card and the same header cluster.
+>
+> **Pre-deploy gate, because it cannot be done from a dev machine.** The
+> ALTER has never run against the real production `operator.db` with its six
+> live rows — the migration test builds a synthetic 2.0-era file. Before the
+> `IMAGE_TAG` bump that carries this: copy
+> `/volume1/docker/wobblebot/data/*operator*.db`, open it twice with
+> `SQLiteStorageAdapter.connect()`, then check `PRAGMA table_info(engine_state)`
+> for `offside_since` and `PRAGMA integrity_check`. This rides alongside the
+> standing adversarial review in `~/.claude/rules/pre-deploy-review.md`, not
+> instead of it.
+>
 > **One claim withdrawn rather than defended.** `busy_timeout` is a widened
 > margin, not a proven fix: the DELETE-mode race reproduces on main, but the
 > shipped concurrency test seeds WAL to match production, where sqlite3's 5s
@@ -340,9 +359,16 @@ reporter.
      branch is unanswerable.** That line goes to a rotating file with 7-day
      retention; 2026-08-19 is 15 days back and nothing else persists it.
    - **Keeping the tick sentence was not the neutral option it looks like.**
-     Measured on the live container: the popover was rendering "about 2h 55m"
-     for BTC, and Group 3's own deploy would have reset it to "1 tick, about
-     5s" for a symbol parked over two weeks. A true-but-misleading number is
+     The captured evidence is a live log line, not arithmetic: at
+     2026-09-03T23:01:23Z, 71 minutes into a daemon up since 21:50Z,
+     cli/live logged "BTC/USD still offside at 81190.1; parked (720
+     consecutive ticks)" — so the popover read "about 1h 0m" at the
+     configured 5.0s tick, for a symbol parked since the 2026-08-19 anchor.
+     ~380x short, and Group 3's own deploy would have reset it to "1 tick,
+     about 5s". (That line comes from inside `_tick`'s `if offside:` block,
+     which a paused symbol never reaches, so the count was not frozen by a
+     pause — the one reading that would have made ticks x cadence
+     meaningless.) A true-but-misleading number is
      the same class 2.0.4 was cut to remove, so it is deleted, not kept as a
      fallback.
    - **A floor could only come from replaying `ohlc_bars` against the band**,
