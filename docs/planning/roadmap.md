@@ -2668,6 +2668,37 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     to take the verdict from the exit code, and it was violated on the exact
     tool it was written about. Every gate is now re-run reading exit codes.
 
+    **Ceremony receipts:** main CI green on `f6eb8df` before tagging (verdict
+    from `gh run watch --exit-status`, not from reading a score); annotated
+    tag `v2.0.6`; tag-triggered `CI & Publish to GHCR` run 33920848748 with
+    `test=success` and `build-and-push=success`; GitHub Release published at
+    `releases/tag/v2.0.6`.
+
+    **Deployed 2026-09-04 21:28 UTC** on operator instruction: `IMAGE_TAG`
+    `2.0.5` -> `2.0.6` on file-based stack 158, image re-pulled, all 8
+    containers recreated. Verified AT THE CONTAINER, not from the redeploy
+    response: `org.opencontainers.image.revision` =
+    `f6eb8df416ce24e41fa59312cf9e076384f7412d` (exactly the release commit),
+    `org.opencontainers.image.version` = `2.0.6`, image
+    `ghcr.io/carldog/wobblebot:2.0.6`. Incidentally confirmed the correction
+    made earlier the same day: `cli/live`'s `RestartPolicy.Name` really is
+    `"no"`, so a boot failure exits and stays down.
+
+    `cli/live` booted clean: live TradeVolume fee rates (0.4%/0.8%), `restored
+    2 offside episode(s) from engine_state: BTC/USD (start unknown), ETH/USD
+    (start unknown)`, session start across all six symbols, grids re-laid out
+    (SOL 4/6, DOGE 4/6, ADA 3/6, XRP 0/6 starved as before). No traceback.
+
+    **The capital fix is live but its interesting branch is NOT yet
+    exercised.** The maintenance daemon logged `capital report clean
+    (symbols_checked=6, cap_consumed=17%, committed_positions=0)` — the new
+    field renders, which proves the code path runs. The count is 0 because the
+    boot had just cancelled and re-laid every grid, so inventory was
+    momentarily unlocked. The informational line itself will first appear on a
+    daily cycle once orders are resting again; until then it is pinned only by
+    the mutation-verified unit tests, and this receipt says so rather than
+    claiming a production confirmation it has not earned.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
