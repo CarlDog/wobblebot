@@ -115,7 +115,12 @@ dev = [
     # httpx2 installed, all 12 tests/web/ modules fail collection on
     # starlette >= 1.2.0 (1.1.0 still imports `httpx` unconditionally) —
     # the sole reason the starlette security bumps sat unmerged from
-    # 17 Jun. Inert on the 1.0.x pinned here. Runtime `httpx` stays in
+    # 17 Jun. REQUIRED at the version pinned here: this file pins
+    # starlette==1.6.0, well past the >= 1.2.0 threshold named two lines
+    # up, so httpx2 is load-bearing rather than inert. The comment used to
+    # read "Inert on the 1.0.x pinned here" while the pin had already moved
+    # to 1.6.0 — it contradicted its own neighbour. Corrected 2026-09-04 by
+    # the release-close audit. Runtime `httpx` stays in
     # [project.dependencies]; the Anthropic adapter uses it directly.
     "httpx2==2.12.0",
 ]

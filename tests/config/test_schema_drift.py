@@ -345,3 +345,59 @@ class TestExtractEnvKeys:
         f = tmp_path / "ex.env"
         f.write_text("\n\nKEY=value\n\n", encoding="utf-8")
         assert _extract_env_keys(f) == {"KEY"}
+
+
+def _active_env_assignments(path: Path) -> list[str]:
+    """Every UNCOMMENTED ``KEY=`` assignment, in file order, with repeats.
+
+    Deliberately NOT ``_extract_env_keys``: that one returns a ``set`` and
+    counts commented-out lines as documentation, both of which are correct
+    for drift but make it structurally blind to a key defined twice.
+    """
+    pattern = re.compile(r"^([A-Z_][A-Z0-9_]*)\s*=")
+    found: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("#"):
+            continue  # commented-out keys are documentation, not assignments
+        match = pattern.match(stripped)
+        if match:
+            found.append(match.group(1))
+    return found
+
+
+class TestNoDuplicateEnvAssignments:
+    """A key assigned twice is silently shadowed, and nothing else notices.
+
+    python-dotenv is last-wins, so a repeated key means the earlier
+    definition is dead — including, in the case that prompted this
+    (2026-09-04 release-close audit), the one sitting under the section
+    header ``.env.example`` documents. The operator's `.env` defined
+    KRAKEN_READER_API_KEY/_SECRET twice with DIFFERENT values; the
+    documented pair was the one that lost, so rotating the key there would
+    have silently done nothing.
+
+    The drift tests above cannot see this: ``_extract_env_keys`` collects
+    into a ``set``, which collapses the duplicate, so both directions
+    passed. This is a hard failure rather than a strict-mode warning
+    because it is a correctness bug, not documentation drift.
+    """
+
+    def test_operator_env_defines_each_key_once(self) -> None:
+        if not _ENV_OPERATOR.exists():
+            pytest.skip("no operator .env; nothing to check")
+        self._assert_unique(_ENV_OPERATOR)
+
+    def test_example_env_defines_each_key_once(self) -> None:
+        self._assert_unique(_ENV_EXAMPLE)
+
+    @staticmethod
+    def _assert_unique(path: Path) -> None:
+        assignments = _active_env_assignments(path)
+        repeated = sorted({k for k in assignments if assignments.count(k) > 1})
+        assert not repeated, (
+            f"{path.name} assigns these keys more than once: {repeated}.\n"
+            "  python-dotenv is last-wins, so every earlier definition is dead —\n"
+            "  including any under the documented section header. Delete the\n"
+            "  duplicate rather than relying on file order."
+        )
