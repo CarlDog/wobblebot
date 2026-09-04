@@ -10,7 +10,7 @@ status, so nothing was queued and the symbol stayed held; six minutes
 later ``re-anchor SOL`` — the prompt's own example wording — parsed
 correctly. Same intent, opposite outcomes, decided by a hyphen.
 
-This module is the regex the grammar deserves. :func:`parse_fast` runs
+This module is the regex the grammar deserves. :func:`classify_fast` runs
 BEFORE the model and returns an intent only when the message is
 unambiguously one of the fixed commands; anything else returns ``None``
 and falls through to the LLM unchanged. Two normalisation rules the
@@ -99,7 +99,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 # Builders keyed by pattern kind. Symbol-less forms first, then the
 # forms that need a grounded ``Symbol``. Keeping them as tables (rather
-# than an if-chain) is what lets ``parse_fast`` stay a short function.
+# than an if-chain) is what lets ``classify_fast`` stay a short function.
 _NO_SYMBOL: dict[str, Callable[[], OperatorIntent]] = {
     "pause_all": lambda: IntentCommand(command=PauseAllCommand()),
     "resume_all": lambda: IntentCommand(command=ResumeAllCommand()),

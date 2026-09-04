@@ -558,16 +558,6 @@ CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred
     ON ledger_entries(occurred_at);
 
 -- ---------------------------------------------------------------- --
--- reanchor_snoozes — dashboard banner snoozes (P3 banner button)    --
--- ---------------------------------------------------------------- --
--- cli/web upserts one row per symbol when the operator clicks
--- "Snooze 24h" on a re-anchor banner; the dashboard's recommendation
--- loader drops symbols with an unexpired snooze. Deliberately
--- UI-local state — a snooze never crosses the ADR-002 firewall
--- (suppressing a banner moves no money). Expired rows are ignored on
--- read and overwritten by the next snooze (one row per symbol, so
--- the table never outgrows the symbol count). Lives in operator.db.
--- ---------------------------------------------------------------- --
 -- hidden_symbols — dashboard card visibility (operator note 09-03)  --
 -- ---------------------------------------------------------------- --
 -- cli/web inserts one row per (user, symbol) when the operator clicks
@@ -593,6 +583,16 @@ CREATE TABLE IF NOT EXISTS hidden_symbols (
     PRIMARY KEY (user_id, symbol_base, symbol_quote)
 );
 
+-- ---------------------------------------------------------------- --
+-- reanchor_snoozes — dashboard banner snoozes (P3 banner button)    --
+-- ---------------------------------------------------------------- --
+-- cli/web upserts one row per symbol when the operator clicks
+-- "Snooze 24h" on a re-anchor banner; the dashboard's recommendation
+-- loader drops symbols with an unexpired snooze. Deliberately
+-- UI-local state — a snooze never crosses the ADR-002 firewall
+-- (suppressing a banner moves no money). Expired rows are ignored on
+-- read and overwritten by the next snooze (one row per symbol, so
+-- the table never outgrows the symbol count). Lives in operator.db.
 CREATE TABLE IF NOT EXISTS reanchor_snoozes (
     symbol_base   TEXT NOT NULL CHECK (length(symbol_base) > 0),
     symbol_quote  TEXT NOT NULL CHECK (length(symbol_quote) > 0),

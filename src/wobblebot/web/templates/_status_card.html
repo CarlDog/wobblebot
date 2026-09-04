@@ -423,8 +423,14 @@
                  from live.symbols and was never traded; its card comes from
                  a dust balance in the observe snapshot. Enforced again in
                  the route, so a hand-rolled POST is covered. Empty
-                 configured_symbols means unknown and falls open, matching
-                 the re-anchor gate above.
+                 configured_symbols means unknown and falls CLOSED here —
+                 the OPPOSITE of the re-anchor gate above, deliberately. There,
+                 refusing on unknown would break a working deployment for a
+                 command the engine re-validates anyway. Here, allowing on
+                 unknown lets an operator hide a card that may carry the only
+                 pause and re-anchor controls for a symbol trading real money.
+                 The route agrees with this gate; they must, or a rendered
+                 button disagrees with what happens when it is pressed.
 
                  A plain form, NOT hx-post: this copies Snooze 24h, the
                  other UI-local write, and returns a 303 to "/". The modal

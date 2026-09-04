@@ -28,6 +28,37 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.5] - 2026-09-04
+
+Operator legibility, three slices deep. The theme is the same one 2.0.4 was
+cut for: a dashboard or a log that states something confidently wrong is worse
+than one that says nothing. Every item below either removes a false claim or
+replaces silence with a true one.
+
+Numbered 2.0.5 rather than 2.1.0 deliberately, following 2.0.2 and 2.0.3 which
+also shipped features on the patch line. The `2.1.0` name stays reserved for
+the deployment & lifecycle-integrity phase in
+`docs/planning/release-2.0-plan.md` §5, and taking it for this work would
+misdescribe both.
+
+The schema change (`engine_state.offside_since`, plus a new `hidden_symbols`
+table) is additive and **roll-back safe**: 2.0.4 reads `engine_state` with an
+explicit column list and never touches `hidden_symbols`, so setting `IMAGE_TAG`
+back against an already-migrated database is a no-op for it. Verified against
+2.0.4's own SQL, not assumed.
+
+**One asymmetry, stated because this release exists to stop confident wrong
+claims.** 2.0.4's `ON CONFLICT ... DO UPDATE SET` omits `offside_since`, so
+while 2.0.4 runs the column freezes rather than tracking. Roll back, let a
+symbol complete a full offside → onside → offside cycle under 2.0.4, then roll
+forward, and the popover renders the *previous* episode's date. Bounded to
+symbols that flap in and out of band — measured on the live tape, that is
+XRP and DOGE. BTC and ETH carry NULL and are structurally immune. A re-anchor
+clears it. Filed as a follow-up rather than fixed here: the pairing cannot be
+repaired from 2.0.5's side, since it is 2.0.4 that fails to write the column.
+
 ### Added
 
 - **The Discord fast path says why it declined.** It reports a classified

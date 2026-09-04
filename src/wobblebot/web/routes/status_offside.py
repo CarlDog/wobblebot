@@ -52,10 +52,13 @@ class OffsideExplanation:  # pylint: disable=too-many-instance-attributes
     """Why one symbol is offside, precomputed so Jinja only formats."""
 
     symbol: Symbol
-    # No offside_ticks: it was carried only to render "Parked N ticks since
-    # cli/live last started", and nothing derives a duration from ticks any
-    # more. EngineStateRow still persists the count — the boot restore seeds
-    # the engine's counter from it — but the popover has no use for it.
+    # This DTO deliberately carries no offside_ticks. It existed only to
+    # render "Parked N ticks since cli/live last started", nothing derives a
+    # duration from ticks any more, and leaving the field here would invite
+    # that sentence back the next time someone wants a number on the unknown
+    # branch. EngineStateRow still persists the COUNT — the boot restore seeds
+    # the engine's counter from it — but no popover text reads it.
+    #
     # When this offside episode began, or None when nothing observed its
     # start (a row predating the column, or a daemon that found the symbol
     # already outside its band). Group 3 replaced the previous
@@ -67,8 +70,6 @@ class OffsideExplanation:  # pylint: disable=too-many-instance-attributes
     # ~380x short, and back to "1 tick" after the next deploy.
     #
     # None is rendered as an explicit unknown, never as a substituted time.
-    # ``offside_ticks`` is kept for the tick-count phrasing on that branch
-    # and now survives restarts, but a DURATION must come from here.
     offside_since: datetime | None
     # Elapsed seconds since ``offside_since``, or None when the start is
     # unknown. Precomputed here because this module's contract is that
