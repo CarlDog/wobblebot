@@ -949,7 +949,7 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > retry so a summary reports what binds NOW, at WARNING as this entry's
 > original text specified. An adversarial review before merge moved the
 > demotion from being implied by the symbol's starved state to being asked
-> for by the layout: `_try_place` is shared with the ADR-023 counter-order
+> for by the CALLER: `_try_place` is shared with the ADR-023 counter-order
 > path, which no `LayoutOutcome` covers, so a symbol-gated demotion silenced
 > a stuck recovery counter with nothing replacing it. That path cannot simply
 > stay loud either — the dissenting refuter on that same finding measured it
@@ -969,10 +969,13 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > refusal arms return the same bare `"refused"`, so no reason survived at all
 > and the buy-side-only variant could not be built. The per-level cap WARNING
 > and the stale-anchor WARNING drop to DEBUG/INFO **only while starved**: a
-> never-starved partial layout keeps them, the counter-order path keeps them,
-> and the exchange-side ordermin arm is untouched. A starved symbol's PARTIAL
-> recovery is the one case that is demoted and then loses its record, which is
-> why that tick gets its own aggregate WARNING.
+> never-starved partial layout keeps them, and the exchange-side ordermin arm
+> is untouched. Two cases needed their own aggregate line instead. A starved
+> symbol's PARTIAL recovery is demoted and then loses its record, so that tick
+> gets a WARNING naming the survivors. The counter-order path is quiet at the
+> per-level line always, and carries its signal in the once-per-counter
+> announcement above.
+>
 > Two latent bugs came with it — the periodic heartbeat counted ticks against
 > 240 while the retry gate counted them against 60, and 240 % 60 == 0, so the
 > retry always returned first and the heartbeat had never once fired; and

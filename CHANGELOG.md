@@ -78,8 +78,8 @@ fresh `[Unreleased]` heading created at that time.
   the retry branch always matched first and the summary was unreachable from
   the day it was written. It is counted in retries now.
 - **Resuming a paused symbol clears its starved state.** Pausing froze the
-  back-off clock, so a symbol starved and then paused would resume into up to
-  five minutes of silence with no warning at all, because the entry warning
+  back-off clock, so a symbol starved and then paused would resume into
+  several minutes of silence with no warning at all, because the entry warning
   only fires for a symbol that is not already starved. That is how the
   2026-09-03 incident ended.
 - **A book vanish during a degraded dead-man's-switch window is framed calmly.**
