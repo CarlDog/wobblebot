@@ -75,7 +75,10 @@ PRUNABLE_TABLES: dict[str, RetentionTarget] = {
 # `advisor_suggestions` and `llm_calls` are keep-forever by operator
 # decision (ADR-036 decision 2); the bounded upserts
 # (`daemon_heartbeats`, `status_report_history`, `user_preferences`,
-# `users`, `reanchor_snoozes`) don't grow and need no policy.
+# `users`, `reanchor_snoozes`, `hidden_symbols`, `engine_state`) don't
+# grow and need no policy — each is bounded by the symbol or user count.
+# `hidden_symbols` holds only what an operator actively hid, and a
+# reveal deletes the row rather than storing a false flag.
 FORENSIC_TABLES: frozenset[str] = frozenset(
     {
         "orders",

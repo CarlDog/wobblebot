@@ -164,6 +164,24 @@ async def migrate_notifications_read_at(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def migrate_engine_state_offside_since(conn: aiosqlite.Connection) -> None:
+    """Add ``offside_since`` to ``engine_state`` (Group 3, 2026-09-04).
+
+    SCHEMA declares the column for fresh DBs, so the ALTER no-ops there;
+    an operator.db written by 2.0.x needs it. Existing rows land on NULL,
+    which is the honest reading and the whole point: nobody recorded when
+    those episodes began, and stamping the migration time — or the next
+    boot's time — would assert a confident wrong date. BTC and ETH have
+    been parked since the 2026-08-19 anchor; a NULL there renders "began
+    before wobblebot recorded offside start times", and fills in for real
+    the first time the engine actually watches one go offside.
+
+    No index: the table holds one row per configured symbol (six today)
+    and is always read whole.
+    """
+    await add_column_if_missing(conn, "engine_state", "offside_since", "TEXT")
+
+
 async def migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
     conn: aiosqlite.Connection,
 ) -> None:

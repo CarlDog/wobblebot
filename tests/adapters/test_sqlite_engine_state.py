@@ -42,6 +42,7 @@ def _row(
     reference_price: Decimal | None = Decimal("50000"),
     anchored_at: datetime | None = _NOW - timedelta(hours=2),
     updated_at: datetime = _NOW,
+    offside_since: datetime | None = None,
 ) -> EngineStateRow:
     return EngineStateRow(
         symbol=symbol,
@@ -51,6 +52,7 @@ def _row(
         reference_price=reference_price,
         anchored_at=anchored_at,
         updated_at=updated_at,
+        offside_since=offside_since,
     )
 
 
@@ -107,3 +109,77 @@ class TestSchemaConstraints:
 
         with pytest.raises(StorageError):
             await storage.save_engine_state(_row(offside_ticks=-1))
+
+
+class TestOffsideSince:
+    """The wall-clock start of the current offside episode (Group 3).
+
+    NULL is a first-class value here, not a missing one: it means the
+    episode began before anything observed its start. Stamping a boot
+    time instead would assert a confident wrong date.
+    """
+
+    async def test_round_trips(self, storage: SQLiteStorageAdapter) -> None:
+        since = _NOW - timedelta(days=15)
+        await storage.save_engine_state(_row(offside=True, offside_ticks=9, offside_since=since))
+        [read] = await storage.get_engine_states()
+        assert read.offside_since == since
+
+    async def test_null_round_trips_as_null(self, storage: SQLiteStorageAdapter) -> None:
+        """An offside row with no recorded start stays unknown, and must
+        not acquire one on the way through storage."""
+        await storage.save_engine_state(_row(offside=True, offside_ticks=9))
+        [read] = await storage.get_engine_states()
+        assert read.offside_since is None
+
+    async def test_non_utc_normalized(self, storage: SQLiteStorageAdapter) -> None:
+        plus_two = timezone(timedelta(hours=2))
+        await storage.save_engine_state(
+            _row(offside=True, offside_since=(_NOW - timedelta(days=1)).astimezone(plus_two))
+        )
+        [read] = await storage.get_engine_states()
+        assert read.offside_since == _NOW - timedelta(days=1)
+        assert read.offside_since is not None
+        assert read.offside_since.utcoffset() == timedelta(0)
+
+    async def test_cleared_by_a_later_upsert(self, storage: SQLiteStorageAdapter) -> None:
+        """Coming back onside must actually erase the stamp, not leave the
+        previous episode's start behind for the next one to inherit."""
+        await storage.save_engine_state(
+            _row(offside=True, offside_ticks=9, offside_since=_NOW - timedelta(hours=3))
+        )
+        await storage.save_engine_state(_row(offside=False, offside_ticks=0))
+        [read] = await storage.get_engine_states()
+        assert read.offside_since is None
+
+
+class TestCorruptValuesDegradeTheRowNotTheRestore:
+    """A visibility column must never cost a pause restore.
+
+    cli/live replays operator pauses from these rows at boot, so a row
+    dropped over an unreadable duration silently resumes real trading on
+    a symbol someone deliberately stopped.
+    """
+
+    async def _corrupt(self, storage: SQLiteStorageAdapter, column: str, value: object) -> None:
+        conn = storage._require_conn()  # pylint: disable=protected-access
+        await conn.execute(f"UPDATE engine_state SET {column} = ?", (value,))  # nosec
+        await conn.commit()
+
+    async def test_unparseable_offside_since_degrades_to_none(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        await storage.save_engine_state(_row(paused=True, offside=True, offside_ticks=9))
+        await self._corrupt(storage, "offside_since", "not-a-timestamp")
+        [read] = await storage.get_engine_states()
+        assert read.offside_since is None
+        assert read.paused is True  # the row, and the pause, survived
+
+    async def test_unparseable_offside_ticks_degrades_to_zero(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        await storage.save_engine_state(_row(paused=True, offside=True, offside_ticks=9))
+        await self._corrupt(storage, "offside_ticks", "garbage")
+        [read] = await storage.get_engine_states()
+        assert read.offside_ticks == 0
+        assert read.paused is True  # the row, and the pause, survived

@@ -487,6 +487,16 @@ CREATE TABLE IF NOT EXISTS cap_trips (
 -- guard on updated_at (~3 ticks) — a dead engine's stale rows must
 -- never render as current state. reference_price/anchored_at are
 -- NULL until the symbol's grid anchors. Lives in operator.db.
+--
+-- offside_since (2026-09-04): wall-clock start of the CURRENT offside
+-- episode, restored into the engine at boot so a restart no longer
+-- forgets it. offside_ticks alone could only ever say "since cli/live
+-- last started" — measured 2026-09-04, that read "about 2h 55m" for a
+-- symbol parked since 2026-08-19, understating by ~125x right after a
+-- deploy. NULL means "offside, but this episode began before the
+-- column existed (or before this row's daemon could observe its
+-- start)" -- an honest unknown, never a stamp of the boot time. Only
+-- an observed onside->offside transition writes it.
 CREATE TABLE IF NOT EXISTS engine_state (
     symbol_base     TEXT NOT NULL CHECK (length(symbol_base) > 0),
     symbol_quote    TEXT NOT NULL CHECK (length(symbol_quote) > 0),
@@ -495,6 +505,10 @@ CREATE TABLE IF NOT EXISTS engine_state (
     offside_ticks   INTEGER NOT NULL DEFAULT 0 CHECK (offside_ticks >= 0),
     reference_price TEXT,
     anchored_at     TEXT,
+    -- No CHECK: ALTER TABLE can't add one, so a CHECK here would make
+    -- fresh and migrated DBs diverge (same rule as llm_calls' cache
+    -- columns above).
+    offside_since   TEXT,
     updated_at      TEXT NOT NULL,
     PRIMARY KEY (symbol_base, symbol_quote)
 );
@@ -550,6 +564,32 @@ CREATE INDEX IF NOT EXISTS idx_ledger_entries_occurred
 -- (suppressing a banner moves no money). Expired rows are ignored on
 -- read and overwritten by the next snooze (one row per symbol, so
 -- the table never outgrows the symbol count). Lives in operator.db.
+-- ---------------------------------------------------------------- --
+-- hidden_symbols — dashboard card visibility (operator note 09-03)  --
+-- ---------------------------------------------------------------- --
+-- cli/web inserts one row per (user, symbol) when the operator clicks
+-- the eye icon on a symbol card; the dashboard's card loop skips those
+-- symbols and renders an "N hidden" summary row instead. Deliberately
+-- UI-local, like reanchor_snoozes — hiding a card moves no money and
+-- changes no engine state, so it never crosses the ADR-002 firewall.
+--
+-- Its OWN table rather than a hidden_symbols column on user_preferences,
+-- which looks simpler and is a silent-data-loss trap: preference writes
+-- go through a full-row upsert rebuilt from the timezone form alone
+-- (web/routes/settings.py), so every timezone save would blank the
+-- hidden set. Classic full-replace bug, and invisible to a naive test.
+--
+-- Per user, because preferences are: two operators must not fight over
+-- one visibility list. Bounded by (users x symbols), so never pruned.
+-- Lives in operator.db.
+CREATE TABLE IF NOT EXISTS hidden_symbols (
+    user_id      INTEGER NOT NULL,
+    symbol_base  TEXT NOT NULL CHECK (length(symbol_base) > 0),
+    symbol_quote TEXT NOT NULL CHECK (length(symbol_quote) > 0),
+    hidden_at    TEXT NOT NULL,
+    PRIMARY KEY (user_id, symbol_base, symbol_quote)
+);
+
 CREATE TABLE IF NOT EXISTS reanchor_snoozes (
     symbol_base   TEXT NOT NULL CHECK (length(symbol_base) > 0),
     symbol_quote  TEXT NOT NULL CHECK (length(symbol_quote) > 0),
