@@ -902,8 +902,9 @@ web:
 # ============================================================================
 # Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
 # ============================================================================
-# Long-running daemon with five concurrent scheduled tasks:
-# vacuum / prune+archive / backup / verify / reconcile. Operator-started;
+# Long-running daemon with seven concurrent scheduled tasks:
+# vacuum / prune+archive / backup / verify / reconcile / capital / ledger.
+# Operator-started;
 # not auto-spawned by any other daemon. Cadences pulled from `schedules:`
 # block above (maintenance_vacuum / maintenance_prune /
 # maintenance_backup / maintenance_verify / maintenance_reconcile /

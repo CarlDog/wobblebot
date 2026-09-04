@@ -78,10 +78,10 @@ Per `stage-8.2-design.md`:
 - Only `price_snapshots` gets pruned in v1.0 (decision 3).
 - Local-only backups in v1.0 (decision 4).
 
-The five tasks run independently via the Stage 8.0.C
+The seven tasks run independently via the Stage 8.0.C
 ``run_poll_loop`` helper — one bad cycle on any task doesn't kill
 the others. Shutdown via SIGINT/SIGTERM flips the shared
-``stop_event``; all five tasks exit at their next loop iteration.
+``stop_event``; all seven tasks exit at their next loop iteration.
 
 Per the Phase 8.1 reconciliation work the maintenance daemon
 assumes known-good storage state at boot — no stale-open rows

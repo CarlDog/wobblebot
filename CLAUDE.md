@@ -11,9 +11,15 @@ rule); this section is a pointer, not a changelog.
 - **Current:** read the latest dated entry in `docs/planning/roadmap.md`; do not infer
   phase or release status from this file. `docs/planning/phase-8-summary.md` records the
   v1.0 close, while `docs/release/v1.1/README.md` retains the historically named post-tag plan.
-  Five releases exist — `v1.0.0` (2026-07-31), `v2.0.0` (2026-08-28), and `v2.0.1`,
-  `v2.0.2`, `v2.0.3` (all 2026-09-03) — all tagged with published GitHub Releases. **The `v1.1` name is historical only: that branch's work
-  shipped as `2.0.0`**, per `CHANGELOG.md`'s preamble.
+  Two releases are semantically significant: **`v1.0.0`** (2026-07-31) and
+  **`v2.0.0`** (2026-08-28). Everything after 2.0.0 is on the patch line —
+  read `CHANGELOG.md`'s topmost version heading for the current tip, and
+  `git tag -l` for the full list. Deliberately count-free: this sentence
+  previously enumerated the releases, was hand-maintained five times, and
+  then sat two releases stale (found by the 2026-09-04 release-close audit),
+  which is the exact drift the documentation-discipline rule exists to stop.
+  **The `v1.1` name is historical only: that branch's work shipped as
+  `2.0.0`**, per `CHANGELOG.md`'s preamble.
 - **Detail:** per-phase closing summaries at `docs/planning/phase-{2..8}-summary.md`;
   the day-by-day soak log lives in roadmap Stage 8.4.E; the v1.1-branch digest (2026-06-04
   onward) is in the same Stage 8.4.E section, clearly marked as branch-only.
@@ -202,7 +208,7 @@ If you're about to add an abstraction "for future flexibility," check that an AD
   the operator's current `settings.yml`, and the roadmap's deployment receipt before
   changing a seat; this file deliberately carries no point-in-time deployment claim.
 - **Config example:** `config/settings.example.yml` (real `config/settings.yml` is gitignored). Per-CLI sections + grid/safety + advisor + profiles. Operators copy this to `settings.yml` and adjust values; comments and structure stay in sync per the schema-drift tests.
-- **Prompt files:** `config/prompts/{quant,risk,news,arbitrator}.md` (committed defaults; operators edit freely). YAML frontmatter + Markdown body; loader in `wobblebot.config.prompts`.
+- **Prompt files:** `config/prompts/{quant,risk,news,arbitrator,operator,gremlin}.md` (committed defaults; operators edit freely). YAML frontmatter + Markdown body; loader in `wobblebot.config.prompts`.
 - **Env vars example:** `.env.example` at the repo root (single source of truth — schema-drift tests verify operator `.env` files stay in sync)
 - **Atlas Cloud CLI:** [github.com/AtlasCloudAI/cli](https://github.com/AtlasCloudAI/cli)
   (credit: AtlasCloudAI), vendored as a git submodule at `vendor/atlascloud-cli`.
@@ -249,8 +255,12 @@ to every project. The wobblebot-specific items below extend it:
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their
-  example counterparts; `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` for
-  bidirectional strict mode in CI.
+  example counterparts. `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` turns the
+  non-strict direction from a warning into a failure — but note it is set
+  in **no workflow**: verified 2026-09-04, it appears zero times under
+  `.github/`, so today that direction only ever prints into captured
+  stdout and reaches nobody on a green run. Set it locally when editing
+  either example file. Wiring it into CI is a queued audit finding.
 - **`settings.example.yml` reflects reality.** The drift test catches KEY
   drift but **not** value/comment staleness or dead pairs (`grid.coins.*`
   is exempt) — verified 2026-06-04 after the example silently carried stale
