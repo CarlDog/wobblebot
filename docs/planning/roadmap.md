@@ -2491,8 +2491,15 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     Across the other seven containers: `cli/web` logged only its known
     non-loopback bind notice; `cli/maintenance` logged three WARNINGs (two
     "target missing" skips for the absent shadow.db, and a CAPITAL notice
-    that DOGE's 31.54 held sat below its ordermin of 50 — the 12:30 fill
-    added 69.95 DOGE, so the next capital pass should clear it); harvest,
+    that DOGE's 31.54 held sat below its ordermin of 50 — I wrote here that
+    the 12:30 fill of 69.95 DOGE "should clear it" on the next pass. **That
+    was wrong, and measured wrong at 14:45 the same day:** DOGE available is
+    still 31.54235586, byte-identical to the 06:19 warning. The check reads
+    `balance.available` (`cli/maintenance_capital.py:184`), and the bought
+    DOGE went straight into a counter-sell — locked grew by exactly
+    262.09793757 - 192.14453109 = 69.95340648, the fill size, while available
+    did not move. A BUY can never raise available, so that warning could not
+    clear the way I claimed); harvest,
     operator, advise, observe and news logged none at all.
 
     **`cli/maintenance`'s daily reconcile reported `clean=6` at 06:19:43** —
