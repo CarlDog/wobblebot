@@ -1077,8 +1077,12 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     applied.recommendation_id,
                     applied.applied_at.dt.isoformat(),
                     applied.symbol,
-                    json.dumps(applied.applied_keys),
-                    json.dumps(applied.rejected_keys),
+                    # model_dump() per item: the field is typed
+                    # list[AppliedKey] since 2026-09-04, and json.dumps
+                    # cannot serialize a Pydantic model. The resulting JSON
+                    # is byte-identical to what the untyped version wrote.
+                    json.dumps([a.model_dump() for a in applied.applied_keys]),
+                    json.dumps([r.model_dump() for r in applied.rejected_keys]),
                     applied.model_name,
                     applied.rationale,
                 ),

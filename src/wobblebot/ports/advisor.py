@@ -315,6 +315,35 @@ class RecommendationOutcome(BaseModel):
         frozen = True
 
 
+class AppliedKey(BaseModel):
+    """One key that cleared the auto-apply gate.
+
+    Lives here rather than in ``services/auto_apply.py`` because
+    :class:`AppliedSuggestion` below is typed with it and a port must own
+    the contract its own fields declare. ``services/auto_apply.py`` imports
+    it from here (services -> ports is the legal direction).
+    """
+
+    key: str = Field(min_length=1)
+    before: float
+    after: float
+    delta_pct: float  # signed; +5.0 means proposed is 5% above current
+
+    class Config:
+        frozen = True
+
+
+class RejectedKey(BaseModel):
+    """One key that did not clear the gate, with the operator-facing reason."""
+
+    key: str = Field(min_length=1)
+    proposed: Any
+    reason: str = Field(min_length=1)
+
+    class Config:
+        frozen = True
+
+
 class AppliedSuggestion(BaseModel):
     """Audit row for a Stage 3.4b auto-applied advisor suggestion.
 
@@ -337,7 +366,9 @@ class AppliedSuggestion(BaseModel):
         applied_at: When ``cli/apply --commit`` wrote the change.
         symbol: Coin whose grid was modified (``"BTC"``).
         applied_keys: Each key that landed, with before / after / delta.
-            Stored as JSON dicts in SQLite — empty list means the
+            Typed :class:`AppliedKey` since 2026-09-04; still serialized as
+            JSON dicts in SQLite, so the on-disk shape is unchanged and no
+            migration was needed. Empty list means the
             audit row records a "considered but no-op" event (currently
             unused; --commit only writes the row when something
             applied).
@@ -354,8 +385,8 @@ class AppliedSuggestion(BaseModel):
     recommendation_id: str = Field(min_length=1)
     applied_at: Timestamp
     symbol: str = Field(min_length=1)
-    applied_keys: list[dict[str, Any]] = Field(default_factory=list)
-    rejected_keys: list[dict[str, Any]] = Field(default_factory=list)
+    applied_keys: list[AppliedKey] = Field(default_factory=list)
+    rejected_keys: list[RejectedKey] = Field(default_factory=list)
     model_name: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
 

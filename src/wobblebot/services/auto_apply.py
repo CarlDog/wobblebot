@@ -52,7 +52,7 @@ from pydantic import BaseModel, Field
 
 from wobblebot.config.advisor import AutoApplyConfig
 from wobblebot.config.grid import GridLevels
-from wobblebot.ports.advisor import AdvisorSuggestion
+from wobblebot.ports.advisor import AdvisorSuggestion, AppliedKey, RejectedKey
 
 # Keys with a configured magnitude cap in v1. Extend when the operator
 # adds `max_levels_change` or similar to AutoApplyConfig.
@@ -71,29 +71,6 @@ _LEVEL_KEYS = ("levels_above", "levels_below")
 # and it is deliberately NOT an MoE expert either (feeding the
 # arbitrator would launder its output through role="aggregated").
 _BLOCKED_ROLES: frozenset[str] = frozenset({"news", "gremlin"})
-
-
-class AppliedKey(BaseModel):
-    """One key that cleared the gate."""
-
-    key: str = Field(min_length=1)
-    before: float
-    after: float
-    delta_pct: float  # signed; +5.0 means proposed is 5% above current
-
-    class Config:
-        frozen = True
-
-
-class RejectedKey(BaseModel):
-    """One key that did not clear the gate, with the operator-facing reason."""
-
-    key: str = Field(min_length=1)
-    proposed: Any
-    reason: str = Field(min_length=1)
-
-    class Config:
-        frozen = True
 
 
 class AutoApplyResult(BaseModel):

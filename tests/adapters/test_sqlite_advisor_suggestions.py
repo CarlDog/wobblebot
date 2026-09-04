@@ -454,8 +454,8 @@ async def test_applied_suggestion_round_trip(storage: SQLiteStorageAdapter) -> N
     row = got[0]
     assert row.recommendation_id == "rec-1"
     assert row.symbol == "BTC"
-    assert row.applied_keys[0]["key"] == "spacing_percentage"
-    assert row.applied_keys[0]["delta_pct"] == 10.0
+    assert row.applied_keys[0].key == "spacing_percentage"
+    assert row.applied_keys[0].delta_pct == 10.0
     assert row.rejected_keys == []
 
 
@@ -469,8 +469,8 @@ async def test_applied_suggestion_with_rejections(storage: SQLiteStorageAdapter)
     await storage.save_applied_suggestion(_applied(rejected_keys=rejected))
     row = (await storage.get_applied_suggestions())[0]
     assert len(row.rejected_keys) == 1
-    assert row.rejected_keys[0]["key"] == "levels_above"
-    assert "no magnitude cap" in row.rejected_keys[0]["reason"]
+    assert row.rejected_keys[0].key == "levels_above"
+    assert "no magnitude cap" in row.rejected_keys[0].reason
 
 
 async def test_applied_suggestion_filters(storage: SQLiteStorageAdapter) -> None:

@@ -490,7 +490,7 @@ class TestCommit:
         row = applied_rows[0]
         assert row.recommendation_id == "rec-commit"
         assert row.symbol == "BTC"
-        assert row.applied_keys[0]["key"] == "spacing_percentage"
+        assert row.applied_keys[0].key == "spacing_percentage"
         # Log emitted the "commit complete" event.
         assert any("commit complete" in r.message for r in caplog.records)
 

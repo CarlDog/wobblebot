@@ -362,8 +362,8 @@ async def _commit_apply(
             recommendation_id=suggestion.recommendation.recommendation_id,
             applied_at=Timestamp(dt=datetime.now(UTC)),
             symbol=result.symbol,
-            applied_keys=[a.model_dump() for a in result.applied_keys],
-            rejected_keys=[r.model_dump() for r in result.rejected_keys],
+            applied_keys=list(result.applied_keys),
+            rejected_keys=list(result.rejected_keys),
             model_name=suggestion.model_name,
             rationale=suggestion.recommendation.rationale,
         )
