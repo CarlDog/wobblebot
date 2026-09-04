@@ -93,7 +93,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path

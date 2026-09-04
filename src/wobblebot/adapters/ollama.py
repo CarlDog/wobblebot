@@ -46,15 +46,11 @@ adapter constructs and owns one; call ``aclose()`` to release it.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any, get_args
-from uuid import uuid4
 
 import httpx
-from pydantic import ValidationError
 
 from wobblebot.config.prompts import Prompt
-from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
     AdvisorRecommendation,
@@ -62,6 +58,11 @@ from wobblebot.ports.advisor import (
     PerformanceSummary,
 )
 from wobblebot.ports.exceptions import AdvisorError
+from wobblebot.services.llm_cloud_call import (
+    OllamaJsonExtractError,
+    build_advisor_recommendation,
+    extract_last_json_object,
+)
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -125,83 +126,6 @@ def is_thinking_model(model_tag: str) -> bool:
     """
     name = model_tag.lower()
     return any(pattern in name for pattern in _THINKING_MODEL_PATTERNS)
-
-
-class OllamaJsonExtractError(Exception):
-    """Internal helper exception — see :func:`extract_last_json_object`.
-
-    Callers catch and re-raise as their port-specific error
-    (``AdvisorError`` from the advisor adapter, ``AssistantError`` from
-    the assistant adapter) so the shared helper stays port-agnostic.
-    """
-
-
-def extract_last_json_object(text: str) -> dict[str, Any]:
-    """Walk ``text`` and return the last ``{...}`` block that parses as a JSON object.
-
-    Thinking models emit a long reasoning preamble (``<think>...</think>``,
-    bullet lists, code-fenced examples) before the final answer.
-    ``json.JSONDecoder.raw_decode`` lets us advance from each ``{`` and
-    try to parse a complete value from there — successful parses are
-    collected and the last one wins.
-
-    Shared between the advisor and assistant adapters; each wraps a
-    failure as its port-specific error type.
-
-    Args:
-        text: The raw response body from the LLM.
-
-    Returns:
-        The parsed JSON object.
-
-    Raises:
-        OllamaJsonExtractError: If no parseable JSON object is present.
-    """
-    decoder = json.JSONDecoder()
-    candidates: list[dict[str, Any]] = []
-    i = 0
-    while i < len(text):
-        if text[i] == "{":
-            try:
-                obj, end_idx = decoder.raw_decode(text, i)
-            except json.JSONDecodeError:
-                i += 1
-                continue
-            if isinstance(obj, dict):
-                candidates.append(obj)
-            i = end_idx
-        else:
-            i += 1
-    if not candidates:
-        raise OllamaJsonExtractError(_no_json_message(text))
-    return candidates[-1]
-
-
-def _no_json_message(text: str) -> str:
-    """Explain WHY no object parsed — truncation reads very differently.
-
-    An opening ``{`` with nothing that closes it is the signature of a
-    response cut off at the output-token cap, not of a model that
-    ignored the schema. Those two failures need opposite responses
-    (raise the cap vs. fix the prompt), and the old message — "no
-    parseable JSON object in N chars" — described both identically.
-
-    Cost a real diagnosis on 2026-08-10: three live cloud tests failed
-    this way and read as provider drift; the actual cause was an output
-    cap the prompt had outgrown, and for Gemini 2.5 a thinking budget
-    that consumed 980 of 1024 tokens before any answer was emitted.
-    """
-    opener = text.find("{")
-    if opener == -1:
-        return (
-            f"Model returned no JSON object at all in {len(text)} chars of output "
-            f"(no '{{' present) — the response ignored the schema."
-        )
-    return (
-        f"Model returned an UNTERMINATED JSON object in {len(text)} chars of output "
-        f"— the response looks truncated. Raise the output-token cap; on "
-        f"thinking-capable models the cap must cover reasoning AND the answer."
-    )
 
 
 class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attributes
@@ -364,23 +288,7 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
                     f"Ollama 'response' is not valid JSON despite format=json request: {exc}"
                 ) from exc
 
-        try:
-            return AdvisorRecommendation(
-                recommendation_id=str(uuid4()),
-                timestamp=Timestamp(dt=datetime.now(UTC)),
-                role=str(inner.get("role", self._role)),
-                recommendations=inner.get("recommendations") or {},
-                rationale=str(inner.get("rationale", "")),
-                confidence=inner["confidence"],
-            )
-        except KeyError as exc:
-            raise AdvisorError(
-                f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
-            ) from exc
-        except ValidationError as exc:
-            raise AdvisorError(
-                f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
-            ) from exc
+        return build_advisor_recommendation(inner, fallback_role=self._role)
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.2: parsing-success is the only check.

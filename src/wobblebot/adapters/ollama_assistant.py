@@ -42,16 +42,16 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from wobblebot.adapters.ollama import (
-    OllamaJsonExtractError,
-    extract_last_json_object,
-    is_thinking_model,
-)
+from wobblebot.adapters.ollama import is_thinking_model
 from wobblebot.config.prompts import Prompt
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
 from wobblebot.ports.exceptions import AssistantError
 from wobblebot.ports.operator import OperatorIntent
-from wobblebot.services.llm_cloud_call import INTENT_ADAPTER
+from wobblebot.services.llm_cloud_call import (
+    INTENT_ADAPTER,
+    OllamaJsonExtractError,
+    extract_last_json_object,
+)
 
 _LOGGER = logging.getLogger(__name__)
 

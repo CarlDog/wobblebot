@@ -42,7 +42,6 @@ from uuid import uuid4
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from wobblebot.adapters.ollama import OllamaJsonExtractError, extract_last_json_object
 from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
 from wobblebot.domain.llm_cost import LLMCallRecord, LLMProvider, LLMRole
 from wobblebot.domain.value_objects import Timestamp
@@ -292,6 +291,96 @@ async def execute_cloud_call(  # pylint: disable=too-many-arguments,too-many-pos
 # here at the Stage 6.5.A refactor pass.
 
 
+# --------------------------------------------------------------------------- #
+# JSON extraction — moved here from adapters/ollama.py on 2026-09-04.
+#
+# It lived in the Ollama adapter for historical reasons (that adapter needed
+# it first) and every other consumer imported it from there — including THIS
+# module, which made the sanctioned adapters->services seam bidirectional and
+# left the package cycle-free only by accident. The function is pure text ->
+# dict and its own docstring already called it port-agnostic, so services is
+# where it belonged. The `Ollama` prefix on the error is retained only to
+# avoid renaming 53 references across 8 files; it is not Ollama-specific.
+# --------------------------------------------------------------------------- #
+
+
+class OllamaJsonExtractError(Exception):
+    """Internal helper exception — see :func:`extract_last_json_object`.
+
+    Callers catch and re-raise as their port-specific error
+    (``AdvisorError`` from the advisor adapter, ``AssistantError`` from
+    the assistant adapter) so the shared helper stays port-agnostic.
+    """
+
+
+def extract_last_json_object(text: str) -> dict[str, Any]:
+    """Walk ``text`` and return the last ``{...}`` block that parses as a JSON object.
+
+    Thinking models emit a long reasoning preamble (``<think>...</think>``,
+    bullet lists, code-fenced examples) before the final answer.
+    ``json.JSONDecoder.raw_decode`` lets us advance from each ``{`` and
+    try to parse a complete value from there — successful parses are
+    collected and the last one wins.
+
+    Shared between the advisor and assistant adapters; each wraps a
+    failure as its port-specific error type.
+
+    Args:
+        text: The raw response body from the LLM.
+
+    Returns:
+        The parsed JSON object.
+
+    Raises:
+        OllamaJsonExtractError: If no parseable JSON object is present.
+    """
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    i = 0
+    while i < len(text):
+        if text[i] == "{":
+            try:
+                obj, end_idx = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                i += 1
+                continue
+            if isinstance(obj, dict):
+                candidates.append(obj)
+            i = end_idx
+        else:
+            i += 1
+    if not candidates:
+        raise OllamaJsonExtractError(_no_json_message(text))
+    return candidates[-1]
+
+
+def _no_json_message(text: str) -> str:
+    """Explain WHY no object parsed — truncation reads very differently.
+
+    An opening ``{`` with nothing that closes it is the signature of a
+    response cut off at the output-token cap, not of a model that
+    ignored the schema. Those two failures need opposite responses
+    (raise the cap vs. fix the prompt), and the old message — "no
+    parseable JSON object in N chars" — described both identically.
+
+    Cost a real diagnosis on 2026-08-10: three live cloud tests failed
+    this way and read as provider drift; the actual cause was an output
+    cap the prompt had outgrown, and for Gemini 2.5 a thinking budget
+    that consumed 980 of 1024 tokens before any answer was emitted.
+    """
+    opener = text.find("{")
+    if opener == -1:
+        return (
+            f"Model returned no JSON object at all in {len(text)} chars of output "
+            f"(no '{{' present) — the response ignored the schema."
+        )
+    return (
+        f"Model returned an UNTERMINATED JSON object in {len(text)} chars of output "
+        f"— the response looks truncated. Raise the output-token cap; on "
+        f"thinking-capable models the cap must cover reasoning AND the answer."
+    )
+
+
 def _parse_json_from_text(
     raw_text: str,
     *,
@@ -325,6 +414,49 @@ def _parse_json_from_text(
         return parsed
 
 
+def build_advisor_recommendation(
+    inner: dict[str, Any],
+    *,
+    fallback_role: str,
+) -> AdvisorRecommendation:
+    """Build an :class:`AdvisorRecommendation` from an already-parsed dict.
+
+    Split out of :func:`parse_advisor_recommendation` on 2026-09-04. That
+    function does two things — text -> dict, then dict -> model — and only
+    the FIRST is cloud-specific. ``adapters/ollama.py`` gets its dict from
+    Ollama's ``format=json`` response instead of by extraction, so it could
+    not reuse the whole helper and carried a byte-identical copy of this
+    tail, error strings included. Two copies of a construction rule that
+    decides what a malformed LLM response tells the operator is exactly the
+    "2+ occurrences carrying a subtle correctness rule" the extraction bar
+    names.
+
+    Args:
+        inner: The parsed JSON object from the model.
+        fallback_role: Role recorded when the LLM omits ``role``.
+
+    Raises:
+        AdvisorError: Missing required field, or schema validation failure.
+    """
+    try:
+        return AdvisorRecommendation(
+            recommendation_id=str(uuid4()),
+            timestamp=Timestamp(dt=datetime.now(UTC)),
+            role=str(inner.get("role", fallback_role)),
+            recommendations=inner.get("recommendations") or {},
+            rationale=str(inner.get("rationale", "")),
+            confidence=inner["confidence"],
+        )
+    except KeyError as exc:
+        raise AdvisorError(
+            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
+        ) from exc
+    except ValidationError as exc:
+        raise AdvisorError(
+            f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
+        ) from exc
+
+
 def parse_advisor_recommendation(
     raw_text: str,
     *,
@@ -354,23 +486,7 @@ def parse_advisor_recommendation(
         provider_name=provider_name,
         error_factory=AdvisorError,
     )
-    try:
-        return AdvisorRecommendation(
-            recommendation_id=str(uuid4()),
-            timestamp=Timestamp(dt=datetime.now(UTC)),
-            role=str(inner.get("role", fallback_role)),
-            recommendations=inner.get("recommendations") or {},
-            rationale=str(inner.get("rationale", "")),
-            confidence=inner["confidence"],
-        )
-    except KeyError as exc:
-        raise AdvisorError(
-            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
-        ) from exc
-    except ValidationError as exc:
-        raise AdvisorError(
-            f"LLM output failed advisor_recommendation_v1 schema validation: {exc}"
-        ) from exc
+    return build_advisor_recommendation(inner, fallback_role=fallback_role)
 
 
 def parse_intent_dict(

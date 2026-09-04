@@ -404,3 +404,60 @@ class TestFailurePath:
         # All retries exhausted with connect error → recorded once at exhaustion.
         assert rows[-1].success is False
         assert rows[-1].error_kind == "LLMRetryExhausted"
+
+
+class TestBuildAdvisorRecommendation:
+    """The construction tail shared by the cloud path and adapters/ollama.
+
+    Extracted 2026-09-04 (audit finding 14) from a byte-identical copy the
+    Ollama adapter carried, error strings included. These tests pin the
+    contract ONCE for both call sites.
+
+    They exist because mutation testing found the cloud side had never
+    pinned it: breaking the missing-field message turned the Ollama adapter
+    tests red and left this module's green. Before the extraction that gap
+    was invisible — each copy was only as tested as its own caller.
+    """
+
+    def test_a_missing_field_names_the_field_and_the_keys_it_did_get(self) -> None:
+        """Both halves are operator-facing. The field name says what the
+        model omitted; the key list says what it sent instead, which is how
+        you tell a schema drift from a truncated response."""
+        from wobblebot.ports.exceptions import AdvisorError
+        from wobblebot.services.llm_cloud_call import build_advisor_recommendation
+
+        with pytest.raises(AdvisorError) as exc:
+            build_advisor_recommendation(
+                {"role": "quant", "recommendations": {}, "rationale": "r"},
+                fallback_role="quant",
+            )
+        message = str(exc.value)
+        assert "'confidence'" in message, "the missing field must be named"
+        assert "rationale" in message and "role" in message, "the keys it DID send must be listed"
+
+    def test_schema_violations_are_reported_as_schema_violations(self) -> None:
+        """A present-but-invalid field is a different diagnosis from a
+        missing one, and the message must not conflate them."""
+        from wobblebot.ports.exceptions import AdvisorError
+        from wobblebot.services.llm_cloud_call import build_advisor_recommendation
+
+        with pytest.raises(AdvisorError, match="schema validation"):
+            build_advisor_recommendation(
+                {"recommendations": {}, "rationale": "r", "confidence": "not-a-number"},
+                fallback_role="quant",
+            )
+
+    def test_the_fallback_role_is_used_only_when_the_model_omits_one(self) -> None:
+        from wobblebot.services.llm_cloud_call import build_advisor_recommendation
+
+        supplied = build_advisor_recommendation(
+            {"role": "risk", "recommendations": {}, "rationale": "r", "confidence": "medium"},
+            fallback_role="quant",
+        )
+        assert supplied.role == "risk"
+
+        omitted = build_advisor_recommendation(
+            {"recommendations": {}, "rationale": "r", "confidence": "medium"},
+            fallback_role="quant",
+        )
+        assert omitted.role == "quant"

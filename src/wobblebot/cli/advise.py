@@ -33,7 +33,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
