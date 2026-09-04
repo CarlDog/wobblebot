@@ -2353,6 +2353,94 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     `reanchor <symbol>` message actually queues a row in production, and
     the popover's live appearance (the two rendering findings were refuted
     by reading CSS, which cannot settle them).
+    **All three closed 2026-09-04** — see item 14's Group 0 line.
+
+14. **Post-2.0.4 backlog Groups 1-3, then `2.0.5`** ✅ 2026-09-04.
+    The plan's four groups worked through in order. Group 1 (operator
+    legibility): the Discord fast path reports a classified decline reason
+    and the embed footer credits the parser that actually decided; a book
+    vanish inside a degraded DMS window is framed calmly. Group 2
+    (starvation legibility): refusal reasons attributed per level in a new
+    `services/grid_starvation.py`, the per-level cap WARNING demoted to
+    DEBUG only while starved, a periodic summary revived from a branch that
+    had been unreachable since the day it was written (240 % 60 == 0, so
+    the retry gate always matched first), and a stuck ADR-023 recovery
+    counter announced once rather than ~14,800 times a day. Group 3
+    (persisted per-symbol state): `engine_state.offside_since` written only
+    on a transition the engine WITNESSED and restored at boot, plus a
+    per-user `hidden_symbols` table and an eye toggle for untraded cards.
+    Group 4 stays parked; its ADR-006 amendment is drafted as **ADR-042,
+    status PROPOSED**, gated on a clean reconcile before ratification.
+
+    Measured, not derived — the correction that recurred five times this
+    cycle and is now a standing rule. The starvation noise was ~985
+    lines/day/symbol (not the register's 2,400, nor the ~1,152 the slice
+    itself first assumed); the counter path would have been ~14,800/day off
+    the measured 5.85s tick (not 17,280 off the nominal 5s); and the offside
+    understatement was ~380x, from a captured log line rather than
+    arithmetic — `BTC/USD still offside at 81190.1; parked (720 consecutive
+    ticks)` at 2026-09-03T23:01:23Z, 71 minutes into that daemon, which the
+    dashboard rendered as "about 1h 0m" for a symbol parked since 08-19.
+
+    Group 0 (three looks, no code) ✅ closed 2026-09-04. BABY/USD renders
+    without an anchor button — settled by rendering and now asserted plus
+    mutation-verified, after confirming the deployed config carries six
+    symbols with BABY absent; the `reanchor` queue was operator-confirmed
+    end to end on 2026-09-03; the popover was settled by rendering it with
+    BTC's real production values at 1100px and 375px, deliberately against
+    the markup that ships NEXT rather than 2.0.4's, since this release
+    deletes the sentence 2.0.4 renders. That render also surfaced a filed
+    (not fixed) inconsistency: pause is ungated where re-anchor is, so
+    `Pause BABY/USD` renders for a symbol cli/live never ticks.
+
+    Ceremony receipts: PRs #135, #136, #137 merged (`4f4cda2`, `783e192`,
+    `b4d88ce`); release commit `a9a5dcb` with main CI green; annotated tag
+    `v2.0.5`; tag-triggered `CI & Publish to GHCR` success; GitHub Release
+    published. Reviews: a pre-implementation verification pass per group
+    (which refuted plan decisions BEFORE code both times), a pre-merge
+    adversarial review per PR, and a six-dimension review of the MERGED
+    `v2.0.4..main` state before the bump — the per-group reviews covered
+    the groups, not their interactions or the deploy. Verdict: nothing
+    blocks. Its corrections shipped in the release commit, including one of
+    my own overclaims ("roll-back safe", true but silent on the
+    roll-forward asymmetry) and six comment contradictions in a release cut
+    for legibility.
+
+    **Deployed 2026-09-04 06:19 UTC** on operator instruction: `IMAGE_TAG`
+    `2.0.4` -> `2.0.5` on file-based stack 158 (image re-pulled; all 8
+    containers recreated at 06:19:15 UTC, verified at the container as
+    `ghcr.io/carldog/wobblebot:2.0.5`). The migration ran clean against the
+    real production operator.db — the one gate that could not be rehearsed
+    from a dev machine — confirmed by the boot line
+    `restored 2 offside episode(s) from engine_state: BTC/USD (start
+    unknown), ETH/USD (start unknown)`. No `database is locked`, no
+    StorageError, no traceback. Both symbols correctly carry NULL: Group
+    3's headline ships DARK for the two symbols that motivated it, and
+    fills in only when they re-enter their bands (11-15% away). That is the
+    honest answer by design, not a failure — and `restore_offside` seeds
+    `max(ticks, 1)`, so neither logs "offside; parking" on this boot.
+
+    Group 2 verified IN PRODUCTION rather than argued, on XRP/USD, by
+    comparing the boot tick against the retry six minutes later:
+
+        06:19:34  WARNING  stale anchor
+        06:19:34  WARNING  BUY @ 1.2145861 refused: max_per_coin_inventory_usd
+        06:19:34  WARNING  BUY @ 1.2546274 refused: max_per_coin_inventory_usd
+        06:19:34  WARNING  BUY @ 1.2946687 refused: max_per_coin_inventory_usd
+        06:19:34  WARNING  layout starved: placed 0/6 (3 refused, 3 sells
+                           deferred); binding: max_per_coin_inventory_usd x3
+        06:25:14  INFO     stale anchor          <- demoted
+        (no cap-refusal lines at all)             <- demoted to DEBUG
+
+    Four WARNING lines per retry became zero, with the binding cap named
+    once on entry instead. The first tick stays loud because the symbol is
+    not yet starved, which is the designed behavior and the discriminator
+    the tests pin. All 8 containers healthy at 06:27 UTC.
+
+    Known and filed, not fixed: rolling back to 2.0.4 freezes
+    `offside_since` (2.0.4's upsert omits the column), so a later
+    roll-forward can render a stale date. Bounded to symbols that flap in
+    and out of band; BTC/ETH carry NULL and are structurally immune.
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
