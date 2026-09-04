@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -51,15 +52,27 @@ class OffsideExplanation:  # pylint: disable=too-many-instance-attributes
     """Why one symbol is offside, precomputed so Jinja only formats."""
 
     symbol: Symbol
-    offside_ticks: int
-    # Ticks x the configured tick length. This is time SINCE cli/live LAST
-    # STARTED, not since the symbol went offside: ``offside_ticks`` lives in
-    # GridEngine process memory and the restore path replays only ``paused``,
-    # so a restart zeroes it. The template says "since cli/live last started"
-    # for exactly that reason — do not reword it into a wall-clock claim.
-    # Persisting an ``offside_since`` column is the real fix, filed as a
-    # follow-up (2026-09-03 review, finding 4).
-    offside_seconds: float
+    # No offside_ticks: it was carried only to render "Parked N ticks since
+    # cli/live last started", and nothing derives a duration from ticks any
+    # more. EngineStateRow still persists the count — the boot restore seeds
+    # the engine's counter from it — but the popover has no use for it.
+    # When this offside episode began, or None when nothing observed its
+    # start (a row predating the column, or a daemon that found the symbol
+    # already outside its band). Group 3 replaced the previous
+    # ``offside_seconds`` — ticks x the configured tick length — because
+    # that number could only ever mean "since cli/live last started", and
+    # measured 2026-09-04 it read "about 2h 55m" for a symbol parked since
+    # 2026-08-19, understating by ~125x right after a deploy.
+    #
+    # None is rendered as an explicit unknown, never as a substituted time.
+    # ``offside_ticks`` is kept for the tick-count phrasing on that branch
+    # and now survives restarts, but a DURATION must come from here.
+    offside_since: datetime | None
+    # Elapsed seconds since ``offside_since``, or None when the start is
+    # unknown. Precomputed here because this module's contract is that
+    # Jinja only formats — and because a template computing `now - since`
+    # would need a request-time clock injected as a global.
+    offside_seconds: float | None
     current_price: Decimal | None
     anchor_price: Decimal | None
     spacing_percentage: Decimal | None
@@ -79,7 +92,7 @@ def build_offside_explanation(
     row: EngineStateRow,
     grid_state: GridState | None,
     current_price: Decimal | None,
-    tick_seconds: float,
+    now: datetime,
 ) -> OffsideExplanation | None:
     """Pure builder. ``None`` when the row is not offside.
 
@@ -91,11 +104,11 @@ def build_offside_explanation(
     """
     if not row.offside:
         return None
-    seconds = row.offside_ticks * tick_seconds
+    seconds = (now - row.offside_since).total_seconds() if row.offside_since is not None else None
     if grid_state is None:
         return OffsideExplanation(
             symbol=row.symbol,
-            offside_ticks=row.offside_ticks,
+            offside_since=row.offside_since,
             offside_seconds=seconds,
             current_price=current_price,
             anchor_price=row.reference_price,
@@ -122,7 +135,7 @@ def build_offside_explanation(
             side = "below"
     return OffsideExplanation(
         symbol=row.symbol,
-        offside_ticks=row.offside_ticks,
+        offside_since=row.offside_since,
         offside_seconds=seconds,
         current_price=current_price,
         anchor_price=grid_state.reference_price,
@@ -139,7 +152,7 @@ async def load_offside_explanations(
     live_storage: StoragePort | None,
     engine_states: Mapping[Symbol, EngineStateRow],
     current_prices: Mapping[Symbol, Decimal],
-    tick_seconds: float,
+    now: datetime,
 ) -> dict[Symbol, OffsideExplanation]:
     """One explanation per FRESH offside row; onside rows are skipped.
 
@@ -162,9 +175,7 @@ async def load_offside_explanations(
                     exc,
                     extra={"symbol": str(symbol), "error": str(exc)},
                 )
-        explanation = build_offside_explanation(
-            row, grid_state, current_prices.get(symbol), tick_seconds
-        )
+        explanation = build_offside_explanation(row, grid_state, current_prices.get(symbol), now)
         if explanation is not None:
             out[symbol] = explanation
     return out

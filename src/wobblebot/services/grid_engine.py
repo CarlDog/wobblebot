@@ -100,6 +100,36 @@ from wobblebot.services.grid_starvation import (
 )
 from wobblebot.services.reconciler import _resolve_terminal_order
 
+
+@dataclass(frozen=True)
+class OffsideState:
+    """One symbol's current offside episode: how long, and since when.
+
+    ``ticks`` counts consecutive offside ticks in THIS process and drives
+    the transition + heartbeat log cadence. ``since`` is the wall-clock
+    start of the episode and is the only field a duration may be rendered
+    from — ``ticks`` resets on every deploy, and measured 2026-09-04 that
+    made the dashboard say "about 2h 55m" for a symbol parked since
+    2026-08-19.
+
+    ``since`` is ``None`` for an episode whose start nothing observed: a
+    row written before the column existed, or a symbol this process found
+    already outside its band at boot. That is an honest unknown, and it
+    must survive. The write rule is
+    ``since = prev.since if prev is not None else now`` — never
+    ``prev.since or now``, which would quietly convert every restored
+    unknown into a stamp of the boot time. Only a transition the engine
+    actually watched happen may set it.
+    """
+
+    ticks: int
+    since: datetime | None
+
+    def advanced(self) -> OffsideState:
+        """This episode, one tick later, keeping whatever start it has."""
+        return OffsideState(ticks=self.ticks + 1, since=self.since)
+
+
 _PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
 """What one level attempt did.
 
@@ -320,11 +350,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # caught it on the first fill. cli/live pages on transition.
         self._fee_anomaly_counts: dict[Symbol, int] = {}
         self._stop_requested = False
-        # Per-symbol count of consecutive offside ticks. Drives transition +
-        # heartbeat logging (log once on entry, periodic summary while
-        # parked, once on recovery) instead of a WARNING every tick. Absent
-        # / 0 means the symbol is onside.
-        self._offside_ticks: dict[Symbol, int] = {}
+        # Per-symbol offside episode: consecutive ticks (drives transition +
+        # heartbeat logging instead of a WARNING every tick) and the episode's
+        # wall-clock start. Absent means the symbol is onside. One dict rather
+        # than two, so a start can never be written apart from the flag it
+        # belongs to — every existing mutation site keeps working unedited.
+        self._offside: dict[Symbol, OffsideState] = {}
         # ADR-025: same transition + heartbeat pattern for consecutive
         # wide-spread-skip ticks.
         self._wide_spread_ticks: dict[Symbol, int] = {}
@@ -572,8 +603,36 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         ``StepResult.offside``, which is ``False`` on every
         non-"stepped" action) when publishing the symbol's
         ``engine_state`` row.
+
+        Process-scoped: a restart resets it unless
+        :meth:`restore_offside` seeds it. Render a duration from
+        :meth:`offside_since`, not from this.
         """
-        return self._offside_ticks.get(symbol, 0)
+        state = self._offside.get(symbol)
+        return state.ticks if state is not None else 0
+
+    def offside_since(self, symbol: Symbol) -> datetime | None:
+        """When ``symbol``'s current offside episode began; ``None`` if
+        onside, or if this episode's start was never observed.
+
+        The second case is not a failure — it is what an honest engine
+        reports for a symbol it found already parked. Callers must render
+        it as unknown rather than substituting a time.
+        """
+        state = self._offside.get(symbol)
+        return state.since if state is not None else None
+
+    def restore_offside(self, symbol: Symbol, ticks: int, since: datetime | None) -> None:
+        """Seed a persisted offside episode at boot (ADR-030 restore).
+
+        Without this the first tick after every deploy looks like a fresh
+        onside->offside transition and stamps ``since`` with the boot
+        time — turning a symbol parked for weeks into one parked for
+        seconds. The seed is falsifiable rather than trusted: the first
+        tick recomputes ``is_offside`` and clears this the moment price is
+        back inside the band, so a stale row cannot outlive one tick.
+        """
+        self._offside[symbol] = OffsideState(ticks=max(ticks, 1), since=since)
 
     def request_stop(self) -> None:
         """Set the soft-stop flag.
@@ -876,7 +935,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             created_at=Timestamp(dt=datetime.now(UTC)),
         )
         await self._storage.save_grid_state(state)
-        self._offside_ticks.pop(symbol, None)
+        # A re-anchor rebuilds the band around current price, so whatever
+        # episode was running is over — including its start.
+        self._offside.pop(symbol, None)
         resumed = self.resume_symbol(symbol)
         # 2026-09-03 review: clear the starved clock too. ``resume_symbol``
         # already does, but it returns early for a symbol that was never
@@ -1171,6 +1232,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             levels_below=state.levels_below,
         )
         offside = is_offside(current_price, levels)
+        # Cleared HERE, next to the computation, rather than in the else: of
+        # the transition-logging block far below — that block sits after the
+        # ADR-037 book-vanish return, so a symbol that came back onside on
+        # the same tick its book vanished would keep a stale episode start
+        # forever. The recovery INFO still lives with the logging block,
+        # driven by this flag rather than by the pop it used to do itself.
+        came_back_onside = not offside and self._offside.pop(symbol, None) is not None
 
         fills, trade_ids = await self._detect_fills(symbol, exchange_open_orders, exchange_trades)
         counters_placed = 0
@@ -1351,8 +1419,19 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # the grid parked for hours; emit ONE WARNING when it goes
             # offside, then only a periodic INFO summary — never a WARNING
             # every tick (the 2026-06-02 soak logged this every 5s for ~7h).
-            consecutive = self._offside_ticks.get(symbol, 0) + 1
-            self._offside_ticks[symbol] = consecutive
+            previous = self._offside.get(symbol)
+            # `previous.since if previous is not None else now` — NOT
+            # `previous.since or now`. A restored episode whose start was
+            # never observed carries since=None, and `or now` would convert
+            # that honest unknown into a stamp of this process's boot time on
+            # the first tick after every deploy.
+            current = (
+                previous.advanced()
+                if previous is not None
+                else OffsideState(ticks=1, since=datetime.now(UTC))
+            )
+            self._offside[symbol] = current
+            consecutive = current.ticks
             if consecutive == 1:
                 _LOGGER.warning(
                     "%s offside at %s (band %s - %s); parking until price returns",
@@ -1379,7 +1458,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                         "consecutive_offside_ticks": consecutive,
                     },
                 )
-        elif self._offside_ticks.pop(symbol, 0):
+        elif came_back_onside:
             _LOGGER.info(
                 "%s back onside at %s; resuming",
                 symbol,

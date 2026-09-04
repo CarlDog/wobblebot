@@ -682,7 +682,7 @@ async def _check_held_reminder(
     Filters on ``engine.is_paused(symbol)``, not ``hold_reason(symbol)
     == "book_vanish"``. ``hold_reason`` is in-memory only (ADR-030's
     ``engine_state`` persists ``paused: bool`` but never the reason) —
-    ``_restore_paused_symbols`` calls ``pause_symbol`` on restart with
+    ``_restore_engine_state`` calls ``pause_symbol`` on restart with
     no reason to restore, so a book-vanish hold that survives a restart
     would read as ``hold_reason() is None`` and silently drop out of a
     narrower filter, defeating this reminder for exactly the case that
@@ -1479,18 +1479,26 @@ async def _refresh_sweep_order(  # pylint: disable=too-many-arguments,too-many-p
     return order, now
 
 
-async def _restore_paused_symbols(
+async def _restore_engine_state(
     engine: GridEngine,
     symbols: list[Symbol],
     operator_storage: StoragePort | None,
 ) -> None:
-    """Re-apply the operator's pauses from ``engine_state`` at startup.
+    """Re-apply pauses AND offside episodes from ``engine_state`` at startup.
 
     Pause lived only in ``GridEngine._paused_symbols`` — process memory —
     so every restart silently resumed trading on a symbol the operator had
     deliberately stopped. The state was already being WRITTEN to disk every
     tick for dashboard visibility (ADR-030); nothing ever read it back.
     That is the whole fix: one read, at startup.
+
+    Group 3 added the offside half. ``offside_since`` exists so a duration
+    can be wall-clock truth instead of "since cli/live last started"; that
+    only works if a restart re-seeds the running episode, because otherwise
+    the first tick reads as a fresh transition and stamps the boot time.
+    Unlike the pause, the offside seed IS falsifiable: the next tick
+    recomputes ``is_offside`` and drops it the moment price is back inside
+    the band, so a stale row cannot survive one tick.
 
     **No freshness guard, deliberately.** ``get_engine_states`` returns
     rows regardless of age and leaves the guard to each consumer, because
@@ -1521,19 +1529,45 @@ async def _restore_paused_symbols(
 
     configured = set(symbols)
     restored: list[str] = []
+    restored_offside: list[str] = []
     for row in rows:
-        if not row.paused:
-            continue
         if row.symbol not in configured:
-            _LOGGER.info(
-                "engine_state has a paused row for %s, which is not in live.symbols; ignoring",
-                row.symbol,
-                extra={"symbol": str(row.symbol), "reason": "not_configured"},
+            if row.paused:
+                _LOGGER.info(
+                    "engine_state has a paused row for %s, which is not in live.symbols; ignoring",
+                    row.symbol,
+                    extra={"symbol": str(row.symbol), "reason": "not_configured"},
+                )
+            continue
+        # Offside first, and outside the paused branch: a symbol can be
+        # offside without being paused, and that is the common case. The
+        # seed is what stops the first tick from looking like a fresh
+        # onside->offside transition and stamping `since` with the boot
+        # time — which would turn a symbol parked for weeks into one
+        # parked for seconds on every deploy.
+        if row.offside:
+            engine.restore_offside(row.symbol, row.offside_ticks, row.offside_since)
+            restored_offside.append(
+                f"{row.symbol} (since {row.offside_since.isoformat()})"
+                if row.offside_since is not None
+                else f"{row.symbol} (start unknown)"
             )
+        if not row.paused:
             continue
         engine.pause_symbol(row.symbol)
         age_h = (datetime.now(UTC) - row.updated_at).total_seconds() / 3600
         restored.append(f"{row.symbol} (paused as of {age_h:.1f}h ago)")
+
+    if restored_offside:
+        # INFO, not WARNING: an offside symbol is parked by design (ADR-006),
+        # unlike a restored pause, which means trading is stopped and the
+        # operator needs to know it stayed stopped.
+        _LOGGER.info(
+            "restored %d offside episode(s) from engine_state: %s",
+            len(restored_offside),
+            ", ".join(restored_offside),
+            extra={"restored_offside": restored_offside},
+        )
 
     if restored:
         _LOGGER.warning(
@@ -1585,6 +1619,11 @@ async def _emit_engine_states(
                 offside_ticks=ticks,
                 reference_price=reference_price,
                 anchored_at=anchored_at,
+                # None whenever the engine never watched this episode start.
+                # It is written through unchanged rather than defaulted, so
+                # a restart cannot invent a start time for a symbol it found
+                # already parked.
+                offside_since=engine.offside_since(symbol),
                 updated_at=now,
             ),
         )
@@ -2192,7 +2231,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         # Before the first tick: re-apply pauses the operator set in a
         # previous session. Until 2026-08-12 a restart silently resumed
         # trading on every paused symbol.
-        await _restore_paused_symbols(engine, list(config.live.symbols), operator_storage)
+        await _restore_engine_state(engine, list(config.live.symbols), operator_storage)
 
     observe_storage = await _open_observe_storage(config.live.observe_db)
 

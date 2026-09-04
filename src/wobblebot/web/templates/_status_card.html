@@ -283,7 +283,16 @@
                     {% else %}
                       Price is outside the grid band, so the engine places no new orders until price returns, or you re-anchor. Any orders already resting stay live.
                     {% endif %}
-                    Parked {{ estate.offside_ticks }} tick{{ "" if estate.offside_ticks == 1 else "s" }} since cli/live last started, about {{ (oexp.offside_seconds if oexp else none) | humanize_duration }} at the configured tick length.
+                    {# Duration comes from the persisted offside_since, never from
+                       the tick count: ticks reset on every deploy, and measured
+                       2026-09-04 that read "about 2h 55m" for a symbol parked since
+                       2026-08-19. A NULL start says so plainly rather than
+                       substituting a time. #}
+                    {% if oexp and oexp.offside_since %}
+                      Parked since {{ oexp.offside_since | tz_format(operator_tz) }}, about {{ oexp.offside_seconds | humanize_duration }} ago.
+                    {% else %}
+                      This episode began before wobblebot recorded offside start times, so how long it has been parked is unknown. It will be recorded the next time this symbol comes back inside its band and leaves again.
+                    {% endif %}
                   </span>
                 </span>
               {% endif %}

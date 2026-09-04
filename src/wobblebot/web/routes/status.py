@@ -699,12 +699,11 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     engine_states = await _load_engine_states(
         operator_storage, tick_seconds=live_tick_seconds, now=now
     )
-    offside_explanations = await load_offside_explanations(
-        live_storage,
-        engine_states,
-        prices,
-        live_tick_seconds if live_tick_seconds is not None else _DEFAULT_TICK_SECONDS,
-    )
+    # No tick length: the popover renders a duration from the persisted
+    # offside_since now, not from ticks x an assumed cadence. tick_seconds
+    # stays wired into _load_engine_states, where it gates the ADR-030
+    # freshness window — that is a real bound, not an approximation.
+    offside_explanations = await load_offside_explanations(live_storage, engine_states, prices, now)
     last_cap_trip_age: float | None = None
     cool_down = check_cool_down(
         last_cap_trip.tripped_at if last_cap_trip else None,
