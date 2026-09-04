@@ -951,7 +951,11 @@ clean manual stop. Queue behind the P3 re-anchor chain work.
 > demotion from being implied by the symbol's starved state to being asked
 > for by the layout: `_try_place` is shared with the ADR-023 counter-order
 > path, which no `LayoutOutcome` covers, so a symbol-gated demotion silenced
-> a stuck recovery counter with nothing replacing it. The same review found
+> a stuck recovery counter with nothing replacing it. That path cannot simply
+> stay loud either — the dissenting refuter on that same finding measured it
+> at ~17k lines/day, since ADR-023 retries every tick outside the back-off —
+> so it gets a once-per-counter announcement carrying the order id and the
+> binding reason, with the per-level line quiet throughout. The same review found
 > that a PARTIAL recovery is demoted too (the state is cleared after the
 > layout runs, not before), so the recovery line now names the surviving
 > refusals at WARNING; and that `request_reanchor` must clear the starved

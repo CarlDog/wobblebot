@@ -19,7 +19,7 @@ from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import CoinGridConfig
 from wobblebot.config.safety import SafetyConfig
-from wobblebot.domain.grid import GridState
+from wobblebot.domain.grid import GridLevel, GridState
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
@@ -2432,36 +2432,96 @@ class TestStarvationLegibility:
         assert recovered[0].levelno == logging.INFO
         assert "only partially" not in recovered[0].getMessage()
 
-    async def test_a_counter_order_refusal_stays_loud_while_starved(
-        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The demotion is asked for by the LAYOUT, not implied by the symbol.
+    async def _engine_with_a_full_book(
+        self, storage: SQLiteStorageAdapter
+    ) -> tuple[GridEngine, Order]:
+        """A symbol trading normally with a full book, plus a queued ADR-023
+        counter that the order-count cap will refuse.
 
-        An ADR-023 recovery counter goes through the same ``_try_place`` but
-        no ``LayoutOutcome`` covers it, so a symbol-gated demotion would
-        silence it with nothing replacing it — real filled inventory with no
-        exit order, invisible for the life of the session.
+        The book is built by a real tick rather than seeded, so every order
+        exists on the exchange too. With ``max_orders=6`` the six standing
+        levels fill the cap exactly, so the counter is refused while the
+        symbol stays onside, non-empty and NOT starved — the case that
+        separates a caller-gated demotion from a symbol-gated one.
         """
-        recovered = TestPendingCounters()._recovered_order()
+        # A recovered BUY at 50500 counters to a SELL at 51000, above the
+        # 50000 market price, so the mock's price-cross matching leaves both
+        # it and the six layout levels standing.
+        recovered = TestPendingCounters()._recovered_order(price="50500")
         await storage.save_order(recovered)
         await TestPendingCounters()._seed_grid_state(storage)
-        engine = GridEngine(
-            _exchange(),
-            storage,
-            _grid_config(),
-            _safety_config(max_total="1"),  # refuses the counter and every level
-            pending_counters=[recovered.id],
-        )
-        await engine.step(BTC_USD)  # counter refused, layout starves
-        assert BTC_USD in engine._starved
+        engine = GridEngine(_exchange(), storage, _grid_config(), _safety_config())
+        first = await engine.step(BTC_USD)
+        assert first.placed == 6
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 6
+        engine._safety = _safety_config(max_orders=6)  # book now exactly at the cap
+        engine._pending_counter_ids.add(recovered.id)
+        return engine, recovered
+
+    async def test_a_stuck_counter_announces_once_with_its_reason(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A blocked ADR-023 counter is announced once, by name and reason.
+
+        Deliberately on a symbol that is NOT starved: a counter can be
+        refused while the layout is fine, so the starved state is the wrong
+        gate. And the announcement must carry the reason itself, because the
+        per-level line is kept at DEBUG on this path — it retries EVERY tick,
+        outside the back-off, so a per-level WARNING is ~17k lines/day.
+        """
+        engine, recovered = await self._engine_with_a_full_book(storage)
+        with caplog.at_level(logging.DEBUG, logger="wobblebot.services.grid_engine"):
+            await engine.step(BTC_USD)
+        assert BTC_USD not in engine._starved  # the book is non-empty
+        announce = [r for r in caplog.records if "recovery counter for" in r.getMessage()]
+        assert len(announce) == 1
+        assert announce[0].levelno == logging.WARNING
+        assert announce[0].order_id == str(recovered.id)
+        assert "max_orders_per_coin" in announce[0].getMessage()  # reason, in the message
+        # The per-level line is detail, and stays quiet on this path.
+        per_level = [r for r in caplog.records if "refused by safety cap" in r.getMessage()]
+        assert per_level and all(r.levelno == logging.DEBUG for r in per_level)
+
         caplog.clear()
         with caplog.at_level(logging.DEBUG, logger="wobblebot.services.grid_engine"):
-            second = await engine.step(BTC_USD)  # backed off: counter only
+            await engine.step(BTC_USD)
         assert recovered.id in engine._pending_counter_ids  # still queued, ADR-023
-        assert second.refusals >= 1
-        counter_lines = [r for r in caplog.records if "SELL @" in r.getMessage()]
-        assert counter_lines
-        assert all(r.levelno == logging.WARNING for r in counter_lines)
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    async def test_a_placed_counter_clears_its_warned_flag(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Otherwise the set grows for the life of the process, and a counter
+        blocked again after placing once would never re-announce."""
+        engine, recovered = await self._engine_with_a_full_book(storage)
+        await engine.step(BTC_USD)
+        assert recovered.id in engine._counter_refusal_warned
+        engine._safety = _safety_config()  # cap relaxed; the counter can place
+        await engine.step(BTC_USD)
+        assert recovered.id not in engine._pending_counter_ids
+        assert recovered.id not in engine._counter_refusal_warned
+
+    async def test_the_refusal_demotion_is_off_by_default(
+        self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The default is the contract: a caller that wants quiet says so.
+
+        It protects the per-fill counter path, which is a one-shot per fill
+        rather than an every-tick retry and so has no reason to be throttled.
+        Asserted on ``_try_place`` directly, since the default is what is
+        under test and a scenario test would exercise a caller's choice.
+        """
+        engine = GridEngine(self._capped_exchange(), storage, _grid_config(), self._capped_config())
+        level = GridLevel(side=OrderSide.BUY, price=Decimal("49000"))
+        with caplog.at_level(logging.DEBUG, logger="wobblebot.services.grid_engine"):
+            outcome, reason = await engine._try_place(
+                BTC_USD, level, _grid_config().for_coin("BTC/USD")
+            )
+        assert outcome == "refused"
+        assert reason == "max_per_coin_exposure_usd"
+        lines = [r for r in caplog.records if "refused by safety cap" in r.getMessage()]
+        assert len(lines) == 1
+        assert lines[0].levelno == logging.WARNING
 
     async def test_a_reanchor_of_an_unpaused_starved_symbol_re_warns(
         self, storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture

@@ -56,7 +56,14 @@ fresh `[Unreleased]` heading created at that time.
   to debug, but only for the layout that is starving and only while it is
   starving. A layout that was never starved keeps them, an exchange-side
   rejection such as an order minimum stays loud, and a queued counter-order
-  for a recovered fill stays loud because nothing else would report it.
+  for a recovered fill gets its own announcement instead.
+- **A recovery counter that cannot place now says so, once.** A counter
+  queued for a fill recovered at startup is retried on every tick and never
+  discarded, so it sat behind a cap silently while the filled inventory had
+  no exit order. It now announces itself once with the blocking reason, then
+  stays quiet until it places. Warning on every attempt instead would be
+  roughly seventeen thousand lines a day, far more than this release
+  removes.
 - **A layout that only partially recovers now says what still blocked it.**
   Its surviving refusals were attempted while the symbol was still starved,
   so they went to debug, and the record naming them is discarded by the

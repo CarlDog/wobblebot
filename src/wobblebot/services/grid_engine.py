@@ -276,6 +276,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # needs a counter-order placed; a failed placement stays here
         # and retries next tick rather than being discarded (decision 4).
         self._pending_counter_ids: set[UUID] = set(pending_counters or [])
+        # Counter ids whose refusal has already been announced this process.
+        # Per ADR-023 a refused counter is retried EVERY tick and never
+        # discarded, and that retry is not behind the starvation back-off, so
+        # an unthrottled WARNING there is ~17k lines/day at the 5s cadence for
+        # one permanently blocked counter -- 17x the noise this slice removes,
+        # and it would bury the summary the slice exists to surface. Warn on
+        # the transition, then DEBUG, mirroring SellGuard and the offside
+        # heartbeat. Bounded by _pending_counter_ids: entries are only added
+        # for ids in that set and dropped whenever one leaves it.
+        self._counter_refusal_warned: set[UUID] = set()
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
         # pause is per-session — a cli/live restart resets it. Keeping it
@@ -1401,6 +1411,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         auto-re-layout guard re-place a full grid with no counter,
         reproducing the very orphan this recovers).
 
+        That every-tick retry is why a refusal is announced ONCE, by this
+        method, with ``_try_place`` kept quiet throughout. The retry is not
+        behind the starvation back-off, so a per-level WARNING here would be
+        ~17k lines/day at the 5s cadence for one blocked counter — 17x the
+        noise this slice removes, burying the summary it exists to surface.
+        Nor can it be gated on the symbol being starved: a counter can be
+        blocked while the layout places fine. So the announcement carries
+        the order id AND the binding reason, and ``_counter_refusal_warned``
+        suppresses the repeats until the counter places (which clears it, so
+        a later re-block announces again).
+
         Returns ``(placed, refusals, sells_deferred)``.
         """
         placed = refusals = sells_deferred = 0
@@ -1413,6 +1434,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     extra={"order_id": str(order_id)},
                 )
                 self._pending_counter_ids.discard(order_id)
+                self._counter_refusal_warned.discard(order_id)
                 continue
             if order.symbol != symbol:
                 continue
@@ -1424,14 +1446,37 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 grid_ceiling=grid_ceiling,
             )
             counter_amount = Amount(value=order.filled_amount, asset=order.amount.asset)
-            outcome, _ = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+            # Always quiet: this path retries every tick, so the per-level
+            # line is the wrong place to carry the signal. The announcement
+            # below is that signal, and it carries the same reason.
+            outcome, reason = await self._try_place(
+                symbol, target, coin_cfg, amount=counter_amount, quiet_refusals=True
+            )
             if outcome == "placed":
                 placed += 1
                 self._pending_counter_ids.discard(order_id)
+                self._counter_refusal_warned.discard(order_id)
             elif outcome == "sell_deferred":
                 sells_deferred += 1
             else:
                 refusals += 1
+                if order_id not in self._counter_refusal_warned:
+                    self._counter_refusal_warned.add(order_id)
+                    _LOGGER.warning(
+                        "%s recovery counter for %s refused: %s. It retries every "
+                        "tick and stays at DEBUG until it places; the filled "
+                        "inventory has no exit order until then",
+                        symbol,
+                        order_id,
+                        reason,
+                        extra={
+                            "symbol": str(symbol),
+                            "order_id": str(order_id),
+                            "side": target.side.value,
+                            "price": str(target.price),
+                            "reason": reason,
+                        },
+                    )
         return placed, refusals, sells_deferred
 
     # ------------------------------------------------------------------ helpers

@@ -130,7 +130,17 @@ region that Group 4 also needs). No ADR, no schema, no money.
 >      counter-order path — which no `LayoutOutcome` covers. A recovery
 >      counter blocked by a cap went silent for the session while its filled
 >      inventory sat with no exit order. It is now a `quiet_refusals`
->      parameter the layout asks for, so the gate is greppable per caller.
+>      parameter the caller passes, so the gate is greppable per call site.
+>      **Both the finding and its dissenting refuter were right, about
+>      different things**, and the first fix took only the finding: making
+>      that path loud again restored ~17k lines/day, since ADR-023 retries
+>      every tick outside the back-off — 17x the noise being removed, burying
+>      the summary the slice exists to surface. The counter must be VISIBLE
+>      (the finding) without being PER-TICK (the dissent), so it announces
+>      once per counter with the order id and the binding reason, cleared
+>      when it finally places. A minority verdict that concedes the mechanism
+>      and disputes only the remedy is worth reading before shipping the
+>      majority's.
 >   2. A PARTIAL recovery *is* demoted: the state is cleared after the layout
 >      runs, not before. Its surviving refusals went to DEBUG and their record
 >      was then discarded, so they appeared nowhere at any level. The recovery
