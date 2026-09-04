@@ -188,10 +188,33 @@ region that Group 4 also needs). No ADR, no schema, no money.
   sell guard already lives outside the engine. Realistic add is 100–140 lines
   against a file already at 1,664.
 
-## Group 3 — Persisted per-symbol state
+## Group 3 — Persisted per-symbol state — ✅ SHIPPED 2026-09-04
 
 **Items:** `offside-since`, `hide-symbol`. No ADR. **One migration carrying
 both.** No money.
+
+> **Shipped.** Four commits: a pre-existing `connect()` lock fix found on the
+> way, the storage layer, the offside-since behavior, and the hide toggle.
+> A pre-implementation verification pass checked every claim below against
+> the code; three corrections are recorded inline. 68 new tests, 15/15
+> mutants caught, suite 3828.
+>
+> - **"One migration carrying both" was wrong.** `hidden_symbols` is a new
+>   table, so `CREATE TABLE IF NOT EXISTS` in SCHEMA covers it and it needs
+>   no migration function at all. Only `offside_since` needs an ALTER. Said
+>   here so the absence does not later read as an oversight.
+> - **The naive "write on the offside transition" would have produced the
+>   exact lie the plan warned about**, by a route the plan did not name. The
+>   transition WARNING fires at `consecutive == 1`, and after a restart that
+>   is a FIRST OBSERVATION, not a transition — production logs it for BTC and
+>   ETH within six seconds of every daemon start. The boot restore is
+>   therefore load-bearing for correctness, not polish, and the write rule is
+>   `prev.since if prev is not None else now`, never `prev.since or now`.
+> - **`tests/deployment/test_v1_to_v2_upgrade_survivor.py` looks like
+>   migration coverage for this and provides none** — its fixture rebuilds
+>   the real v1.0.0 schema, which has no `engine_state` table, so SCHEMA
+>   creates it already carrying the column and the ALTER never runs. A new
+>   file builds a genuinely 2.0-era operator.db instead.
 
 Together because they genuinely co-edit: both add port methods, adapter
 implementations and DDL, and both touch the card's badge/header cluster. The
@@ -282,11 +305,25 @@ reporter.
    symbols outside `live.symbols`.** Operator's call. This is the scope Group 3
    builds, so the summary row carries no controls and the anchor button shipped
    in 2.0.4 cannot be silently un-shipped by hiding a traded symbol.
-2. **`offside-since` for the already-parked symbols.** BTC and ETH have been
-   offside since 2026-08-19. Either add a floor flag and render "parked at least
-   Xh", or leave the column NULL and keep 2.0.4's tick sentence until a genuine
-   transition is observed. Related: seed those two rows by hand from the engine's
-   own first-transition WARNING, or let them fill in naturally?
+2. ~~**`offside-since` for the already-parked symbols.**~~ **RESOLVED
+   2026-09-04 by measurement — no operator decision was needed, and the
+   question as posed had a false premise.**
+   - **The "seed by hand from the engine's own first-transition WARNING"
+     branch is unanswerable.** That line goes to a rotating file with 7-day
+     retention; 2026-08-19 is 15 days back and nothing else persists it.
+   - **Keeping the tick sentence was not the neutral option it looks like.**
+     Measured on the live container: the popover was rendering "about 2h 55m"
+     for BTC, and Group 3's own deploy would have reset it to "1 tick, about
+     5s" for a symbol parked over two weeks. A true-but-misleading number is
+     the same class 2.0.4 was cut to remove, so it is deleted, not kept as a
+     fallback.
+   - **A floor could only come from replaying `ohlc_bars` against the band**,
+     which proves "price outside the band since T" and NOT "the engine was
+     parked since T" — four deploys on 2026-09-03 alone mean the engine was
+     down across parts of any such window. Not built. `anchored_at` yields a
+     CEILING, not a floor, and would render backwards if used for "at least".
+   - **Shipped:** NULL renders as an explicit unknown, and fills in for real
+     the next time the symbol re-enters its band and leaves again.
 3. **`dms-framing` threshold.** How much of the dead-man's-switch window must a
    failure streak consume before the calm framing is used? Kraken fired at ~0.85
    of the window on the one observed event; anything below that fixes
