@@ -38,12 +38,50 @@ fresh `[Unreleased]` heading created at that time.
   mis-parse it exists to prevent.
 - **An unknown symbol and an ambiguous one are now told apart**, so the
   operator-facing wording is no longer false for the ambiguous case.
+- **A starved symbol now says what is blocking it, and stops repeating.** A
+  layout that places nothing records which cap or condition refused each
+  level. That breakdown appears once when the symbol enters the starved
+  state, and again in a periodic summary about once an hour, naming what is
+  binding at that moment rather than what was binding when it started.
 
 ### Fixed
 
 - **The Discord embed footer credits the parser that actually decided.**
   `status` is a fast-path pattern, so regex-answered queries were crediting the
   model on the one surface the operator reads.
+- **A starved symbol no longer repeats the same refusal forever.** A symbol
+  that cannot place at its anchor re-emitted the identical per-level refusal
+  and stale-anchor warnings on every retry, a measured 985 lines a day, for
+  a condition the engine cannot resolve on its own. Those per-level lines drop
+  to debug, but only for the layout that is starving and only while it is
+  starving. A layout that was never starved keeps them, an exchange-side
+  rejection such as an order minimum stays loud, and a queued counter-order
+  for a recovered fill gets its own announcement instead.
+- **A recovery counter that cannot place now says so, once.** A counter
+  queued for a fill recovered at startup is retried on every tick and never
+  discarded, so it sat behind a cap silently while the filled inventory had
+  no exit order. It now announces itself once with the blocking reason, then
+  stays quiet until it places. Warning on every attempt instead would be
+  roughly fifteen thousand lines a day, fifteen times what this release
+  removes.
+- **A layout that only partially recovers now says what still blocked it.**
+  Its surviving refusals were attempted while the symbol was still starved,
+  so they went to debug, and the record naming them is discarded by the
+  recovery itself. One warning now reports them before that happens.
+- **Re-anchoring a starved symbol re-announces the problem.** Resuming a
+  paused symbol cleared the starved state, but an operator re-anchors a stuck
+  symbol far more often than they pause it first, and that path did not. A
+  re-anchor that still places nothing now names the blocking reason instead
+  of refreshing the record silently.
+- **The periodic still-starved summary now actually fires.** It counted ticks
+  against a threshold that was an exact multiple of the retry interval, so
+  the retry branch always matched first and the summary was unreachable from
+  the day it was written. It is counted in retries now.
+- **Resuming a paused symbol clears its starved state.** Pausing froze the
+  back-off clock, so a symbol starved and then paused would resume into
+  several minutes of silence with no warning at all, because the entry warning
+  only fires for a symbol that is not already starved. That is how the
+  2026-09-03 incident ended.
 - **A book vanish during a degraded dead-man's-switch window is framed calmly.**
   The previous predicate asked only whether Kraken's confirmed deadline had
   passed, and the real 2026-09-03 purge landed about 18 seconds before it — so

@@ -941,7 +941,58 @@ with zero placed there IS a retry loop, via the self-heal.
 self-resolves when funds free or price recovers, and `pause` is a
 clean manual stop. Queue behind the P3 re-anchor chain work.
 
-**Follow-up (2026-09-03, observed on XRP/USD):** the back-off works
+**Follow-up (2026-09-03, observed on XRP/USD) — ✅ SHIPPED 2026-09-03.**
+
+> **Shipped, and it was not logging-only.** `services/grid_starvation.py`
+> holds the record: `LayoutOutcome` carries a refusal breakdown and
+> `StarvationState` carries the clock plus the reasons, refreshed on every
+> retry so a summary reports what binds NOW, at WARNING as this entry's
+> original text specified. An adversarial review before merge moved the
+> demotion from being implied by the symbol's starved state to being asked
+> for by the CALLER: `_try_place` is shared with the ADR-023 counter-order
+> path, which no `LayoutOutcome` covers, so a symbol-gated demotion silenced
+> a stuck recovery counter with nothing replacing it. That path cannot simply
+> stay loud either — the dissenting refuter on that same finding measured it
+> at ~17k lines/day off the nominal 5s tick (~14,800 off the measured 5.85s
+> one), since ADR-023 retries every tick outside the back-off —
+> so it gets a once-per-counter announcement carrying the order id and the
+> binding reason, with the per-level line quiet throughout. The same review found
+> that a PARTIAL recovery is demoted too (the state is cleared after the
+> layout runs, not before), so the recovery line now names the surviving
+> refusals at WARNING; and that `request_reanchor` must clear the starved
+> clock explicitly, since `resume_symbol` returns early for the common case
+> of a starved symbol that was never paused.
+>
+> The summary is WARNING, not the INFO the offside heartbeat uses: offside is
+> a normal parked state, whereas a starved symbol cannot trade at all.
+> `_try_place` widened to return
+> `(outcome, reason)` — the plan had ruled that out, but all THREE of its
+> refusal arms return the same bare `"refused"`, so no reason survived at all
+> and the buy-side-only variant could not be built. The per-level cap WARNING
+> and the stale-anchor WARNING drop to DEBUG/INFO **only while starved**: a
+> never-starved partial layout keeps them, and the exchange-side ordermin arm
+> is untouched. Two cases needed their own aggregate line instead. A starved
+> symbol's PARTIAL recovery is demoted and then loses its record, so that tick
+> gets a WARNING naming the survivors. The counter-order path is quiet at the
+> per-level line always, and carries its signal in the once-per-counter
+> announcement above.
+>
+> Two latent bugs came with it — the periodic heartbeat counted ticks against
+> 240 while the retry gate counted them against 60, and 240 % 60 == 0, so the
+> retry always returned first and the heartbeat had never once fired; and
+> `resume_symbol` did not clear starved state, so starve → pause → resume
+> yielded no warning and a stale reason set. The summary also had to move to
+> the far side of the retry it summarizes, or it reported the previous
+> retry's reasons.
+>
+> Honest noise figure, MEASURED on the live container over a 1h25m window
+> on 2026-09-03 rather than derived: **~985/day/symbol** — 4 lines per
+> retry (3 cap + 1 stale-anchor) at an observed ~5m51s retry cadence. Not
+> the 2,400 first estimated, and not the ~1,152 the slice itself assumed
+> from a nominal 5-minute retry: a tick takes longer than its 5s budget,
+> so 60 ticks is ~351s of wall clock, not 300.
+
+*Original text:* the back-off works
 as shipped — retry every 60 ticks — but each retry still emits the
 per-level `refused by safety cap` WARNINGs from `_try_place`
 (safety-cap refusals were never demoted alongside the

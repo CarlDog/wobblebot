@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -90,9 +91,23 @@ from wobblebot.services.exposure import (
     total_exposure_usd,
     total_inventory_cost_usd,
 )
+from wobblebot.services.grid_starvation import (
+    REASON_EXCHANGE_ERROR,
+    REASON_INSUFFICIENT_BALANCE,
+    LayoutOutcome,
+    StarvationState,
+    describe_reasons,
+)
 from wobblebot.services.reconciler import _resolve_terminal_order
 
 _PlaceOutcome = Literal["placed", "refused", "sell_deferred"]
+"""What one level attempt did.
+
+``_try_place`` returns this paired with a reason string, because all
+THREE of its refusal paths return ``"refused"`` -- the outcome alone
+cannot say whether a level was blocked by a safety cap, by free balance,
+or by the exchange's own minimum (2026-09-03).
+"""
 
 _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 
@@ -118,10 +133,30 @@ _STARVED_RETRY_EVERY_TICKS = 60
 # long ago has ridden through enough market time that its reference
 # price may no longer reflect a sensible regime -- a WARNING (not just
 # INFO) when the auto-re-layout uses it, so the operator notices
-# without the engine refusing to trade or forcing a re-anchor itself
-# (that's the separate, not-yet-built P3 re-anchor command). Detection
-# only, per the backlog item's own framing.
+# without the engine refusing to trade or forcing a re-anchor itself.
+# The fix flow it points at is the operator-initiated re-anchor (ADR-031),
+# which SHIPPED 2026-08-09 as `reanchor <SYMBOL>` in Discord and the
+# per-symbol anchor button on the dashboard. This comment claimed it was
+# "not yet built" for weeks after it was; corrected 2026-09-03.
+#
+# Detection only, per the backlog item's own framing. Note it compares the
+# age of the persisted GridState row, not of the process, so a restart does
+# not reset it -- and a STARVED symbol can never refresh its own anchor, so
+# once past the threshold the warning is permanently true and repeats on
+# every retry. That is why it drops to INFO while starved.
 _STALE_ANCHOR_AGE = timedelta(hours=24)
+
+# How often (in RETRIES, not ticks) to emit the still-starved summary. The
+# nominal arithmetic is 12 x 60 ticks x 5s = one line an hour per starved
+# symbol; measured on the live container 2026-09-03 the retry cadence is
+# ~5m51s rather than 5m, because a tick overruns its budget, so it is closer
+# to one line every 70 minutes. Either way the point is the order of
+# magnitude, not the exact period. It MUST be counted in retries: the previous heartbeat counted
+# ticks against _OFFSIDE_SUMMARY_EVERY_TICKS (240) while the retry gate
+# counted the same ticks against 60, and since 240 is an exact multiple of
+# 60 the retry branch always matched first and returned. That heartbeat was
+# unreachable from the day it was written and never once fired.
+_STARVED_SUMMARY_EVERY_RETRIES = 12
 
 
 StepAction = Literal[
@@ -241,6 +276,23 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # needs a counter-order placed; a failed placement stays here
         # and retries next tick rather than being discarded (decision 4).
         self._pending_counter_ids: set[UUID] = set(pending_counters or [])
+        # Counter ids whose refusal has already been announced this process.
+        # Per ADR-023 a refused counter is retried EVERY tick and never
+        # discarded, and that retry is not behind the starvation back-off, so
+        # an unthrottled WARNING there is ~14,800 lines/day for one
+        # permanently blocked counter -- 15x the noise this slice removes, and
+        # it would bury the summary the slice exists to surface. (Derived from
+        # the tick cadence MEASURED live on 2026-09-03, ~5.85s, not the
+        # nominal 5s: 86400/5.85. The nominal rate gives 17,280, which is the
+        # figure the review quoted.) Warn on the transition, then DEBUG,
+        # mirroring SellGuard and the offside heartbeat.
+        #
+        # Bounded by _pending_counter_ids: entries are only added for ids in
+        # that set and dropped whenever one leaves it. Per-process and
+        # in-memory ON PURPOSE, like _starved -- a restart re-announces every
+        # still-blocked counter once, which is what a fresh operator reading a
+        # fresh log needs. Do not persist it.
+        self._counter_refusal_warned: set[UUID] = set()
         self._coin_locks: dict[str, asyncio.Lock] = {}
         # Stage 5.4: operator-driven control surface. In-memory state so
         # pause is per-session — a cli/live restart resets it. Keeping it
@@ -278,7 +330,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         self._wide_spread_ticks: dict[Symbol, int] = {}
         # P3 starvation back-off: ticks since a layout placed 0 orders.
         # Absent = not starved. Same transition + heartbeat pattern.
-        self._starved_ticks: dict[Symbol, int] = {}
+        self._starved: dict[Symbol, StarvationState] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -489,6 +541,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # empty book re-lays normally.
         self._hold_reasons.pop(symbol, None)
         self._external_cancels.pop(symbol, None)
+        # 2026-09-03: drop starvation state too. The pause gate returns before
+        # the no-orders check, so a symbol starved and THEN paused keeps its
+        # tick count frozen; on resume the back-off would swallow up to 59
+        # more ticks of silence, and the entry WARNING would not re-fire
+        # (it is guarded on the symbol being absent here). The operator would
+        # resume and see nothing at all. Covers the ADR-037 book-vanish hold
+        # as well — both routes exit through this method.
+        self._starved.pop(symbol, None)
         _LOGGER.info("%s resumed by operator", symbol, extra={"symbol": str(symbol)})
         return True
 
@@ -818,16 +878,30 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         await self._storage.save_grid_state(state)
         self._offside_ticks.pop(symbol, None)
         resumed = self.resume_symbol(symbol)
+        # 2026-09-03 review: clear the starved clock too. ``resume_symbol``
+        # already does, but it returns early for a symbol that was never
+        # paused — the COMMON case, since a starved symbol keeps ticking.
+        # Without this a re-anchor of a stuck symbol lays out with the
+        # demotion still on and takes ``_note_layout_outcome``'s refresh
+        # branch, so a 0/N re-anchor emits nothing at WARNING and names no
+        # reason. The operator re-anchors precisely because the symbol is
+        # stuck, and would learn nothing about why it still is. It also makes
+        # the tick count match ``StarvationState``'s own docstring, which
+        # already says the clock resets on intervention.
+        self._starved.pop(symbol, None)
         levels = compute_grid_levels(
             reference_price=state.reference_price,
             spacing_percentage=state.spacing_percentage,
             levels_above=state.levels_above,
             levels_below=state.levels_below,
         )
-        placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
+        layout = await self._place_layout(symbol, levels, coin_cfg)
+        placed = layout.placed
+        refusals = layout.refusals
+        sells_deferred = layout.sells_deferred
         # A 0/N reanchor layout (the original 2026-08-09 incident) enters
         # the starved back-off immediately — no next-tick busy loop.
-        self._note_layout_outcome(symbol, placed, refusals, sells_deferred, len(levels))
+        self._note_layout_outcome(symbol, layout, len(levels))
         message = (
             f"re-anchored {symbol}: {old_anchor} -> {current_price}; "
             f"cancelled {cancelled}, placed {placed}/{len(levels)}"
@@ -855,54 +929,63 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
     async def _place_layout(
         self, symbol: Symbol, levels: list[GridLevel], coin_cfg: CoinGridConfig
-    ) -> tuple[int, int, int]:
-        """Place every level of a layout; returns (placed, refusals, sells_deferred).
+    ) -> LayoutOutcome:
+        """Place every level of a layout and tally what happened.
 
         The one placement loop shared by ``_initialize``, the auto
         re-layout branch, and ``request_reanchor`` — three call sites
         with an identical per-outcome tally that would otherwise drift.
+
+        ``LayoutOutcome.reasons`` attributes each refusal and sums to
+        ``refusals``. It is what makes the DEBUG demotion this method asks
+        ``_try_place`` for safe: the detail leaves the per-level lines and
+        survives in the starved WARNING, the periodic summary, or the
+        partial-recovery WARNING instead. This is the ONLY caller that asks
+        for the demotion, because it is the only one that builds that record.
         """
         placed = 0
         refusals = 0
         sells_deferred = 0
+        reasons: Counter[str] = Counter()
+        # Sampled once, before the loop: a symbol already in the back-off is
+        # re-attempting a layout whose refusals the starved record carries.
+        quiet = symbol in self._starved
         for level in levels:
-            outcome = await self._try_place(symbol, level, coin_cfg)
+            outcome, reason = await self._try_place(symbol, level, coin_cfg, quiet_refusals=quiet)
             if outcome == "placed":
                 placed += 1
             elif outcome == "sell_deferred":
                 sells_deferred += 1
             else:
                 refusals += 1
-        return (placed, refusals, sells_deferred)
+                reasons[reason] += 1
+        return LayoutOutcome(
+            placed=placed,
+            refusals=refusals,
+            sells_deferred=sells_deferred,
+            reasons=dict(reasons),
+        )
 
     def _starved_should_attempt(self, symbol: Symbol) -> bool:
         """Gate a no-orders re-layout attempt through the back-off.
 
-        Not starved: always attempt. Starved: count the tick and allow
-        an attempt only every ``_STARVED_RETRY_EVERY_TICKS``, with the
-        standard periodic heartbeat in between — never a retry (or a
-        log line) every tick.
-        """
-        ticks = self._starved_ticks.get(symbol)
-        if ticks is None:
-            return True
-        ticks += 1
-        self._starved_ticks[symbol] = ticks
-        if ticks % _STARVED_RETRY_EVERY_TICKS == 0:
-            return True
-        if ticks % _OFFSIDE_SUMMARY_EVERY_TICKS == 0:
-            _LOGGER.info(
-                "%s still starved (no orders placeable); parked %d ticks, retrying every %d",
-                symbol,
-                ticks,
-                _STARVED_RETRY_EVERY_TICKS,
-                extra={"symbol": str(symbol), "consecutive_starved_ticks": ticks},
-            )
-        return False
+        Not starved: always attempt. Starved: count the tick and allow an
+        attempt only every ``_STARVED_RETRY_EVERY_TICKS`` -- never a retry
+        every tick.
 
-    def _note_layout_outcome(
-        self, symbol: Symbol, placed: int, refusals: int, sells_deferred: int, target: int
-    ) -> None:
+        A pure gate: it emits nothing. The periodic summary lives in
+        :meth:`_note_layout_outcome`, on the far side of the attempt this
+        call authorizes, so it can report the reasons that retry actually
+        hit rather than the previous one's.
+        """
+        state = self._starved.get(symbol)
+        if state is None:
+            return True
+        state = state.advanced()
+        self._starved[symbol] = state
+        return state.ticks % _STARVED_RETRY_EVERY_TICKS == 0
+
+    def _note_layout_outcome(self, symbol: Symbol, outcome: LayoutOutcome, target: int) -> None:
         """Enter/clear the starved state from a layout's outcome.
 
         Zero placed out of a non-empty target = starved: ONE WARNING
@@ -911,34 +994,108 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         the back-off in :meth:`_starved_should_attempt` owns the
         cadence. Any placement clears the state — standing orders make
         the no-orders self-heal moot.
+
+        An already-starved symbol keeps its tick count and takes this
+        retry's reasons, then emits the periodic summary on every
+        ``_STARVED_SUMMARY_EVERY_RETRIES``-th retry. The summary lives here,
+        after the attempt, so it reports what is binding NOW; emitted from
+        the gate instead it would always be one retry stale.
         """
-        if placed > 0 or target == 0:
-            if self._starved_ticks.pop(symbol, None) is not None:
-                _LOGGER.info(
-                    "%s recovered from starvation: placed %d/%d",
+        if outcome.placed > 0 or target == 0:
+            if self._starved.pop(symbol, None) is not None:
+                recovery_extra = {
+                    "symbol": str(symbol),
+                    "levels_placed": outcome.placed,
+                    "target_levels": target,
+                    "refusals": outcome.refusals,
+                    "refusal_reasons": dict(outcome.reasons),
+                }
+                if outcome.refusals:
+                    # The recovering layout ran while the symbol was STILL
+                    # starved (this hook runs after ``_place_layout``), so its
+                    # surviving refusals went to DEBUG — and the record that
+                    # would otherwise carry them is discarded on the line
+                    # above. This is the only place those reasons are ever
+                    # named. A never-starved partial layout does not reach
+                    # here at all and keeps its per-level WARNINGs.
+                    _LOGGER.warning(
+                        "%s recovered from starvation only partially: placed %d/%d, "
+                        "%d still refused; binding: %s",
+                        symbol,
+                        outcome.placed,
+                        target,
+                        outcome.refusals,
+                        describe_reasons(outcome.reasons),
+                        extra=recovery_extra,
+                    )
+                else:
+                    _LOGGER.info(
+                        "%s recovered from starvation: placed %d/%d",
+                        symbol,
+                        outcome.placed,
+                        target,
+                        extra=recovery_extra,
+                    )
+            return
+        existing = self._starved.get(symbol)
+        if existing is not None:
+            refreshed = existing.with_outcome(outcome, target)
+            self._starved[symbol] = refreshed
+            retries, remainder = divmod(refreshed.ticks, _STARVED_RETRY_EVERY_TICKS)
+            # remainder == 0 keeps an operator re-anchor that lands mid-back-off
+            # from emitting a summary it did not earn: only a real retry
+            # boundary qualifies.
+            if remainder == 0 and retries % _STARVED_SUMMARY_EVERY_RETRIES == 0:
+                # WARNING, not the INFO the offside heartbeat uses. Offside is
+                # a NORMAL parked state -- price moved outside a grid that is
+                # working as designed. Starvation means the symbol cannot
+                # trade at all until someone changes a cap or the anchor. One
+                # line an hour is not noise, and without it a symbol starved
+                # for 23 hours (the 2026-09-03 XRP case) would emit exactly
+                # one WARNING at entry and nothing after.
+                _LOGGER.warning(
+                    "%s still starved after %d retries (%d consecutive ticks): "
+                    "placed 0/%d, binding: %s%s",
                     symbol,
-                    placed,
+                    retries,
+                    refreshed.ticks,
                     target,
-                    extra={"symbol": str(symbol), "levels_placed": placed, "target_levels": target},
+                    describe_reasons(refreshed.reasons),
+                    (
+                        f"; {refreshed.sells_deferred} sells deferred"
+                        if refreshed.sells_deferred
+                        else ""
+                    ),
+                    extra={
+                        "symbol": str(symbol),
+                        "starved_retries": retries,
+                        "consecutive_starved_ticks": refreshed.ticks,
+                        "target_levels": target,
+                        "refusals": refreshed.refusals,
+                        "sells_deferred": refreshed.sells_deferred,
+                        "refusal_reasons": dict(refreshed.reasons),
+                    },
                 )
             return
-        if symbol not in self._starved_ticks:
-            self._starved_ticks[symbol] = 1
-            _LOGGER.warning(
-                "%s layout starved: placed 0/%d (%d refused, %d sells deferred); "
-                "backing off — retrying every %d ticks instead of every tick",
-                symbol,
-                target,
-                refusals,
-                sells_deferred,
-                _STARVED_RETRY_EVERY_TICKS,
-                extra={
-                    "symbol": str(symbol),
-                    "target_levels": target,
-                    "refusals": refusals,
-                    "sells_deferred": sells_deferred,
-                },
-            )
+        self._starved[symbol] = StarvationState.entering(outcome, target)
+        _LOGGER.warning(
+            "%s layout starved: placed 0/%d (%d refused, %d sells deferred); "
+            "binding: %s; backing off — retrying every %d ticks instead of every "
+            "tick, and per-level cap refusals drop to DEBUG until it clears",
+            symbol,
+            target,
+            outcome.refusals,
+            outcome.sells_deferred,
+            describe_reasons(outcome.reasons),
+            _STARVED_RETRY_EVERY_TICKS,
+            extra={
+                "symbol": str(symbol),
+                "target_levels": target,
+                "refusals": outcome.refusals,
+                "sells_deferred": outcome.sells_deferred,
+                "refusal_reasons": dict(outcome.reasons),
+            },
+        )
 
     async def _initialize(
         self,
@@ -961,8 +1118,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             levels_above=state.levels_above,
             levels_below=state.levels_below,
         )
-        placed, refusals, sells_deferred = await self._place_layout(symbol, levels, coin_cfg)
-        self._note_layout_outcome(symbol, placed, refusals, sells_deferred, len(levels))
+        layout = await self._place_layout(symbol, levels, coin_cfg)
+        placed = layout.placed
+        refusals = layout.refusals
+        sells_deferred = layout.sells_deferred
+        self._note_layout_outcome(symbol, layout, len(levels))
         _LOGGER.info(
             "grid initialized for %s: anchor %s, placed %d/%d%s%s",
             symbol,
@@ -1048,7 +1208,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 # cycle would slowly accumulate or shed inventory and
                 # bleed value through the spread.
                 counter_amount = Amount(value=filled.filled_amount, asset=filled.amount.asset)
-                outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+                outcome, _ = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
                 if outcome == "placed":
                     counters_placed += 1
                 elif outcome == "sell_deferred":
@@ -1072,7 +1232,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             remaining_open = await self._storage.get_open_orders(symbol=symbol)
             if remaining_open:
                 # Orders exist again by any path — starvation (if any) is over.
-                self._starved_ticks.pop(symbol, None)
+                self._starved.pop(symbol, None)
                 # ADR-037: a lone external cancel with the rest of the
                 # book intact (e.g. one manual cancel on the exchange
                 # UI) must not arm a permanent hair-trigger — the hold
@@ -1127,9 +1287,16 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     # Detect-only (per the backlog item): still re-lays out
                     # normally. A stale anchor that still brackets price
                     # passes silently otherwise -- the operator-initiated
-                    # re-anchor command (separate, not-yet-built P3 item)
-                    # is the fix flow this warning points at.
-                    _LOGGER.warning(
+                    # re-anchor (ADR-031, shipped 2026-08-09) is the fix
+                    # flow this warning points at.
+                    #
+                    # INFO while starved: a starved symbol cannot place, so
+                    # it cannot refresh its own anchor, so this is
+                    # permanently true and repeats on every retry (~246/day
+                    # measured live). The starved WARNING and the periodic
+                    # summary are the operator's signal for that symbol.
+                    log = _LOGGER.info if symbol in self._starved else _LOGGER.warning
+                    log(
                         "%s has no open orders; re-laying out grid at a stale anchor",
                         symbol,
                         extra=log_extra,
@@ -1140,15 +1307,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                         symbol,
                         extra=log_extra,
                     )
-                relayout_placed, relayout_refusals, relayout_deferred = await self._place_layout(
-                    symbol, levels, coin_cfg
-                )
+                relayout = await self._place_layout(symbol, levels, coin_cfg)
+                relayout_placed = relayout.placed
+                relayout_refusals = relayout.refusals
+                relayout_deferred = relayout.sells_deferred
                 placed += relayout_placed
                 refusals += relayout_refusals
                 sells_deferred += relayout_deferred
-                self._note_layout_outcome(
-                    symbol, relayout_placed, relayout_refusals, relayout_deferred, len(levels)
-                )
+                self._note_layout_outcome(symbol, relayout, len(levels))
                 # v1.1 backlog "partial-grid placement WARN -> INFO": the
                 # placed-vs-target summary an operator should look at,
                 # now that per-level insufficient-balance refusals log
@@ -1252,6 +1418,17 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         auto-re-layout guard re-place a full grid with no counter,
         reproducing the very orphan this recovers).
 
+        That every-tick retry is why a refusal is announced ONCE, by this
+        method, with ``_try_place`` kept quiet throughout. The retry is not
+        behind the starvation back-off, so a per-level WARNING here would be
+        ~14,800 lines/day for one blocked counter — 15x the noise this slice
+        removes, burying the summary it exists to surface.
+        Nor can it be gated on the symbol being starved: a counter can be
+        blocked while the layout places fine. So the announcement carries
+        the order id AND the binding reason, and ``_counter_refusal_warned``
+        suppresses the repeats until the counter places (which clears it, so
+        a later re-block announces again).
+
         Returns ``(placed, refusals, sells_deferred)``.
         """
         placed = refusals = sells_deferred = 0
@@ -1264,6 +1441,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     extra={"order_id": str(order_id)},
                 )
                 self._pending_counter_ids.discard(order_id)
+                self._counter_refusal_warned.discard(order_id)
                 continue
             if order.symbol != symbol:
                 continue
@@ -1275,14 +1453,37 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 grid_ceiling=grid_ceiling,
             )
             counter_amount = Amount(value=order.filled_amount, asset=order.amount.asset)
-            outcome = await self._try_place(symbol, target, coin_cfg, amount=counter_amount)
+            # Always quiet: this path retries every tick, so the per-level
+            # line is the wrong place to carry the signal. The announcement
+            # below is that signal, and it carries the same reason.
+            outcome, reason = await self._try_place(
+                symbol, target, coin_cfg, amount=counter_amount, quiet_refusals=True
+            )
             if outcome == "placed":
                 placed += 1
                 self._pending_counter_ids.discard(order_id)
+                self._counter_refusal_warned.discard(order_id)
             elif outcome == "sell_deferred":
                 sells_deferred += 1
             else:
                 refusals += 1
+                if order_id not in self._counter_refusal_warned:
+                    self._counter_refusal_warned.add(order_id)
+                    _LOGGER.warning(
+                        "%s recovery counter for %s refused: %s. It retries every "
+                        "tick and stays at DEBUG until it places; the filled "
+                        "inventory has no exit order until then",
+                        symbol,
+                        order_id,
+                        reason,
+                        extra={
+                            "symbol": str(symbol),
+                            "order_id": str(order_id),
+                            "side": target.side.value,
+                            "price": str(target.price),
+                            "reason": reason,
+                        },
+                    )
         return placed, refusals, sells_deferred
 
     # ------------------------------------------------------------------ helpers
@@ -1467,13 +1668,18 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         level: GridLevel,
         coin_cfg: CoinGridConfig,
         amount: Amount | None = None,
-    ) -> _PlaceOutcome:
+        *,
+        quiet_refusals: bool = False,
+    ) -> tuple[_PlaceOutcome, str]:
         """Run safety checks then place. Refusals/deferrals are logged
         and never raise.
 
         ``amount`` overrides the default USD-budget-derived sizing — used
         for counter orders, which must match the filled order's base
         amount (ADR-006 decision 2).
+
+        Returns the outcome paired with a refusal reason (empty for a
+        placement or a deferral) — see ``_PlaceOutcome``.
 
         Three non-placed outcomes:
         - ``"refused"`` — an internal safety cap (``_check_safety``
@@ -1502,7 +1708,26 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """
         decision = await self._check_safety(symbol, level, coin_cfg)
         if not decision.ok:
-            _LOGGER.warning(
+            # 2026-09-03: while a symbol is starved this line repeats
+            # verbatim on every retry, forever, for a condition the engine
+            # cannot resolve on its own — 3 lines per retry, measured at
+            # ~738/day for XRP/USD on the live container.
+            #
+            # The CALLER decides, not this method. Gating on
+            # ``symbol in self._starved`` here reads the same for the layout
+            # and for the two counter-order call sites, and no LayoutOutcome
+            # covers those: their reason is discarded, so they would go quiet
+            # with nothing replacing it. An ADR-023 recovery counter blocked
+            # by a cap would then be invisible for the life of the session
+            # while its filled inventory sat with no exit order. Only
+            # ``_place_layout`` passes True, and only because the starved
+            # WARNING, the periodic summary and the partial-recovery WARNING
+            # carry the reason it suppresses.
+            #
+            # This deliberately does not touch the other two refusal arms
+            # below: an exchange-side ordermin rejection stays loud.
+            log = _LOGGER.debug if quiet_refusals else _LOGGER.warning
+            log(
                 "%s %s @ %s refused by safety cap: %s",
                 symbol,
                 level.side.value.upper(),
@@ -1515,12 +1740,15 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "reason": decision.reason,
                 },
             )
-            return "refused"
+            return "refused", decision.reason or "safety_cap"
 
         if level.side is OrderSide.SELL and self._safety.sell_guard.enabled:
             assessment = await self._sell_guard.assess(symbol, level.price)
             if not assessment.allowed:
-                return "sell_deferred"
+                # No log here by design: SellGuard.assess already emits its own
+                # transition WARNING with the numbers and then throttles to a
+                # heartbeat, so the sell half is not a per-level noise source.
+                return "sell_deferred", ""
 
         try:
             await self._place_level(symbol, level, coin_cfg, amount=amount)
@@ -1552,7 +1780,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "available": str(exc.available),
                 },
             )
-            return "refused"
+            return "refused", REASON_INSUFFICIENT_BALANCE
         except ExchangeError as exc:
             # Kraken's client-side ordermin/costmin rejection (and any
             # other exchange-side refusal) lands here -- must not
@@ -1571,8 +1799,8 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "error": str(exc),
                 },
             )
-            return "refused"
-        return "placed"
+            return "refused", REASON_EXCHANGE_ERROR
+        return "placed", ""
 
     async def _place_level(
         self,
