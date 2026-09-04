@@ -357,6 +357,14 @@ Gates, in order:
    placement rule**: the asymmetry (sells may extend, buys never), an explicit
    retirement trigger, and a hard ceiling on simultaneous extension orders per
    symbol that is independent of episode count.
+   **◐ DRAFTED 2026-09-04 as ADR-042, status PROPOSED — not ratified.** It
+   specifies four retirement triggers rather than one (episode end, sell guard
+   disabled, re-anchor, clean shutdown), makes the per-symbol-per-instant
+   ceiling a brace that survives a process death rather than the primary bound,
+   and REJECTS the proposal's "discard band-illegal pending counters" rule
+   outright as an ADR-031/ADR-023 violation. Note the ordering: gate 1 blocks
+   *ratification of the ADR*, not merely the code, because decision 5 makes the
+   profit predicate unsafe by construction until the cost basis reconciles.
 3. Replay validation via `tools/auditor.py` over a real **multi-episode** rally
    window. Shadow mode is not a substitute, because you cannot choose the window
    at live-tape cadence.
