@@ -256,17 +256,24 @@ to every project. The wobblebot-specific items below extend it:
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their
-  example counterparts. `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` turns the
-  non-strict direction (operator file missing a key the example documents)
-  from a printed warning into a hard failure. **Where it is actually on,
-  verified 2026-09-04:** the operator's `.env` sets it and
-  `tests/conftest.py` calls `load_dotenv()`, so it is LIVE for local runs —
-  add a key to either example file and the drift test goes red on your
-  machine. It is set in **no workflow**, though: zero occurrences under
-  `.github/`, and CI has no operator `.env` to load, so in CI that
-  direction prints into captured stdout and reaches nobody. Practical
-  consequence: local runs catch example/operator drift, CI does not.
-  Wiring it into CI is a queued audit finding.
+  example counterparts. The operator-missing-keys direction is a **hard
+  failure by default since 2026-09-04**; `WOBBLEBOT_STRICT_CONFIG_DRIFT=0`
+  demotes it to a printed warning. Add a key to either example file and
+  the drift test goes red until the operator file matches — which is the
+  point, per the keep-examples-in-sync practice.
+
+  **It cannot be wired into CI, and the attempt was measured rather than
+  assumed.** Every call site sits behind a skip for a missing operator
+  file; `config/settings.yml` and `.env` are both gitignored (0 tracked)
+  and no workflow creates them, so a fresh checkout skips all three
+  regardless of the variable. Setting it in `docker-publish.yml` would
+  have produced a guard that reads as armed and checks nothing — the
+  defect class the release-close audit existed to find. This check is
+  structurally local-only: the drift it looks for is between an
+  OPERATOR's config and the example, and CI has no operator config.
+  What was actually wrong is now fixed: the default lives in tracked
+  code instead of depending on an untracked `.env` that could be — and
+  on 2026-09-04 was — deleted, silently disarming it.
 - **`settings.example.yml` reflects reality.** The drift test catches KEY
   drift but **not** value/comment staleness or dead pairs (`grid.coins.*`
   is exempt) — verified 2026-06-04 after the example silently carried stale

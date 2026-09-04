@@ -12,10 +12,23 @@ For each pair, two directions of drift are checked:
   They mean the operator is carrying configuration the bot will never
   read again, which silently masks bugs and makes upgrades harder.
 - **Operator missing keys** — keys in the example that are absent from
-  the operator file. By default these are reported as warnings (printed
-  to the test report) so a fresh checkout doesn't get blocked.
-  Setting the env var ``WOBBLEBOT_STRICT_CONFIG_DRIFT=1`` promotes the
-  warning to a hard failure — useful in CI to enforce strict parity.
+  the operator file. **Hard failure by default since 2026-09-04**; set
+  ``WOBBLEBOT_STRICT_CONFIG_DRIFT=0`` to demote it back to a printed
+  warning. A fresh checkout is not blocked by this, because with no
+  operator file the check skips before it can fire.
+
+  It used to be opt-in via ``WOBBLEBOT_STRICT_CONFIG_DRIFT=1``, and the
+  only thing setting that was the operator's own ``.env`` — an untracked,
+  machine-local file. Deleting it silently disarmed the guard, which is
+  how this was noticed. Docs at the time claimed the variable was set "in
+  CI"; it appears in no workflow.
+
+  **And it cannot be, meaningfully.** Every call below sits behind a skip
+  for a missing operator file, both operator files are gitignored, and no
+  workflow materializes them — so setting the variable in CI would change
+  nothing while reading as an armed guard. This check is structurally
+  local-only: the drift it looks for is between an operator's real config
+  and the documented example, and CI has no operator config to drift.
 
 Operator files are gitignored and may not exist on a fresh clone; in
 that case the operator-side checks skip cleanly. The example files
@@ -113,8 +126,16 @@ def _extract_env_keys(path: Path) -> set[str]:
 
 
 def _strict_mode_enabled() -> bool:
-    raw = os.environ.get(_STRICT_ENV_VAR, "")
-    return raw.strip().lower() in ("1", "true", "yes", "on")
+    """Strict unless explicitly switched off.
+
+    Default-ON deliberately (2026-09-04). The inverse — opt-in via an env
+    var — meant the guard's liveness depended on an untracked file that
+    happened to set it, and it went quietly dead the day that file was
+    deleted. A guard whose armed/disarmed state is invisible in the repo
+    is worse than one that is honestly absent.
+    """
+    raw = os.environ.get(_STRICT_ENV_VAR, "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def _report_missing(label: str, missing: set[str]) -> None:
@@ -124,7 +145,8 @@ def _report_missing(label: str, missing: set[str]) -> None:
     sorted_keys = sorted(missing)
     message = (
         f"{label} is missing keys from the example file: {sorted_keys}\n"
-        f"  (set {_STRICT_ENV_VAR}=1 to make this a hard failure)"
+        f"  (this is a hard failure by default; set {_STRICT_ENV_VAR}=0 "
+        f"to demote it to a warning)"
     )
     if _strict_mode_enabled():
         pytest.fail(message)
@@ -401,3 +423,32 @@ class TestNoDuplicateEnvAssignments:
             "  including any under the documented section header. Delete the\n"
             "  duplicate rather than relying on file order."
         )
+
+
+class TestStrictModeIsArmedByDefault:
+    """The guard's liveness must be visible in tracked code.
+
+    Before 2026-09-04 strict mode was opt-in, and the only thing opting in
+    was the operator's untracked `.env`. Deleting that file disarmed the
+    guard with nothing in the repo to show it — while CLAUDE.md and README
+    both claimed the variable was set "in CI", where it appears in zero
+    workflows. These tests pin the default so it cannot regress to
+    depending on a file git has never seen.
+    """
+
+    def test_armed_with_no_env_var_at_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(_STRICT_ENV_VAR, raising=False)
+        assert _strict_mode_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF", " 0 "])
+    def test_explicit_opt_out_is_honored(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The escape hatch has to work, or someone mid-migration is stuck."""
+        monkeypatch.setenv(_STRICT_ENV_VAR, value)
+        assert _strict_mode_enabled() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "on", ""])
+    def test_anything_else_stays_armed(self, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Including empty string: MCP hosts and shells inject "" for an
+        unset field, and that must not read as "disarm"."""
+        monkeypatch.setenv(_STRICT_ENV_VAR, value)
+        assert _strict_mode_enabled() is True
