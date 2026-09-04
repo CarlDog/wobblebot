@@ -2442,6 +2442,66 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     roll-forward can render a stale date. Bounded to symbols that flap in
     and out of band; BTC/ETH carry NULL and are structurally immune.
 
+    **Nine-hour soak, measured 2026-09-04 15:27 UTC** (deploy +9h08m). The
+    entire `cli/live` container log is 349 lines; every count below is a
+    `lines_matched` from a filtered fetch, not an estimate.
+
+    | | count |
+    |---|---|
+    | total log lines | 349 |
+    | WARNING, all | 45 |
+    | WARNING, after the boot minute | 33 |
+    | XRP layout attempts (`stale anchor`) | 89 — 1 WARNING at boot + 88 INFO |
+    | starvation summaries | 7 — at retries 12/24/36/48/60/72/84 |
+    | offside park -> resume cycles | 23 |
+    | grid fills | 1 |
+
+    Group 2's payoff, stated with its provenance: 88 post-entry retries
+    COUNTED, times the 4-WARNING-per-retry shape OBSERVED on the un-demoted
+    boot tick at 06:19:34, is ~352 WARNING lines that 2.0.4 would have
+    written on this path. 2.0.5 wrote 7. The product is arithmetic; both
+    of its inputs are receipts.
+
+    Group 3's load-bearing mechanism confirmed in production, which no local
+    test could do: BTC logged `parked (5280 consecutive ticks)` at 06:30:14,
+    eleven minutes into a 06:19 boot. Eleven minutes is ~114 real ticks, so
+    `restore_offside` seeded ~5166 — it restored the COUNT, not merely the
+    flag.
+
+    The starvation summary is doing its job, and what it surfaces is a real
+    condition: **XRP is fully inert.** Its sells are deferred by the ADR-032
+    guard (avg cost 1.471046775 against a price that sat ~1.44-1.46 all day)
+    and its buys are refused by `max_per_coin_inventory_usd`, so it re-laid
+    out its grid 88 times and placed nothing. That is both guards working as
+    designed, and it is already covered by the 2026-08-16 stranded-capital
+    HOLD ruling — recorded here as evidence the summary surfaces the
+    condition, NOT as a proposal to intervene.
+
+    Filed rather than acted on: XRP crossed its band top (1.4548339) 23 times
+    between 08:50 and 12:30, which is both the measured blast radius for the
+    rollback follow-up below and a case the popover reports accurately but
+    uninformatively (own register row); two DOGE `QueryOrders missing entry`
+    ExchangeErrors at 12:30, both self-recovered by the
+    continue-other-symbols path; one ADA spread-too-wide skip.
+
+    Across the other seven containers: `cli/web` logged only its known
+    non-loopback bind notice; `cli/maintenance` logged three WARNINGs (two
+    "target missing" skips for the absent shadow.db, and a CAPITAL notice
+    that DOGE's 31.54 held sat below its ordermin of 50 — the 12:30 fill
+    added 69.95 DOGE, so the next capital pass should clear it); harvest,
+    operator, advise, observe and news logged none at all.
+
+    **`cli/maintenance`'s daily reconcile reported `clean=6` at 06:19:43** —
+    every Kraken trade on all six symbols has a local row. This is relevant
+    to ADR-042 gate 1 but does NOT discharge it: it is the narrower
+    always-on subset, which excludes Kraken's Ledgers endpoint and sees only
+    the newest ~1000 account-wide trades, so an old gap can age out of its
+    sight. The gate names `tools/reconcile_trade_history.py`, which adds
+    Ledgers and has no six-symbol receipt — the 2026-08-22 run was BTC-only.
+    What IS settled is the precondition the gate exists for: that run's
+    18-trade backfill corrected BTC's basis (23->41 trades, +2.81%) and
+    nothing has regressed since.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.

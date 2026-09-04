@@ -40,12 +40,15 @@ anyway.
 
 ---
 
-## Group 0 — Three looks, no code — ◐ TWO SETTLED, ONE STILL NEEDS THE OPERATOR
+## Group 0 — Three looks, no code — ✅ ALL THREE SETTLED 2026-09-04
 
-Not a release. Status as of 2026-09-04; `cli/web` publishes to
-`127.0.0.1:28080` on the NAS, so the live page is reachable only from the NAS
-or the operator's own browser — item 1 below cannot be closed from a dev
-machine, and is recorded as open rather than assumed.
+Not a release. `cli/web` publishes to `127.0.0.1:28080` on the NAS, so the
+live page is reachable only from the NAS or the operator's own browser. Items
+1 and 3 were therefore settled by RENDERING the markup rather than by
+inspecting the deployed page, and each says so in its own entry; item 2 rests
+on the operator's own report. Recorded that way deliberately — "settled by
+rendering" is a weaker claim than "settled against production", and collapsing
+the two would be the confident-overclaim this group exists to catch.
 
 1. **BABY/USD renders without an anchor button.** ✅ *Settled 2026-09-04, same
    caveat as item 3 — against this markup, by rendering, not against the
@@ -426,10 +429,16 @@ reporter.
      CEILING, not a floor, and would render backwards if used for "at least".
    - **Shipped:** NULL renders as an explicit unknown, and fills in for real
      the next time the symbol re-enters its band and leaves again.
-3. **`dms-framing` threshold.** How much of the dead-man's-switch window must a
-   failure streak consume before the calm framing is used? Kraken fired at ~0.85
-   of the window on the one observed event; anything below that fixes
-   2026-09-03, higher values buy margin against an earlier fire.
+3. **`dms-framing` threshold.** ◐ **SHIPPED WITH A DEFAULT OF 0.5, STILL
+   YOURS TO CHANGE.** How much of the dead-man's-switch window must a failure
+   streak consume before the calm framing is used? Kraken fired at ~0.85 of
+   the window on the one observed event; anything below that fixes
+   2026-09-03, higher values buy margin against an earlier fire. Group 1
+   shipped `_DMS_CALM_FRAMING_FRACTION = 0.5` on 2026-09-03 rather than block
+   on this answer. Flagged explicitly on 2026-09-04 because a value an
+   implementer picked and deployed is not the same as a question the operator
+   closed, and the plan was still filing it under decisions that BLOCK. One
+   constant, no schema, no migration — changing it costs a redeploy.
 4. **`sell-side-offside`.** Confirm the reconcile gate, and name the net margin
    per extension sell you actually want. Note the fee accounting is already net
    of both legs, so a threshold quoted "on top of the round-trip fee" would
