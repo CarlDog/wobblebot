@@ -37,9 +37,15 @@ Exit codes:
   process exit, not on the healthcheck (2026-09-05: the forwarder died,
   the container reported ``unhealthy`` 591 times, and nothing acted for
   10h11m).
-- ``2`` — no ``operator:`` config section, ``outbound_channel_id`` not
-  in ``allowed_channel_ids``, an unopenable database, an unloadable
-  prompt file, or an unbuildable assistant.
+- ``2`` — no loadable config file (neither ``settings.yml`` nor
+  ``settings.example.yml``), an unparseable one, or an unknown
+  ``--profile`` — this is the likeliest cause in the Portainer
+  deployment, whose command line hardcodes ``--profile cpu-only``
+  against a read-only ``config/`` bind mount; no ``operator:`` config
+  section; ``outbound_channel_id`` not in ``allowed_channel_ids``; an
+  unopenable **operator** database (the five optional DBs log a
+  WARNING and degrade instead of exiting); an unloadable prompt file;
+  or an unbuildable assistant.
 """
 
 # pylint: disable=too-many-lines
