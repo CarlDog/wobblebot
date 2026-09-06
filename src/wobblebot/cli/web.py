@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import getpass
 import logging
 import os
@@ -403,8 +402,33 @@ async def _serve_async(config: WobbleBotConfig) -> int:
         release_check_stop.set()
         if release_check_task is not None:
             release_check_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await release_check_task
+            except asyncio.CancelledError:
+                # Expected — we just cancelled it. Swallowed rather than
+                # re-raised so ``safe_shutdown`` below still runs.
+                pass
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # Awaiting an already-finished task re-raises the exception
+                # it STORED, which is not CancelledError. A suppression
+                # narrowed to CancelledError would let that escape this
+                # ``finally`` BEFORE ``safe_shutdown`` runs, skipping
+                # ``_close_storages`` + ``kraken_http.aclose`` and leaking
+                # the sqlite handles and the connection pool. Logged and
+                # continued, matching safe_shutdown's own best-effort
+                # per-phase contract.
+                #
+                # Deliberately NO exit-on-task-death here, unlike
+                # cli/operator, which exits when a supervised loop dies:
+                # this poll only feeds the footer's "update available"
+                # indicator, so a transient GitHub failure must never
+                # bounce the operator's dashboard.
+                _LOGGER.warning(
+                    "release-check task ended with an unexpected %s: %s — continuing shutdown",
+                    type(exc).__name__,
+                    exc,
+                    extra={"task": "release-check", "error": str(exc)},
+                )
         await safe_shutdown(
             [
                 ("close_web_storages", lambda: _close_storages(adapters)),

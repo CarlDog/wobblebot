@@ -10,6 +10,9 @@ testable seams without an actual Gateway connection:
 - ``send_message`` / ``send_embed`` / ``send_confirmation`` against a
   mock ``discord.Client`` injected via ``attach_client``.
 - ``start`` token-env-var validation.
+- Wrapping of raw ``aiohttp`` transport errors (the 2026-09-05
+  DNS-outage class) on both a send path and the ``start`` /
+  login path — see ``TestAiohttpTransportErrorWrapping``.
 - ``close`` idempotency.
 - ``_resolve_text_channel`` fallback path (``get_channel`` returns
   ``None`` -> ``fetch_channel``).
@@ -28,8 +31,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import aiohttp
 import discord
 import pytest
+from aiohttp.client_reqrep import ConnectionKey
 from pydantic import ValidationError
 
 from wobblebot.adapters.discord_confirm_view import CUSTOM_ID_TEMPLATE
@@ -646,3 +651,171 @@ class TestLifecycle:
         # second close is a no-op
         await t.close()
         client.close.assert_awaited_once()
+
+
+# --------------------------------------------------------------------- #
+# aiohttp transport-error wrapping (2026-09-05 DNS-outage incident)     #
+# --------------------------------------------------------------------- #
+
+
+def _dns_error() -> aiohttp.ClientConnectorDNSError:
+    """Build a genuine ``aiohttp.ClientConnectorDNSError``.
+
+    This is the exact error class that escaped the adapter during the
+    2026-09-05 upstream-DNS outage. It must be built with a REAL
+    ``ConnectionKey``: ``str()`` on the exception reads ``key.host`` /
+    ``key.port`` / ``key.ssl``, so a ``None`` key raises
+    ``AttributeError`` instead of rendering a message.
+
+    ``ConnectionKey`` is a ``NamedTuple`` (not a dataclass) in the
+    pinned aiohttp 3.13.5; these seven fields are its full shape.
+    """
+    key = ConnectionKey(
+        host="discord.com",
+        port=443,
+        is_ssl=True,
+        ssl=None,
+        proxy=None,
+        proxy_auth=None,
+        proxy_headers_hash=None,
+    )
+    return aiohttp.ClientConnectorDNSError(key, OSError(-2, "Name or service not known"))
+
+
+class TestAiohttpTransportErrorWrapping:
+    """The adapter must wrap its HTTP library's errors, not just discord.py's.
+
+    ``discord.py``'s exception hierarchy does not cover its own
+    transport layer. A name-resolution failure raises
+    ``aiohttp.ClientConnectorDNSError``, whose MRO terminates at
+    ``ClientError`` -> ``OSError`` and never reaches
+    ``DiscordException`` — so a ``DiscordException``-only clause lets it
+    through raw. On 2026-09-05 that killed ``cli/operator``'s
+    notification forwarder for 10h11m while the daemon looked alive.
+    """
+
+    def test_dns_error_is_outside_discords_hierarchy(self) -> None:
+        """Premise guard: state precisely which branch the fixture exercises.
+
+        Without this, a green send/start test below could be explained
+        by the pre-existing ``discord.DiscordException`` clause. These
+        two lines together prove it cannot be: the fixture is outside
+        the branch that already existed and inside the one the fix
+        added.
+        """
+        exc = _dns_error()
+        assert not isinstance(exc, discord.DiscordException)
+        assert isinstance(exc, aiohttp.ClientError)
+
+    @pytest.mark.asyncio
+    async def test_send_embed_wraps_raw_aiohttp_dns_error(self) -> None:
+        """The send path the incident actually traversed.
+
+        ``cli/operator``'s notification forwarder sends embeds, so this
+        pins ``send_embed``'s clause specifically, not just the shared
+        ``channel.send`` seam.
+        """
+        dns_error = _dns_error()
+        t = _transport()
+        channel = _mock_channel()
+        channel.send = AsyncMock(side_effect=dns_error)
+        t.attach_client(_mock_client(channel))
+
+        with pytest.raises(DiscordTransportError, match="Failed to send embed to channel 100"):
+            await t.send_embed("100", title="Fill", description="BTC filled")
+
+        # Prove the send was really attempted — that the failure came
+        # from the seam under test and not from channel resolution.
+        channel.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_embed_preserves_the_dns_error_as_cause(self) -> None:
+        """``raise ... from exc`` must keep the original for forensics."""
+        dns_error = _dns_error()
+        t = _transport()
+        channel = _mock_channel()
+        channel.send = AsyncMock(side_effect=dns_error)
+        t.attach_client(_mock_client(channel))
+
+        with pytest.raises(DiscordTransportError) as exc_info:
+            await t.send_embed("100", title="Fill", description="BTC filled")
+
+        assert exc_info.value.__cause__ is dns_error
+        # The adapter's f-string interpolates ``{exc}``; assert against
+        # the fixture's own ``str`` rather than a hardcoded copy.
+        assert str(dns_error) in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_send_message_wraps_raw_aiohttp_dns_error(self) -> None:
+        """Same widening on the plain-text send path."""
+        dns_error = _dns_error()
+        t = _transport()
+        channel = _mock_channel()
+        channel.send = AsyncMock(side_effect=dns_error)
+        t.attach_client(_mock_client(channel))
+
+        with pytest.raises(DiscordTransportError, match="Failed to send message to channel 100"):
+            await t.send_message("100", "x")
+
+        channel.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_wraps_raw_aiohttp_dns_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The seventh catch site: a boot during a DNS outage.
+
+        ``HTTPClient.static_login`` catches only ``HTTPException`` and
+        retries ``OSError`` only for ``errno in (54, 10054)``, so a DNS
+        failure at boot is neither caught nor retried by discord.py —
+        it escapes ``client.start`` raw. Before the fix ``start()`` had
+        no clause for it at all, so it escaped into whatever task owns
+        ``start()`` (``cli/operator``'s ``gateway_task``).
+
+        Asserting the ``"Discord gateway connection failed"`` prefix
+        pins the ADDED clause specifically: the pre-existing
+        ``LoginFailure`` clause renders a different message.
+        """
+        dns_error = _dns_error()
+        # Build the spec'd mock BEFORE patching the name it specs from.
+        fake_client = MagicMock(spec=discord.Client)
+        fake_client.start = AsyncMock(side_effect=dns_error)
+        fake_client.close = AsyncMock(return_value=None)
+
+        monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake-token")
+        # Patch the package-namespace name the adapter actually resolves.
+        monkeypatch.setattr(discord, "Client", MagicMock(return_value=fake_client))
+
+        t = _transport()
+        with pytest.raises(DiscordTransportError, match="Discord gateway connection failed"):
+            await t.start()
+
+        # Prove the Gateway call was really reached and awaited — i.e.
+        # the error is not the earlier missing-token refusal.
+        fake_client.start.assert_awaited_once_with("fake-token")
+
+    @pytest.mark.asyncio
+    async def test_start_keeps_login_failure_message_distinct(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ordering guard for the clause the widening sits next to.
+
+        ``discord.LoginFailure`` IS a ``discord.DiscordException``, so
+        if the widened clause were ordered first it would swallow a bad
+        token and report it as a connection failure — telling the
+        operator to check the network when the real fix is the token.
+        The ``LoginFailure`` clause must stay first.
+        """
+        login_error = discord.LoginFailure("Improper token has been passed.")
+        fake_client = MagicMock(spec=discord.Client)
+        fake_client.start = AsyncMock(side_effect=login_error)
+        fake_client.close = AsyncMock(return_value=None)
+
+        monkeypatch.setenv("DISCORD_BOT_TOKEN", "fake-token")
+        monkeypatch.setattr(discord, "Client", MagicMock(return_value=fake_client))
+
+        t = _transport()
+        with pytest.raises(DiscordTransportError, match="Discord login failed") as exc_info:
+            await t.start()
+
+        assert "gateway connection failed" not in str(exc_info.value)
+        assert exc_info.value.__cause__ is login_error
+        fake_client.start.assert_awaited_once_with("fake-token")

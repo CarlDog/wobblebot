@@ -25,6 +25,21 @@ intent to engine.
 
 Run as a module: ``python -m wobblebot.cli.operator``
 (``--config /path/to/settings.yml`` to override the YAML path).
+
+Exit codes:
+
+- ``0`` — clean shutdown (SIGINT/SIGTERM set the stop event).
+- ``1`` — the Discord transport failed, **or** one of the five
+  supervised background tasks died (which includes the gateway task, so
+  an unset bot-token env var lands here rather than on 2). The daemon
+  exits rather than lingering as a zombie so the container's
+  ``restart:`` policy restarts it; ``restart: unless-stopped`` acts on
+  process exit, not on the healthcheck (2026-09-05: the forwarder died,
+  the container reported ``unhealthy`` 591 times, and nothing acted for
+  10h11m).
+- ``2`` — no ``operator:`` config section, ``outbound_channel_id`` not
+  in ``allowed_channel_ids``, an unopenable database, an unloadable
+  prompt file, or an unbuildable assistant.
 """
 
 # pylint: disable=too-many-lines
@@ -36,6 +51,7 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -208,8 +224,26 @@ async def _forwarder_loop(
 
     try:
         await run_poll_loop(_one_cycle, interval_seconds=poll_seconds, stop_event=stop_event)
-    finally:
         _LOGGER.info("notification forwarder stopped")
+    except asyncio.CancelledError:
+        _LOGGER.info("notification forwarder stopped (cancelled)")
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # 2026-09-05 incident: an aiohttp DNS error escaped the adapter,
+        # killed this loop, and the old bare ``finally`` rendered that as
+        # the same routine "forwarder stopped" INFO line a clean shutdown
+        # emits — so a fatal event read as a normal one and nothing acted
+        # for 10h11m. A loop that DIES is an ERROR; only a loop that
+        # STOPS is INFO. Re-raised so the supervisor
+        # (``_supervise_background_tasks``) sees it too.
+        _LOGGER.error(
+            "notification forwarder DIED (%s): %s",
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
+            extra={"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        raise
 
 
 # --------------------------------------------------------------------- #
@@ -1283,10 +1317,18 @@ async def _close_transport_with_cap(
 
     If transport.close() doesn't return within ``timeout_seconds``,
     log a warning and proceed; the gateway_task is cancelled to make
-    sure the orphan coroutine doesn't dangle past process exit. The
-    cancellation is wrapped in a try/except for ``CancelledError``
-    (the expected outcome of cancel-then-await) and
-    ``DiscordTransportError`` (which may surface during teardown).
+    sure the orphan coroutine doesn't dangle past process exit.
+
+    The cancel-and-await is delegated to ``_cancel_background_tasks``
+    (2026-09-05) so the gateway gets the same treatment as the four poll
+    tasks: ``CancelledError`` — the expected outcome of cancel-then-await
+    — is silent, and ANY other stored exception is logged at WARNING
+    instead of escaping. That matters now that Layer 4 supervision makes
+    "the gateway is already dead when we get here" a routine path: the
+    old narrow ``except (CancelledError, DiscordTransportError)`` would
+    let a non-discord stored exception re-raise out of this helper,
+    past ``_main_async``'s ``except DiscordTransportError``, and lose
+    the ``exit_code = 1`` the supervisor had just set.
     """
     try:
         await asyncio.wait_for(transport.close(), timeout=timeout_seconds)
@@ -1296,12 +1338,133 @@ async def _close_transport_with_cap(
             "cancelling gateway task and proceeding to shutdown",
             timeout_seconds,
         )
-    if not gateway_task.done():
-        gateway_task.cancel()
+    await _cancel_background_tasks((gateway_task,))
+
+
+async def _cancel_background_tasks(tasks: Sequence[asyncio.Task[Any]]) -> None:
+    """Cancel every task in ``tasks`` and await all of them, never raising.
+
+    The shutdown path's job is to leave nothing running, so it must
+    survive a task that is *already dead*. Awaiting such a task re-raises
+    its stored exception, and the pre-2026-09-05 loop caught only
+    ``asyncio.CancelledError`` — so one dead task escaped the loop and
+    the tasks after it were never cancelled at all. Layer 4's supervisor
+    makes "already dead, carrying a stored exception" the routine
+    shutdown path, which turns that latent bug into a live one.
+
+    Shape: cancel the ones that are still running (an already-``done``
+    task is left alone, so this is safe to call twice — the gateway is
+    reached both via ``_close_transport_with_cap`` and via the daemon's
+    final phase list), then ``gather(..., return_exceptions=True)`` so
+    every result is collected rather than the first failure aborting the
+    rest. ``CancelledError`` is the expected outcome and stays silent;
+    anything else is reported at WARNING and swallowed.
+    """
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for task, result in zip(tasks, results, strict=True):
+        if not isinstance(result, BaseException):
+            continue
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        _LOGGER.warning(
+            "background task %s carried an unretrieved %s at shutdown: %s",
+            task.get_name(),
+            type(result).__name__,
+            result,
+            extra={
+                "task": task.get_name(),
+                "error_type": type(result).__name__,
+                "error": str(result),
+            },
+        )
+
+
+async def _supervise_background_tasks(
+    *,
+    must_run: Sequence[asyncio.Task[Any]],
+    one_shot: Sequence[asyncio.Task[Any]],
+    stop_event: asyncio.Event,
+) -> asyncio.Task[Any] | None:
+    """Block until shutdown is requested or a supervised task dies.
+
+    The daemon used to ``await stop_event.wait()`` and nothing else, so a
+    background task that raised became a zombie: the exception sat
+    unretrieved on a Task nobody awaited while the process stayed alive
+    and healthy-looking. On 2026-09-05 the notification forwarder died
+    that way at 11:57:20 and stayed dead for 10h11m.
+
+    Two gates, because the tasks are not the same kind of thing:
+
+    - ``must_run`` — the poll loops and the Discord gateway. ANY
+      completion before ``stop_event`` is a failure. ``run_poll_loop``
+      only returns once the stop event is set, and discord.py's
+      ``start()`` returning at all means the Gateway connection is gone.
+    - ``one_shot`` — the history backfill, which completes NORMALLY a
+      few seconds after boot. Only an *exceptional* completion counts;
+      a clean finish is logged and the wait continues over what is left.
+      (A naive ``FIRST_COMPLETED`` that treats every completion as
+      failure would therefore fire on every single boot.)
+
+    Returns the offending task, or ``None`` for a clean shutdown.
+
+    Note ``stop_event.wait()`` is wrapped in a Task before it reaches
+    ``asyncio.wait``: on 3.13 a bare coroutine raises ``TypeError:
+    Passing coroutines is forbidden, use tasks explicitly``. Same
+    pattern as ``_backfill_history_task``. Only tasks that report
+    ``done()`` are inspected — ``.exception()`` on a pending task raises
+    ``InvalidStateError``.
+    """
+    one_shot_set = set(one_shot)
+    pending: set[asyncio.Task[Any]] = set(must_run) | one_shot_set
+    stop_wait: asyncio.Task[Any] = asyncio.create_task(stop_event.wait())
     try:
-        await gateway_task
-    except (asyncio.CancelledError, DiscordTransportError):
-        pass
+        while True:
+            waiters: set[asyncio.Task[Any]] = set(pending)
+            waiters.add(stop_wait)
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            # Checked first: when the stop event and a poll loop land in
+            # the same wakeup (the loop returns *because* of the event),
+            # that is a clean shutdown, not a death.
+            if stop_wait.done():
+                return None
+            for task in [t for t in pending if t.done()]:
+                pending.discard(task)
+                name = task.get_name()
+                exc = None if task.cancelled() else task.exception()
+                if exc is not None:
+                    _LOGGER.error(
+                        "background task %s DIED (%s): %s",
+                        name,
+                        type(exc).__name__,
+                        exc,
+                        exc_info=exc,
+                        extra={
+                            "task": name,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        },
+                    )
+                    return task
+                if task in one_shot_set:
+                    _LOGGER.info(
+                        "background task %s completed (one-shot)",
+                        name,
+                        extra={"task": name},
+                    )
+                    continue
+                _LOGGER.error(
+                    "background task %s exited before shutdown was requested; "
+                    "the daemon cannot do its job without it",
+                    name,
+                    extra={"task": name},
+                )
+                return task
+    finally:
+        if not stop_wait.done():
+            stop_wait.cancel()
 
 
 async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
@@ -1620,13 +1783,43 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     )
 
     exit_code = 0
+    # discord.py's Client.start blocks until the connection terminates.
+    # SIGINT triggers transport.close() via the signal handler. Created
+    # OUTSIDE the try so the finally can always reach it — the shutdown
+    # phase below cancels all five background tasks, not just the four
+    # poll tasks (2026-09-05: the gateway was the worst zombie of the
+    # set, since the ``except DiscordTransportError`` below guarded
+    # ``stop_event.wait()``, a position from which it could never observe
+    # an exception stored on the gateway task).
+    gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
+    background_tasks: tuple[asyncio.Task[Any], ...] = (
+        forwarder_task,
+        ttl_expirer_task,
+        heartbeat_alert_task,
+        backfill_task,
+        gateway_task,
+    )
     try:
-        # discord.py's Client.start blocks until the connection terminates.
-        # SIGINT triggers transport.close() via the signal handler.
-        gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
-        await stop_event.wait()
+        failed_task = await _supervise_background_tasks(
+            must_run=(forwarder_task, ttl_expirer_task, heartbeat_alert_task, gateway_task),
+            one_shot=(backfill_task,),
+            stop_event=stop_event,
+        )
+        if failed_task is not None:
+            _LOGGER.error(
+                "operator daemon exiting non-zero after %s failed, so the container's "
+                "restart policy brings it back (a dead task means a dead daemon, and "
+                "`restart: unless-stopped` acts on process exit, not on healthchecks)",
+                failed_task.get_name(),
+                extra={"failed_task": failed_task.get_name()},
+            )
+            exit_code = 1
         await _close_transport_with_cap(transport, gateway_task)
     except DiscordTransportError as exc:
+        # Narrow scope now: the gateway's own failures arrive through
+        # ``failed_task`` above, not here, so this covers only a raise from
+        # ``transport.close()`` inside ``_close_transport_with_cap``. Kept
+        # because both paths must produce the same non-zero exit.
         _LOGGER.error(
             "discord transport failed; exiting: %s",
             exc,
@@ -1636,13 +1829,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     finally:
         stop_event.set()
 
-        async def _cancel_background_tasks() -> None:
-            for task in (forwarder_task, ttl_expirer_task, heartbeat_alert_task, backfill_task):
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        async def _cancel_tasks() -> None:
+            await _cancel_background_tasks(background_tasks)
 
         async def _close_assistant() -> None:
             aclose = getattr(assistant, "aclose", None)
@@ -1650,7 +1838,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
                 await aclose()
 
         phases: list[ShutdownPhase] = [
-            ("cancel_background_tasks", _cancel_background_tasks),
+            ("cancel_background_tasks", _cancel_tasks),
             ("close_assistant", _close_assistant),
             ("close_operator_storage", operator_storage.close),
         ]

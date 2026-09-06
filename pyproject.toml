@@ -54,6 +54,14 @@ dependencies = [
     # pending-command id in the component custom_id so a click still works
     # after a daemon restart (P3 buttons-over-reactions).
     "discord.py>=2.4.0,<3",
+    # 2.0.7 — discord.py's HTTP/Gateway transport is aiohttp, and its
+    # errors are NOT discord.DiscordException (ClientConnectorDNSError's
+    # MRO ends ClientError -> OSError). discord_transport.py catches
+    # aiohttp.ClientError by name, so the transitive dep is now a direct
+    # import and must be declared. Floor is 3.10.10 — the release that
+    # added ClientConnectorDNSError, the error the 2026-09-05 outage
+    # raised. Narrows discord.py's own aiohttp<4,>=3.7.4.
+    "aiohttp>=3.10.10,<4",
     # Stage 7.1 — Phase 7 web UI (ADR-016 + ADR-017). FastAPI app
     # at src/wobblebot/web/ served by uvicorn from cli/web; Jinja2
     # for server-rendered HTML; python-multipart for form POSTs

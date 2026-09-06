@@ -32,8 +32,22 @@ Design choices ratified in ``stage-5.1-design.md`` decision 8 + ADR-013:
 - The transport is concrete, not behind a ``TransportPort`` ABC. Only
   ``cli/operator`` consumes it; an abstraction would be speculative.
 - Error wrapping: ``DiscordTransportError`` wraps
-  ``discord.DiscordException`` and friends for callers who don't want
-  to import ``discord.py`` to handle errors.
+  ``discord.DiscordException`` **and** the transport errors of the HTTP
+  library underneath it (``aiohttp.ClientError``,
+  ``asyncio.TimeoutError``) for callers who don't want to import
+  ``discord.py`` to handle errors. Both halves are load-bearing:
+  discord.py's exception hierarchy does not cover its own transport
+  layer, so a name-resolution failure raises
+  ``aiohttp.ClientConnectorDNSError``, whose MRO terminates at
+  ``ClientError`` -> ``OSError`` and never reaches
+  ``DiscordException``. On 2026-09-05 an upstream-DNS outage sent
+  exactly that error past a ``DiscordException``-only clause, out of
+  ``cli/operator``'s notification forwarder and into a task nobody
+  awaits, where it sat for 10h11m while the daemon looked alive. This
+  is not a claim that every transport failure surfaces here —
+  discord.py's own reconnect loop absorbs most mid-session ones — only
+  that the ones reaching a call site are wrapped instead of escaping
+  raw.
 """
 
 from __future__ import annotations
@@ -45,6 +59,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import aiohttp
 import discord
 from pydantic import BaseModel, Field
 
@@ -126,9 +141,12 @@ class ReactionEvent(BaseModel):
 class DiscordTransportError(Exception):
     """Raised when a Discord transport operation fails.
 
-    Wraps protocol / API / channel-resolution failures so callers don't
-    need to import ``discord.py`` exception types. The ``__cause__``
-    chain preserves the original error for forensic debugging.
+    Wraps protocol / API / channel-resolution failures — both
+    ``discord.DiscordException`` and the ``aiohttp.ClientError`` /
+    ``asyncio.TimeoutError`` transport errors underneath it — so callers
+    need import neither ``discord.py`` nor ``aiohttp`` exception types.
+    The ``__cause__`` chain preserves the original error for forensic
+    debugging.
     """
 
 
@@ -264,7 +282,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         channel = await self._resolve_text_channel(channel_id)
         try:
             message = await channel.send(content=content)
-        except discord.DiscordException as exc:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise DiscordTransportError(
                 f"Failed to send message to channel {channel_id}: {exc}"
             ) from exc
@@ -304,7 +322,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             embed.set_footer(text=footer)
         try:
             message = await channel.send(embed=embed)
-        except discord.DiscordException as exc:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise DiscordTransportError(
                 f"Failed to send embed to channel {channel_id}: {exc}"
             ) from exc
@@ -330,7 +348,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         try:
             message = await channel.fetch_message(numeric_msg_id)
             await message.add_reaction(emoji)
-        except discord.DiscordException as exc:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise DiscordTransportError(
                 f"Failed to add reaction to message {message_id}: {exc}"
             ) from exc
@@ -355,7 +373,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 if self._bot_user_id is not None and str(message.author.id) == self._bot_user_id:
                     continue
                 messages.append(_inbound_from_message(message))
-        except discord.DiscordException as exc:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise DiscordTransportError(
                 f"Failed to fetch history for channel {channel_id}: {exc}"
             ) from exc
@@ -415,7 +433,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         embed.set_footer(text=f"id: {ref_id}")
         try:
             message = await channel.send(embed=embed, view=build_confirm_view(ref_id))
-        except discord.DiscordException as exc:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise DiscordTransportError(
                 f"Failed to send confirmation to channel {channel_id}: {exc}"
             ) from exc
@@ -429,6 +447,13 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         Reads the bot token from the env var named by
         ``config.bot_token_env_var``; raises ``DiscordTransportError`` if
         the env var is missing or empty.
+
+        Connect-time transport failures are wrapped too, not just
+        ``LoginFailure``: ``HTTPClient.static_login`` catches only
+        ``HTTPException`` and retries ``OSError`` only for ``errno in
+        (54, 10054)``, so a DNS failure at boot is neither caught nor
+        retried and would otherwise escape raw into whatever task owns
+        ``start()``.
         """
         token = os.environ.get(self._config.bot_token_env_var, "").strip()
         if not token:
@@ -445,6 +470,8 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             await client.start(token)
         except discord.LoginFailure as exc:
             raise DiscordTransportError(f"Discord login failed: {exc}") from exc
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise DiscordTransportError(f"Discord gateway connection failed: {exc}") from exc
 
     async def close(self) -> None:
         """Disconnect from the Gateway. Idempotent."""
@@ -484,7 +511,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         if channel is None:
             try:
                 channel = await client.fetch_channel(numeric_id)
-            except discord.DiscordException as exc:
+            except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 raise DiscordTransportError(
                     f"Channel {channel_id} could not be resolved: {exc}"
                 ) from exc
