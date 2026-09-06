@@ -30,6 +30,116 @@ fresh `[Unreleased]` heading created at that time.
 
 _Nothing yet._
 
+## [2.0.7] - 2026-09-05
+
+A reliability release. One incident, one root cause, one class of bug —
+found by watching the 2.0.6 soak, not by a test.
+
+### The incident
+
+A ~21-minute NAS **upstream-connectivity** outage (Pi-hole was up 8 days and
+logged `Connection error` against 1.0.0.1, 208.67.222.222 AND 8.8.8.8
+simultaneously) killed name resolution for every container on 2026-09-05,
+11:53:45 - 12:14:13 UTC. `cli/observe`, `cli/news` and `cli/live` failed soft
+and recovered. `cli/operator` did not: its notification forwarder died at
+11:57:20 and stayed dead for **10h11m** while the process stayed alive and its
+Discord transport reconnected at 12:26. Discord notification forwarding AND
+the heartbeat-alert monitor for every other daemon were dark for that whole
+window. Trading was unaffected (`cli/live` filled three DOGE orders at
+17:54-19:21, hours after the operator daemon died).
+
+The container reported `unhealthy` **591 consecutive times** and nothing acted
+on it, because `restart: unless-stopped` fires on process *exit*, not on
+healthchecks.
+
+### Root cause
+
+`aiohttp.ClientConnectorDNSError` is not a `discord.DiscordException` - its MRO
+ends `... -> ClientError -> OSError`. `adapters/kraken_exchange.py` wraps its
+HTTP library's base error (`except httpx.HTTPError`); `adapters/
+discord_transport.py` wrapped only discord.py's *domain* error. That single
+asymmetry is why four daemons survived and one died.
+
+The raw error passed straight through the correct, pre-existing per-row handler
+(`except (DiscordTransportError, StorageError)`), out of `run_poll_loop`, out
+of a bare `finally` that logged it at INFO, and into a Task nobody awaited -
+where, because the Task stayed referenced by a local, even Python's "Task
+exception was never retrieved" warning never fired. Proof it sat there for ten
+hours: `await` on a *cancelled* task raises `CancelledError`, yet the 22:13:42
+shutdown logged `ClientConnectorDNSError`.
+
+### Fixed
+
+- **The adapter now wraps transport errors, not just domain errors.** All
+  **seven** catch sites in `discord_transport.py` widened to
+  `(discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError)`. The
+  seventh is `start()`'s `except discord.LoginFailure`, which the first draft
+  of the plan missed entirely - a boot during an outage would still have leaked
+  raw aiohttp into the gateway task. `discord.LoginFailure` stays first so an
+  auth failure keeps its specific message.
+- **A loop that DIES is an ERROR; only a loop that STOPS is INFO.** The bare
+  `finally` in `_forwarder_loop` could not tell the two apart, which is why a
+  fatal event rendered as the same routine line a clean shutdown emits.
+- **Five background tasks are now supervised, not four.** `cli/operator`
+  created five and awaited none. The omitted one was the Discord gateway -
+  the worst zombie of the set, because `except DiscordTransportError` guarded
+  `await stop_event.wait()`, a position from which it can never observe an
+  exception stored on a task. The module's own `exit_code = 1` was therefore
+  *already unreachable* for exactly the failure it was written to catch. Gates
+  are per-task: any completion before shutdown is failure for the poll loops
+  and the gateway; only an *exceptional* completion is failure for the one-shot
+  history backfill, which finishes normally seconds after every boot.
+- **The shutdown cancel loop no longer aborts on the first corpse.** It caught
+  only `asyncio.CancelledError`, so awaiting an already-dead task re-raised its
+  stored exception and the remaining tasks were never cancelled. Latent before
+  (observable harm on 2026-09-05 was zero); routine once supervision lands,
+  which is why it ships in the same commit.
+- **`cli/web` had the same narrow-catch bug with a worse consequence** - an
+  escape propagated out of the `finally` *before* `safe_shutdown`, skipping
+  `_close_storages` and `kraken_http.aclose`. Deliberately **no**
+  exit-on-task-death there: a transient GitHub release-poll failure must never
+  bounce the operator's dashboard.
+- **`cli/operator`'s exit codes are documented** for the first time, and two
+  claims corrected while writing them: an unset bot-token env var lands on 1,
+  not 2, and there is no missing-credentials exit-2 path in that module.
+
+### Added
+
+- `aiohttp>=3.10.10,<4` as a declared direct dependency. The floor is not
+  `>=3.9`: `ClientConnectorDNSError` was added in 3.10.10, and the regression
+  test names it.
+
+### Process
+
+The plan was reviewed **before** implementation, per the ratified pre-deploy
+practice: 51 agents, 5 dimensions, 15 findings, 7 surviving three-lens
+refutation, and a completeness critic that overturned a kill the panel had made
+twice. **It found the plan wrong in five of its six layers** - a Layer 4
+prescription that raised `TypeError` on the repo's own interpreter, a Layer 2
+that caught nothing reachable (cut entirely), a Layer 5 that was a zero-line
+change as written, a misdiagnosed Layer 6, and three of five tests with no seam
+to bind to. Reviewing a diff catches a bad implementation; reviewing the plan
+caught a bad instruction that every correct implementation would have obeyed.
+
+All eight behaviours are mutation-verified: each was reverted in turn, its
+guarding tests were required to go red, and the tree was asserted
+byte-identical to HEAD after every restore. **8/8 caught.**
+
+### Known gap, not closed
+
+The healthcheck still has no actor. This release converts task-death into a
+process exit that `restart: unless-stopped` already handles; it does **not**
+address the "wedged-but-alive (stuck socket, blocked Ollama, deadlocked
+aiosqlite)" class `tools/healthcheck.py` was written for. Those still report
+unhealthy indefinitely with nothing reading it. An autoheal-style actor touches
+~30 stacks and belongs to the reserved 2.1.0 deployment & lifecycle-integrity
+phase.
+
+Also unmeasured: the root-cause story requires at least one unforwarded
+notification row at 11:57:20 for `send_embed` to have been called at all. The
+adapter's hole is proven independently of which call hit it, but that specific
+trigger instant is inferred, not measured.
+
 ## [2.0.6] - 2026-09-04
 
 A correctness release with no new features. Every item is either a defect

@@ -2699,6 +2699,83 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     the mutation-verified unit tests, and this receipt says so rather than
     claiming a production confirmation it has not earned.
 
+17. **`2.0.7` — a dead background task is now a crash, not a zombie**
+    ✅ 2026-09-05. Found by watching the 2.0.6 soak, not by a test.
+
+    **The incident.** A ~21-minute NAS upstream-connectivity outage
+    (11:53:45–12:14:13 UTC) killed name resolution for every container.
+    Pi-hole was NOT the cause — it was up 8 days and logged
+    `Connection error` against 1.0.0.1, 208.67.222.222 and 8.8.8.8
+    simultaneously, i.e. the NAS lost its upstream. `cli/observe`,
+    `cli/news` and `cli/live` failed soft and recovered; `cli/operator`'s
+    forwarder died at 11:57:20 and stayed dead **10h11m**, process alive,
+    Discord transport reconnected at 12:26, container `unhealthy` 591
+    consecutive times with nothing acting because `restart:
+    unless-stopped` fires on process exit, not on health. Notification
+    forwarding and the heartbeat-alert monitor for EVERY other daemon
+    were dark. Trading unaffected — `cli/live` filled three DOGE orders
+    at 17:54–19:21, hours after the operator died.
+
+    **This recurs.** Pi-hole logged five more upstream failures the same
+    day (NTP timeouts at 13:44, 17:56, 18:56, 19:56, 21:56), so this is
+    not a freak event and the fragility would have fired again.
+
+    **Root cause, measured:** `aiohttp.ClientConnectorDNSError` is not a
+    `discord.DiscordException` (MRO ends `... -> ClientError -> OSError`).
+    `kraken_exchange.py` wraps its HTTP library's base error;
+    `discord_transport.py` wrapped only discord.py's domain error. Four
+    daemons survived, one died. Proof the exception sat unretrieved for
+    ten hours: `await` on a *cancelled* task raises `CancelledError`, yet
+    the 22:13:42 shutdown logged `ClientConnectorDNSError`.
+
+    **Shipped:** all SEVEN adapter catch sites widened (the 7th, inside
+    `start()`, was missed by the plan's first draft — a boot during an
+    outage would still have leaked); a loop that DIES logs ERROR and
+    re-raises while only a loop that STOPS stays INFO; FIVE supervised
+    tasks with per-task gates (the gateway was the omitted one, and
+    `except DiscordTransportError` guarding `stop_event.wait()` meant the
+    module's own `exit_code = 1` was already unreachable for the failure
+    it was written to catch); a shutdown cancel loop that no longer
+    aborts on the first corpse; the same narrow-catch fix in `cli/web`,
+    where the consequence was worse (an escape skipped `safe_shutdown`
+    entirely) but where exit-on-death is deliberately NOT applied;
+    `cli/operator`'s exit codes documented for the first time.
+
+    **The plan review earned its place — again, and harder.** 51 agents,
+    5 dimensions, 15 findings, 7 surviving three-lens refutation, plus a
+    completeness critic that OVERTURNED a kill the panel had made twice.
+    It found the plan wrong in **five of its six layers**: Layer 4's
+    prescribed `asyncio.wait({stop_event.wait(), *tasks})` raises
+    `TypeError: Passing coroutines is forbidden` on 3.13 (reproduced
+    independently before accepting it) while the correct pattern sat 976
+    lines above it in the same file; Layer 2 would have caught nothing
+    reachable and was CUT; Layer 5 as written was a zero-line change;
+    Layer 6 was misdiagnosed with its stakes inverted; and three of five
+    proposed tests had no seam to bind to, which is why Layers 4 and 5
+    ship as extracted module-level helpers. Reviewing a diff catches a
+    bad implementation; reviewing the PLAN caught a bad instruction that
+    every correct implementation would have obeyed.
+
+    **Mutation-verified 8/8**, serially in the main tree with
+    `git checkout` restore and a byte-identical-to-HEAD assertion after
+    every mutant — not in parallel worktrees, because the contamination
+    the worktree rule guards against comes from concurrency, and a
+    worktree would have silently imported `wobblebot` from the main tree
+    anyway under an editable install. Gates re-run by exit code:
+    black/isort/mypy/pylint 0, pytest 3924 passed.
+
+    **Known gap, stated rather than closed:** the healthcheck still has
+    no actor. This release turns task-death into an exit that
+    `unless-stopped` handles; it does nothing for the wedged-but-alive
+    class `tools/healthcheck.py` was written for. Deferred to the
+    reserved 2.1.0 deployment & lifecycle-integrity phase.
+
+    **Correction to the 2.0.6 soak report:** it claimed zero ERROR and
+    zero traceback, which was true for the window actually watched
+    (21:28–03:20) and not for the day. The outage above landed at 11:53,
+    after the watch stopped. The report was not wrong; it was narrower
+    than it sounded.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
