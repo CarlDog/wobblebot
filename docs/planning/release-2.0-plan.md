@@ -472,6 +472,39 @@ prompt sync. A receipt makes that visible at boot instead of at diagnosis.
   presentations, with stable finding IDs, evidence, redaction, and
   deterministic exit codes. Read-only by construction.
 
+- **A healthcheck actor — and it must NOT be uniform.** Every service got a
+  `HEALTHCHECK` in P3 slice 8 (v1.1 register, DONE 2026-08-09) specifically to
+  catch "wedged-but-alive." Nothing reads the result. Docker does not restart on
+  health, only on process exit, so an unhealthy container stays unhealthy
+  forever. **Measured 2026-09-05:** `wobblebot-operator` reported
+  `FailingStreak: 591` — 591 consecutive failed probes, ~10 hours — with
+  `RestartCount: 0`. The healthcheck was right 591 times and nothing acted.
+  2.0.7 closes only the sub-case where a *task* dies (it now exits, and
+  `unless-stopped` handles the rest); a genuinely wedged process is untouched.
+  **Hard constraint: the actor must page, never restart, for `live`, `harvest`
+  and `tools`.** Those three are `restart: "no"` precisely because their exits
+  encode decisions rather than faults — a loss-cap trip is exit 1 — so a uniform
+  "restart anything unhealthy" actor would restart a loss-capped trader and
+  defeat the risk control. The v1.1 register already names this hazard in the
+  loss-cap E2E entry: *"a watchdog auto-restarts into the losing market."*
+  **This likely DOES need an ADR, unlike the rest of this slice**, and the
+  reason is a direct conflict with Slice 1: an autoheal-style container needs
+  the Docker socket, which hands a new component full control of the daemon on
+  a stack whose 2.1 theme is capability *isolation*. Resolve that tension in
+  the ADR rather than in the implementation.
+- **Alerting is single-homed in the daemon most likely to be reporting on
+  others.** The heartbeat-alert monitor that watches all six daemons runs
+  *inside* `cli/operator`. When `cli/operator` died on 2026-09-05, the watchdog
+  died with it and could not report its own death — the failure was found by a
+  human looking at a container list ten hours later. The compound case is the
+  one that matters: **had `cli/live` wedged in the same window, nothing would
+  have paged.** Options, in rough preference order: hoist the monitor into
+  `cli/maintenance` (already `unless-stopped`, no money authority, and its
+  daily cadence would need tightening); give it a dead-man's-switch that an
+  external observer notices; or let each daemon assert on its peers so no
+  single death silences the fleet. Decide with Slice 4's notification outbox,
+  since both concern delivery guarantees rather than detection.
+
 ### 5e. Slice 5 — Ollama adapter hardening (M, can run in parallel) · possible **ADR-014 amendment**
 
 Per the Ollama assessment's own A→D ordering, and classed by that assessment
