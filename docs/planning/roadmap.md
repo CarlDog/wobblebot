@@ -2776,6 +2776,44 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     after the watch stopped. The report was not wrong; it was narrower
     than it sounded.
 
+    **Ceremony receipts:** main CI green on `6883153` before tagging — and
+    the individual JOBS checked, not the run rollup (`test=success`,
+    `build-and-push=success`), because an aggregate green can hide a skipped
+    job. One process note worth keeping: the first CI poll used
+    `gh run list --limit 3` and silently dropped `CI & Publish to GHCR`
+    entirely, reporting three unrelated successes as if they were the answer.
+    That is the same "silence is not success" shape as the incident being
+    fixed, in the monitoring of its own release. Re-polled naming the workflow
+    explicitly and refusing to report until it was present AND complete.
+    Annotated tag `v2.0.7`; tag build run 34003972028; GitHub Release at
+    `releases/tag/v2.0.7`.
+
+    **Deployed 2026-09-06 01:33 UTC** on operator instruction: `IMAGE_TAG`
+    `2.0.6` -> `2.0.7` on file-based stack 158, image re-pulled, all 8
+    containers recreated, all 8 `healthy` after the start period. Verified AT
+    THE CONTAINER, not from the redeploy response:
+    `org.opencontainers.image.revision` =
+    `688315321a86c09f0967dfefdaf483e27c24e1c5` (exactly the commit `v2.0.7`
+    points to), `org.opencontainers.image.version` = `2.0.7`, image
+    `sha256:5857d979`. `cli/live`'s `RestartPolicy.Name` re-confirmed as
+    `"no"` — which matters more than usual this release, since the whole
+    supervision change assumes `unless-stopped` on the six that have it.
+
+    `cli/live` booted clean: live TradeVolume fee rates (0.4%/0.8%) across all
+    six symbols, `restored 2 offside episode(s) from engine_state: BTC/USD,
+    ETH/USD`, session start at `max_session_loss_usd=150`, grids re-laid —
+    SOL 4/6, DOGE 5/6, ADA 3/6, XRP 0/6 starved on `max_per_coin_inventory_usd`
+    as before. No traceback.
+
+    **The fix is NOT yet proven in production, and this receipt says so.**
+    Nothing has exercised `_supervise_background_tasks`: that needs a
+    background task to actually die, which needs another upstream outage. The
+    8/8 mutation pass is the evidence until then — a clean boot is not. Given
+    Pi-hole logged five more upstream failures on 2026-09-05 alone, the real
+    test will likely arrive on its own within days; the thing to check when it
+    does is whether the operator container exits and comes BACK, rather than
+    sitting unhealthy.
+
 ## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
 
 **Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
