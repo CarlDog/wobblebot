@@ -571,6 +571,47 @@ next time its file is touched (trigger noted where sharper):
   with a `fill_on_place: bool` seam on `MockExchangeAdapter` next time either file changes.
 - **`_compute_atr_series` two-line pass-through** in `ta_metrics.py` — inline on next touch.
 
+### 2.0.7-close follow-up queue (2026-09-05 — from the plan + diff reviews)
+
+Surfaced by the two adversarial reviews that gated 2.0.7 and deliberately left out of it.
+Ordered by consequence, not effort. The first two are the ones a reviewer flagged as
+capable of silently reproducing the incident 2.0.7 exists to fix.
+
+- **`must_run` composition is pinned by nothing** (highest value here). Dropping
+  `forwarder_task` from `_supervise_background_tasks`'s `must_run` tuple in
+  `cli/operator.py` passes mypy, pylint, all 3924 tests and both new supervision test
+  modules — and silently reproduces the 2026-09-05 zombie verbatim. Every behaviour of
+  the supervisor is mutation-verified EXCEPT which tasks are handed to it. Fix is one
+  test asserting `set(must_run) | set(one_shot)` equals the elements of the
+  `background_tasks` tuple — catches both directions (a task added to the tuple but not
+  supervised, and vice versa) and cannot go stale the way a hard-coded name allowlist
+  would. Raised by the diff review's test-honesty dimension; the finding was killed 2-1
+  on severity, but this half survived every refuter and the completeness critic endorsed
+  the union-equality form over the original remedy.
+- **`sqlite_storage.py:1455` — an unparseable row escapes as `ValidationError`, and the
+  daemon it reaches does not come back.** The row parse
+  (`[row_to_pending_command(row) for row in rows]`) sits OUTSIDE the adapter's existing
+  `try`, so a `ValidationError` bypasses the `StorageError` contract every one of the six
+  call sites guards. The dangerous call site is `cli/live.py:1199`, whose
+  `except WobbleBotPortError` does not catch it — on the one daemon that is
+  `restart: "no"` and therefore stays down. Fix is one line: move the comprehension
+  inside the try. Unreachable today (no code path writes a malformed row), which is why
+  it is queued rather than shipped — but scope the fix to include `cli/live`, not just
+  the adapter. Found in a DISSENT: the finding it came from was killed 3-0, and the
+  refuter who killed it identified this sharper, more dangerous version while doing so.
+- **Two sibling loops still carry the anti-pattern 2.0.7 names.** `_ttl_expirer_loop`
+  (`cli/operator.py:324-327`) and `_heartbeat_alert_loop` (`:527-530`) kept the bare
+  `try/finally` + INFO shape that the forwarder fix replaced — the exact mechanism the
+  new comment calls out as the 2026-09-05 misdiagnosis. Non-blocking because Layer 4
+  announces their death at ERROR regardless, so this is inconsistency rather than a hole.
+  Ship on the next touch of either.
+- **`adapters/discord_confirm_view.py:234`** — `except discord.DiscordException:` over
+  `interaction.response.send_message`, i.e. this release's own defect class (a
+  domain-only catch over an aiohttp-backed call) left open in the other Discord-touching
+  file. Pre-existing, not introduced by 2.0.7. It cannot kill the daemon: the raise
+  escapes into discord.py's `View` item-callback machinery, which routes to
+  `View.on_error` and logs. Widen to match the adapter's tuple on the next touch.
+
 ### Auto-action cluster (needs P4 outcome data + own ADRs)
 - **`cli/auto-tune` daemon** — operator demonstrates advisor trust + a no-value-for-checks use case + ADR removing the operator-trigger.
 - **Auto-pause on news-role HIGH risk** — after the P4 evaluator + calibrated threshold + **ADR-002 ratified-with-exception**; consumes the P1 Kraken-status feed.
