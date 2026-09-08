@@ -375,7 +375,7 @@ historical pre-review evidence for `fff8f956d749a115225abe880aa77c5dd767aada`.
   matches the tested local image.
   This inspection used `--network none --read-only` and started no daemon.
 
-**C5-R1 remains open for deployment review.** The first tag attempt returned
+**C5-R1 at publication (historical): open for deployment review.** The first tag attempt returned
 **1 failed, 3,990 passed, 6 skipped, 30 deselected**: pytest collected an aiosqlite
 worker-thread `Event loop is closed` warning during a read-only test. Its write
 rejection assertion did not fail. Independent review supports a shutdown timing
@@ -395,6 +395,52 @@ not deploy production, close existing issues, merge dependency PRs, schedule a
 monitor or accept the phase. Current production backups, the concrete file-stack
 diff, live config/key-scope checks, authorized finite observation and explicit
 2.0.x acceptance remain before N0/N1.
+
+**C5-R1 local repair ✅ 2026-09-08 UTC:** commit `b6d9649ed81cccd4f7ca234ea943cf7c215d4fda`
+repairs ordinary failed-open shutdown in both `SQLiteStorageAdapter` connection
+paths. The adapter retains the awaitable connection and joins its already-stopping
+worker before returning the original database error. The wait is bounded at five
+seconds; timeout or an unknown worker layout reports an explicit cleanup error
+with the original cause. Successful opens, schema behavior, read-only protection
+and initial-open cancellation retain their existing behavior. The helper supports
+both the legacy `Connection(Thread)` and modern private `_thread` layouts.
+
+The controlled regression holds a real worker at shutdown, closes the caller's
+loop immediately after failed connect, and observes worker state before test
+cleanup. Removing the repair reproduces `Event loop is closed` on both the missing
+read-only file and invalid writable path. This demonstrates the mechanism; the
+original tag-CI thread's exact ownership remains unproven. The first failure and
+single unchanged retry remain preserved in the publication receipt.
+
+- **Windows / Python 3.13.14 / aiosqlite 0.22.1:**
+  4002 passed, 30 deselected in 170.65s (0:02:50); **87.64%** coverage. `python -m pip check`,
+  `python -m black --check src/ tests/`, `python -m isort --check-only src/ tests/`,
+  `python -m mypy src/` and `python -m pylint src/` pass. Full `python -m pytest -ra`
+  used strict-config and mandatory tagged-upgrade gates with no operator-file skips.
+- **Installed Linux / Python 3.14.7 / aiosqlite 0.22.1:**
+  3996 passed, 6 skipped, 30 deselected in 93.77s (0:01:33); **87.61%** coverage. The same static commands,
+  strict-config and mandatory tagged-upgrade gates pass. The evidence names the
+  absent operator-file skips. The offline mock-exchange/operator/simulator lane
+  reports **10 passed in 19.71s**. Runs used `--network none`, disposable
+  fixtures and no operator credentials; wheel sources match the committed source.
+- **Compatibility:** selected storage/lifecycle tests pass against actual isolated
+  aiosqlite 0.20.0, 0.21.0 and 0.22.0 imports; each run reports **51 passed**.
+  The installed 0.22.1 lane also passes the selected tests. Older-version results
+  establish lifecycle compatibility, not the modern unawaited-stop defect.
+  Version 0.22.0 already awaits shutdown, which the corrected test barrier permits.
+- **Independent review and test honesty:** no remaining actionable findings.
+  All **4/4** requested mutations are caught, producing the five intended failing
+  cases: both connection paths, timeout detection, unsupported worker shape and
+  unstarted-worker handling. Baseline and restored runs each pass all **5 tests**;
+  isolated imports and byte-for-byte restoration are verified.
+
+[The local repair evidence](../release/c5-r1-local-repair-evidence.json) records
+the source, local image, exact test outcomes and harness corrections. This closes
+the authorized **local C5-R1 repair**. Published `v2.0.8` and its GHCR image still
+contain the earlier source; no new release or production deployment occurred.
+Publish and verify an artifact containing this repair before selecting it for C5
+deployment. Current backups, the concrete stack diff, live config/key-scope checks,
+authorized finite observation and explicit phase acceptance remain separate gates.
 
 ## Post-v2.0 Security Maintenance
 
