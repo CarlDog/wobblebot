@@ -480,7 +480,7 @@
               {
                 "completedAt": "2026-09-08T05:59:23Z",
                 "conclusion": "success",
-                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "name": "Tests (pytest \u2014 unit; integration excluded by addopts)",
                 "number": 9,
                 "startedAt": "2026-09-08T05:56:51Z",
                 "status": "completed"
@@ -622,7 +622,7 @@
               {
                 "completedAt": "2026-09-08T06:06:30Z",
                 "conclusion": "success",
-                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "name": "Tests (pytest \u2014 unit; integration excluded by addopts)",
                 "number": 9,
                 "startedAt": "2026-09-08T06:04:01Z",
                 "status": "completed"
@@ -853,7 +853,7 @@
               {
                 "completedAt": "2026-09-08T06:18:14Z",
                 "conclusion": "success",
-                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "name": "Tests (pytest \u2014 unit; integration excluded by addopts)",
                 "number": 9,
                 "startedAt": "2026-09-08T06:15:48Z",
                 "status": "completed"
@@ -1238,7 +1238,7 @@
               {
                 "completedAt": "2026-09-08T06:11:34Z",
                 "conclusion": "failure",
-                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "name": "Tests (pytest \u2014 unit; integration excluded by addopts)",
                 "number": 9,
                 "startedAt": "2026-09-08T06:09:26Z",
                 "status": "completed"

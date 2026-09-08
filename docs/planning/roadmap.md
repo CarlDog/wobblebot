@@ -344,7 +344,8 @@ merged reviewed head `28b58203c82db0d98e077a41a6c2679fea33bc58` as
 The annotated `v2.0.8` tag and [GitHub Release](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.8) point to that
 merge commit. [The publication evidence](../release/2.0.8-publication-evidence.json)
 preserves the final local gates, exact named workflow jobs and artifact readback.
-The earlier `fff8f95` attachment remains historical pre-review evidence.
+The [earlier local attachment](../release/2.0.8-local-evidence.json) remains
+historical pre-review evidence for `fff8f956d749a115225abe880aa77c5dd767aada`.
 
 - Final **Windows / Python 3.13.14**: 3997 passed, 30 deselected in 126.80s (0:02:06);
   **87.62%** coverage. `python -m pip check`, `python -m black --check src/ tests/`,
