@@ -329,8 +329,19 @@ async def _ttl_expirer_loop(
 
     try:
         await run_poll_loop(_one_cycle, interval_seconds=poll_seconds, stop_event=stop_event)
-    finally:
         _LOGGER.info("ttl expirer stopped")
+    except asyncio.CancelledError:
+        _LOGGER.info("ttl expirer stopped (cancelled)")
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        _LOGGER.error(
+            "ttl expirer DIED (%s): %s",
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
+            extra={"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        raise
 
 
 # --------------------------------------------------------------------- #
@@ -489,8 +500,8 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
 
     Emits via :func:`notify` into the notifications table; the
     forwarder loop (2s) pushes the rows to Discord. A failed freshness
-    read is logged and skipped — the alerting layer must never crash
-    the operator daemon.
+    read is logged and retried next cycle. Unexpected failures propagate
+    to the supervisor so a dead monitor cannot remain silently offline.
     """
     tracker = _HeartbeatAlertTracker(muted=muted)
     _LOGGER.info(
@@ -532,8 +543,19 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
 
     try:
         await run_poll_loop(_one_cycle, interval_seconds=check_seconds, stop_event=stop_event)
-    finally:
         _LOGGER.info("heartbeat alert monitor stopped")
+    except asyncio.CancelledError:
+        _LOGGER.info("heartbeat alert monitor stopped (cancelled)")
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        _LOGGER.error(
+            "heartbeat alert monitor DIED (%s): %s",
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
+            extra={"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        raise
 
 
 # --------------------------------------------------------------------- #

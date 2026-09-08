@@ -41,6 +41,8 @@ fresh `[Unreleased]` heading created at that time.
   readers. The live loop keeps ticking and reports blocked command dispatch until
   the row is repaired; approvals are neither discarded nor dispatched partially.
   Error tracebacks omit the malformed payload.
+- Operator TTL-expirer and heartbeat-monitor failures now log ERROR and propagate
+  to supervision; cancellation and normal shutdown retain distinct INFO messages.
 
 ## [2.0.7] - 2026-09-05
 

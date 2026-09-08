@@ -13,7 +13,7 @@ with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-2
 receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
 independent reviewers' findings were accepted into the plan (gate ordering and
 old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
-the 57-test focused starvation/offside baseline. C1 and C2.1-C2.2 are complete locally. Release,
+the 57-test focused starvation/offside baseline. C1 and C2.1-C2.3 are complete locally. Release,
 deployment, tracker status changes and phase closure remain at their later gates;
 2.1 implementation has not begun.
 
@@ -50,7 +50,17 @@ with a formatted-traceback sentinel regression. The reviewer confirmed resolutio
 Five isolated behavior mutants were caught with restored tests green. Final full
 suite: **3,971 passed, 29 deselected** in 158.15 seconds; Black/isort, mypy (153
 source files) and pylint (10.00/10) pass with upgrade/config gates armed. C2.3-C2.4
-remain next. No production data was repaired or commands executed.
+remain next. No production data was repaired or commands executed. Commit: `e29c483`.
+
+**C2.3 operator-loop terminal logging ✅ 2026-09-08 UTC:** TTL expiry and
+heartbeat monitoring now match the forwarder's normal/cancel/failure contract.
+Unexpected failures log ERROR with traceback and propagate to supervision;
+expected port failures keep their existing retry behavior. The regression first
+failed on four old-code cases; 36 focused tests pass on the repair. Independent
+review found no defect; all six isolated logging/propagation mutants were caught.
+Full suite: **3,977 passed, 29 deselected** in 154.96 seconds. Black/isort, mypy
+(153 source files) and pylint (10.00/10) pass with upgrade/config gates armed.
+C2.4 is the remaining runtime repair.
 
 ## Post-v2.0 Security Maintenance
 
