@@ -18,7 +18,9 @@ repairs are complete locally. C3/C4 evidence is prepared in the
 [audit packet](2.0-closeout-audit.md). The operator accepted E01-E03 with
 "continue" on 2026-09-08 and authorized C5 release preparation. Publication,
 deployment, tracker status changes and phase closure remain at their later gates;
-2.1 implementation has not begun.
+2.1 implementation has not begun. C5 local release preparation is now verified;
+the final receipt below and [publication handoff](../release/v2.0.8-upgrade.md)
+identify the candidate awaiting source/PR/tag publication approval.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a
@@ -250,6 +252,75 @@ metadata) fail the strengthened test; its baseline and restored cases pass.
 The independently reviewed image rehearsal now also requires a non-trade ledger
 sentinel and exact logical-content comparison of restored data. These checks
 do not yet establish candidate-image or production acceptance.
+
+**C5 Linux finding and bounded repair — 2026-09-08 UTC:** the first installed
+Linux/Python 3.14.7 candidate-wheel run passed static checks but returned **1 failed,
+3,988 passed, 6 skipped, 30 deselected** in 96.71 seconds. The failure was the
+HTTP healthcheck's unclosed `HTTPError` response, exposed by Python 3.14's
+resource-warning handling. A deterministic response-closure test failed before
+the fix and passes after it; the behavior-removal mutant also fails in the isolated
+worktree, with baseline/restored tests passing. The generated tagged-upgrade code
+now uses an angle-bracket virtual filename, eliminating a coverage attempt to read
+a nonexistent source file without suppressing warnings. The affected Linux lane
+passes **11 tests** in 5.82 seconds with coverage enabled and neither warning.
+Independent review found no further repair defect. Full final gates follow.
+
+**C5 local release preparation ✅ 2026-09-08 UTC:** package, tools and tests are
+frozen at `fff8f956d749a115225abe880aa77c5dd767aada` (2.0.8). The final receipt
+changes documentation only. [The evidence attachment](../release/2.0.8-local-evidence.json)
+retains complete image identities, environment versions, commands, skips and
+rehearsal results; [the handoff](../release/v2.0.8-upgrade.md) contains the proposed
+PR/Release text, publication sequence and later deployment/rollback gates.
+
+- **Windows / Python 3.13.14:** `pip check`, `black --check src/ tests/`,
+  `isort --check-only src/ tests/`, `mypy src/` and `pylint src/` pass in the isolated
+  current-manifest verifier. Black checks 403 files, mypy checks 153 source files,
+  and pylint scores 10.00/10. Full `python -m pytest` with mandatory upgrade and
+  strict config flags: **3,996 passed, 30 deselected**, 165.18 seconds,
+  **87.62%** coverage. No operator-file checks skipped.
+- **Linux / Python 3.14.7:** the same static commands pass. Full
+  `python -m pytest -ra --junitxml=/evidence/linux-pytest.xml`:
+  **3,990 passed, 6 skipped, 30 deselected**, 98.84 seconds, **87.59%** coverage.
+  Every skip is an explicitly absent operator `.env`/`settings.yml` check in
+  `tests/config/test_schema_drift.py`; the attachment names each test. The
+  v1.0.0 and v2.0.7 tagged upgrade gates ran with
+  `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1`. No resource or coverage warning remains.
+  The selected mock-exchange/operator/simulator integration command
+  (`python -m pytest -m integration -q --no-cov` with the three paths in the
+  attachment) passes **10 tests** in 20.90 seconds.
+- **Artifact identity:** the candidate was built from `git archive` of the frozen
+  commit, with installed version 2.0.8 and no host source/settings/credentials
+  mounted. Local image ID:
+  `sha256:8ac6ca7188bd44edffeff9a13da4ff1a50513d55e2049d975a4e0bb37adb43df`.
+  The test-only derivative preserves every installed runtime version; package
+  Python files and the packaged healthcheck match the frozen source byte-for-byte.
+  This is a local image identity, not a published GHCR digest.
+- **Actual prior-image compatibility:** the published 2.0.7 image at digest
+  `sha256:7aab19e0eafbf5ba778f5729501d045a5cb0b1b36044c769cd5a6dfab994f513`
+  matches tag commit `688315321a86c09f0967dfefdaf483e27c24e1c5`. Its installed
+  distribution is 2.0.7 while its imported version remains the historical 2.0.5
+  defect. All **six** isolated stages pass against the final candidate: seed/online
+  backup, upgrade/reconnect, prior insert/upsert/reconnect, re-upgrade/fresh write,
+  restore/prior read and restore/candidate upgrade. Every stage preserves approved
+  commands, queued notifications and the financial sentinels, including a
+  fee-bearing non-trade ledger row. Restored old engine fields match the backup;
+  prior writes retain raw diagnostics that the new reader correctly suppresses.
+  All fixture integrity checks pass. Networking is disabled; database writes use
+  disposable named volumes and container writable layers are ephemeral. No
+  production database or external effect is used.
+- **Review and guard evidence:** independent plan/safety/completeness reviews
+  resolved ledger/restore coverage and the pause-authority wording. The healthcheck
+  repair has a failing old-code regression, caught isolated mutation and passing
+  restored lane. The version-contract mutants were recorded in the earlier C5
+  receipt. Remaining changes are documentation/evidence only.
+
+Remote `main` was reverified at `aff47fc`; v2.0.8 remains unused. E01-E03 are
+accepted with their existing owners/triggers. **Publication is awaiting explicit
+approval:** push/open PR, merge after named checks, tag/Release and verify the
+published image. No source was pushed, issue/PR status changed, image published,
+production service deployed or monitor scheduled. Current production backups,
+live config/key-scope checks, final tag-image identity and authorized observation
+remain deployment gates. Formal 2.0.x acceptance and N0/N1 entry remain outstanding.
 
 ## Post-v2.0 Security Maintenance
 
