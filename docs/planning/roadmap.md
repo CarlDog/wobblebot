@@ -5,6 +5,234 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Ollama Cloud provider — local ✅ 2026-09-08 UTC:**
+the operator authorized the distinct `ollama_cloud` provider for single-advisor,
+MoE expert/arbitrator and fallback targets. [ADR-045](../architecture/adr-045-ollama-cloud-provider.md)
+records native authenticated `POST https://ollama.com/api/chat`, fixed endpoint,
+redirect refusal, shared retry/cost/session/trace plumbing and local JSON validation.
+No local Ollama server is involved. Provider-call outcomes and token usage persist
+under `ollama_cloud`; confirmed usage stays billed when the answer is rejected.
+Unsupported operator/gremlin configurations are rejected rather than silently routed.
+
+Initial verified constant-rate IDs are `gpt-oss:120b`, `gpt-oss:20b`,
+`qwen3.5:397b`, `gemma4:31b`. Rates/cache prices come from Ollama's current official
+pricing page and model catalog. Plan credit consumption counts toward the shared
+USD budget; monthly fees and credit purchases do not. Unknown models fail before
+HTTP. DeepSeek's peak/off-peak pricing is not implemented. No exact current-primary
+equivalent was found, so provider support changes no seat or fallback selection.
+All active YAML values are unchanged; commented setup guidance is in both repository
+settings files. The ignored operator env gained only an inert key placeholder.
+Compose forwards the optional `OLLAMA_API_KEY` only to `advise` and `tools`.
+The smoke-check and cost-report tools recognize the provider; no live probe ran.
+
+The ledger provider CHECK is widened in a serialized, transactional rebuild that
+preserves original column order, data, constraints, indexes and triggers. Tagged
+v2.0.9 upgrade, prior-writer compatibility, repeat/concurrent opens and injected
+failure rollback pass. Read-only opens do not migrate. An initial full run exposed
+an unconstrained legacy test ledger being rejected; the migration now correctly
+leaves that already-compatible shape alone. Its failed setup also caused a secondary
+unclosed-connection warning; the corrected focused and full runs pass without it.
+Old application readers cannot deserialize new Cloud rows after activation; the
+[setup guide](../implementation/ollama-cloud.md) documents the rollback boundary.
+
+Offline native-adapter/workflow tests cover authentication, redirects, usage/cache
+normalization, thinking accounting, malformed/truncated output, missing pricing,
+bounded retries, cost denial, cancellation, role/context retention, provider order,
+all-cloud exhaustion to heuristic and next-scheduled-evaluation primary recovery.
+The focused protocol/workflow/migration/tools/failure/config command passed **119
+tests** before the final gremlin restriction; the follow-up config/tools command
+passed **43**, and the corrected legacy-ledger/upgrade/transfer command passed **33**.
+
+Final full verification on local `main` based on `15679b1`, Python 3.13.14:
+
+```powershell
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& tmp/c4-environment/Scripts/python.exe -m pytest -q --tb=short
+```
+
+**4224 passed, 30 integration tests deselected**, 138.26 seconds.
+Black `--check src/ tests/ tools/run_cloud_check.py tools/show_llm_costs.py` and
+isort `--check-only` on the same paths pass (422 files checked by Black).
+Mypy `src/` passes (158 source files); pylint `src/` passes at 10.00/10, with
+changed config/migration modules rechecked after final fixes. `git diff --check`
+passes. Earlier uncommitted fallback/cap/layout work is preserved and covered by
+the full suite. No paid calls, activation, commit/push, NAS deployment, live ledger
+migration, phase acceptance or G6 entry occurred.
+
+**Equivalent-cloud fallback order — local ✅ 2026-09-08 UTC:**
+the operator clarified that the previously selected first cloud fallback should
+become the last LLM choice, after an equivalent model on another cloud route when
+available. [ADR-043's amendment](../architecture/adr-043-llm-fallbacks.md) and the
+[seat register](../reference/advisor-seats.md#fallback-candidates) now record
+primary → nominal cloud equivalent → previous cloud backup → heuristic. Missing
+equivalent slots are skipped. Local Ollama fallback presets are superseded and
+removed; existing primary seats and the generic local adapter remain intact.
+
+The authenticated Atlas model catalog returned 118 entries. It lists/prices
+`anthropic/claude-haiku-4.5-20251001` and `anthropic/claude-sonnet-4.6`, but both
+report `is_ready: false`; no functioning endpoint or identical model behavior is
+claimed. Haiku is preselected before the operator news/arbitrator backups; Sonnet
+matches the example's generic quant/arbitrator primaries. GPT-5 mini/4o and Gemini
+2.0 Flash had no catalog matches, and Grok already uses Atlas. Ollama Cloud's
+19-entry catalog had no exact primary matches; no direct-cloud adapter was added.
+The two Atlas prices/cache-read rates are now registered from catalog USD/token
+data, not inferred from native-provider prices. Catalog inspection was read-only;
+no prompts or paid inference ran. All fallback lists remain disabled pending
+availability and role validation.
+
+All ten commented target presets per file now contain cloud-only alternatives.
+Their previous first cloud backup is preserved as the final item. Both settings
+files select `engine: cascade` and `config/heuristic/quant.yml` at the base; every
+supplied profile inherits or already selects that engine. Those two fields are
+the only active YAML changes in this follow-up. Models, primary inference settings,
+budgets, safety values and profile names are unchanged. Clear heuristic guards
+still resolve first; exhausted cloud routes return the heuristic, and the next
+normal scheduled non-guard evaluation probes the primary. No extra polling or
+permanent model switch is introduced.
+
+Eight new offline cases exercise native/equivalent/final success, stopping order,
+prompt/arbitrator context, role and attempt metadata, catalog billing, shared cap
+denial, all-cloud failure to heuristic and next-evaluation primary recovery. The
+tests forbid local Ollama construction. The targeted cloud-equivalent/pricing
+command passed **48 tests** in 0.54 seconds:
+
+```powershell
+& tmp/c4-environment/Scripts/python.exe -m pytest tests/cli/test_advisor_cloud_equivalents.py tests/services/test_llm_pricing.py tests/services/test_llm_pricing_freshness.py --no-cov -q --tb=short
+```
+
+Final full validation on local `main` based on `15679b1`, Python 3.13.14:
+
+```powershell
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& tmp/c4-environment/Scripts/python.exe -m pytest -q --tb=short
+```
+
+**4,165 passed, 30 integration tests deselected**, 136.12 seconds. Black
+`--check src/ tests/` (414 files), isort `--check-only src/ tests/`, mypy `src/`
+(156 files), pylint `src/` (10.00/10) and `git diff --check` pass. All 20 actual
+commented presets parsed/priced, and all six configurations per file validated
+with candidates enabled only in memory for the selected mode. No commit/push,
+NAS deployment, model activation, G6 entry or phase acceptance occurred.
+
+**Counter-cap repair and settings layout — local ✅ 2026-09-08 UTC:**
+the operator authorized the first two follow-ups from
+[ADR-044](../architecture/adr-044-settings-layout-and-policy-authority.md).
+`GridEngine` now resolves quantity once and charges price × quantity in all five
+USD cap checks before passing that same amount to placement. Initial sizing and
+executed counter quantities are preserved. Order-count and BUY-only spend/inventory
+semantics are unchanged. A higher-priced SELL counter can correctly be refused
+when its original BUY freed only the configured order budget; partial counters
+that fit no longer get rejected because today's configured size is larger.
+
+The new counter suite covers existing headroom, below/exact/above boundaries,
+configured-size increases/decreases, BUY/SELL differences, normal/partial fills,
+startup recovery and retained refused recovery counters. After fixing test-only
+frozen-config construction, **29 of 63 cases failed on the old code**; all pass with
+the repair. The older cap-counter test's incorrect equal-dollar assumption was
+corrected rather than loosening its cap.
+
+Both repository settings files now share 21 section positions in seven comment
+groups, a five-profile purpose index, static/future-POLICY ownership notes and
+LLM budgets beside advisor settings. Repeated and stale profile/seat histories
+were replaced with practical guidance and canonical document links. All raw YAML
+values and all six resolved configurations per file are unchanged. All ten
+cloud/Ollama candidate pairs per file are preserved, validated in their selected
+mode and remain disabled. The operator file shrank from 1,129 to 999 lines; the
+example from 1,493 to 1,212. Neither file acquired a new schema or database field.
+
+Validation on local `main` based on `15679b1`, Python 3.13.14:
+
+```powershell
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& tmp/c4-environment/Scripts/python.exe -m pytest -q --tb=short
+```
+
+**4,157 passed, 30 integration tests deselected**, 139.09 seconds. The focused
+engine/exposure/rewriter/config command also passed **570 tests**:
+
+```powershell
+& tmp/c4-environment/Scripts/python.exe -m pytest tests/services/test_counter_order_caps.py tests/services/test_grid_engine.py tests/services/test_exposure.py tests/services/test_settings_rewriter.py tests/config --no-cov -q --tb=short
+```
+
+Black `--check src/ tests/` (413 files), isort `--check-only src/ tests/`, mypy
+`src/` (156 files), pylint `src/` (10.00/10) pass. These checks include the existing
+uncommitted Ollama fallback work below. Cross-process configuration fingerprints
+normalize set-valued authorization IDs; direct model equality also verified the
+final comment pass. This is local implementation, uncommitted and undeployed.
+ADR-044's POLICY amendments remain proposed; G6, database migration and phase
+acceptance are unchanged.
+
+After the final comment pass, **52 tests passed** (0.84 seconds) with strict
+config drift still enabled:
+
+```powershell
+& tmp/c4-environment/Scripts/python.exe -m pytest tests/config/test_schema_drift.py tests/config/test_example_parity.py tests/config/test_example_invariants.py tests/config/test_example_symbols.py tests/services/test_settings_rewriter.py --no-cov -q --tb=short
+```
+
+`git diff --check` also passes.
+
+**Settings layout and authority review — document complete 2026-09-08 UTC:**
+[Proposed ADR-044](../architecture/adr-044-settings-layout-and-policy-authority.md)
+classifies all current settings sections, retains ADR-040's seven-field POLICY set,
+and proposes matching layouts for operator/example files. It identifies required
+clarifications to defaults versus hard ceilings, database-failure behavior,
+automatic tightening, CLI/writer authority and scoped revision history. An offline
+mock-exchange reproduction confirmed the current counter-amount cap check can
+charge configured order size instead of actual notional; its repair is a prerequisite
+in the proposal, not implemented by this review. Both settings files and all runtime
+source are unchanged during the review; base and every named profile validated.
+This is a review receipt, not ratification, G6 entry, POLICY implementation or phase
+acceptance. The prior fallback changes remain separate uncommitted work.
+
+**Ollama fallback candidates and workflow verification — local ✅ 2026-09-08 UTC:**
+the follow-up adds a commented cloud-first/Ollama-second pair to all ten advisor
+targets in each repository settings file. Active resolved values are unchanged;
+all fallback lists remain empty. The [seat register](../reference/advisor-seats.md#fallback-candidates)
+identifies Llama 3.1 8B q4 for quant and Qwen 2.5 7B q4 for risk as evaluation-only,
+with no current role qualification, and Gemma 4 e4b q8 for news/arbitrator as
+degraded candidates with measured quality/latency and NAS resource limitations.
+Known UNSAFE Gemma/Llama risk results remain disqualifying. No models were pulled,
+inference campaigns run, primary seats changed, or NAS configuration activated.
+
+Real CLI composition through Anthropic, OpenAI/Atlas, Ollama and SQLite is covered
+by 22 new offline workflow cases. They verify first-success stopping, primary
+recovery, retries before local substitution, inherited role/prompt/arbitrator
+context, distinct candidate inference settings, news auto-apply exclusion,
+unforgeable/persisted routing, cloud-only accounting, spend-cap denial and partial
+versus complete MoE failure. Six regressions initially exposed malformed Ollama
+envelopes/answer shapes escaping as raw JSON/type errors. The adapter now returns
+clean `AdvisorError` failures so `cascade` can retain its heuristic result.
+The [workflow guide](../implementation/llm-fallbacks.md#workflow-and-failure-boundaries)
+documents ordering, latency, cap and failed-chain provenance limits.
+
+Verification on local `main` based on `15679b1` (PR #146):
+
+```powershell
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& tmp/c4-environment/Scripts/python.exe -m pytest -q --tb=short
+```
+
+**4,094 passed, 30 integration tests deselected**, 186.09 seconds, Python 3.13.14.
+After tightening the test fixtures to use distinct inference settings per candidate,
+the final focused command passed **178 tests** in 2.40 seconds:
+
+```powershell
+& tmp/c4-environment/Scripts/python.exe -m pytest tests/cli/test_advisor_ollama_fallbacks.py tests/cli/test_advisor_fallbacks.py tests/adapters/test_fallback_advisor.py tests/adapters/test_ollama.py tests/config/test_schema_drift.py tests/config/test_advisor_config.py --no-cov -q --tb=short
+```
+
+Black `--check src/ tests/`, isort `--check-only src/ tests/`, mypy `src/` (156
+source files), pylint `src/` (10.00/10), and `git diff --check` pass; final test-file
+format/import checks also pass. All 20 commented two-candidate blocks parsed,
+cloud pricing resolved, and all six resolved configurations per settings file
+validated with candidates enabled only in memory. Full active configurations were
+equal before/after the comment edits. This is local, uncommitted work; model
+qualification, live interruption recovery, deployment and formal phase acceptance
+remain separate.
+
 **LLM interruption follow-up — local implementation ✅ 2026-09-08 UTC:**
 the operator requested actionable error reporting and fallback options after news
 and arbitrator hit an Anthropic credit denial. [ADR-043](../architecture/adr-043-llm-fallbacks.md)

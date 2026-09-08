@@ -22,6 +22,94 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 | **gremlin** | **`qwen2.5:3b-instruct-q4_K_M`** (Ollama, default seat) — **BUILT 2026-08-17 (P4.4c)**; enabled observe-only on the NAS the same day | **un-batteried BY DESIGN** — the outcome ledger is its battery (ADR-035 d.4: directional calls grade against the realized move; P4.4b evaluator live). Seat picked for cheap + leap-prone (free local, temp 1.0, 12.7 tok/s hot on the NAS); discipline rule: do NOT tune or reseat until a ledger sample exists, and never because the scoreboard flatters a challenger on <30 decisive | *(the ledger)* | seat default 2026-08-17; role shipped | ✅ NAS observe-only deployment active since 2026-08-17; auto-apply remains off |
 | **operator assistant** | `qwen2.5:1.5b-instruct-q4_K_M` | 8/8 on the NAS sweep, no cache-warm tax | `probe_assistant.py` / `sweep_assistant_nas.py` | 2026-05-27 | ✅ wired — `cpu-only` profile |
 
+## Fallback candidates
+
+**Revised 2026-09-08 after operator clarification; all presets remain disabled.**
+The primary stays first. Prefer the same model through another cloud route, if
+available, then the cloud model previously selected as the first fallback. That
+previous first fallback is now the **last LLM option**. After cloud exhaustion,
+use the heuristic and retry the primary on the next scheduled non-guard evaluation.
+Skip an unavailable equivalent slot; do not insert an unrelated model to fill it.
+The prior local Ollama fallback selections are superseded and removed from YAML.
+
+Current operator cloud committee (primaries unchanged):
+
+| Role | Primary | Equivalent-cloud candidate | Final cloud fallback |
+|---|---|---|---|
+| quant / single cloud escalation | Atlas `xai/grok-4.5` | None verified on another eligible route; already on Atlas | Atlas `deepseek-ai/deepseek-v4-pro` |
+| risk | OpenAI `gpt-5-mini` | None found in the Atlas/Ollama Cloud catalogs checked | Atlas `deepseek-ai/deepseek-v4-pro` |
+| news | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — listed, readiness unverified | Atlas `xai/grok-4.5` |
+| arbitrator | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — listed, readiness unverified | OpenAI `gpt-5-mini` |
+
+The example file retains its generic primaries. Its Sonnet 4.6 quant/arbitrator
+targets get the nominal Atlas `anthropic/claude-sonnet-4.6` equivalent before the
+same role-specific final backup. Its GPT-4o/Gemini 2.0 Flash targets have no match
+in the catalog checked. Local primary examples retain their primary tags and only
+the role-specific final cloud backup; their former local fallback tags are removed.
+No primary, prompt, inference setting or safety cap was reseated by this change.
+
+### Availability and equivalence evidence
+
+Authenticated read-only `GET https://api.atlascloud.ai/v1/models` returned **118
+model entries** on 2026-09-08. Exact Haiku/Sonnet IDs above were present, with the
+following per-million-token prices (catalog USD/token values multiplied by one million):
+
+| Atlas model | Input | Output | Cache read | Readiness field |
+|---|---|---|---|---|
+| `anthropic/claude-haiku-4.5-20251001` | $1.00 | $5.00 | $0.10 | `is_ready: false` |
+| `anthropic/claude-sonnet-4.6` | $3.00 | $15.00 | $0.30 | `is_ready: false` |
+
+Those entries now have pricing in `services/llm_pricing.py` under the OpenAI adapter's
+ledger identity. A catalog row is **not proof of a working endpoint**. The readiness
+flag's operational meaning was not established by a billable call, and neither
+mirror was enabled. Recheck availability and run the role's prompt/protocol battery
+before activation. Native aliases and gateway model labels are nominal equivalence,
+not verified identical weights, revision, behavior or independent upstream capacity.
+An Atlas billing account can bypass native account trouble while sharing an upstream
+model outage. The older public model pages were stale/unavailable; the account
+catalog is the source for these IDs and prices, not inferred native-provider rates.
+
+The [Ollama Cloud model catalog](https://ollama.com/api/tags) had 19 entries and no
+exact Haiku, Sonnet, GPT-5 mini, GPT-4o, Gemini 2.0 Flash or Grok match. Its open
+models, including GPT-OSS and DeepSeek, are different models, not equivalent native
+GPT/Claude/Grok endpoints. Direct access requires authentication, and
+[Ollama Cloud](https://docs.ollama.com/cloud) is not the existing free local adapter.
+Its [structured-output documentation](https://docs.ollama.com/capabilities/structured-outputs)
+currently excludes cloud support. The distinct `provider: ollama_cloud` now uses
+authenticated cloud transport, shared cost/retry accounting and local JSON validation
+([setup and supported models](../implementation/ollama-cloud.md)). `provider: ollama`
+remains local. Provider support does not qualify any new seat or populate a missing
+equivalent slot; the existing cloud selections remain unchanged and disabled.
+
+### Final-backup evidence and limits
+
+| Role | Evidence retained from the previous first cloud fallback | Activation limit |
+|---|---|---|
+| quant | DeepSeek V4 Pro: gen3 55/63 OK, zero UNSAFE | Provisional: 55 OK + 7 SUB accounts for only 62 outcomes. Reconcile the missing result; calibration trails Grok. Shares Atlas with the primary |
+| risk | DeepSeek V4 Pro: Phase B 52/54 OK, zero UNSAFE | Credible backup, not a demonstrated win over the incumbent; safety/top scores are saturated |
+| news | Grok 4.5: Phase B news/gen2 66/66 | A ceiling tie, not proof it beats Haiku; shares Atlas with the nominal equivalent |
+| arbitrator | GPT-5 mini: v1 + gen2 73/75, p=0.248 vs Haiku | Both misses violated `never_emit_a_tighten`; preserve that weakness in role validation |
+
+All presets use 4,000 output tokens and a 300-second timeout. Final-backup
+temperatures remain quant 1.0, risk 0.4, news 0.6 and arbitrator 1.0; mirrors use
+the same role's preset temperature. GPT-5 mini omits temperature at the adapter.
+These are starting inference settings, not new measured latency or completeness
+guarantees. Gate all cloud candidates through the existing shared `llm.cost` limits.
+
+Both repository settings files now select `engine: cascade` and the existing
+`config/heuristic/quant.yml` at the base, inherited by every supplied profile.
+Clear guards stay heuristic-first. A failed arbitrator or no surviving experts
+returns the heuristic; a surviving subset of experts can still be arbitrated.
+No local LLM is added at the end of an exhausted cloud chain. No new background
+polling runs: the ordinary advisor schedule retries providers, starting with primary.
+Explicit `engine: llm` still omits heuristic composition; keep `cascade` for this policy.
+
+No paid inference, model pull, primary-seat change or NAS activation ran. All ten
+commented targets in each YAML remain opt-in. Prior local candidate evidence is
+retained as history in [the model review](advisor-llm-models.md#rev-2026-09-08--fallback-candidate-review);
+it is no longer a recommendation for this fallback chain. The
+[workflow guide](../implementation/llm-fallbacks.md) records routing and offline tests.
+
 ## Full-field matrix (Phase B) + adversarial audit — 2026-08-17: BOTH SEATS HELD
 
 16 models × 3 rounds × (news/gen2 + risk), four price tiers cheapest-first,

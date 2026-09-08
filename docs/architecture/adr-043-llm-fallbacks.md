@@ -69,6 +69,36 @@ failure is provider/account-wide; two models behind the same provider share that
 
 ## Consequences and review
 
+### Candidate-selection amendment — 2026-09-08
+
+The operator clarified the preferred order: **current primary → nominally equivalent
+model through Atlas Cloud or Ollama Cloud, when verified → previously selected
+first cloud fallback → heuristic**. The previous first cloud fallback becomes the
+last LLM option; this does not retry or demote the primary inside its own chain.
+Skip the equivalent slot when no distinct verified route exists. Never label a
+different model family equivalent based only on size, branding or provider.
+
+This supersedes the earlier cloud/local preset selection, not the generic explicit
+Ollama adapter capability. Repository fallback presets now contain cloud targets
+only and remain disabled. All supplied advisor profiles resolve to `cascade` via
+the base settings, with `config/heuristic/quant.yml`; existing model primaries,
+parameters, budgets and safety values are preserved. Clear heuristic guards still
+resolve first. Exhausted LLM routes return the heuristic on that evaluation; the
+next scheduled non-guard evaluation starts at the primary again. There is no
+permanent model switch, extra polling loop or new cooldown service. Explicit
+`engine: llm` remains a supported opt-out of heuristic composition.
+
+The authenticated Atlas catalog lists/prices Haiku 4.5 and Sonnet 4.6 equivalents,
+but both report `is_ready: false`; these are preselected nominal matches, not
+verified functioning replacements. Check availability and exact role behavior
+before enabling them. GPT-5 mini/4o and Gemini 2.0 Flash were absent from that
+catalog; Grok already uses Atlas. Ollama Cloud's current catalog has no exact
+primary matches, and its API cannot be treated as free local Ollama: authentication,
+quota/accounting and structured-output behavior differ. The later explicit provider
+request is implemented by [ADR-045](adr-045-ollama-cloud-provider.md); no equivalent
+slot or new seat is selected automatically. Detailed evidence and routes live
+in the [seat register](../reference/advisor-seats.md#fallback-candidates).
+
 Fallback adds latency and may incur additional calls within the existing caps. Timeouts
 can represent provider work whose usage was not returned; current cost accounting
 records confirmed usage and does not guarantee a precise invoice ceiling. This change

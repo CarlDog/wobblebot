@@ -7,6 +7,7 @@ may contain credentials, echoed prompts or arbitrary text; never persist them.
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 
@@ -102,8 +103,14 @@ def _body_error_kind(exc: httpx.HTTPStatusError) -> str | None:
     except (ValueError, UnicodeError, RecursionError, httpx.ResponseNotRead):
         return None
     error = payload.get("error") if isinstance(payload, dict) else None
+    ollama_model_missing = (
+        (exc.request.url.host, exc.request.url.path, exc.request.method, exc.response.status_code)
+        == ("ollama.com", "/api/chat", "POST", 404)
+        and isinstance(error, str)
+        and re.fullmatch(r"model ['\"][^'\"\n]+['\"] not found", error)
+    )
     if not isinstance(error, dict):
-        return None
+        return "model_unavailable" if ollama_model_missing else None
     codes = {value for key in ("code", "type") if isinstance(value := error.get(key), str)}
     for code, kind in _PROVIDER_CODES.items():
         if code in codes:

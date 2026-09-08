@@ -235,7 +235,6 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         try:
             response = await self._client.post(f"{self._base_url}/api/generate", json=payload)
             response.raise_for_status()
-            ollama_envelope: dict[str, Any] = response.json()
         except httpx.HTTPError as exc:
             # Include the exception type: a bare ReadTimeout/ConnectTimeout
             # often has an empty str(), which left this message as a
@@ -243,6 +242,13 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
             # advise-timeout incident needed Ollama's own GIN log to
             # diagnose). The type name disambiguates timeout vs transport.
             raise AdvisorError(f"Ollama request failed: {type(exc).__name__}: {exc}") from exc
+
+        try:
+            ollama_envelope = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise AdvisorError("Ollama response envelope is not valid JSON") from exc
+        if not isinstance(ollama_envelope, dict):
+            raise AdvisorError("Ollama response envelope must be a JSON object")
 
         raw_response_field = ollama_envelope.get("response")
         raw_thinking_field = ollama_envelope.get("thinking")
@@ -288,6 +294,8 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
                     f"Ollama 'response' is not valid JSON despite format=json request: {exc}"
                 ) from exc
 
+        if not isinstance(inner, dict):
+            raise AdvisorError("Ollama recommendation must be a JSON object")
         return build_advisor_recommendation(inner, fallback_role=self._role)
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:

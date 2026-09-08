@@ -23,6 +23,62 @@ qwq / qwen3.6 / nemotron3 / deepseek-r1 / mistral-nemo / phi4 /
 phi4-reasoning / granite4.1) ran against the NVMe-resident store.
 Elapsed times are therefore not comparable across rows.
 
+## Rev 2026-09-08 — Fallback candidate review
+
+The operator requested preselected fallback candidates after the Anthropic credit
+interruption. This review reuses the recorded evaluations; it adds no new scores.
+The [seat register's candidate table](advisor-seats.md#fallback-candidates) is the
+selection index and carries the evidence, limitations and disabled configuration state.
+
+**Latest operator clarification:** an equivalent model on another cloud route goes
+before the previously selected first cloud fallback; the previous first fallback
+becomes the final LLM choice. The heuristic handles exhausted cloud routes until
+the next scheduled evaluation retries the primary. The seat register records
+nominal Atlas Haiku/Sonnet matches, pricing, `is_ready: false`, and absent matches
+for the other primaries. Those catalog observations add no model-quality scores.
+Local fallback presets described below are historical and have been removed.
+
+DeepSeek V4 Pro is the quant candidate because its current-contract gen3 result
+has 55/63 OK and zero UNSAFE; its weaker calibration and shared Atlas dependency
+remain limitations. The row totals only 62 outcomes (55 OK + 7 SUB + 0 UNSAFE),
+so the quant candidate stays provisional until the missing judgment is reconciled;
+this review does not invent its disposition or silently change the historical table.
+Its Phase B risk result also supports a risk backup. Grok 4.5
+is the news candidate from the later 66/66 news/gen2 matrix result. GPT-5 mini is
+the arbitrator candidate from 73/75 judgments, with both never-tighten violations
+explicitly retained. These are backup selections, not incumbent replacement claims.
+
+The review excludes deprecated/off-contract quant batteries, the early ceilinged
+`hard` significance claim, single-run rankings and unparseable responses as positive
+selection evidence. It also rejects transferring GPT-5 mini's risk success to news:
+the news evaluation directly records ten OVERTRADE errors. Local risk candidates
+with severe-case UNSAFE results do not become acceptable merely because they are free.
+The Phase B matrix's ceiling and repeated-fixture limitations prevent treating
+its small top-group score differences as proven improvements.
+
+An earlier follow-up selected a second, Ollama candidate for every role: Llama 3.1
+8B q4 for quant, Qwen 2.5 7B q4 for risk, and the measured Gemma 4 e4b q8 tag for
+news and arbitrator. **Quant/risk are evaluation-only selections, not qualified
+fallbacks.** The historical Llama q8 quant result cannot be transferred to q4 or
+the current-contract battery. Qwen has no qualifying risk receipt; its 5/17
+arbitrator screen supplies no positive risk evidence. It is a new risk evaluation
+candidate, not a rehabilitation of the tested Gemma/Llama risk failures.
+
+Gemma's news 61/66 and arbitrator 44/51 support only degraded candidate status.
+Its 228.7s NAS measurement saturated a 600-token budget, and the exact q8 build
+exceeds the NAS quantization guideline. The former 2048-token / 900-second local
+settings need complete-response and queued-load measurements; a q4 substitution
+requires its own scoring. The seat register retains these limitations alongside
+the historical evidence. No local candidate was activated; these local presets
+were superseded by the cloud-only order above.
+
+Model IDs were checked against public provider listings; commented presets carry
+explicit inference settings for subsequent prompt/budget validation. No paid probes,
+primary-seat changes or production activation were performed by this review.
+Offline tests exercise real provider adapters with synthetic HTTP responses; they
+validate fallback routing, not the selected models' judgment. The operational
+sequence and coverage are in the [fallback guide](../implementation/llm-fallbacks.md).
+
 ## Rev 2026-08-11e — DECISIVE: `grok-4.5` beats the champion significantly on gen3
 
 8 rounds on `gen3`, **168 judgments each**. This is the run that settles

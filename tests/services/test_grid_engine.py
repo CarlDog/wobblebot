@@ -967,13 +967,13 @@ class TestSafetyCaps:
         result = await engine.step(BTC_USD)
 
         # The fill freed $10 of exposure (the closed BUY is no longer
-        # "open"). Counter placement adds $10 back. So with cap=60 and
-        # 5 remaining open ($50), the counter ($10) just fits → placed.
+        # "open"). The counter preserves that BUY's base amount at a
+        # higher price: $10 / 49500 * 50000 > $10. The remaining $50
+        # book plus this actual notional exceeds $60 and must be refused.
         assert result.fills == 1
-        assert result.counters_placed == 1
-
-        # Now tighten the math: another fill, but the counter would push
-        # us over. Use a fresh engine with a tighter cap.
+        assert result.counters_placed == 0
+        assert result.refusals == 1
+        assert len(await storage.get_open_orders(symbol=BTC_USD)) == 5
 
     async def test_cap_at_exact_boundary_allows_placement(
         self, storage: SQLiteStorageAdapter

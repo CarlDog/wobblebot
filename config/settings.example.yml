@@ -1,23 +1,25 @@
-# WobbleBot Configuration (Example)
+# WobbleBot configuration
 #
-# Copy this file to settings.yml and adjust for your needs. The
-# committed example file documents every operator-tunable value;
-# settings.yml stays gitignored and holds your actual values.
+# Copy settings.example.yml to settings.yml and tune for your deployment.
+# The example is generic; settings.yml is gitignored and holds operator values.
+# Both use the same section order; keys and profile behavior stay schema-aligned.
 #
-# Per the project's standing rule, settings.example.yml and
-# settings.yml stay schema-aligned: same keys, same comments, same
-# section ordering, same structure — only VALUES differ. Schema-drift
-# tests (tests/config/test_schema_drift.py) catch most drift, but
-# comment parity is on you.
+# Loading: --config path -> base YAML -> ONE --profile NAME -> explicit CLI flags.
+# Mappings merge recursively; lists replace completely. Values load at startup.
+# Trading caps/guards: safety and live/shadow. Cloud budgets: llm. Treasury: harvester.
+# Models and fallbacks: advisor plus the selected profile's advisor override.
 #
-# CLIs accept --config path/to/settings.yml (default: this directory's
-# settings.yml) and --profile NAME to apply a named override block.
-# Any CLI flag passed explicitly takes precedence over both YAML and
-# profile values.
+# Secrets and deployment endpoints belong in ENV/.env (Kraken reader/trader/harvester
+# keys, provider keys, session secret, KRAKEN_BASE_URL, OLLAMA_BASE_URL). There is no
+# exchange YAML section. Existing endpoint/reference fields retain their current behavior.
+# Writable DB POLICY is deferred: docs/architecture/adr-044-settings-layout-and-policy-authority.md.
+# Today's profiles, CLI overrides and operator-invoked writers still work as before.
 
 # ============================================================================
-# Application metadata
+# 1. Core configuration
 # ============================================================================
+
+# Application identity and trading mode (live / shadow / sandbox).
 application:
   name: "WobbleBot"
   version: "0.1.0"
@@ -29,23 +31,49 @@ application:
   # gate engine features on it.
   mode: "live"
 
-# ============================================================================
-# Exchange connection (Kraken)
-# ============================================================================
-# Configured via ENVIRONMENT, not this file. Credentials live in .env
-# (KRAKEN_READER_API_KEY / KRAKEN_TRADER_API_KEY / KRAKEN_HARVESTER_API_KEY —
-# never here); the base URL is an optional KRAKEN_BASE_URL override; the
-# per-request timeout is a code default (10s). There is intentionally no
-# `exchange:` section — the prior one (name / rate_limit_rps / max_retries /
-# retry_delay_seconds / request_timeout_seconds) was dead config read by no
-# code (WobbleBotConfig has no `exchange` field). Removed per the
-# retry-policy audit — see docs/architecture/retry-policy.md, finding G1.
+# Operator-controlled SETTINGS: engine-enforced caps and guards.
+# Order-count, exposure, daily BUY spend and inventory caps are six future
+# POLICY candidates, static today (ADR-040/044). Guard settings stay static.
+# Book/count caps apply to BUYs and SELLs; spend/inventory caps to BUYs only.
+# Caps charge the proposed price x quantity, including partial-fill counters.
+# Sell-guard deferrals are separate from hard-cap refusals.
+safety:
+  # Generic TEMPLATE caps — size these to YOUR balance + coin count before
+  # going live (two-sided ceiling = coins × levels × order_size; keep
+  # max_daily_spend below your free USD). This file is a starting template,
+  # not a mirror of any live deployment — your tuned values live in the
+  # gitignored settings.yml.
+  max_total_exposure_usd: 100.0       # global cap across all coins
+  max_daily_spend_usd: 100.0          # BUY-side commits per UTC day
+  max_per_coin_exposure_usd: 100.0    # per-coin cap
+  max_orders_per_coin: 20             # count cap, per-coin
 
-# ============================================================================
-# Grid trading geometry (engine-tunable)
-# ============================================================================
-# These are the parameters the GridEngine reads. Per-coin overrides
-# under `coins:` shadow `default:` for that coin only.
+  # ADR-039 inventory caps: the caps above bound the ORDER BOOK; these
+  # bound the POSITION — held inventory at average COST basis plus open
+  # BUY notional. Cost, not mark-to-market (an MTM cap re-opens buying
+  # as price falls). BUY placement only; a SELL releases headroom and
+  # is never blocked. Sells that the ADR-032 guard defers keep their
+  # inventory counted here — that pairing is the point: a coin whose
+  # sells cannot fire stops accumulating instead of ratcheting.
+  max_per_coin_inventory_usd: 40.0
+  max_total_inventory_usd: 300.0
+
+  # ADR-032 cost-basis sell guard: defers (never cancels) a SELL whose
+  # net-of-fees proceeds fall more than max_loss_percentage below the
+  # symbol's replayed average cost basis. Enforced (unlike the retired
+  # emergency_stop block) -- every key here is actually read.
+  sell_guard:
+    enabled: true
+    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.80% (Tier-1 doubled 2026-07-09)
+
+  # ADR-025 pre-placement spread guard: skip the whole tick (no order
+  # placement attempted) when the symbol's bid-ask spread exceeds this.
+  # Default never fires on healthy BTC/ETH (~0.01-0.05%); null disables.
+  max_spread_percentage: 1.0
+
+# Grid geometry: coins.* overrides default for that coin only.
+# order_size_usd (default/per coin) is the seventh future POLICY candidate,
+# static today. Spacing, levels, target mode and enabled flags stay SETTINGS.
 grid:
   default:
     # Widened 2026-05-30 from 1.0% -> 3.0% (Stage 8.6). The grid backtest
@@ -87,62 +115,8 @@ grid:
       order_size_usd: 6.0
       enabled: true
 
-# ============================================================================
-# Safety caps (engine-enforced, non-negotiable)
-# ============================================================================
-# These are checked inside GridEngine BEFORE any place_order call.
-# Refusals are logged + counted in StepResult.refusals; they never raise.
-# The sell_guard's own deferrals count separately in StepResult.sells_deferred
-# (never a hard-cap refusal -- see ADR-032).
-safety:
-  # Generic TEMPLATE caps — size these to YOUR balance + coin count before
-  # going live (two-sided ceiling = coins × levels × order_size; keep
-  # max_daily_spend below your free USD). This file is a starting template,
-  # not a mirror of any live deployment — your tuned values live in the
-  # gitignored settings.yml.
-  max_total_exposure_usd: 100.0       # global cap across all coins
-  max_daily_spend_usd: 100.0          # BUY-side commits per UTC day
-  max_per_coin_exposure_usd: 100.0    # per-coin cap
-  max_orders_per_coin: 20             # count cap, per-coin
-
-  # ADR-039 inventory caps: the caps above bound the ORDER BOOK; these
-  # bound the POSITION — held inventory at average COST basis plus open
-  # BUY notional. Cost, not mark-to-market (an MTM cap re-opens buying
-  # as price falls). BUY placement only; a SELL releases headroom and
-  # is never blocked. Sells that the ADR-032 guard defers keep their
-  # inventory counted here — that pairing is the point: a coin whose
-  # sells cannot fire stops accumulating instead of ratcheting.
-  max_per_coin_inventory_usd: 40.0
-  max_total_inventory_usd: 300.0
-
-  # ADR-032 cost-basis sell guard: defers (never cancels) a SELL whose
-  # net-of-fees proceeds fall more than max_loss_percentage below the
-  # symbol's replayed average cost basis. Enforced (unlike the retired
-  # emergency_stop block) -- every key here is actually read.
-  sell_guard:
-    enabled: true
-    max_loss_percentage: 1.0          # structural floor from fees alone is ~0.80% (Tier-1 doubled 2026-07-09)
-
-  # ADR-025 pre-placement spread guard: skip the whole tick (no order
-  # placement attempted) when the symbol's bid-ask spread exceeds this.
-  # Default never fires on healthy BTC/ETH (~0.01-0.05%); null disables.
-  max_spread_percentage: 1.0
-
-# ============================================================================
-# Scheduled task cadences (Stage 3.3 Slice C.0)
-# ============================================================================
-# Every long-running daemon reads its polling interval from here.
-# Duration format: a number with a unit suffix.
-#   30s   = 30 seconds
-#   10m   = 10 minutes
-#   4h    = 4 hours
-#   7d    = 7 days
-# A bare number is treated as seconds (e.g. `30` == `30s`). Use `0s`
-# to disable a schedule whose consumer supports it (only observe's
-# balance polling does today).
-#
-# Adding a new periodic task: add a key here and have the consuming
-# CLI look it up via config.schedules.get("<name>").
+# Shared task cadences. Duration suffixes: s/m/h/d; bare number = seconds.
+# 0s disables a scheduled task. Daemons load configuration at startup.
 schedules:
   observe_prices: 30s                 # cli/observe: public Ticker poll cadence
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
@@ -162,10 +136,11 @@ schedules:
   maintenance_ledger: 1d              # cli/maintenance (ADR-040): exchange-ledger income ingest cadence
 
 # ============================================================================
-# Per-CLI: live (cli/live)
+# 2. Trading, simulation and manual checks
 # ============================================================================
-# Knobs specific to the operational loop against real Kraken.
-# Real money trading. CLI flags override these values.
+
+# cli/live: real-money trading. Session-loss limits and other guards are
+# operator-controlled SETTINGS. Explicit CLI flags override supported values.
 live:
   symbols:
     - BTC/USD
@@ -236,11 +211,8 @@ live:
   # quiet even after 18+ hours. Set to null to disable.
   held_reminder_seconds: 14400.0
 
-# ============================================================================
-# Per-CLI: shadow (cli/shadow)
-# ============================================================================
-# Same engine, real Kraken prices, simulated execution against a
-# synthetic ledger. No real money.
+# cli/shadow: same engine with live prices and a synthetic ledger.
+# Session-loss limits and guards are operator-controlled SETTINGS.
 shadow:
   symbols:
     - BTC/USD
@@ -264,17 +236,28 @@ shadow:
   maker_fee_rate: 0.0040
   taker_fee_rate: 0.0080
 
+# cli/sandbox: mock exchange and paper cycle; no real Kraken contact.
+sandbox:
+  db: "data/wobblebot-sim.db"
+  log_format: plain
+
+# cli/preflight: one diagnostic engine step using Kraken validate=true.
+# Reads grid and safety above; run before a live trading session.
+preflight:
+  symbol: BTC/USD                     # singular — preflight runs ONE step
+  log_format: plain
+
+# cli/status: read-only prices and balances using KRAKEN_READER_API_KEY.
+status:
+  symbol: BTC/USD
+  log_format: plain
+
 # ============================================================================
-# Per-CLI: observe (cli/observe)
+# 3. Market data and screening
 # ============================================================================
-# Pure data collection; no engine, no LLM, no orders. Polling cadences
-# live in the `schedules:` block at the bottom of this file.
-#
-# Observe broadly, trade narrowly — observe.symbols is independent of
-# live.symbols / shadow.symbols. Major-cap USD-quoted spot pairs only;
-# stablecoin pairs (USDT/USD) don't move so they're skipped, and tiny-cap
-# altcoins generate price noise the engine isn't tested against. Storage
-# cost is trivial: 30s cadence × 12 symbols ≈ 5MB/year per symbol.
+
+# cli/observe: data collection only; no engine, LLM or orders.
+# Observe broadly, trade narrowly: symbols are independent of live/shadow.
 observe:
   symbols:
     - BTC/USD
@@ -319,73 +302,9 @@ observe:
   # the halt itself still applies.
   operator_db: "data/wobblebot-operator.db"
 
-# ============================================================================
-# Per-CLI: screener (cli/screener)
-# ============================================================================
-# P2 slice 5: rank symbols with stored bar history by grid-suitability.
-# Read-only + offline (no Kraken calls in v1); output is a log table.
-# The two band centers encode the non-monotonic volatility read: too
-# quiet = the grid never cycles, too hot = the caps trip -- closest to
-# the center ranks best. Advisory only (ADR-002): the operator gates
-# every symbol addition.
-screener:
-  db: "data/wobblebot-observe.db"
-  lookback_days: 30
-  interval_minutes: 60
-  vol_band_center: 0.005                # stdev of per-bar returns (fraction)
-  atr_band_center_pct: 0.5              # ATR(14) as % of latest close
-  log_format: plain
-
-
-# ============================================================================
-# Per-CLI: preflight (cli/preflight)
-# ============================================================================
-# Diagnostic single-step against live Kraken with adapter in
-# validate=true mode. Reads grid + safety from the sections above.
-preflight:
-  symbol: BTC/USD                     # singular — preflight runs ONE step
-  log_format: plain
-
-# ============================================================================
-# Per-CLI: status (cli/status)
-# ============================================================================
-# Read-only one-shot Kraken fetch: current price + account balances.
-# No engine, no orders. Uses KRAKEN_READER_API_KEY (read-only key).
-status:
-  symbol: BTC/USD
-  log_format: plain
-
-# ============================================================================
-# Per-CLI: sandbox (cli/sandbox)
-# ============================================================================
-# Phase 1 sandbox: hard-coded buy-dip/sell-rebound cycle through
-# MockExchangeAdapter + SQLiteStorageAdapter. No real Kraken contact.
-# Useful for verifying the hex layers wire up after a fresh checkout.
-sandbox:
-  db: "data/wobblebot-sim.db"
-  log_format: plain
-
-# ============================================================================
-# News ingestion (Stage 3.2.5 — see ADR-007)
-# ============================================================================
-# Long-running daemon (`python -m wobblebot.cli.news`) that polls every
-# enabled source and persists items to news_items. Storage dedup is
-# UNIQUE(source, external_id), so re-fetching across polls is a no-op.
-#
-# Two source types ship in v1:
-#   - RSS feeds (no auth, any feed URL works)
-#   - CryptoCompare News (disabled by default — CoinDesk Data retired
-#     the free API tier 2026-05-21; requires a paid subscription now)
-#
-# The original ADR-007 plan named CryptoPanic + Whale-alert; both went
-# paid-only after the ADR was written, so v1 pivoted to RSS +
-# CryptoCompare — which has since ALSO gone paid-only (see below).
-# NewsPort stays abstract — operators can plug in paid sources if
-# they want the extra coverage.
-#
-# Per-source dedup means leaving overlapping feeds enabled is safe;
-# the storage layer keeps one row per (source, external_id) pair.
-# Disabling a noisy outlet is a single `enabled: false` flip.
+# cli/news: polls enabled feeds and persists news_items.
+# Deduplication is per (source, external_id). Disable a feed with enabled: false.
+# CryptoCompare requires a paid subscription and is disabled by default.
 news:
   db: "data/wobblebot-news.db"
 
@@ -463,19 +382,53 @@ news:
   # UNKNOWN on the health surfaces).
   operator_db: "data/wobblebot-operator.db"
 
+# cli/screener: offline symbol ranking from stored bars, advisory only.
+# Volatility bands reward neither a motionless nor an excessively hot market.
+screener:
+  db: "data/wobblebot-observe.db"
+  lookback_days: 30
+  interval_minutes: 60
+  vol_band_center: 0.005                # stdev of per-bar returns (fraction)
+  atr_band_center_pct: 0.5              # ATR(14) as % of latest close
+  log_format: plain
+
 # ============================================================================
-# Per-CLI: advise (cli/advise — Stage 3.3 Passive Advisory Workflow)
+# 4. LLM budgets and strategy advisor
 # ============================================================================
-# Long-running daemon that periodically builds a PerformanceSummary,
-# asks the configured advisor for a recommendation, and persists the
-# result to its own DB. Per ADR-002 + ADR-007 nothing here applies —
-# operator reviews via `tools/show_suggestions.py`.
-#
-# Cadence lives in `schedules.advise` above. Multi-symbol since
-# Stage 3.6b: the daemon iterates serial per symbol within each sweep,
-# building a single-symbol PerformanceSummary per cycle so the LLM
-# never sees more than one coin's context at a time (no cross-
-# contamination of opinions).
+
+# Operator-controlled SETTINGS: shared cloud spend caps and retry policy.
+# Applies to Anthropic, OpenAI, Google and Atlas, including cloud fallbacks.
+# Ollama bypasses this cloud cost gate. enforce: false records without denying.
+# Omit/null only for a deployment that does not require cloud cost gating.
+llm:
+  cost:
+    # Sliding 24-hour USD cap across all roles + providers. Trips
+    # raise LLMCostCapExceeded; the calling CLI catches and skips
+    # the call (cli/advise) or posts an operator notification
+    # (cli/operator).
+    max_spend_per_day_usd: "1.00"
+    # Per-CLI-invocation USD cap. In-memory tally, resets per
+    # process start. Catches runaway loops that the daily cap
+    # wouldn't notice fast enough.
+    max_spend_per_session_usd: "0.50"
+    # Dry-run kill switch. true = gate enforces; false = gate
+    # records calls but never denies (ADR-014 decision 8 — see
+    # block-level comment above).
+    enforce: true
+  retry:
+    # Total cloud-LLM call attempts = 1 + max_retries. Transient
+    # errors (429 / 5xx / network) retry; permanent (other 4xx)
+    # raise immediately. ADR-015 default policy.
+    max_retries: 3
+    # First retry waits this long; subsequent retries multiply.
+    # Defaults give 1s / 2s / 4s for max_retries=3 — total ~7s
+    # worst-case retry window.
+    initial_backoff_seconds: 1.0
+    backoff_multiplier: 2.0
+
+# cli/advise daemon: data sources, storage and sweep options.
+# Cadence is schedules.advise; advisor below selects models and behavior.
+# Recommendations are advisory only (ADR-002); this daemon never trades.
 advise:
   symbols:
     - BTC/USD
@@ -515,27 +468,13 @@ advise:
   log_format: plain
   log_file_path: "data/logs/advise.log"     # daily rotation, 7-day retention. null = stderr only.
 
-# ============================================================================
-# Strategy Advisor (Phase 3 — see ADR-007 + ADR-009)
-# ============================================================================
-# Two modes:
-#   type: single  - one LLM, no aggregation. Simple; fast to iterate.
-#                   This is the Stage 3.2 default; MoE ships in 3.4a.
-#   type: moe     - mixture of experts (≥3 LLMs) + aggregator. The
-#                   `profiles.moe-advisor` block below shows the full
-#                   MoE shape; activate it with `--profile moe-advisor`
-#                   once the MoE adapter lands.
-#
-# Aggregation strategies (MoE only):
-#   voting              - discrete-direction votes; majority wins
-#   weighted_confidence - numeric proposals × self-reported confidence
-#   arbitrator          - a fourth model reads expert opinions, picks
-#
-# Cloud LLMs (Anthropic/OpenAI/Google) and local Ollama models can mix
-# freely. Per ADR-007 the upside of genuinely different training priors
-# outweighs per-call data exposure for a hobby trading bot.
+# Strategy configuration: type single or moe (mixture of experts).
+# MoE aggregation: voting, weighted_confidence or arbitrator.
+# Cloud providers and Ollama may mix. Seats, fallback order and inference
+# parameters remain static SETTINGS; auto_apply bounds are operator-controlled.
+# Seat evidence: docs/reference/advisor-seats.md; routing: docs/implementation/llm-fallbacks.md
 advisor:
-  type: single                        # Stage 3.2 default. Flip to `moe` via profile.
+  type: single                        # Base mode. Select `moe` via a profile.
 
   # Decision engine (Stage 8.5):
   #   llm       — the LLM advisor (single / MoE), per `type`. The default;
@@ -546,14 +485,20 @@ advisor:
   #               call; fall back to the heuristic on LLM failure / cost
   #               cap. Recommended for cloud-LLM setups (most ticks cost $0).
   # `heuristic` and `cascade` require `heuristic_file`.
-  engine: llm
-  # heuristic_file: "config/heuristic/quant.yml"   # curve + guard thresholds + toggles
+  engine: cascade
+  heuristic_file: "config/heuristic/quant.yml"
 
-  # Cadence lives in the `schedules:` block at the bottom of this file
+  # Cadence lives in the core `schedules:` block near the top of this file
   # (key: `advise`), alongside every other periodic-task interval.
 
   # Single-mode LLM target. Required when type=single (and engine is llm/cascade).
-  # ollama | anthropic | openai | google | atlas.
+  # `ollama_cloud` uses https://ollama.com/api/chat and OLLAMA_API_KEY.
+  # It is metered cloud usage, subject to llm.cost caps and llm.retry settings.
+  # Supported initial models: gpt-oss:120b, gpt-oss:20b, qwen3.5:397b, gemma4:31b.
+  # For an evaluated primary or fallback, set provider: ollama_cloud and its model.
+  # Keep this role's prompt; tune inference_params per model. No -cloud suffix.
+  # Setup, example and limits: docs/implementation/ollama-cloud.md
+  # ollama | ollama_cloud | anthropic | openai | google | atlas.
   # `atlas` (2026-08-12) is Atlas Cloud, an OpenAI-COMPATIBLE gateway
   # fronting ~400 models — it reuses the OpenAI adapter with a base_url
   # override, needs ATLASCLOUD_API_KEY, and its models carry a vendor
@@ -564,18 +509,20 @@ advisor:
   provider: ollama
   model: deepseek-r1:7b
   prompt_file: "config/prompts/quant.md"
-  # Optional ADR-043 failover: omitted/[] keeps the primary-only behavior.
-  # Put this list here for single mode, or inside each MoE expert/arbitrator.
-  # At most two distinct targets, tried in order on provider interruptions.
-  # Each inherits the parent prompt/role; set inference knobs for THAT model.
-  # Cloud candidates require their key, an llm: block, and the shared cost gate.
-  # Example only; choose and validate a backup for the role before enabling:
+  # Preselected quant: equivalent cloud first, previous cloud backup last; disabled.
+  # No verified equivalent on a different cloud route; skip that slot.
+  # Final cloud: weaker calibration; reconcile 62/63 outcomes; shares Atlas with Grok.
+  # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+  # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+  # After validation, replace the active [] line with this block:
   # fallbacks:
-  #   - provider: openai
-  #     model: gpt-5-mini
-  #     inference_params: {temperature: 1.0, max_tokens: 4000, timeout_seconds: 120}
-  # An explicitly configured provider: ollama is also allowed (local, unbilled).
-  # See docs/implementation/llm-fallbacks.md for operation and provenance.
+  # - provider: atlas
+  #   model: deepseek-ai/deepseek-v4-pro
+  #   inference_params:
+  #     temperature: 1.0
+  #     max_tokens: 4000
+  #     timeout_seconds: 300
+  fallbacks: []
   inference_params:
     temperature: 0.5
     max_tokens: 512                   # bump to 2048 for thinking models (R1, o1) —
@@ -610,15 +557,12 @@ advisor:
     min_interval_minutes: 240
 
 # ============================================================================
-# Per-CLI: harvest (cli/harvest — Stage 4.2 read-only treasury monitor)
+# 5. Treasury
 # ============================================================================
-# Cadence lives in `schedules.harvest` above. The daemon reads Kraken
-# USD balance, runs the propose_transfer() decision, logs what WOULD
-# be proposed, and (Stage 4.3) persists every non-None proposal to
-# the harvest.db transfer_proposals table for operator review via
-# `python tools/show_proposals.py`. Persistence happens regardless
-# of `harvester.enabled` — that flag gates execution in Stage 4.4+,
-# not the forensic record. No transfers happen through Stage 4.3.
+
+# cli/harvest daemon: treasury polling and storage; cadence is schedules.harvest.
+# harvester below sets thresholds and execution gates. Proposals persist
+# even when execution is disabled. Only Harvester can transfer funds (ADR-003).
 harvest:
   db: "data/wobblebot-harvest.db"       # transfer_proposals lands here
   log_format: plain                     # plain | json
@@ -628,27 +572,9 @@ harvest:
   # to Discord via cli/operator's forwarder. Set to null to run silent.
   operator_db: "data/wobblebot-operator.db"
 
-# ============================================================================
-# Harvester (Phase 4 — Stage 4.1 schema landed; operational from 4.2+)
-# ============================================================================
-# Treasury-management thresholds. The Harvester proposes (and later
-# executes, per ADR-003) Kraken↔bank transfers when balance leaves the
-# operator-defined band. Per ADR-004 transfers go through Kraken's
-# withdrawal API via ExchangePort — no separate banking adapter.
-#
-# Ordering invariant (validated at config-load):
-#   min_exchange_liquidity_usd  <  topup_threshold_usd  <  surplus_threshold_usd
-#
-# - min_exchange_liquidity_usd: floor; Harvester never withdraws below.
-# - topup_threshold_usd: low-water mark above the floor. Between min
-#   and topup, Harvester proposes a bank→Kraken deposit.
-# - surplus_threshold_usd: ceiling. Above this, Harvester proposes
-#   scraping the excess to bank.
-# - max_withdrawal_per_day_usd: rolling 24h cap on outflows. Limits
-#   blast radius of a misconfiguration or runaway loop.
-#
-# `enabled: false` mirrors the auto-apply gate posture (ADR-012-style):
-# operator opts in for any code path that moves money.
+# Operator-controlled SETTINGS: treasury thresholds, outflow caps and destinations.
+# min_exchange_liquidity_usd < topup_threshold_usd < surplus_threshold_usd.
+# enabled gates execution; Kraken withdrawal credentials are separate ENV secrets.
 harvester:
   enabled: false
   min_exchange_liquidity_usd: 200.0
@@ -679,25 +605,12 @@ harvester:
   proposal_max_age_hours: 24
 
 # ============================================================================
-# Operator interaction daemon (Phase 5 — Stage 5.6+; cli/operator)
+# 6. Operator surfaces and maintenance
 # ============================================================================
-# Bidirectional Discord interface per ADR-013. cli/operator maintains a
-# Gateway connection, parses operator messages via an LLM (Ollama in
-# Phase 5; cloud variants in Phase 6) into typed OperatorIntent
-# payloads, and routes:
-#   - Command (pause/resume/cancel/stop) → writes a PendingCommand row,
-#     posts a confirm embed; cli/live polls approved rows and dispatches
-#     (the ADR-002 confirm-before-execute firewall).
-#   - Query (status/open_orders/recent_fills/...) → answers immediately.
-#   - Conversational → posts reply text.
-#   - Unparseable → asks the operator to rephrase.
-# A background forwarder also drains the `notifications` SQLite table
-# (written by cli/live + cli/harvest) and posts each as a Discord
-# embed; a TTL expirer transitions abandoned awaiting_confirmation
-# rows to expired.
-#
-# Per ADR-013 decision 9 neither cli/live nor cli/harvest imports
-# discord.py — they write notification rows; cli/operator forwards.
+
+# cli/operator: Discord interface. Queries answer immediately; commands enter
+# pending_commands and require approval before execution (ADR-002/013).
+# Authorization, assistant settings and command TTLs remain SETTINGS.
 operator:
   auth:
     # Discord bot token env-var name. The actual token never appears in
@@ -787,66 +700,9 @@ operator:
   log_format: plain                       # plain | json
   log_file_path: "data/logs/operator.log" # daily rotation, 7-day retention. null = stderr only.
 
-# ============================================================================
-# Cloud LLM cost caps + retry policy (Phase 6 — ADR-014 + ADR-015)
-# ============================================================================
-# Cross-cutting block applied to every cloud-LLM call regardless of
-# which CLI (cli/advise, cli/operator, ...) or role drove it. Ollama
-# (local, free) calls bypass — only the three cloud providers
-# (anthropic, openai, google) are gated.
-#
-# Leave the block omitted entirely (or set to null) for a pure-Ollama
-# deployment — the gate is inactive and zero config is needed. The
-# presence of `llm:` is the opt-in signal that cloud usage is in
-# scope.
-#
-# Per ADR-014 decision 8, set `cost.enforce: false` for the first
-# week of cloud usage so the gate records every call (forensic
-# audit trail in operator.db's llm_calls table) but never denies.
-# Flip to true once you've seen real cost numbers and confirmed the
-# caps fit your usage.
-llm:
-  cost:
-    # Sliding 24-hour USD cap across all roles + providers. Trips
-    # raise LLMCostCapExceeded; the calling CLI catches and skips
-    # the call (cli/advise) or posts an operator notification
-    # (cli/operator).
-    max_spend_per_day_usd: "1.00"
-    # Per-CLI-invocation USD cap. In-memory tally, resets per
-    # process start. Catches runaway loops that the daily cap
-    # wouldn't notice fast enough.
-    max_spend_per_session_usd: "0.50"
-    # Dry-run kill switch. true = gate enforces; false = gate
-    # records calls but never denies (ADR-014 decision 8 — see
-    # block-level comment above).
-    enforce: true
-  retry:
-    # Total cloud-LLM call attempts = 1 + max_retries. Transient
-    # errors (429 / 5xx / network) retry; permanent (other 4xx)
-    # raise immediately. ADR-015 default policy.
-    max_retries: 3
-    # First retry waits this long; subsequent retries multiply.
-    # Defaults give 1s / 2s / 4s for max_retries=3 — total ~7s
-    # worst-case retry window.
-    initial_backoff_seconds: 1.0
-    backoff_multiplier: 2.0
-
-# ============================================================================
-# Web UI (Phase 7 — Stage 7.1+, required for cli/web)
-# ============================================================================
-# Server-rendered FastAPI + Jinja2 dashboard with HTMX-polled cards.
-# Operator-managed reverse proxy fronts this on the LAN (ADR-016);
-# bind_host defaults to 127.0.0.1 so the daemon is loopback-only out
-# of the box. Auth is single-operator-v1: session cookie + bcrypt
-# password seeded via `cli/web create-user`. CSRF synchronizer-token
-# middleware + per-IP login rate-limit defend the auth surface
-# (ADR-017).
-#
-# Leave the block omitted entirely (or set to null) when not running
-# the web UI — the dashboard is opt-in. The required env var
-# `WOBBLEBOT_WEB_SESSION_SECRET` only matters when `cli/web serve`
-# starts up (mint via `python -c "import secrets;
-# print(secrets.token_urlsafe(32))"`).
+# cli/web: dashboard and approval surfaces. /settings stores only user preferences
+# such as timezone in the DB; it does not edit this file or trading policy.
+# Auth/session controls are operator-controlled SETTINGS; session secret is ENV.
 web:
   # ---- serving ----
   # 127.0.0.1 = loopback-only. Operator runs their reverse proxy in
@@ -916,39 +772,9 @@ web:
   log_format: plain                       # plain | json
   log_file_path: "data/logs/web.log"      # daily rotation, 7-day retention. null = stderr only.
 
-# ============================================================================
-# Maintenance worker (Phase 8 — Stage 8.2+, required for cli/maintenance)
-# ============================================================================
-# Long-running daemon with seven concurrent scheduled tasks:
-# vacuum / prune+archive / backup / verify / reconcile / capital / ledger.
-# Operator-started;
-# not auto-spawned by any other daemon. Cadences pulled from `schedules:`
-# block above (maintenance_vacuum / maintenance_prune /
-# maintenance_backup / maintenance_verify / maintenance_reconcile /
-# maintenance_capital / maintenance_ledger) with
-# per-task defaults (7d / 1d / 1d / 30d / 1d) when missing.
-#
-# Per stage-8.2-design.md decision 3 only `price_snapshots` gets
-# pruned in v1.0. Every audit table (orders, trades, llm_calls, etc.)
-# stays forever; archive is the operator's manual concern there.
-#
-# Per decision 4 only local backups ship in v1.0. SQLite's online
-# `.backup` API produces atomic point-in-time copies without
-# locking cli/live's writers. Operator can rclone/rsync the
-# backup_dir to offsite storage if they want.
-#
-# v1.1: `verify` runs a restoration smoke test (PRAGMA integrity_check
-# + a representative SELECT per table) against each DB's LATEST
-# backup, and notifies (via operator_db below, if set) on failure.
-#
-# 2026-08-22: `reconcile` fetches Kraken's account-wide trade history
-# once per cycle and diffs it against reconcile_source_db for every
-# symbol in live.symbols (the actually-traded set), notifying at
-# critical on any Kraken trade missing locally -- born from a
-# confirmed silent-trade-loss incident (receipt in
-# docs/planning/roadmap.md's v1.1 digest). A trade on a still-open
-# local order is deferred (persistence pending), never paged.
-# Read-only reader-key credentials only; never writes.
+# cli/maintenance: vacuum, prune/archive, backup, verify, reconcile, capital
+# and ledger tasks, with cadences in schedules. Reads live.symbols for reconciliation.
+# Retention, paths and task controls remain operator-controlled SETTINGS.
 maintenance:
   # Every DB the daemon should VACUUM + back up. Add the operator's
   # active DBs; missing files are skipped (logged WARNING) so partial
@@ -1029,22 +855,20 @@ maintenance:
   operator_db: "data/wobblebot-operator.db"
 
 # ============================================================================
-# Profiles (named overrides)
+# 7. Named profile overlays
 # ============================================================================
-# Operator runs `cli/live --profile conservative` (or `cli/shadow
-# --profile conservative`, etc.) to deep-merge the named block over
-# the base config. CLI flags override even profiles. Apply only the
-# keys you want to change; everything else inherits.
-#
-# Each profile covers EVERY mode the profile is meaningful for. The
-# read-only/diagnostic CLIs (observe, status, sandbox, preflight)
-# don't have risk knobs to tune by profile, so they don't appear
-# here — they always run with their base config + flag overrides.
+
+# Select ONE with --profile NAME; mappings merge and lists replace entirely.
+# Profiles are not composable. Explicit supported CLI flags take precedence.
+# conservative / aggressive: risk and grid geometry overlays.
+# moe-advisor: local Ollama committee; cloud-only-moe: cloud committee.
+# cpu-only: CPU host configuration; still uses a cloud advisor with cascade.
+# Inspect the selected profile for effective seats, budgets and safety overrides.
+# For MoE, keep base advisor.fallbacks empty; enable only expert/arbitrator lists.
 profiles:
 
-  # Conservative: wide spacing, fewer orders, tight kill switches.
-  # Also caps shadow's max session loss + shrinks the synthetic
-  # starting balance so even simulated runs stay frugal-feeling.
+  # Risk/geometry overlay with lower exposure and session limits.
+  # Inspect its effective spacing against the base before use.
   conservative:
     grid:
       default:
@@ -1062,13 +886,9 @@ profiles:
       initial_balances:
         USD: 1000
 
-  # Aggressive: tight spacing, more orders, looser caps. Shadow
-  # gets a bigger synthetic pot so multi-cycle behavior has room
-  # to play out before hitting balance constraints.
-  # CAUTION: the Stage 8.6 backtest found ~1% spacing catastrophic in
-  # trends (3% is the least-bad static default — see grid.default above);
-  # 0.6% is tighter still and suits short chop-window shadow experiments,
-  # not unattended live sessions.
+  # More levels and looser caps; evaluate in shadow before live use.
+  # Tighter spacing can increase trend losses; see
+  # docs/reference/grid-strategy-research-synthesis-2026-05-30.md.
   aggressive:
     grid:
       default:
@@ -1089,37 +909,10 @@ profiles:
         BTC: 1
         ETH: 5
 
-  # Mixture-of-experts advisor (Stage 3.4a). All four providers are
-  # wired up — Ollama since Stage 3.4a; anthropic / openai / google
-  # since Phase 6 (cloud providers need the `llm:` cost-gate block
-  # above + the provider's API key in the env). The default
-  # `moe-advisor` profile below is an all-Ollama lineup that runs
-  # as-shipped; the `cloud-only-moe` profile further down shows an
-  # all-cloud lineup.
-  #
-  # Adjust the model tags to match what `ollama list` shows on your
-  # machine. The aggregator choices are `voting` (per-key majority),
-  # `weighted_confidence` (weighted by each expert's self-reported
-  # confidence), or `arbitrator` (a fourth model reads the three
-  # opinions and picks the final call — the arbitrator block must
-  # be set when aggregator=arbitrator).
-  #
-  # ⚠️ THE MODEL TAGS BELOW ARE RUNNABLE DEFAULTS, NOT SCORED SEAT
-  # HOLDERS. They are chosen so the profile starts on a stock Ollama
-  # install with no cloud keys — that is ALL they are chosen for. As of
-  # 2026-08-11 every one of them disagrees with the measured evidence:
-  #
-  #   seat         this profile      measured holder (see the register)
-  #   arbitrator   phi4:14b-q8_0     gpt-5-mini (8/8 vs voting 5/8)
-  #   quant        phi4:14b-q8_0     gpt-5-mini (freejudge; challenger filed)
-  #   news         deepseek-r1:8b    undecided — this tag has NEVER been scored
-  #   risk         qwen3:8b          undecided — this tag has NEVER been scored
-  #
-  # Before flipping ANY profile to `type: moe`, reconcile against
-  # docs/reference/advisor-seats.md — the register is the authority on
-  # who holds a seat and what evidence put them there. Shipping an
-  # unscored model into a live seat is how "which model is our risk
-  # expert, and why?" became unanswerable in the first place.
+  # Local Ollama committee. These tags are examples, NOT qualified seat holders.
+  # Install the matching tags and evaluate each against its current role prompt.
+  # Reconcile docs/reference/advisor-seats.md before using a live seat.
+  # aggregator=arbitrator requires the arbitrator block below.
   moe-advisor:
     advisor:
       type: moe
@@ -1129,6 +922,20 @@ profiles:
         provider: ollama
         model: phi4:14b-q8_0
         prompt_file: "config/prompts/arbitrator.md"
+        # Preselected arbitrator: equivalent cloud first, previous cloud backup last; disabled.
+        # No verified equivalent on a different cloud route; skip that slot.
+        # Final cloud: 73/75; both misses violated never-tighten.
+        # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+        # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+        # After validation, replace the active [] line with this block:
+        # fallbacks:
+        # - provider: openai
+        #   model: gpt-5-mini
+        #   inference_params:
+        #     temperature: 1.0
+        #     max_tokens: 4000
+        #     timeout_seconds: 300
+        fallbacks: []
         inference_params:
           temperature: 0.3
           max_tokens: 1024
@@ -1140,6 +947,20 @@ profiles:
           model: phi4:14b-q8_0
           role: quant
           prompt_file: "config/prompts/quant.md"
+          # Preselected quant: equivalent cloud first, previous cloud backup last; disabled.
+          # No verified equivalent on a different cloud route; skip that slot.
+          # Final cloud: weaker calibration; reconcile 62/63 outcomes; shares Atlas with Grok.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: deepseek-ai/deepseek-v4-pro
+          #   inference_params:
+          #     temperature: 1.0
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.5
             max_tokens: 512
@@ -1149,6 +970,20 @@ profiles:
           model: qwen3:8b
           role: risk
           prompt_file: "config/prompts/risk.md"
+          # Preselected risk: equivalent cloud first, previous cloud backup last; disabled.
+          # No verified equivalent on a different cloud route; skip that slot.
+          # Final cloud: 52/54 OK, zero UNSAFE; still requires role validation.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: deepseek-ai/deepseek-v4-pro
+          #   inference_params:
+          #     temperature: 0.4
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.4
             max_tokens: 512
@@ -1158,16 +993,29 @@ profiles:
           model: deepseek-r1:8b
           role: news
           prompt_file: "config/prompts/news.md"
+          # Preselected news: equivalent cloud first, previous cloud backup last; disabled.
+          # No verified equivalent on a different cloud route; skip that slot.
+          # Final cloud: 66/66 news; a ceiling tie, not proof it beats the incumbent.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: xai/grok-4.5
+          #   inference_params:
+          #     temperature: 0.6
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.6
             max_tokens: 2048               # R1 needs room for <think> + JSON
             timeout_seconds: 180
 
-  # Cloud-only MoE: every expert is a cloud LLM (anthropic / openai /
-  # google — all shipped in Phase 6). Requires the `llm:` cost-gate
-  # block above + each provider's API key in the env (ANTHROPIC_API_KEY
-  # / OPENAI_API_KEY / GOOGLE_API_KEY). Model tags below are
-  # illustrative — refresh them to current models before use.
+  # Cloud committee; requires llm cost configuration and each selected
+  # provider's API key in ENV, including keys for enabled cloud fallbacks.
+  # Reconcile tags/evidence with docs/reference/advisor-seats.md before use.
+  # Profile contents alone do not establish which profile is deployed.
   cloud-only-moe:
     advisor:
       type: moe
@@ -1177,6 +1025,26 @@ profiles:
         provider: anthropic
         model: claude-sonnet-4-6
         prompt_file: "config/prompts/arbitrator.md"
+        # Preselected arbitrator: equivalent cloud first, previous cloud backup last; disabled.
+        # First: nominal equivalent via Atlas; catalog is_ready=false, verify before enabling.
+        # Final cloud: 73/75; both misses violated never-tighten.
+        # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+        # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+        # After validation, replace the active [] line with this block:
+        # fallbacks:
+        # - provider: atlas
+        #   model: anthropic/claude-sonnet-4.6
+        #   inference_params:
+        #     temperature: 1.0
+        #     max_tokens: 4000
+        #     timeout_seconds: 300
+        # - provider: openai
+        #   model: gpt-5-mini
+        #   inference_params:
+        #     temperature: 1.0
+        #     max_tokens: 4000
+        #     timeout_seconds: 300
+        fallbacks: []
         inference_params:
           temperature: 0.3
           max_tokens: 1024
@@ -1187,6 +1055,26 @@ profiles:
           model: claude-sonnet-4-6
           role: quant
           prompt_file: "config/prompts/quant.md"
+          # Preselected quant: equivalent cloud first, previous cloud backup last; disabled.
+          # First: nominal equivalent via Atlas; catalog is_ready=false, verify before enabling.
+          # Final cloud: weaker calibration; reconcile 62/63 outcomes; shares Atlas with Grok.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: anthropic/claude-sonnet-4.6
+          #   inference_params:
+          #     temperature: 1.0
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          # - provider: atlas
+          #   model: deepseek-ai/deepseek-v4-pro
+          #   inference_params:
+          #     temperature: 1.0
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.5
             max_tokens: 512
@@ -1195,6 +1083,20 @@ profiles:
           model: gpt-4o
           role: risk
           prompt_file: "config/prompts/risk.md"
+          # Preselected risk: equivalent cloud first, previous cloud backup last; disabled.
+          # No verified equivalent on a different cloud route; skip that slot.
+          # Final cloud: 52/54 OK, zero UNSAFE; still requires role validation.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: deepseek-ai/deepseek-v4-pro
+          #   inference_params:
+          #     temperature: 0.4
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.4
             max_tokens: 512
@@ -1203,54 +1105,29 @@ profiles:
           model: gemini-2.0-flash
           role: news
           prompt_file: "config/prompts/news.md"
+          # Preselected news: equivalent cloud first, previous cloud backup last; disabled.
+          # No verified equivalent on a different cloud route; skip that slot.
+          # Final cloud: 66/66 news; a ceiling tie, not proof it beats the incumbent.
+          # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+          # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+          # After validation, replace the active [] line with this block:
+          # fallbacks:
+          # - provider: atlas
+          #   model: xai/grok-4.5
+          #   inference_params:
+          #     temperature: 0.6
+          #     max_tokens: 4000
+          #     timeout_seconds: 300
+          fallbacks: []
           inference_params:
             temperature: 0.6
             max_tokens: 512
 
-  # CPU-only NAS Docker deployment profile (feature/docker-support).
-  #
-  # Optimized for the operator's Synology DS1823xs+ inference host:
-  # Ryzen V1780B 4C/8T @ 3.35 GHz, 64 GB RAM, no GPU, no AVX-512.
-  # Model selections follow the global rule at
-  # `~/.claude/rules/nas-ollama-optimization.md` — q4_K_M over q8 for
-  # ≥7B models because the speed gain (~25-30%) beats the marginal
-  # quality loss on CPU. See also `docker/README.md`.
-  #
-  # Per-role measured tok/sec on this hardware (2026-05-27 hot cache):
-  #   - operator (qwen2.5:1.5b-q4_K_M): 16-tier; 3-16s per intent parse
-  #     depending on system cache contention. See sweep results at
-  #     docs/reference/sweep-2026-05-27-nas-operator-models.md.
-  #   - advisor  (Stage 8.5 cascade): the deterministic heuristic decides
-  #     most ticks locally for $0; only ambiguous calls escalate to cloud
-  #     o3. The 2026-05-29 sweep found NO local CPU model reasons well
-  #     enough for the advisor role (best 16/36; a constant scores ~19/36),
-  #     so the prior local llama3.1:8b advisor was retired here. The
-  #     advisor is a latency-tolerant daemon, so an occasional cloud call
-  #     is fine; the operator-assistant stays local (interactive).
-  #
-  # Operator model selected after a 16-model + 8-model NAS sweep
-  # 2026-05-27/28: qwen2.5:1.5b was the only candidate with 8/8 pass
-  # rate AND no first-message timeout. 3B/7B models hit a 120s
-  # cache-warm tax on the first call after a fresh model load — fatal
-  # for interactive Discord. qwen2.5:1.5b is small enough to fully
-  # cache-warm during the warmup() call, so every real message lands
-  # on hot cache.
-  #
-  # `base_url: http://host.docker.internal:11434` resolves inside
-  # any container that has `extra_hosts: "host.docker.internal:host-gateway"`
-  # set in docker-compose.yml (per the global docker-deployments.md
-  # rule). The advisor reads OLLAMA_BASE_URL from the environment;
-  # docker-compose.yml sets that env var alongside this profile.
-  #
-  # The advisor's LLM escalation target is a single cloud reasoning model
-  # (gpt-5-mini), not a local MoE: MoE on CPU multiplies latency by N
-  # experts and no local model cleared the bar anyway. Post-ADR-022 the
-  # heuristic makes only the clear guard calls and escalates every other
-  # tick to gpt-5-mini as a free judge — chosen over o3 in a 2026-06-04
-  # bake-off (better judgment on the escalate cases at ~1/3 the cost,
-  # ~$0.10/day; see docs/reference/advisor-llm-models.md). Cost stays
-  # gate-bounded by the top-level `llm:` block. Requires that block +
-  # OPENAI_API_KEY in the env.
+  # CPU host: small local operator assistant plus a single cloud advisor.
+  # Cascade resolves clear heuristic guards and escalates other calls to the
+  # configured cloud model; requires llm and that provider's ENV credentials.
+  # The assistant's base_url must be reachable from its container; advisor
+  # Ollama wiring uses OLLAMA_BASE_URL. This profile does not mean offline.
   cpu-only:
     operator:
       assistant:
@@ -1271,6 +1148,20 @@ profiles:
       provider: openai
       model: gpt-5-mini
       prompt_file: "config/prompts/quant.md"
+      # Preselected quant: equivalent cloud first, previous cloud backup last; disabled.
+      # No verified equivalent on a different cloud route; skip that slot.
+      # Final cloud: weaker calibration; reconcile 62/63 outcomes; shares Atlas with Grok.
+      # Cloud chain failure uses the heuristic; next scheduled evaluation retries primary.
+      # Evidence: docs/reference/advisor-seats.md#fallback-candidates
+      # After validation, replace the active [] line with this block:
+      # fallbacks:
+      # - provider: atlas
+      #   model: deepseek-ai/deepseek-v4-pro
+      #   inference_params:
+      #     temperature: 1.0
+      #     max_tokens: 4000
+      #     timeout_seconds: 300
+      fallbacks: []
       inference_params:
         temperature: 1.0       # gpt-5-mini is a reasoning model — it ignores low temps
         # 4000 covers the model's hidden reasoning tokens + the JSON answer

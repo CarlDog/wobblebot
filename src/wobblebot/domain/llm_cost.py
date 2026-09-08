@@ -3,8 +3,8 @@
 One ``LLMCallRecord`` per cloud-LLM API call — success or failure.
 Failed calls still record because some providers bill for them (e.g.
 content-moderation refusals). Ollama (local, free) calls bypass this
-machinery entirely; cost-tracking only kicks in for the three cloud
-providers ADR-014 establishes.
+machinery entirely; authenticated Ollama Cloud is metered and participates
+alongside the other cloud providers (ADR-045).
 
 The shape is deliberately Kraken-aligned to the trading-history models:
 forensic write-once rows, never mutated after insert, indexed by
@@ -32,7 +32,7 @@ LLMRole = Literal[
     "unknown",  # fallback for adapter contexts that can't classify
 ]
 
-LLMProvider = Literal["anthropic", "openai", "google"]
+LLMProvider = Literal["anthropic", "openai", "google", "ollama_cloud"]
 
 
 class LLMCallRecord(BaseModel):

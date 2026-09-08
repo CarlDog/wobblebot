@@ -47,6 +47,7 @@ from wobblebot.adapters.google import GoogleAdvisorAdapter
 from wobblebot.adapters.heuristic_advisor import HeuristicAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
 from wobblebot.adapters.ollama import OllamaAdapter
+from wobblebot.adapters.ollama_cloud import OllamaCloudAdvisorAdapter
 from wobblebot.adapters.openai import OpenAIAdvisorAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import (
@@ -135,6 +136,7 @@ _CLOUD_KEY_ENV = {
     "openai": "OPENAI_API_KEY",
     "google": "GOOGLE_API_KEY",
     "atlas": "ATLASCLOUD_API_KEY",
+    "ollama_cloud": "OLLAMA_API_KEY",
 }
 
 
@@ -182,7 +184,7 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
         )
     key_var = _CLOUD_KEY_ENV[provider]
     api_key = os.environ.get(key_var)
-    if not api_key:
+    if not api_key or not api_key.strip():
         raise OperatorConfigError(
             f"{key_var} missing from environment; required when " f"advisor.provider=='{provider}'."
         )
@@ -204,6 +206,7 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
     Dispatches by provider (the "not yet implemented" note here was stale
     from Stage 6.2 — every branch below is live):
     - ``ollama`` → ``OllamaAdapter`` (local, free; bypasses the cost gate).
+    - ``ollama_cloud`` → native authenticated Cloud API with cost/retry wiring.
     - ``anthropic`` / ``openai`` / ``google`` → that provider's adapter;
       each requires ``cloud_wiring`` non-None for the ADR-014 cost gate.
     - ``atlas`` → ``OpenAIAdvisorAdapter`` with a base_url override, since
@@ -222,10 +225,13 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
             max_tokens=inference_params.max_tokens,
             timeout_seconds=inference_params.timeout_seconds,
         )
-    if provider == "anthropic":
-        api_key = _require_cloud_key("anthropic", cloud_wiring)
+    if provider in ("anthropic", "ollama_cloud"):
+        api_key = _require_cloud_key(provider, cloud_wiring)
         assert cloud_wiring is not None  # narrowed by _require_cloud_key
-        return AnthropicAdvisorAdapter(
+        adapter_cls = (
+            AnthropicAdvisorAdapter if provider == "anthropic" else OllamaCloudAdvisorAdapter
+        )
+        return adapter_cls(
             model=model,
             prompt=prompt,
             role=role,  # type: ignore[arg-type]

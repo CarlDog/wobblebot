@@ -355,7 +355,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
                             'arbitrator', 'single', 'unknown'
                         )),
     provider            TEXT NOT NULL CHECK (provider IN (
-                            'anthropic', 'openai', 'google'
+                            'anthropic', 'openai', 'google', 'ollama_cloud'
                         )),
     model               TEXT NOT NULL,
     tokens_in           INTEGER NOT NULL,

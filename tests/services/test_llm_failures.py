@@ -14,6 +14,26 @@ from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "host,path,status,message,expected",
+    [
+        ("ollama.com", "/api/chat", 404, "model 'gpt-oss:120b' not found", "model_unavailable"),
+        ("ollama.com", "/api/chat", 404, "route missing", "http_404"),
+        ("ollama.com", "/wrong", 404, "model 'gpt-oss:120b' not found", "http_404"),
+        ("other.invalid", "/api/chat", 404, "model 'gpt-oss:120b' not found", "http_404"),
+        ("ollama.com", "/api/chat", 400, "model 'gpt-oss:120b' not found", "http_400"),
+    ],
+)
+def test_ollama_model_unavailability_requires_known_host_endpoint_status(
+    host, path, status, message, expected
+):
+    request = httpx.Request("POST", f"https://{host}{path}")
+    response = httpx.Response(status, request=request, json={"error": message})
+    exc = httpx.HTTPStatusError("private", request=request, response=response)
+    assert classify_error(exc) == expected
+    assert "gpt-oss" not in failure_detail(exc)
+
+
 def test_anthropic_credit_failure_has_actionable_classification() -> None:
     request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     response = httpx.Response(

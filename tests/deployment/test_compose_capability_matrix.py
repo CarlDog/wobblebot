@@ -53,6 +53,7 @@ CREDENTIAL_ENV_KEYS = frozenset(
         "OPENAI_API_KEY",
         "GOOGLE_API_KEY",
         "ATLASCLOUD_API_KEY",
+        "OLLAMA_API_KEY",
         "CRYPTOCOMPARE_API_KEY",
         "DISCORD_BOT_TOKEN",
         "WOBBLEBOT_WEB_SESSION_SECRET",
@@ -79,7 +80,7 @@ EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
     "news": frozenset({"CRYPTOCOMPARE_API_KEY"}),
     # cli/advise.py:128-131 — _CLOUD_KEY_ENV. No Kraken adapter; Ollama needs
     # no credential.
-    "advise": _CLOUD_LLM | {"ATLASCLOUD_API_KEY"},
+    "advise": _CLOUD_LLM | {"ATLASCLOUD_API_KEY", "OLLAMA_API_KEY"},
     # cli/harvest.py:432 — the ONLY adapter it builds reads
     # config.harvester.api_key_env_var (default KRAKEN_HARVESTER_API_KEY),
     # daemon mode included. The module docstring's "uses the read-only
@@ -116,7 +117,7 @@ EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
     # cloud keys. NOT the Harvester key — `cli/harvest --execute` runs against
     # the `harvest` service (`docker compose run --rm harvest …`), which keeps
     # withdrawal authority in exactly one service definition.
-    "tools": _READER | _TRADER | _CLOUD_LLM | {"ATLASCLOUD_API_KEY"},
+    "tools": _READER | _TRADER | _CLOUD_LLM | {"ATLASCLOUD_API_KEY", "OLLAMA_API_KEY"},
 }
 
 # Non-secret wiring every service must still receive after the split. Present

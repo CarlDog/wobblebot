@@ -3554,6 +3554,28 @@ Group 4. Operator's question and the four holes:
 role-preserving alternatives under the existing spend caps. Persist actual model
 provenance and display safe actionable failure labels. Partially supersedes ADR-015's
 v1 prohibition on provider substitution; retains advisory and news-role firewalls.
+The same-day candidate amendment prefers an equivalent cloud route before the
+previous cloud backup, with heuristic recovery and no local fallback presets.
 
-<!-- ADR-043 is the last in this file; new ADRs append below. -->
+## ADR-044 — Settings Layout and POLICY Authority Boundaries
+
+**Status:** POLICY amendment proposed; counter-cap repair and settings layout implemented locally.
+**Date:** 2026-09-08
+**Proposal:** [Full review and proposed amendment](adr-044-settings-layout-and-policy-authority.md).
+Retain ADR-040's seven-field POLICY membership; clarify protected ceilings,
+bootstrap defaults, database-failure behavior, approval and legacy CLI/writer
+boundaries. Records the behavior-preserving settings layout and the independently
+implemented actual-counter-notional cap repair. ADR-040 remains the accepted decision
+until amended; backlog G6 and phase-entry gates remain unchanged.
+
+## ADR-045 — Distinct Ollama Cloud Advisor Provider
+
+**Status:** Accepted for local implementation; activation remains separate.
+**Date:** 2026-09-08
+**Decision:** [Full ADR](adr-045-ollama-cloud-provider.md). Add authenticated native
+`ollama_cloud` advisor targets with shared spend/retry accounting, local response
+validation and a history-preserving SQLite provider migration. Local `ollama`
+remains separate. Existing seats and fallback selections are unchanged.
+
+<!-- ADR-045 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
