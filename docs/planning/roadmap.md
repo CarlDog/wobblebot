@@ -19,8 +19,10 @@ repairs are complete locally. C3/C4 evidence is prepared in the
 "continue" on 2026-09-08 and authorized C5 release preparation. The later "Yes"
 authorized source/PR/tag publication. **v2.0.8 is published and its GHCR artifact
 verified**; the C5 publication receipt below identifies the source, checks and digest.
-Production deployment, existing issue/dependency-PR dispositions and formal phase
-acceptance remain gated. 2.1 implementation has not begun.
+The later "push and deploy to the nas" authorized publication and deployment of
+the C5-R1 repair as **2.0.9**; both are verified in the receipt below. Existing
+issue/dependency-PR dispositions and formal phase acceptance remain gated.
+2.1 implementation has not begun.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a
@@ -441,6 +443,69 @@ contain the earlier source; no new release or production deployment occurred.
 Publish and verify an artifact containing this repair before selecting it for C5
 deployment. Current backups, the concrete stack diff, live config/key-scope checks,
 authorized finite observation and explicit phase acceptance remain separate gates.
+
+**C5-R1 publication and NAS deployment ✅ 2026-09-08 UTC:** the operator explicitly
+requested "push and deploy to the nas". [PR #144](https://github.com/CarlDog/wobblebot/pull/144)
+merged the reviewed repair as `4ac64c622166e964a99e2c7240f09360d84f7952`.
+The new, unmoved [v2.0.9 tag and Release](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.9)
+resolve to that source. The final PR tree and merge tree agree; the intervening
+change from the locally tested package candidate was documentation only.
+
+- **Final local package:** Windows/Python 3.13.14 reports **4002 passed,
+  30 deselected in 131.12s**; installed Linux/Python 3.14.7 reports **3996 passed,
+  6 absent-operator-file skips, 30 deselected in 95.90s**. `python -m pip check`,
+  `python -m black --check src/ tests/`, `python -m isort --check-only src/ tests/`,
+  `python -m mypy src/`, `python -m pylint src/` and full `python -m pytest -ra`
+  pass with strict-config and mandatory tagged-upgrade gates. The explicit offline
+  integration lane passes **10 tests in 19.79s**. The six actual-image
+  upgrade/rollback/re-upgrade/restore stages pass against prior 2.0.7 and candidate
+  2.0.9, using disposable fixtures and no network. A stale expected-version assertion
+  in the rehearsal harness was corrected before migration; it was not a product failure.
+- **GitHub:** final PR tests, secret scan and all three CodeQL analyses pass.
+  Merged-source workflow `34199107204` passes test job `101973560237` (**3996 passed,
+  6 skipped, 30 deselected in 121.58s**) and build job `101974422618`.
+  Tag workflow `34199150953` passes test job `101973693949` (**3996 passed,
+  6 skipped, 30 deselected in 141.19s**) and build job `101974702832` on its first
+  attempt. Main/tag secret scans and merged-source CodeQL pass. Skipped PR image
+  builds and duplicate secret checks are not counted as successful executions.
+- **Published artifact:** `ghcr.io/carldog/wobblebot@sha256:930f828d7df9fa8689fc4486c0cce12084573e7c9bca9fdad65bdf10aa844b25`.
+  Linux/amd64 platform manifest `sha256:46629196606d8f43da1d62bc76fc2bba37661037de7f2b1a41af8ae5311c2544`
+  identifies image config `sha256:cae1b343cf9e06cb5f1ad72650f0df845f7aa290ed97078446b787c9c3a7bb5d`.
+  All packaged Python, required templates/static assets and the healthcheck match
+  tagged source; runtime package versions match the tested candidate exactly.
+- **Controlled stop and backups:** live `cpu-only` configuration and all six
+  database integrity checks pass. Preflight validates **6/6 orders** with dry-run
+  semantics. Actual trader/Harvester keys are distinct, with Withdraw off/on
+  respectively. SIGTERM-only stops finish naturally with exit 0; the trader cancels
+  **11 orders**, followed by an independent read confirming zero open orders.
+  No approved transfer command or pending transfer result remains. All six SQLite
+  online backups pass integrity and restoration-read verification; their paths,
+  cutoffs and hashes are in the evidence. These are individually consistent
+  snapshots, not a globally atomic backup; later effects must be reconciled before restore.
+- **NAS readback:** stack **158**, endpoint **2**, stays file-managed at
+  `StackFileVersion=85`. Only `IMAGE_TAG` changes **2.0.7 → 2.0.9**; the full Compose
+  file, other stack environment entries, admin-only resource control, mounts and
+  restart policies are preserved. All eight containers start at **07:31:38–07:31:41 UTC**
+  on the verified image config and source revision; all are healthy at **07:34:09 UTC**.
+  Trader and Harvester retain `restart: no`. All six databases pass integrity checks
+  with the required diagnostic columns. **54 table comparisons** pass both across
+  shutdown and across deployment, preserving existing financial, approval,
+  notification and pause rows; no new cap trip or unexplained command transition appears.
+- **Bounded behavior:** authenticated, GET-only loopback requests to `/dashboard`
+  and `/status/card` return 200; `/healthz` returns 200 and anonymous dashboard access
+  redirects to login. All six symbol cards render: BTC/ETH remain OFFSIDE and XRP
+  shows the complete STARVED explanation without an invented elapsed duration.
+  No error/critical/traceback or closed-loop match appears in the captured startup
+  logs of the eight daemons. The ephemeral signed session for the existing operator
+  does not verify password-login UX or the external reverse proxy.
+
+[The deployment evidence](../release/2.0.9-deployment-evidence.json) records the
+commands, named jobs, image chain, verified backups and live readbacks. This completes
+the requested push/deploy batch and deploys the C5-R1 repair. No diagnostic trade,
+transfer or paid model probe was initiated; normal configured daemon work resumed.
+The eight-hour observation campaign is not scheduled, no natural task-failure/recovery
+event is claimed, and **formal 2.0.x acceptance and N0/N1 entry remain pending**.
+Historical v2.0.8 failure/retry evidence remains unchanged.
 
 ## Post-v2.0 Security Maintenance
 
