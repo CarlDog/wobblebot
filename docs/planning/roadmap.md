@@ -27,10 +27,13 @@ ledger/daily cap and a stricter $0.20 probe session ceiling; recorded cost was
 **$0.021926**. Atlas Haiku news/arbitrator, Atlas Grok news, OpenAI GPT-5 mini
 arbitrator and Atlas DeepSeek V4 Pro risk passed parsed-output and basic role guards.
 Atlas's `is_ready: false` is insufficient to infer availability: its Haiku and Grok
-endpoints worked. DeepSeek quant instead proposed 1.5% spacing against a 3% current
-grid, violating the no-tighten rule; its activation is withheld pending the operator's
-choice of leaving it disabled or evaluating an Ollama Cloud replacement. This small
-smoke test does not replace the recorded model-selection batteries.
+endpoints worked. DeepSeek quant proposed 1.5% spacing against a 3% current grid.
+The initial smoke check incorrectly applied arbitration's blanket no-tighten rule
+to the quant role, whose prompt permits tightening in genuine ranging. That result
+does **not** establish an unsafe quant judgment. The operator requested evaluation
+of an Ollama Cloud alternative; a balanced quant-fixture comparison of GPT-OSS 120B
+and DeepSeek is in progress. This small smoke test does not replace the recorded
+model-selection batteries.
 
 The passing risk/news/arbitrator routes have been written to NAS `cpu-only` and
 the repository operator file's matching `cloud-only-moe` profile. News/arbitrator
