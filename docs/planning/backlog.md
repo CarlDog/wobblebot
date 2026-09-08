@@ -10,8 +10,8 @@ The roadmap records the separate stabilization publication PR and its release.
 An eligible trigger permits a scope decision; it does not schedule implementation.
 Owners below are accountable roles, not claims that another person accepted a task.
 The operator assigns the implementation owner when a slice starts. E01-E03 were
-accepted on 2026-09-08; source/tag publication was subsequently authorized.
-Production deployment and formal acceptance retain their closeout-plan decisions.
+accepted on 2026-09-08; publication and NAS deployment were subsequently authorized
+and are recorded in the roadmap. Formal acceptance retains its closeout-plan decision.
 
 ## Closeout and tracker disposition
 
@@ -28,8 +28,8 @@ Production deployment and formal acceptance retain their closeout-plan decisions
 | PR138 | [Pylint bump](https://github.com/CarlDog/wobblebot/pull/138) reviewed; individual CI and local tooling check pass. Merge pending instruction. | Tooling owner; authorized merge, rebase/retest final head if it changes. | Exact head and combined compatibility in audit; source/image publication stays separate. |
 | PR139 | [PyYAML stubs bump](https://github.com/CarlDog/wobblebot/pull/139) reviewed; individual CI and local mypy check pass. Merge pending instruction. | Tooling owner; same head/retest gate as PR138. | Exact head and combined compatibility in audit. |
 | PR140 | Park [isort major](https://github.com/CarlDog/wobblebot/pull/140). Current CI cannot resolve with pylint 4.0.7; pylint 4.0.8 permits it. Windows default-encoding checks also warn while returning success. | Tooling owner; PR138 first, then explicitly adopt UTF-8 verification and obtain clean Windows/Linux checks. | Isolated isort 9 check passes with UTF-8 and warnings-as-errors; default mode is not accepted. No bulk reformat or environment switch in this patch. |
-| C5 | Publication receipt recorded in the roadmap; deployment/formal close remain gated. | Operator + release integrator; approve the concrete deployment and limitations. | Verified source/tag/image, current stack and consistent backup, rollback rehearsal, finite behavior receipt, explicit close. |
-| C5-R1 | Ordinary failed-open shutdown repaired and verified locally; published v2.0.8 is unchanged. | Release integrator + operator; separately authorize publication of the repaired source, then C5 deployment gates. | Deterministic real-worker regressions, independent review/mutations, supported-version checks and full Windows/Linux gates in the roadmap and local repair evidence. |
+| C5 | Publication and NAS deployment receipts recorded in the roadmap; formal close remains gated. | Operator + release integrator; authorize the proposed observation window and record acceptance of the remaining limitations. | Verified source/tag/image, preserved stack, current verified backups, rollback rehearsal and bounded behavior receipt; explicit phase close remains outstanding. |
+| C5-R1 | Ordinary failed-open shutdown repaired, published and deployed; historical v2.0.8 evidence remains unchanged. | Release integrator; implementation/publication/deployment complete within C5. | Deterministic real-worker regressions, independent review/mutations, supported-version and full Windows/Linux gates, plus [deployment evidence](../release/2.0.9-deployment-evidence.json). |
 
 ## Proposed next phase
 
