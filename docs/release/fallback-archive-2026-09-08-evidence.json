@@ -1,0 +1,852 @@
+{
+  "verified_at": "2026-09-08T20:11:39+00:00",
+  "scope": "Activate approved cloud fallbacks, evaluate an Ollama quant backup, repair and verify archive collisions. No phase acceptance or primary-seat replacement.",
+  "publication": {
+    "pr": "https://github.com/CarlDog/wobblebot/pull/148",
+    "source": "4f5b32b0641d79b7a339c7b8c189e0c2b764775d",
+    "ci": "https://github.com/CarlDog/wobblebot/actions/runs/34272635108",
+    "ci_and_publish": "success"
+  },
+  "activation": {
+    "initial_roles": {
+      "at": "2026-09-08T19:54:52.168139+00:00",
+      "routes": {
+        "risk": [
+          {
+            "provider": "atlas",
+            "model": "deepseek-ai/deepseek-v4-pro",
+            "inference_params": {
+              "temperature": 0.4,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          }
+        ],
+        "news": [
+          {
+            "provider": "atlas",
+            "model": "anthropic/claude-haiku-4.5-20251001",
+            "inference_params": {
+              "temperature": 0.6,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          },
+          {
+            "provider": "atlas",
+            "model": "xai/grok-4.5",
+            "inference_params": {
+              "temperature": 0.6,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          }
+        ],
+        "arbitrator": [
+          {
+            "provider": "atlas",
+            "model": "anthropic/claude-haiku-4.5-20251001",
+            "inference_params": {
+              "temperature": 1.0,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          },
+          {
+            "provider": "openai",
+            "model": "gpt-5-mini",
+            "inference_params": {
+              "temperature": 1.0,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          }
+        ]
+      },
+      "files": [
+        {
+          "location": "nas",
+          "profile": "cpu-only",
+          "before_sha256": "dfecfa249aa6171d1776a4b13ceb8605c72e9925f4984e31a78d4649030c7137",
+          "after_sha256": "0db3b53601535abe2aa236c0377e473d6757ec84f29a1b9e1f60115054c18e84",
+          "only_fallbacks_changed": true
+        },
+        {
+          "location": "repository",
+          "profile": "cloud-only-moe",
+          "before_sha256": "a6befa8c057047f817277cf94eacea3c1c8a6ce3a10d869b63e4c978853cf9e1",
+          "after_sha256": "05f519d59311bf7822433b1f08935ea1cde020dd5fdb5cb0a63eba4383312a57",
+          "only_fallbacks_changed": true
+        }
+      ],
+      "nas_backup_directory": "pre-fallback-activation-20260908T195452Z"
+    },
+    "quant": {
+      "at": "2026-09-08T20:06:56.928590+00:00",
+      "routes": {
+        "quant": [
+          {
+            "provider": "atlas",
+            "model": "deepseek-ai/deepseek-v4-pro",
+            "inference_params": {
+              "temperature": 1.0,
+              "max_tokens": 4000,
+              "timeout_seconds": 300
+            }
+          }
+        ]
+      },
+      "qualification": "DeepSeek 9/9; subsequent authenticated Ollama comparison 6 OK, 2 UNSAFE, 1 SUBOPTIMAL. DeepSeek enabled, Ollama unselected.",
+      "files": [
+        {
+          "location": "nas",
+          "profile": "cpu-only",
+          "before_sha256": "0db3b53601535abe2aa236c0377e473d6757ec84f29a1b9e1f60115054c18e84",
+          "after_sha256": "039cad556f61489edd54067bdc2ff80ba90d8a089ef1456005c17f11d92016d3",
+          "only_fallbacks_changed": true
+        },
+        {
+          "location": "repository",
+          "profile": "cloud-only-moe",
+          "before_sha256": "05f519d59311bf7822433b1f08935ea1cde020dd5fdb5cb0a63eba4383312a57",
+          "after_sha256": "13921f3642697c3fbea1c323e8233fe11b57d5149311554d993b4a6c2a900844",
+          "only_fallbacks_changed": true
+        }
+      ],
+      "nas_backup_directory": "pre-quant-fallback-activation-20260908T200657Z"
+    },
+    "generic_example_fallbacks": "disabled",
+    "effective_config_changes": "Only fallback arrays; active comments clarified. Primaries, safety and budgets preserved.",
+    "ollama_key_replacement": "Operator replaced rejected key; stack and advisor match verified without retaining either value.",
+    "runtime": {
+      "trace_id": "d71f3252-2937-4cb1-93b3-e2284fa0bdec",
+      "calls": [
+        {
+          "timestamp": "2026-09-08T19:55:43.971882+00:00",
+          "role": "news",
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5",
+          "success": 0,
+          "error_kind": "insufficient_credit",
+          "cost_usd": "0"
+        },
+        {
+          "timestamp": "2026-09-08T19:55:58.677208+00:00",
+          "role": "news",
+          "provider": "openai",
+          "model": "anthropic/claude-haiku-4.5-20251001",
+          "success": 1,
+          "error_kind": null,
+          "cost_usd": "0.005290"
+        },
+        {
+          "timestamp": "2026-09-08T19:55:59.321857+00:00",
+          "role": "risk",
+          "provider": "openai",
+          "model": "gpt-5-mini",
+          "success": 1,
+          "error_kind": null,
+          "cost_usd": "0.002347"
+        },
+        {
+          "timestamp": "2026-09-08T19:56:14.250060+00:00",
+          "role": "quant",
+          "provider": "openai",
+          "model": "xai/grok-4.5",
+          "success": 1,
+          "error_kind": null,
+          "cost_usd": "0.015804"
+        },
+        {
+          "timestamp": "2026-09-08T19:56:14.484351+00:00",
+          "role": "arbitrator",
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5",
+          "success": 0,
+          "error_kind": "insufficient_credit",
+          "cost_usd": "0"
+        },
+        {
+          "timestamp": "2026-09-08T19:56:19.070919+00:00",
+          "role": "arbitrator",
+          "provider": "openai",
+          "model": "anthropic/claude-haiku-4.5-20251001",
+          "success": 1,
+          "error_kind": null,
+          "cost_usd": "0.005151"
+        }
+      ],
+      "suggestions": [
+        {
+          "created_at": "2026-09-08T20:09:47.902406+00:00",
+          "role": "aggregated",
+          "model_name": "cascade[heuristic+moe[arbitrator:quant:xai/grok-4.5/risk:gpt-5-mini/news:claude-haiku-4-5|arb=claude-haiku-4-5]] [actual routes: quant=atlas/xai/grok-4.5, risk=openai/gpt-5-mini, news=atlas/anthropic/claude-haiku-4.5-20251001, arbitrator=atlas/anthropic/claude-haiku-4.5-20251001]",
+          "llm_attempts": [
+            {
+              "role": "quant",
+              "provider": "atlas",
+              "model": "xai/grok-4.5",
+              "error_kind": null
+            },
+            {
+              "role": "risk",
+              "provider": "openai",
+              "model": "gpt-5-mini",
+              "error_kind": null
+            },
+            {
+              "role": "news",
+              "provider": "anthropic",
+              "model": "claude-haiku-4-5",
+              "error_kind": "insufficient_credit"
+            },
+            {
+              "role": "news",
+              "provider": "atlas",
+              "model": "anthropic/claude-haiku-4.5-20251001",
+              "error_kind": null
+            },
+            {
+              "role": "arbitrator",
+              "provider": "anthropic",
+              "model": "claude-haiku-4-5",
+              "error_kind": "insufficient_credit"
+            },
+            {
+              "role": "arbitrator",
+              "provider": "atlas",
+              "model": "anthropic/claude-haiku-4.5-20251001",
+              "error_kind": null
+            }
+          ]
+        },
+        {
+          "created_at": "2026-09-08T20:04:02.485032+00:00",
+          "role": "aggregated",
+          "model_name": "cascade[heuristic+moe[arbitrator:quant:xai/grok-4.5/risk:gpt-5-mini/news:claude-haiku-4-5|arb=claude-haiku-4-5]] [actual routes: risk=openai/gpt-5-mini, news=atlas/anthropic/claude-haiku-4.5-20251001, arbitrator=atlas/anthropic/claude-haiku-4.5-20251001]",
+          "llm_attempts": [
+            {
+              "role": "risk",
+              "provider": "openai",
+              "model": "gpt-5-mini",
+              "error_kind": null
+            },
+            {
+              "role": "news",
+              "provider": "anthropic",
+              "model": "claude-haiku-4-5",
+              "error_kind": "insufficient_credit"
+            },
+            {
+              "role": "news",
+              "provider": "atlas",
+              "model": "anthropic/claude-haiku-4.5-20251001",
+              "error_kind": null
+            },
+            {
+              "role": "arbitrator",
+              "provider": "anthropic",
+              "model": "claude-haiku-4-5",
+              "error_kind": "insufficient_credit"
+            },
+            {
+              "role": "arbitrator",
+              "provider": "atlas",
+              "model": "anthropic/claude-haiku-4.5-20251001",
+              "error_kind": null
+            }
+          ]
+        },
+        {
+          "created_at": "2026-09-08T20:02:33.211327+00:00",
+          "role": "gremlin",
+          "model_name": "qwen2.5:3b-instruct-q4_K_M",
+          "llm_attempts": []
+        }
+      ],
+      "routes": {
+        "quant": [
+          {
+            "provider": "atlas",
+            "model": "deepseek-ai/deepseek-v4-pro"
+          }
+        ],
+        "risk": [
+          {
+            "provider": "atlas",
+            "model": "deepseek-ai/deepseek-v4-pro"
+          }
+        ],
+        "news": [
+          {
+            "provider": "atlas",
+            "model": "anthropic/claude-haiku-4.5-20251001"
+          },
+          {
+            "provider": "atlas",
+            "model": "xai/grok-4.5"
+          }
+        ],
+        "arbitrator": [
+          {
+            "provider": "atlas",
+            "model": "anthropic/claude-haiku-4.5-20251001"
+          },
+          {
+            "provider": "openai",
+            "model": "gpt-5-mini"
+          }
+        ]
+      },
+      "ollama_calls": [
+        {
+          "timestamp": "2026-09-08T20:09:26.053366+00:00",
+          "role": "quant",
+          "model": "gpt-oss:120b",
+          "success": 1,
+          "error_kind": null
+        },
+        {
+          "timestamp": "2026-09-08T20:09:23.958078+00:00",
+          "role": "quant",
+          "model": "gpt-oss:120b",
+          "success": 1,
+          "error_kind": null
+        },
+        {
+          "timestamp": "2026-09-08T20:09:21.200606+00:00",
+          "role": "quant",
+          "model": "gpt-oss:120b",
+          "success": 1,
+          "error_kind": null
+        }
+      ],
+      "ollama_key_present": true,
+      "ollama_key_surrounding_whitespace": false,
+      "ollama_key_wrapped_quotes": false
+    }
+  },
+  "qualification": {
+    "smoke": {
+      "at": "2026-09-08T19:51:30.450037+00:00",
+      "synthetic_fixture": true,
+      "probe_session_ceiling_usd": "0.20",
+      "checks": [
+        {
+          "role": "quant",
+          "provider": "atlas",
+          "model": "deepseek-ai/deepseek-v4-pro",
+          "trace_id": "fallback-activation-5cfe22a424df4d9ba676f768b5d8b299",
+          "parsed": true,
+          "smoke_guard_pass": false,
+          "recommendations": {
+            "spacing_percentage": 1.5
+          },
+          "returned_role": "quant",
+          "elapsed_seconds": 24.598537
+        },
+        {
+          "role": "risk",
+          "provider": "atlas",
+          "model": "deepseek-ai/deepseek-v4-pro",
+          "trace_id": "fallback-activation-1aa98b293e364f12aa4260fb16da9da9",
+          "parsed": true,
+          "smoke_guard_pass": true,
+          "recommendations": {},
+          "returned_role": "risk",
+          "elapsed_seconds": 22.337923
+        },
+        {
+          "role": "news",
+          "provider": "atlas",
+          "model": "anthropic/claude-haiku-4.5-20251001",
+          "trace_id": "fallback-activation-4cc7edf9f82d4455a64d803a296c4f3d",
+          "parsed": true,
+          "smoke_guard_pass": true,
+          "recommendations": {},
+          "returned_role": "news",
+          "elapsed_seconds": 8.373783
+        },
+        {
+          "role": "arbitrator",
+          "provider": "atlas",
+          "model": "anthropic/claude-haiku-4.5-20251001",
+          "trace_id": "fallback-activation-48170f4fd3664f3094bc28fff4da57ce",
+          "parsed": true,
+          "smoke_guard_pass": true,
+          "recommendations": {
+            "spacing_percentage": 4.2
+          },
+          "returned_role": "arbitrator",
+          "elapsed_seconds": 2.957936
+        },
+        {
+          "role": "news",
+          "provider": "atlas",
+          "model": "xai/grok-4.5",
+          "trace_id": "fallback-activation-d8450f5bb6fd4c5e9fa07d4e81835803",
+          "parsed": true,
+          "smoke_guard_pass": true,
+          "recommendations": {},
+          "returned_role": "news",
+          "elapsed_seconds": 6.502178
+        },
+        {
+          "role": "arbitrator",
+          "provider": "openai",
+          "model": "gpt-5-mini",
+          "trace_id": "fallback-activation-9d2c0db723e94359827797ee810dae6a",
+          "parsed": true,
+          "smoke_guard_pass": true,
+          "recommendations": {
+            "spacing_percentage": 4.2
+          },
+          "returned_role": "arbitrator",
+          "elapsed_seconds": 19.268537
+        }
+      ],
+      "recorded_cost_usd": "0.021926",
+      "interpretation_correction": "The initial quant smoke_guard_pass=false applied the wrong blanket no-tighten criterion and is invalid for qualification. Corrected role-specific batteries below supersede it."
+    },
+    "initial_comparison": {
+      "at": "2026-09-08T19:57:44.999120+00:00",
+      "fixtures": [
+        "gen3_fee_bleed_high_evidence",
+        "gen3_trend_onset_still_cycling",
+        "gen3_vol_regime_shift_up",
+        "gen3_starved_tight_range",
+        "gen3_overwide_one_lucky_cycle",
+        "gen3_quiet_above_floor_wide",
+        "gen3_matched_and_earning",
+        "gen3_ran_away_wrong_lever",
+        "gen3_mild_uptrend_grid_keeps_up"
+      ],
+      "scope": "One round, nine preselected gen3 cases balanced across directions. Preliminary fallback qualification, not a primary-seat win.",
+      "acceptance": "At least 7/9 OK, zero UNSAFE and zero ERROR; spacing at or below current 0.80% fee floor is unsafe.",
+      "session_ceiling_usd": "0.30",
+      "models": [
+        {
+          "provider": "ollama_cloud",
+          "model": "gpt-oss:120b",
+          "checks": [
+            {
+              "fixture": "gen3_fee_bleed_high_evidence",
+              "trace_id": "quant-backup-eval-ac3f16a802e14c888d59a2e96312b072",
+              "verdict": "ERROR",
+              "error_kind": "authentication_error",
+              "elapsed_seconds": 0.258699
+            }
+          ],
+          "counts": {
+            "ERROR": 1
+          },
+          "qualified": false
+        },
+        {
+          "provider": "atlas",
+          "model": "deepseek-ai/deepseek-v4-pro",
+          "checks": [
+            {
+              "fixture": "gen3_fee_bleed_high_evidence",
+              "trace_id": "quant-backup-eval-9243eb9ab8ce44f6859f4172b134ef9b",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 0.85
+              },
+              "confidence": "high",
+              "elapsed_seconds": 42.262007
+            },
+            {
+              "fixture": "gen3_trend_onset_still_cycling",
+              "trace_id": "quant-backup-eval-9c6aa9b8418b4051999edccdb76d00a6",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.5
+              },
+              "confidence": "high",
+              "elapsed_seconds": 48.13648
+            },
+            {
+              "fixture": "gen3_vol_regime_shift_up",
+              "trace_id": "quant-backup-eval-599694ebfce04fe6a75f638b6729bf25",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "high",
+              "elapsed_seconds": 28.481468
+            },
+            {
+              "fixture": "gen3_starved_tight_range",
+              "trace_id": "quant-backup-eval-63240e541f294d93a537db545ce8d6c5",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "high",
+              "elapsed_seconds": 37.380402
+            },
+            {
+              "fixture": "gen3_overwide_one_lucky_cycle",
+              "trace_id": "quant-backup-eval-cfddc52d36204678a9becbd88f5298ac",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "high",
+              "elapsed_seconds": 35.748198
+            },
+            {
+              "fixture": "gen3_quiet_above_floor_wide",
+              "trace_id": "quant-backup-eval-1e3494b64fe940fbaa02481c4efa5ed3",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.0
+              },
+              "confidence": "medium",
+              "elapsed_seconds": 31.895928
+            },
+            {
+              "fixture": "gen3_matched_and_earning",
+              "trace_id": "quant-backup-eval-1b1157f466144b948ba30bb695fd6c25",
+              "verdict": "OK",
+              "direction": "hold",
+              "recommendations": {},
+              "confidence": "high",
+              "elapsed_seconds": 14.799202
+            },
+            {
+              "fixture": "gen3_ran_away_wrong_lever",
+              "trace_id": "quant-backup-eval-9c52cefcaaf94f51afe70d8b10f3ccf5",
+              "verdict": "OK",
+              "direction": "hold",
+              "recommendations": {
+                "spacing_percentage": 1.3
+              },
+              "confidence": "low",
+              "elapsed_seconds": 24.926575
+            },
+            {
+              "fixture": "gen3_mild_uptrend_grid_keeps_up",
+              "trace_id": "quant-backup-eval-1e9adfe72cf54b42bb5617e0ed7e4fc5",
+              "verdict": "OK",
+              "direction": "hold",
+              "recommendations": {},
+              "confidence": "medium",
+              "elapsed_seconds": 34.109678
+            }
+          ],
+          "counts": {
+            "OK": 9
+          },
+          "qualified": true
+        }
+      ],
+      "recorded_cost_usd": "0.047534"
+    },
+    "ollama_after_key_replacement": {
+      "at": "2026-09-08T20:09:02.248268+00:00",
+      "fixtures": [
+        "gen3_fee_bleed_high_evidence",
+        "gen3_trend_onset_still_cycling",
+        "gen3_vol_regime_shift_up",
+        "gen3_starved_tight_range",
+        "gen3_overwide_one_lucky_cycle",
+        "gen3_quiet_above_floor_wide",
+        "gen3_matched_and_earning",
+        "gen3_ran_away_wrong_lever",
+        "gen3_mild_uptrend_grid_keeps_up"
+      ],
+      "scope": "One round, nine preselected gen3 cases balanced across directions. Preliminary fallback qualification, not a primary-seat win.",
+      "acceptance": "At least 7/9 OK, zero UNSAFE and zero ERROR; spacing at or below current 0.80% fee floor is unsafe.",
+      "session_ceiling_usd": "0.15",
+      "models": [
+        {
+          "provider": "ollama_cloud",
+          "model": "gpt-oss:120b",
+          "checks": [
+            {
+              "fixture": "gen3_fee_bleed_high_evidence",
+              "trace_id": "quant-backup-eval-97ad84c3542c489f8a702c91844844ff",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.258575
+            },
+            {
+              "fixture": "gen3_trend_onset_still_cycling",
+              "trace_id": "quant-backup-eval-2d218ae5de5d43a5bd3b4481323966ce",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.3
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.442795
+            },
+            {
+              "fixture": "gen3_vol_regime_shift_up",
+              "trace_id": "quant-backup-eval-20bb849e8f52463eb92f57cddd199c53",
+              "verdict": "OK",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "medium",
+              "elapsed_seconds": 2.050642
+            },
+            {
+              "fixture": "gen3_starved_tight_range",
+              "trace_id": "quant-backup-eval-a8cec34ed6224f30b6760dbfbb6920f8",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.0
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.686406
+            },
+            {
+              "fixture": "gen3_overwide_one_lucky_cycle",
+              "trace_id": "quant-backup-eval-dabea4b561ea4fc799af923b1172a247",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.5
+              },
+              "confidence": "high",
+              "elapsed_seconds": 3.080151
+            },
+            {
+              "fixture": "gen3_quiet_above_floor_wide",
+              "trace_id": "quant-backup-eval-d14633c908524cfa9d26c61d6cda1820",
+              "verdict": "OK",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.0
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.217803
+            },
+            {
+              "fixture": "gen3_matched_and_earning",
+              "trace_id": "quant-backup-eval-8b6b36ac73314017b2257517e1dda218",
+              "verdict": "UNSAFE",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.0
+              },
+              "confidence": "high",
+              "elapsed_seconds": 4.002965
+            },
+            {
+              "fixture": "gen3_ran_away_wrong_lever",
+              "trace_id": "quant-backup-eval-f77fa7e5224444188b556fedd9bc6fe1",
+              "verdict": "SUBOPTIMAL",
+              "direction": "widen",
+              "recommendations": {
+                "spacing_percentage": 1.8
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.744682
+            },
+            {
+              "fixture": "gen3_mild_uptrend_grid_keeps_up",
+              "trace_id": "quant-backup-eval-9b94281cc9dd485d9d5ca5a469a9ca31",
+              "verdict": "UNSAFE",
+              "direction": "tighten",
+              "recommendations": {
+                "spacing_percentage": 1.2
+              },
+              "confidence": "high",
+              "elapsed_seconds": 2.083863
+            }
+          ],
+          "counts": {
+            "OK": 6,
+            "UNSAFE": 2,
+            "SUBOPTIMAL": 1
+          },
+          "qualified": false
+        }
+      ],
+      "reason": "Retry after operator replaced Ollama credential.",
+      "recorded_cost_usd": "0.005250"
+    },
+    "total_probe_cost_usd": "0.074710",
+    "cost_scope": "Test inference only; ordinary advisor calls remain separately accounted in the production ledger.",
+    "limits": "Nine preselected cases, one round, preliminary fallback qualification. No primary winner or universal safety claim."
+  },
+  "archive": {
+    "root_cause": "Rolling intraday retention cutoffs reused date-only archive filenames. Existing-file guard correctly prevented overwrite and deferred deletion.",
+    "repair": "UTC cutoff timestamp plus per-export UUID; archive-before-delete and no-overwrite retained.",
+    "snapshot": {
+      "directory": "/app/data/backups/archive-recovery-20260908T200121Z",
+      "manifest": "/app/data/backups/archive-recovery-20260908T200121Z/manifest.json",
+      "targets": [
+        {
+          "table": "price_snapshots",
+          "source": "/app/data/wobblebot-observe.db",
+          "timestamp_column": "observed_at",
+          "archive_dir": "/app/data/archive",
+          "prefix": "wobblebot-observe",
+          "cutoff": "2026-08-09T20:01:21.219232+00:00",
+          "eligible_rows": 23738,
+          "existing_archives": {
+            "wobblebot-observe-2026-08-09.csv.gz": "926acc97402c91d1945b11a43c84674db80774e9818022846846c29cc8bd3962"
+          },
+          "backup": "/app/data/backups/archive-recovery-20260908T200121Z/wobblebot-observe-20260908-2001.db",
+          "backup_verified": true
+        },
+        {
+          "table": "news_items",
+          "source": "/app/data/wobblebot-news.db",
+          "timestamp_column": "fetched_at",
+          "archive_dir": "/app/data/archive",
+          "prefix": "news_items",
+          "cutoff": "2026-06-10T20:01:21.219232+00:00",
+          "eligible_rows": 315,
+          "existing_archives": {
+            "news_items-2026-06-10.csv.gz": "7277101c35c582e7f06f80d324e8b6a0bc78bd3aa09d871a61f3429a3522e86d"
+          },
+          "backup": "/app/data/backups/archive-recovery-20260908T200121Z/wobblebot-news-20260908-2001.db",
+          "backup_verified": true
+        }
+      ]
+    },
+    "verification": {
+      "at": "2026-09-08T20:11:33.515430+00:00",
+      "manifest": "/app/data/backups/archive-recovery-20260908T200121Z/manifest.json",
+      "targets": [
+        {
+          "table": "price_snapshots",
+          "previous_pending_rows": 23738,
+          "missing_from_exports": 0,
+          "remaining_at_snapshot_cutoff": 0,
+          "integrity": "ok",
+          "original_archives_preserved": true,
+          "new_archives": [
+            {
+              "name": "wobblebot-observe-2026-08-09T201038.242397Z-09310071efd142238b7955bccdd6e5df.csv.gz",
+              "rows": 23936,
+              "sha256": "f59fe77da1b0e50241422226a0fd63cc22b02a5bf913ee57e01719e4fa8e20fc",
+              "gzip_valid": true
+            }
+          ]
+        },
+        {
+          "table": "news_items",
+          "previous_pending_rows": 315,
+          "missing_from_exports": 0,
+          "remaining_at_snapshot_cutoff": 0,
+          "integrity": "ok",
+          "original_archives_preserved": true,
+          "new_archives": [
+            {
+              "name": "news_items-2026-06-10T201052.722449Z-4100feffc4d449429be09431d1733f62.csv.gz",
+              "rows": 315,
+              "sha256": "e9e7b2c70f57e23630ae145983d9da225146ac587e7a0554e9623af5f796a9fb",
+              "gzip_valid": true
+            }
+          ]
+        }
+      ]
+    },
+    "deployment": {
+      "at": "2026-09-08T20:10:28.912049+00:00",
+      "image": "ghcr.io/carldog/wobblebot:sha-4f5b32b",
+      "source": "4f5b32b0641d79b7a339c7b8c189e0c2b764775d",
+      "image_id": "sha256:943621a8ab15f14493f70d85928907bb34796823562a6e18dd9b56e9609e90ab",
+      "repo_digests": [
+        "ghcr.io/carldog/wobblebot@sha256:d614794e668528c520e81b46e2255a98f36f9752832511bd1f8aa3685a7022da"
+      ],
+      "stack_version": 87,
+      "only_maintenance_image_changed": true
+    },
+    "containers": {
+      "at": "2026-09-08T20:11:39.400242+00:00",
+      "image": "ghcr.io/carldog/wobblebot:sha-4f5b32b",
+      "source": "4f5b32b0641d79b7a339c7b8c189e0c2b764775d",
+      "image_id": "sha256:943621a8ab15f14493f70d85928907bb34796823562a6e18dd9b56e9609e90ab",
+      "repo_digests": [
+        "ghcr.io/carldog/wobblebot@sha256:d614794e668528c520e81b46e2255a98f36f9752832511bd1f8aa3685a7022da"
+      ],
+      "containers": {
+        "advise": {
+          "id": "2ea9fb945af858fe8767d3d9927ebf6e090cc0ba648160dbf70075c230036757",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T20:07:42.995084085Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "harvest": {
+          "id": "e259bcf60aef7cbe451425ce9971c3dd87bdda279aeaf7b0f259ac818000e5ce",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:07.519974271Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "live": {
+          "id": "6c55a3abcceeecb87384ef8777a9bcceb831b4e08dc3630fdd9dfe5b79d756cc",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:07.928310651Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "maintenance": {
+          "id": "a4f434d998fa0f0f625ac8bc0018205f543bbeaa29a85f583582674f76e9ff1d",
+          "image_id": "sha256:943621a8ab15f14493f70d85928907bb34796823562a6e18dd9b56e9609e90ab",
+          "started_at": "2026-09-08T20:10:29.582321377Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "news": {
+          "id": "c9393f1249ea36f1c69003a9bc2bb899643fa6127ec79a33822972d85e31e917",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:03.611921518Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "observe": {
+          "id": "480d81572531fa8dc999a2010b7016b87c56ca368d3750ccf1ec52785c5cc9e1",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:07.70572902Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "operator": {
+          "id": "2533b6d46c741bbed6a0ca5a46d7b27cb236d4c1a51947daabe77dcf876795be",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:05.641509434Z",
+          "status": "running",
+          "health": "healthy"
+        },
+        "web": {
+          "id": "61460f264d55b0237169c61c05a37011bc3c5d869294177e77fbb46ef61d02c9",
+          "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+          "started_at": "2026-09-08T19:39:06.360421013Z",
+          "status": "running",
+          "health": "healthy"
+        }
+      },
+      "seven_peer_containers_preserved": true
+    },
+    "scope": "Maintenance-only service image override; seven peer containers preserved from the post-key-replacement baseline. Other services remain sha-1cbae64.",
+    "rollback": "Retain all old/new archives and verified backups. Restore maintenance image to sha-1cbae64 only if needed; old filename collisions would recur. Reconcile the service-level image override during a future full rollout."
+  },
+  "validation": {
+    "archive_regressions": "61 passed; two new regressions reproduced on old code before repair.",
+    "strict_schema_drift": "32 passed",
+    "format_import_type_lint": "Targeted black, isort, mypy passed; pylint 10.00/10.",
+    "source_delta_from_peer_image": "src/wobblebot/cli/maintenance.py only"
+  }
+}

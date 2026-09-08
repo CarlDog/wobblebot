@@ -24,7 +24,10 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 
 ## Fallback candidates
 
-**Revised 2026-09-08 after operator clarification; all presets remain disabled.**
+**Updated 2026-09-08: operator-authorized NAS activation.** The NAS `cpu-only`
+committee and repository operator `cloud-only-moe` profile now enable the routes
+below. Generic example lists and other profiles remain disabled. The
+[roadmap](../planning/roadmap.md) carries verification and deployment receipts.
 The primary stays first. Prefer the same model through another cloud route, if
 available, then the cloud model previously selected as the first fallback. That
 previous first fallback is now the **last LLM option**. After cloud exhaustion,
@@ -36,10 +39,10 @@ Current operator cloud committee (primaries unchanged):
 
 | Role | Primary | Equivalent-cloud candidate | Final cloud fallback |
 |---|---|---|---|
-| quant / single cloud escalation | Atlas `xai/grok-4.5` | None verified on another eligible route; already on Atlas | Atlas `deepseek-ai/deepseek-v4-pro` |
+| quant | Atlas `xai/grok-4.5` | None verified on another eligible route; already on Atlas | Atlas `deepseek-ai/deepseek-v4-pro` |
 | risk | OpenAI `gpt-5-mini` | None found in the Atlas/Ollama Cloud catalogs checked | Atlas `deepseek-ai/deepseek-v4-pro` |
-| news | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — listed, readiness unverified | Atlas `xai/grok-4.5` |
-| arbitrator | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — listed, readiness unverified | OpenAI `gpt-5-mini` |
+| news | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — live role call and workflow verified | Atlas `xai/grok-4.5` |
+| arbitrator | Anthropic `claude-haiku-4-5` | Atlas `anthropic/claude-haiku-4.5-20251001` — live role call and workflow verified | OpenAI `gpt-5-mini` |
 
 The example file retains its generic primaries. Its Sonnet 4.6 quant/arbitrator
 targets get the nominal Atlas `anthropic/claude-sonnet-4.6` equivalent before the
@@ -61,9 +64,10 @@ following per-million-token prices (catalog USD/token values multiplied by one m
 
 Those entries now have pricing in `services/llm_pricing.py` under the OpenAI adapter's
 ledger identity. A catalog row is **not proof of a working endpoint**. The readiness
-flag's operational meaning was not established by a billable call, and neither
-mirror was enabled. Recheck availability and run the role's prompt/protocol battery
-before activation. Native aliases and gateway model labels are nominal equivalence,
+flag is insufficient to infer availability: both Haiku and Grok returned successful
+billable role calls despite `is_ready: false`. Haiku is now enabled for news and
+arbitration; Sonnet remains an unactivated example candidate. Native aliases and
+gateway model labels are nominal equivalence,
 not verified identical weights, revision, behavior or independent upstream capacity.
 An Atlas billing account can bypass native account trouble while sharing an upstream
 model outage. The older public model pages were stale/unavailable; the account
@@ -79,13 +83,21 @@ currently excludes cloud support. The distinct `provider: ollama_cloud` now uses
 authenticated cloud transport, shared cost/retry accounting and local JSON validation
 ([setup and supported models](../implementation/ollama-cloud.md)). `provider: ollama`
 remains local. Provider support does not qualify any new seat or populate a missing
-equivalent slot; the existing cloud selections remain unchanged and disabled.
+equivalent slot. GPT-OSS 120B first returned `authentication_error` despite correct
+NAS key wiring. The operator replaced the key and all nine requests then succeeded.
+Its quant results were **6 OK / 2 UNSAFE / 1 SUBOPTIMAL**, below the predeclared
+qualification threshold. The two unsafe results tightened already-matched,
+profitable grids in `gen3_matched_and_earning` (1.25% → 1.0%) and
+`gen3_mild_uptrend_grid_keeps_up` (1.9% → 1.2%). These are fixture-specific
+forbidden directions, not a blanket quant no-tighten rule. Widening in
+`gen3_ran_away_wrong_lever` was suboptimal. No Ollama Cloud fallback is enabled;
+working authenticated provider support is now verified independently of seat quality.
 
 ### Final-backup evidence and limits
 
 | Role | Evidence retained from the previous first cloud fallback | Activation limit |
 |---|---|---|
-| quant | DeepSeek V4 Pro: gen3 55/63 OK, zero UNSAFE | Provisional: 55 OK + 7 SUB accounts for only 62 outcomes. Reconcile the missing result; calibration trails Grok. Shares Atlas with the primary |
+| quant | DeepSeek V4 Pro: historical gen3 55/63 OK, zero UNSAFE; new balanced nine-case check 9/9 OK, zero UNSAFE/ERROR | Enabled as a provisional backup. New check is one round, not a primary-seat win. Historical 55 OK + 7 SUB still accounts for only 62 outcomes. Shares Atlas with the primary |
 | risk | DeepSeek V4 Pro: Phase B 52/54 OK, zero UNSAFE | Credible backup, not a demonstrated win over the incumbent; safety/top scores are saturated |
 | news | Grok 4.5: Phase B news/gen2 66/66 | A ceiling tie, not proof it beats Haiku; shares Atlas with the nominal equivalent |
 | arbitrator | GPT-5 mini: v1 + gen2 73/75, p=0.248 vs Haiku | Both misses violated `never_emit_a_tighten`; preserve that weakness in role validation |
@@ -104,8 +116,20 @@ No local LLM is added at the end of an exhausted cloud chain. No new background
 polling runs: the ordinary advisor schedule retries providers, starting with primary.
 Explicit `engine: llm` still omits heuristic composition; keep `cascade` for this policy.
 
-No paid inference, model pull, primary-seat change or NAS activation ran. All ten
-commented targets in each YAML remain opt-in. Prior local candidate evidence is
+The activation checks cost $0.074710: six role smoke calls ($0.021926), the
+initial quant comparison ($0.047534), and nine authenticated Ollama calls after
+key replacement ($0.005250). Quant tightening is permitted in genuine
+ranging; the first smoke check's blanket no-tighten verdict was a harness mistake,
+not evidence against DeepSeek. The new quant check used nine preselected gen3
+fixtures, balanced three each across widen/tighten/hold, requiring at least 7/9 OK,
+zero UNSAFE/ERROR, and spacing above the current 0.80% fee floor. It passed 9/9.
+Other role smoke calls establish availability and basic protocol, supplemented by
+the historical batteries above; they do not establish a new seat winner.
+
+Live news/arbitrator primary calls failed with native Anthropic `insufficient_credit`
+and succeeded through Atlas Haiku; the suggestion preserves both attempted routes.
+Quant/risk backup availability was tested separately; no primary outage was forced.
+No primary-seat change or model pull ran. Prior local candidate evidence is
 retained as history in [the model review](advisor-llm-models.md#rev-2026-09-08--fallback-candidate-review);
 it is no longer a recommendation for this fallback chain. The
 [workflow guide](../implementation/llm-fallbacks.md) records routing and offline tests.

@@ -5,7 +5,7 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**Fallback activation + archive collision follow-up — in progress 2026-09-08 UTC:**
+**Fallback activation + archive repair — ✅ 2026-09-08 UTC:**
 The operator requested activating the preselected fallback chains and investigating
 maintenance's archive collisions. Read-only NAS comparison confirmed both existing
 gzip archives are intact: 30,921 price snapshots and 237 news rows. At 19:50 UTC,
@@ -32,16 +32,62 @@ The initial smoke check incorrectly applied arbitration's blanket no-tighten rul
 to the quant role, whose prompt permits tightening in genuine ranging. That result
 does **not** establish an unsafe quant judgment. The operator requested evaluation
 of an Ollama Cloud alternative; a balanced quant-fixture comparison of GPT-OSS 120B
-and DeepSeek is in progress. This small smoke test does not replace the recorded
-model-selection batteries.
+and DeepSeek completed. DeepSeek passed **9/9**, zero UNSAFE/ERROR, on nine
+preselected gen3 fixtures balanced three each across widen/tighten/hold. The gate
+was at least 7/9 OK, zero UNSAFE/ERROR, and spacing above the current 0.80% fee
+floor. This is preliminary fallback qualification, not a primary-seat win.
+
+Ollama initially rejected the correctly wired key with `authentication_error`.
+After the operator replaced it in Portainer, all nine GPT-OSS 120B calls succeeded,
+but role scoring was **6 OK / 2 UNSAFE / 1 SUBOPTIMAL**. It tightened two matched,
+profitable grids where those specific fixtures forbid tightening; no blanket quant
+no-tighten rule was used. It remains unselected. Ollama Cloud authentication and
+usage accounting are now live-verified. Probe cost totals **$0.074710**: $0.021926
+for smoke checks, $0.047534 for the first comparison, and $0.005250 after key repair.
+These bounded checks supplement the historical batteries; normal advisor-cycle
+spend is separate in the production ledger.
 
 The passing risk/news/arbitrator routes have been written to NAS `cpu-only` and
 the repository operator file's matching `cloud-only-moe` profile. News/arbitrator
 use equivalent Atlas Haiku before their prior Grok/GPT-5 mini backups. Risk uses
-DeepSeek; quant remains empty. Primary models, budgets and safety settings are
-unchanged; NAS backup `config/pre-fallback-activation-20260908T195452Z`. The advisor
-was restarted to load them; live workflow confirmation and archive repair deployment
-are still pending. No issue status, phase acceptance or G6 changes.
+DeepSeek; quant now uses the qualified DeepSeek backup too. Primary models,
+budgets and safety settings are unchanged; NAS backup
+`config/pre-fallback-activation-20260908T195452Z`. The advisor
+was restarted to load them; the operator's key update subsequently recreated only
+the advisor among the eight daemons. The final quant/comment update is backed up
+under `config/pre-quant-fallback-activation-20260908T200657Z`. Final NAS settings
+SHA256 is `039cad556f61489edd54067bdc2ff80ba90d8a089ef1456005c17f11d92016d3`.
+Strict schema-drift verification passed **32 tests**. Other profiles and generic
+example lists remain disabled. Native Anthropic still reports `insufficient_credit`,
+but news and arbitration now succeed through Atlas Haiku. The ledger and persisted
+suggestion record both primary failure and fallback success, including after key
+replacement. Quant/risk backups were exercised with synthetic inputs; no primary
+outage was forced. Existing all-cloud-exhaustion/next-cycle recovery tests remain
+the workflow evidence for those paths.
+
+[PR #148](https://github.com/CarlDog/wobblebot/pull/148) merged as
+`4f5b32b0641d79b7a339c7b8c189e0c2b764775d`; merged-source
+[CI and GHCR publication](https://github.com/CarlDog/wobblebot/actions/runs/34272635108)
+passed. Only maintenance was deployed to `ghcr.io/carldog/wobblebot:sha-4f5b32b`
+using a service-level image override in stack 158 / endpoint 2, Compose version 87.
+The seven peer daemons retain `sha-1cbae64`; their IDs/images were preserved from
+the post-key-replacement baseline. All eight were running and healthy at 20:11 UTC.
+Reconcile this explicit maintenance image override during the next full rollout.
+
+Before pruning, observe/news online backups passed restoration checks under
+`data/backups/archive-recovery-20260908T200121Z`. The fixed startup cycle archived
+and deleted **23,936 price snapshots + 315 news rows**. Independent verification
+matched every row fingerprint from the fixed-cutoff pending snapshot, confirmed
+zero remaining rows at that cutoff, validated new gzip files and SQLite integrity,
+and confirmed both original archive SHA256 values were unchanged. Additional rows
+aging into retention after the cutoff follow the normal daily schedule. No archive
+was renamed, overwritten or discarded. A failed DELETE can leave duplicate recovery
+exports by design. Rollback must retain all exports/backups; restoring the old
+maintenance image would restore the filename collision behavior.
+
+The [sanitized evidence receipt](../release/fallback-archive-2026-09-08-evidence.json)
+contains route attempts, fixture results, image identities, config hashes, archive
+hashes and preservation checks. No issue status, phase acceptance or G6 changes.
 
 **Ollama Cloud publication + NAS deployment — ✅ 2026-09-08 UTC:**
 [PR #147](https://github.com/CarlDog/wobblebot/pull/147) merged the counter-order

@@ -13,7 +13,7 @@ Old ledger rows retain their original labels because the provider body was not s
 For `advisor.type: single`, place `fallbacks` alongside `provider` and `model`.
 For MoE, put a separate list inside the expert and/or `arbitrator` entry. A list
 contains at most two distinct targets and defaults to empty. Example arbitrator
-fragment for the current Haiku arbitrator (both candidates need activation review):
+fragment for the current Haiku arbitrator (enabled on the NAS after the recorded checks):
 
 ```yaml
 # Within an existing advisor.arbitrator or advisor.experts item:
@@ -45,9 +45,12 @@ explain why each model was chosen and its remaining limitations. The preferred
 order is primary → equivalent model on another cloud route → the previously
 selected cloud fallback → heuristic. Skip the equivalent slot when no verified
 match exists; a different model family is a backup, not an equivalent. The Atlas
-Haiku/Sonnet matches are listed and priced but currently report `is_ready: false`.
-They require an availability/role check before activation. Local Ollama candidates
-were removed from these presets. Lists stay disabled until the operator replaces
+Haiku/Sonnet matches are listed and priced but report `is_ready: false`; that flag
+did not prevent successful Haiku role calls. NAS news/arbitrator now use Atlas
+Haiku first; the [seat register](../reference/advisor-seats.md#fallback-candidates)
+records the activated quant/risk/final backups and qualification limits. Sonnet
+remains an unactivated example. Local Ollama candidates were removed from these
+presets. Generic example lists stay disabled until the operator replaces
 the active `[]` with the selected list. When using a
 MoE profile, leave the base `advisor.fallbacks` empty and edit the chosen profile's
 expert/arbitrator lists. Operator chat and the gremlin have no fallback support in

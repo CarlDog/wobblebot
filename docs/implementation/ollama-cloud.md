@@ -77,8 +77,16 @@ available → previous cloud backup sequence. Exhaustion uses the heuristic with
 `engine: llm` has no heuristic. See [fallback workflow](llm-fallbacks.md).
 
 No current primary has an exact Ollama Cloud equivalent in the checked catalog.
-The supplied fallback lists remain disabled; adding provider support does not
-replace the existing seat selections with GPT-OSS or another unrelated model.
+Generic example lists remain disabled. The NAS's enabled fallback routes are
+recorded in the [seat register](../reference/advisor-seats.md#fallback-candidates);
+none uses Ollama Cloud. The 2026-09-08 GPT-OSS 120B quant evaluation initially
+encountered `authentication_error` despite verified Portainer-to-advisor key wiring.
+Replacing the key and recreating the advisor resolved authentication; all nine
+subsequent provider calls succeeded, with usage recorded under `ollama_cloud`.
+Role scoring was 6 OK / 2 UNSAFE / 1 SUBOPTIMAL, so the candidate was not enabled.
+See the seat register for fixture-specific findings and the qualification limit.
+Catalog access alone does not validate credentials: `/api/tags` is public
+([official Cloud API examples](https://docs.ollama.com/cloud)).
 
 ## Verification and upgrade
 
