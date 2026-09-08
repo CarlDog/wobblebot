@@ -1,0 +1,381 @@
+{
+  "at": "2026-09-08T15:21:59.124365-05:00",
+  "files": [
+    {
+      "location": "nas",
+      "before_sha256": "039cad556f61489edd54067bdc2ff80ba90d8a089ef1456005c17f11d92016d3",
+      "after_sha256": "4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671",
+      "filled_lists": [
+        {
+          "path": "advisor.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.0.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.1.fallbacks",
+          "role": "risk",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 0.4,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.2.fallbacks",
+          "role": "news",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "xai/grok-4.5",
+              "inference_params": {
+                "temperature": 0.6,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.arbitrator.fallbacks",
+          "role": "arbitrator",
+          "targets": [
+            {
+              "provider": "openai",
+              "model": "gpt-5-mini",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.cloud-only-moe.advisor.experts.0.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "anthropic/claude-sonnet-4.6",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            },
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.cloud-only-moe.advisor.experts.1.fallbacks",
+          "role": "risk",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 0.4,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.cloud-only-moe.advisor.experts.2.fallbacks",
+          "role": "news",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "xai/grok-4.5",
+              "inference_params": {
+                "temperature": 0.6,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.cloud-only-moe.advisor.arbitrator.fallbacks",
+          "role": "arbitrator",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "anthropic/claude-sonnet-4.6",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            },
+            {
+              "provider": "openai",
+              "model": "gpt-5-mini",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        }
+      ],
+      "moe_inheritance_resets": [
+        "profiles.moe-advisor.advisor.fallbacks",
+        "profiles.cloud-only-moe.advisor.fallbacks",
+        "profiles.cpu-only.advisor.fallbacks"
+      ],
+      "profiles": [
+        {
+          "profile": "base",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "conservative",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "aggressive",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "moe-advisor",
+          "type": "moe",
+          "populated_targets": 4
+        },
+        {
+          "profile": "cloud-only-moe",
+          "type": "moe",
+          "populated_targets": 4
+        },
+        {
+          "profile": "cpu-only",
+          "type": "moe",
+          "populated_targets": 4
+        }
+      ],
+      "active_profile_unchanged": "cpu-only"
+    },
+    {
+      "location": "repository",
+      "before_sha256": "13921f3642697c3fbea1c323e8233fe11b57d5149311554d993b4a6c2a900844",
+      "after_sha256": "78e1966e69a600839ef59b9e9d5d3946e58542dbbb50ce11d60bc736b2f83bba",
+      "filled_lists": [
+        {
+          "path": "advisor.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.0.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.1.fallbacks",
+          "role": "risk",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 0.4,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.experts.2.fallbacks",
+          "role": "news",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "xai/grok-4.5",
+              "inference_params": {
+                "temperature": 0.6,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.moe-advisor.advisor.arbitrator.fallbacks",
+          "role": "arbitrator",
+          "targets": [
+            {
+              "provider": "openai",
+              "model": "gpt-5-mini",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        },
+        {
+          "path": "profiles.cpu-only.advisor.fallbacks",
+          "role": "quant",
+          "targets": [
+            {
+              "provider": "atlas",
+              "model": "deepseek-ai/deepseek-v4-pro",
+              "inference_params": {
+                "temperature": 1.0,
+                "max_tokens": 4000,
+                "timeout_seconds": 300
+              }
+            }
+          ]
+        }
+      ],
+      "moe_inheritance_resets": [
+        "profiles.moe-advisor.advisor.fallbacks",
+        "profiles.cloud-only-moe.advisor.fallbacks"
+      ],
+      "profiles": [
+        {
+          "profile": "base",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "conservative",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "aggressive",
+          "type": "single",
+          "populated_targets": 1
+        },
+        {
+          "profile": "moe-advisor",
+          "type": "moe",
+          "populated_targets": 4
+        },
+        {
+          "profile": "cloud-only-moe",
+          "type": "moe",
+          "populated_targets": 4
+        },
+        {
+          "profile": "cpu-only",
+          "type": "single",
+          "populated_targets": 1
+        }
+      ],
+      "active_profile_unchanged": "cloud-only-moe"
+    }
+  ],
+  "sonnet_checks": {
+    "at": "2026-09-08T15:19:35.582908-05:00",
+    "synthetic_fixture": true,
+    "probe_session_ceiling_usd": "0.10",
+    "checks": [
+      {
+        "role": "quant",
+        "provider": "atlas",
+        "model": "anthropic/claude-sonnet-4.6",
+        "trace_id": "fallback-activation-15f569e69e304a88b36e306a31ba98c6",
+        "parsed": true,
+        "smoke_guard_pass": true,
+        "recommendations": {
+          "spacing_percentage": 1.5
+        },
+        "returned_role": "quant",
+        "elapsed_seconds": 56.31165
+      },
+      {
+        "role": "arbitrator",
+        "provider": "atlas",
+        "model": "anthropic/claude-sonnet-4.6",
+        "trace_id": "fallback-activation-485ff0e699e44dd7ab4b3461da0bf557",
+        "parsed": true,
+        "smoke_guard_pass": true,
+        "recommendations": {
+          "spacing_percentage": 4.2
+        },
+        "returned_role": "arbitrator",
+        "elapsed_seconds": 56.097937
+      }
+    ],
+    "recorded_cost_usd": "0.018834"
+  },
+  "backup": "pre-all-profile-fallbacks-20260908T202213Z",
+  "applied_at": "2026-09-08T15:22:13.298323-05:00",
+  "validation": {
+    "independent_nas_profiles": 6,
+    "every_resolved_model_target_populated": true,
+    "strict_schema_drift_tests": 32,
+    "independent_nas_readback_sha256": "4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671",
+    "active_committee_unchanged": true,
+    "daemon_restart_required": false
+  }
+}

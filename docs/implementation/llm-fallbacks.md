@@ -48,12 +48,16 @@ match exists; a different model family is a backup, not an equivalent. The Atlas
 Haiku/Sonnet matches are listed and priced but report `is_ready: false`; that flag
 did not prevent successful Haiku role calls. NAS news/arbitrator now use Atlas
 Haiku first; the [seat register](../reference/advisor-seats.md#fallback-candidates)
-records the activated quant/risk/final backups and qualification limits. Sonnet
-remains an unactivated example. Local Ollama candidates were removed from these
+records the activated quant/risk/final backups and qualification limits. Sonnet's
+Atlas equivalent also passed two role smoke checks and is configured in the NAS
+profile that uses Sonnet primaries; generic examples remain opt-in. Local Ollama candidates were removed from these
 presets. Generic example lists stay disabled until the operator replaces
-the active `[]` with the selected list. When using a
-MoE profile, leave the base `advisor.fallbacks` empty and edit the chosen profile's
-expert/arbitrator lists. Operator chat and the gremlin have no fallback support in
+the active `[]` with the selected list. Operator settings now populate all actual
+targets, including the base single advisor. If the base has single-advisor backups,
+each MoE profile must explicitly set `profiles.NAME.advisor.fallbacks: []` to reset
+that inherited list, then configure backups inside every expert/arbitrator entry.
+This parent reset is required by the schema; it is not an empty model-target list.
+Operator chat and the gremlin have no fallback support in
 this change.
 
 This demonstrates the shape, not a tested seat replacement. Select and evaluate

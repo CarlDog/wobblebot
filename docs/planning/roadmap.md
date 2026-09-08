@@ -5,6 +5,35 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**All operator fallback targets populated — ✅ 2026-09-08 UTC:**
+The operator requested filling the remaining empty lists in the NAS settings.
+Nine NAS targets and six repository operator targets now have role-specific cloud
+backups, including the base single advisor. Profiles without advisor overrides
+inherit its backup. MoE profiles use labeled `advisor.fallbacks: []` inheritance
+resets, required to avoid applying the base single-advisor chain to the committee;
+every actual expert/arbitrator list is populated. The active NAS `cpu-only` and
+repository `cloud-only-moe` configurations resolve exactly as before. Primaries,
+safety, budgets and all non-fallback YAML values are unchanged; generic example
+defaults remain opt-in.
+
+The NAS Sonnet profile now tries Atlas `anthropic/claude-sonnet-4.6` before the
+previous role-specific backup. Two advisory-only availability/protocol checks,
+using the existing ledger/daily cap and a $0.10 probe ceiling, passed for quant
+and arbitration; actual cost **$0.018834**, bringing this session's activation and
+qualification probes to **$0.093544**. This is a nominal-equivalent route
+check, not a new seat qualification. Other newly populated lists use the already
+checked DeepSeek, Grok and GPT-5 mini role backups. No Ollama candidate was enabled.
+
+All six configurations in each operator file passed schema resolution and semantic
+comparison. `python -m pytest tests/config/test_schema_drift.py --no-cov -q --tb=short`
+with `WOBBLEBOT_STRICT_CONFIG_DRIFT=1` passed **32 tests**. Independent readback
+inside the advisor container validated every NAS profile, found no empty actual
+model target, and matched the saved settings hash. The original NAS file is backed
+up under `config/pre-all-profile-fallbacks-20260908T202213Z`. No daemon restart was
+needed because the active committee's effective configuration is unchanged.
+The [config receipt](../release/all-profile-fallbacks-2026-09-08-evidence.json)
+records exact target paths, hashes, backups and Sonnet checks. No phase/G6 change.
+
 **Fallback activation + archive repair — ✅ 2026-09-08 UTC:**
 The operator requested activating the preselected fallback chains and investigating
 maintenance's archive collisions. Read-only NAS comparison confirmed both existing

@@ -24,9 +24,10 @@ assistant). Seat *architecture* decisions stay in the ADRs.
 
 ## Fallback candidates
 
-**Updated 2026-09-08: operator-authorized NAS activation.** The NAS `cpu-only`
-committee and repository operator `cloud-only-moe` profile now enable the routes
-below. Generic example lists and other profiles remain disabled. The
+**Updated 2026-09-08: operator-authorized activation across operator profiles.**
+Every actual model target in the NAS and repository operator `settings.yml` now
+has cloud backups. The active NAS `cpu-only` committee and repository operator
+`cloud-only-moe` profile retain the routes below. Generic examples remain disabled. The
 [roadmap](../planning/roadmap.md) carries verification and deployment receipts.
 The primary stays first. Prefer the same model through another cloud route, if
 available, then the cloud model previously selected as the first fallback. That
@@ -66,7 +67,11 @@ Those entries now have pricing in `services/llm_pricing.py` under the OpenAI ada
 ledger identity. A catalog row is **not proof of a working endpoint**. The readiness
 flag is insufficient to infer availability: both Haiku and Grok returned successful
 billable role calls despite `is_ready: false`. Haiku is now enabled for news and
-arbitration; Sonnet remains an unactivated example candidate. Native aliases and
+arbitration. Two later Sonnet availability/protocol checks passed for quant and
+arbitration ($0.018834 total); the NAS's inactive `cloud-only-moe` Sonnet targets
+now try the Atlas equivalent before their role-specific final backup. Those two
+calls do not establish a seat winner or full role qualification. The generic
+example still leaves Sonnet opt-in. Native aliases and
 gateway model labels are nominal equivalence,
 not verified identical weights, revision, behavior or independent upstream capacity.
 An Atlas billing account can bypass native account trouble while sharing an upstream
@@ -115,6 +120,14 @@ returns the heuristic; a surviving subset of experts can still be arbitrated.
 No local LLM is added at the end of an exhausted cloud chain. No new background
 polling runs: the ordinary advisor schedule retries providers, starting with primary.
 Explicit `engine: llm` still omits heuristic composition; keep `cascade` for this policy.
+
+The operator-requested empty-list follow-up filled nine NAS targets and six
+repository operator targets, including the base single advisor. Profiles without
+advisor overrides inherit that base backup. MoE profiles explicitly reset the
+inherited single-advisor list with a labeled `advisor.fallbacks: []`; every expert
+and arbitrator has its own populated list. These resets are required by the schema
+and do not disable any role's backups. All six configurations in each file validated;
+the active committees, primary models and safety settings are unchanged.
 
 The activation checks cost $0.074710: six role smoke calls ($0.021926), the
 initial quant comparison ($0.047534), and nine authenticated Ollama calls after
