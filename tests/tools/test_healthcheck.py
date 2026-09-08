@@ -13,7 +13,10 @@ import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock
+from urllib.error import HTTPError
 
 import pytest
 
@@ -71,6 +74,18 @@ class TestHttpMode:
     def test_connection_refused_is_unhealthy(self) -> None:
         # Port 9 (discard) is a safe nothing-listens target locally.
         assert main(["--http", "http://127.0.0.1:9/healthz", "--timeout", "2"]) == 1
+
+    def test_http_error_closes_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An unhealthy response still owns a resource that must be released."""
+        response = BytesIO(b"unavailable")
+        url = "http://fixture.invalid/healthz"
+        error = HTTPError(url, 503, "Service Unavailable", None, response)
+        monkeypatch.setattr("tools.healthcheck.urllib.request.urlopen", Mock(side_effect=error))
+        try:
+            assert main(["--http", url]) == 1
+            assert response.closed
+        finally:
+            error.close()
 
 
 # --------------------------------------------------------------------- #

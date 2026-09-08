@@ -22,6 +22,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
+# P3 starvation back-off (the 2026-08-09 re-anchor e2e finding): when a
+# layout places ZERO orders (BUYs refused for reserved quote balance +
+# SELLs cost-basis-deferred), the no-orders self-heal used to re-attempt
+# the full layout EVERY tick, silently and forever. Once starved, retry
+# only this often — 60 ticks ≈ 5 min at the default 5s cadence, measured
+# in the writer's cadence like every other tick constant. Conditions
+# that unstarve a symbol (quote balance freed, price back above cost
+# basis) change on market timescales; a 5-minute probe is prompt enough
+# while cutting the busy-wait ~60x. A PARTIAL layout (placed >= 1) never
+# counts as starved — its standing orders make the no-orders check moot.
+#
+# Lives here rather than in ``grid_engine`` because it is not only the
+# engine's business: anything that reports a starved symbol to an operator
+# has to quote the same cadence, and a second copy would drift.
+STARVED_RETRY_EVERY_TICKS = 60
+
 # Refusal reasons that are NOT a named safety cap. All three of
 # ``_try_place``'s refusal paths return the same ``"refused"`` outcome, so a
 # breakdown that only knew about caps would not sum to the refusal count and
@@ -30,6 +46,44 @@ from dataclasses import dataclass, field, replace
 REASON_INSUFFICIENT_BALANCE = "insufficient_balance"
 REASON_EXCHANGE_ERROR = "exchange_error"
 
+# The named safety caps ``GridEngine._check_safety`` can refuse on. Each one
+# is also the key of the ``safety:`` setting that produced it, which is the
+# whole reason a consumer may show the raw name to an operator.
+REASON_MAX_ORDERS_PER_COIN = "max_orders_per_coin"
+REASON_MAX_PER_COIN_EXPOSURE_USD = "max_per_coin_exposure_usd"
+REASON_MAX_TOTAL_EXPOSURE_USD = "max_total_exposure_usd"
+REASON_MAX_DAILY_SPEND_USD = "max_daily_spend_usd"
+REASON_MAX_PER_COIN_INVENTORY_USD = "max_per_coin_inventory_usd"
+REASON_MAX_TOTAL_INVENTORY_USD = "max_total_inventory_usd"
+
+SAFETY_CAP_REASONS = frozenset(
+    {
+        REASON_MAX_ORDERS_PER_COIN,
+        REASON_MAX_PER_COIN_EXPOSURE_USD,
+        REASON_MAX_TOTAL_EXPOSURE_USD,
+        REASON_MAX_DAILY_SPEND_USD,
+        REASON_MAX_PER_COIN_INVENTORY_USD,
+        REASON_MAX_TOTAL_INVENTORY_USD,
+    }
+)
+"""The reason names that really are a configured safety cap.
+
+A :class:`StarvationState`'s ``reasons`` mapping is NOT all caps. It also
+carries :data:`REASON_INSUFFICIENT_BALANCE` and
+:data:`REASON_EXCHANGE_ERROR`, plus ``_try_place``'s ``"safety_cap"``
+fallback for a decision that somehow arrived without a named reason
+(unreachable today — every ``ok=False`` return in ``GridEngine.
+_check_safety`` names one of the six below). None of
+those three is a ``settings.yml`` key, and insufficient balance is reached
+only AFTER every cap has passed, so a consumer that calls them "the binding
+cap" both misnames the state and sends the operator to grep a setting that
+does not exist. Membership here is how a consumer tells the two apart.
+
+An ALLOWLIST on purpose: a new refusal reason added to ``_try_place``
+tomorrow is not a cap until someone says so here, so the honest wording is
+what it gets by default. An exclusion list would call it a cap by silence.
+"""
+
 
 @dataclass(frozen=True)
 class LayoutOutcome:
@@ -37,7 +91,9 @@ class LayoutOutcome:
 
     ``reasons`` maps a refusal reason to its count and sums to ``refusals``.
     Each key is either a safety-cap reason (whatever ``_check_safety``
-    returned) or one of the two module constants above.
+    returned — see :data:`SAFETY_CAP_REASONS`) or one of the two non-cap
+    constants, :data:`REASON_INSUFFICIENT_BALANCE` /
+    :data:`REASON_EXCHANGE_ERROR`.
     """
 
     placed: int = 0
@@ -56,6 +112,18 @@ class StarvationState:
     clears the starved state resets it, including an operator re-anchor that
     places even one order. So it reads as "consecutive starved ticks since
     the last placement or intervention", never as the age of the problem.
+
+    **Never render this as a duration.** Unlike ``offside_ticks``, which
+    ``cli/live`` restore-seeds at boot from the persisted row
+    (``GridEngine.restore_offside``), this counter is process-scoped with no
+    seeding path at all: a restart drops it to zero and the symbol re-enters
+    starvation on its next 0/N layout as if the problem were new. The
+    asymmetry is measured, not assumed: production ETH logged ``31680
+    consecutive ticks`` 171 seconds after container start — a count only a
+    restore-seeded counter can honestly report, and this one is not seeded.
+    Multiplying it by the tick interval therefore yields a duration that is
+    right only when nothing has restarted, and this project has already
+    shipped one duration off by ~380x.
 
     The reason fields are refreshed on every retry rather than frozen at
     entry, so an hourly summary reports what is binding NOW. Conditions move
@@ -115,6 +183,14 @@ def describe_reasons(reasons: Mapping[str, int]) -> str:
 __all__ = (
     "REASON_EXCHANGE_ERROR",
     "REASON_INSUFFICIENT_BALANCE",
+    "REASON_MAX_DAILY_SPEND_USD",
+    "REASON_MAX_ORDERS_PER_COIN",
+    "REASON_MAX_PER_COIN_EXPOSURE_USD",
+    "REASON_MAX_PER_COIN_INVENTORY_USD",
+    "REASON_MAX_TOTAL_EXPOSURE_USD",
+    "REASON_MAX_TOTAL_INVENTORY_USD",
+    "SAFETY_CAP_REASONS",
+    "STARVED_RETRY_EVERY_TICKS",
     "LayoutOutcome",
     "StarvationState",
     "describe_reasons",

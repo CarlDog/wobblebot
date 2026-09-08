@@ -4,6 +4,10 @@ Smoke tests - verify basic package structure and imports.
 These tests ensure the package is properly installed and basic imports work.
 """
 
+import tomllib
+from importlib.metadata import version
+from pathlib import Path
+
 import pytest
 
 
@@ -11,7 +15,10 @@ def test_wobblebot_import() -> None:
     """Test that the main wobblebot package can be imported."""
     import wobblebot
 
-    assert wobblebot.__version__ == "2.0.5"
+    manifest = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    declared_version = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]["version"]
+    assert wobblebot.__version__ == declared_version
+    assert version("wobblebot") == declared_version
     assert wobblebot.__author__ == "WobbleBot Team"
 
 

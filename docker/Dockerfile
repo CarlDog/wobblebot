@@ -5,7 +5,7 @@
 # Stage 1 (builder): installs build deps and produces wheels for
 # wobblebot + all runtime dependencies into /wheels.
 #
-# Stage 2 (runtime): minimal python:3.13-slim image with only the
+# Stage 2 (runtime): minimal python:3.14-slim image with only the
 # wheels installed. No compilers, no source tree, no test deps.
 #
 # Single image serves all 8 daemons (cli/live, cli/observe,
@@ -25,7 +25,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 
 # Build deps for any C-extension wheels that pip falls back to
 # building from source. bcrypt + pydantic-core ship wheels for
-# python:3.13-slim, so this is belt-and-suspenders, not strictly
+# python:3.14-slim, so this is belt-and-suspenders, not strictly
 # required today.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc \

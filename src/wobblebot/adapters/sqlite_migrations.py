@@ -182,6 +182,54 @@ async def migrate_engine_state_offside_since(conn: aiosqlite.Connection) -> None
     await add_column_if_missing(conn, "engine_state", "offside_since", "TEXT")
 
 
+async def migrate_engine_state_starvation(conn: aiosqlite.Connection) -> None:
+    """Add starvation diagnostics and their freshness marker (2.0.8).
+
+    SCHEMA declares them for fresh DBs, so the ALTERs no-op there; an
+    operator.db written by 2.0.7 or earlier needs them. Every definition
+    here is byte-identical to its CREATE TABLE counterpart so fresh and
+    migrated DBs do not drift.
+
+    ``NOT NULL DEFAULT`` is not decoration. Existing rows backfill to
+    0 / ``'{}'``, and cli/live's boot restore reads those rows BEFORE the
+    first tick writes anything: ``EngineStateRow`` is a frozen dataclass
+    with no validation, so a NULL would slide silently into the row and
+    the dashboard would render a starvation badge built from Nones. The
+    DEFAULT is also what keeps a rolled-back 2.0.7 writer working — its
+    INSERT omits these columns entirely.
+
+    The CHECKs ride the ALTER. SQLite accepts ``ALTER TABLE ADD COLUMN
+    ... NOT NULL DEFAULT 0 CHECK (...)``, records it, and enforces it —
+    the same shape ``migrate_advisor_suggestions_news_materially_drove``
+    has shipped since v1.1. No CHECK on ``starved_reasons``: a
+    ``json_valid()`` constraint would turn a corrupt visibility blob into
+    a failed write on a real-money tick, and ``get_engine_states``
+    already degrades a bad blob to ``{}``.
+
+    Backfilled 0 / ``{}`` reads as "not starved", which is the honest
+    default for a row written before the engine published the state.
+    A symbol that IS starved re-publishes the truth on its next tick.
+    """
+    for column in (
+        "starved_ticks",
+        "starved_target",
+        "starved_refusals",
+        "starved_sells_deferred",
+    ):
+        await add_column_if_missing(
+            conn,
+            "engine_state",
+            column,
+            f"INTEGER NOT NULL DEFAULT 0 CHECK ({column} >= 0)",
+        )
+    await add_column_if_missing(
+        conn, "engine_state", "starved_reasons", "TEXT NOT NULL DEFAULT '{}'"
+    )
+    # NULL until a new writer publishes diagnostics. Old writers leave this
+    # unchanged on upsert, so a new reader can suppress retained stale values.
+    await add_column_if_missing(conn, "engine_state", "starved_updated_at", "TEXT")
+
+
 async def migrate_price_snapshots_unique(  # pylint: disable=too-many-locals
     conn: aiosqlite.Connection,
 ) -> None:

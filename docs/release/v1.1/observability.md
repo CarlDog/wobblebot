@@ -1,5 +1,10 @@
 # Observability — monitoring, alerting, backups
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 *Anomaly detection, retention policies, alternate notification fallbacks, metrics export, and backup verification. The /health page covers liveness today; entries here cover behavioral and operational visibility.*
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*

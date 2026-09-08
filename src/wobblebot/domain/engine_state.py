@@ -21,7 +21,8 @@ follow-up, not part of ADR-030's scope).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
@@ -65,6 +66,31 @@ class EngineStateRow:  # pylint: disable=too-many-instance-attributes
     transition writes it. That distinction is the whole feature: a
     stamp at first observation would assert a confident wrong date,
     which is the class of defect 2.0.4 was cut to remove.
+
+    The ``starved_*`` fields (2.0.8) carry one symbol's
+    ``services.grid_starvation.StarvationState``, which otherwise never
+    leaves the engine's memory: ``starved_ticks`` consecutive starved
+    ticks, ``starved_target`` the layout's order target,
+    ``starved_refusals`` / ``starved_sells_deferred`` that retry's counts,
+    and ``starved_reasons`` its refusal breakdown (reason -> count). All
+    five read 0 / ``{}`` when the symbol is not starved. They exist
+    because the web tier CANNOT recompute them: ``sells_deferred`` needs
+    the authenticated ``TradeVolume`` maker fee (ADR-038) that cli/live
+    logs and never persists.
+
+    ``starved_ticks`` IS NOT ``offside_ticks``, and the difference is a
+    trap. ``offside_ticks`` is restore-seeded at boot
+    (``GridEngine.restore_offside``, called from cli/live's boot restore);
+    ``GridEngine._starved`` is not — it is a plain in-memory dict built
+    empty in ``__init__`` with no restore path, so ``starved_ticks``
+    RESETS TO 0 ON EVERY cli/live RESTART and then climbs again from 1.
+    It is a count of ticks since this process started, not the age of the
+    problem, and it MUST NEVER be rendered as a duration. Multiplying it
+    by the tick interval is exactly the arithmetic that made a symbol
+    parked since the 2026-08-19 anchor read as "about 1h 0m" (see
+    ``offside_ticks`` above): the counter was honest, the multiplication
+    was the lie. There is no ``starved_since`` — nothing observes the
+    transition across a restart, so there is no honest one to write.
     """
 
     symbol: Symbol
@@ -75,3 +101,21 @@ class EngineStateRow:  # pylint: disable=too-many-instance-attributes
     anchored_at: datetime | None
     updated_at: datetime
     offside_since: datetime | None = None
+    # Defaults on all five so the existing construction sites (cli/live,
+    # the adapter's reader, and the test factories) keep working
+    # unchanged. This is a frozen dataclass with NO validation, so a
+    # None reaching here would slide in silently and render a badge
+    # built from Nones — which is why the columns behind these fields
+    # are NOT NULL with defaults and the reader degrades in place
+    # rather than passing a NULL through.
+    #
+    # CONTRACT CHANGE: starved_reasons is a Mapping, so an EngineStateRow
+    # is no longer hashable — frozen=True hashes over every field, and a
+    # dict in that tuple makes hash(row) raise TypeError. Nothing hashes
+    # one today (rows are dict VALUES keyed by Symbol, verified by grep
+    # 2026-09-05); key any new set/dict on row.symbol, not on the row.
+    starved_ticks: int = 0
+    starved_target: int = 0
+    starved_refusals: int = 0
+    starved_sells_deferred: int = 0
+    starved_reasons: Mapping[str, int] = field(default_factory=dict)

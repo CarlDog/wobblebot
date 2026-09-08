@@ -94,6 +94,13 @@ from wobblebot.services.exposure import (
 from wobblebot.services.grid_starvation import (
     REASON_EXCHANGE_ERROR,
     REASON_INSUFFICIENT_BALANCE,
+    REASON_MAX_DAILY_SPEND_USD,
+    REASON_MAX_ORDERS_PER_COIN,
+    REASON_MAX_PER_COIN_EXPOSURE_USD,
+    REASON_MAX_PER_COIN_INVENTORY_USD,
+    REASON_MAX_TOTAL_EXPOSURE_USD,
+    REASON_MAX_TOTAL_INVENTORY_USD,
+    STARVED_RETRY_EVERY_TICKS,
     LayoutOutcome,
     StarvationState,
     describe_reasons,
@@ -148,17 +155,10 @@ _LOGGER = logging.getLogger("wobblebot.services.grid_engine")
 # every 5s for ~7h straight. 240 ticks ≈ 20 min at the default 5s cadence.
 _OFFSIDE_SUMMARY_EVERY_TICKS = 240
 
-# P3 starvation back-off (the 2026-08-09 re-anchor e2e finding): when a
-# layout places ZERO orders (BUYs refused for reserved quote balance +
-# SELLs cost-basis-deferred), the no-orders self-heal used to re-attempt
-# the full layout EVERY tick, silently and forever. Once starved, retry
-# only this often — 60 ticks ≈ 5 min at the default 5s cadence, measured
-# in the writer's cadence like every other tick constant. Conditions
-# that unstarve a symbol (quote balance freed, price back above cost
-# basis) change on market timescales; a 5-minute probe is prompt enough
-# while cutting the busy-wait ~60x. A PARTIAL layout (placed >= 1) never
-# counts as starved — its standing orders make the no-orders check moot.
-_STARVED_RETRY_EVERY_TICKS = 60
+# Compat alias: tests/services/test_grid_engine.py still imports this name
+# from here. One source of truth — the value and its rationale live in
+# grid_starvation, which is also what a reporting consumer imports.
+_STARVED_RETRY_EVERY_TICKS = STARVED_RETRY_EVERY_TICKS
 
 # v1.1 backlog "boot-time stale-anchor WARN": an anchor persisted this
 # long ago has ridden through enough market time that its reference
@@ -642,6 +642,37 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """
         self._offside[symbol] = OffsideState(ticks=max(ticks, 1), since=since)
 
+    def starvation(self, symbol: Symbol) -> StarvationState | None:
+        """``symbol``'s starved-state record, or ``None`` if not starved.
+
+        A visibility accessor beside :meth:`offside_ticks`: the counts and
+        the refusal reasons only ever existed in memory, so a reporting
+        caller (``cli/live``'s ``engine_state`` writer) has no other way to
+        see WHY a layout placed nothing. ``sells_deferred`` in particular
+        cannot be re-derived downstream — it needs the account's
+        ``maker_fee_rate`` from an authenticated ``TradeVolume`` call
+        (ADR-038) that is logged and never persisted.
+
+        **Deliberately ungated.** It reports what ``self._starved`` holds,
+        with no exemption for a paused or offside symbol, because the
+        engine's own WARNING calls those symbols starved and an accessor
+        that disagreed with the log would make the engine lie about its own
+        state. That is real: nothing clears ``_starved`` on the pause or
+        offside transition (the four clearing sites are ``resume_symbol``,
+        ``_reanchor_unlocked``, a layout that placed something, and
+        ``_tick`` finding orders still open), and ``_tick``'s starvation
+        path sits behind ``if not offside:``, so a symbol that starves and
+        then parks keeps a FROZEN record here indefinitely.
+        Suppressing that is the CALLER's job, at the layer that also knows
+        the paused/offside precedence it has to render — this method
+        answering ``None`` would only hide the staleness, not fix it.
+
+        See :class:`StarvationState` before rendering ``ticks``: it is not
+        restore-seeded the way ``offside_ticks`` is, and is never a
+        duration.
+        """
+        return self._starved.get(symbol)
+
     def request_stop(self) -> None:
         """Set the soft-stop flag.
 
@@ -1039,7 +1070,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """Gate a no-orders re-layout attempt through the back-off.
 
         Not starved: always attempt. Starved: count the tick and allow an
-        attempt only every ``_STARVED_RETRY_EVERY_TICKS`` -- never a retry
+        attempt only every ``STARVED_RETRY_EVERY_TICKS`` -- never a retry
         every tick.
 
         A pure gate: it emits nothing. The periodic summary lives in
@@ -1052,7 +1083,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             return True
         state = state.advanced()
         self._starved[symbol] = state
-        return state.ticks % _STARVED_RETRY_EVERY_TICKS == 0
+        return state.ticks % STARVED_RETRY_EVERY_TICKS == 0
 
     def _note_layout_outcome(self, symbol: Symbol, outcome: LayoutOutcome, target: int) -> None:
         """Enter/clear the starved state from a layout's outcome.
@@ -1110,7 +1141,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         if existing is not None:
             refreshed = existing.with_outcome(outcome, target)
             self._starved[symbol] = refreshed
-            retries, remainder = divmod(refreshed.ticks, _STARVED_RETRY_EVERY_TICKS)
+            retries, remainder = divmod(refreshed.ticks, STARVED_RETRY_EVERY_TICKS)
             # remainder == 0 keeps an operator re-anchor that lands mid-back-off
             # from emitting a summary it did not earn: only a real retry
             # boundary qualifies.
@@ -1156,7 +1187,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             outcome.refusals,
             outcome.sells_deferred,
             describe_reasons(outcome.reasons),
-            _STARVED_RETRY_EVERY_TICKS,
+            STARVED_RETRY_EVERY_TICKS,
             extra={
                 "symbol": str(symbol),
                 "target_levels": target,
@@ -1928,7 +1959,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         level: GridLevel,
         coin_cfg: CoinGridConfig,
     ) -> _SafetyDecision:
-        """Evaluate all four safety caps for a proposed order.
+        """Evaluate every safety cap for a proposed order.
+
+        Six of them since ADR-039 added the two inventory caps — this
+        docstring said "all four" until 2026-09-05. Every refusal reason
+        is a named constant from ``grid_starvation``, and
+        ``grid_starvation.SAFETY_CAP_REASONS`` is exactly the set of names
+        this method can return, so a consumer can tell a cap refusal from
+        the non-cap ones ``_try_place`` also records.
 
         ``proposed`` is ``coin_cfg.order_size_usd`` — the configured
         per-order USD budget. Existing-order sums use
@@ -1942,13 +1980,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
 
         coin_open = await self._storage.get_open_orders(symbol=symbol)
         if len(coin_open) + 1 > cap.max_orders_per_coin:
-            return _SafetyDecision(ok=False, reason="max_orders_per_coin")
+            return _SafetyDecision(ok=False, reason=REASON_MAX_ORDERS_PER_COIN)
 
         if notional_usd(coin_open) + proposed > cap.max_per_coin_exposure_usd:
-            return _SafetyDecision(ok=False, reason="max_per_coin_exposure_usd")
+            return _SafetyDecision(ok=False, reason=REASON_MAX_PER_COIN_EXPOSURE_USD)
 
         if await total_exposure_usd(self._storage) + proposed > cap.max_total_exposure_usd:
-            return _SafetyDecision(ok=False, reason="max_total_exposure_usd")
+            return _SafetyDecision(ok=False, reason=REASON_MAX_TOTAL_EXPOSURE_USD)
 
         if level.side is OrderSide.BUY:
             # Committed-funds-only rule (canceled/expired BUYs excluded)
@@ -1956,7 +1994,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # same headroom this cap enforces. See that module for the
             # 2026-05-22 incident behind it.
             if await daily_spend_usd(self._storage) + proposed > cap.max_daily_spend_usd:
-                return _SafetyDecision(ok=False, reason="max_daily_spend_usd")
+                return _SafetyDecision(ok=False, reason=REASON_MAX_DAILY_SPEND_USD)
 
             # ADR-039 inventory caps: the four caps above bound the
             # order BOOK; these bound the POSITION — held inventory at
@@ -1969,11 +2007,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 coin_inventory + buy_notional_usd(coin_open) + proposed
                 > cap.max_per_coin_inventory_usd
             ):
-                return _SafetyDecision(ok=False, reason="max_per_coin_inventory_usd")
+                return _SafetyDecision(ok=False, reason=REASON_MAX_PER_COIN_INVENTORY_USD)
 
             total_inventory = await total_inventory_cost_usd(self._storage)
             all_open_buys = buy_notional_usd(await self._storage.get_open_orders())
             if total_inventory + all_open_buys + proposed > cap.max_total_inventory_usd:
-                return _SafetyDecision(ok=False, reason="max_total_inventory_usd")
+                return _SafetyDecision(ok=False, reason=REASON_MAX_TOTAL_INVENTORY_USD)
 
         return _SafetyDecision(ok=True)

@@ -1,5 +1,10 @@
 # Harvester — treasury and fund movement
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 *Entries here extend the Harvester (ADR-003: sole module with transfer authority) — adding deposit direction, reconciliation, and operator-facing improvements.*
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*

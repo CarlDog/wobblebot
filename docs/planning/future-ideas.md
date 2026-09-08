@@ -1,5 +1,9 @@
 # Future Ideas
 
+> Reconciled 2026-09-08: both ideas below became shipped features (Phase 3 MoE
+> and Phase 5 Discord). Their original rationale is retained as history. Current
+> residuals and triggers live in [the backlog](backlog.md), not these old proposals.
+
 A scratchpad for ideas that are not committed to any phase of
 `roadmap.md` but are worth remembering. Each entry should capture:
 **what**, **why interesting**, **what it touches**, **open questions**.
@@ -53,7 +57,7 @@ three disagree beyond a threshold.
   and time, not dollars. Different math if Phase 3+ ever uses hosted
   models.
 
-**Status:** Idea only. Not on the current roadmap.
+**Status:** Historical idea, superseded by the shipped MoE architecture; see the roadmap.
 
 ---
 
@@ -102,4 +106,4 @@ two-way control surface where operator commands (`/pause`, `/status`,
   confidence, proposed changes). One `discord_notify(notification)`
   function with format-by-level switching, or per-type emitters?
 
-**Status:** Idea only. Not on the current roadmap.
+**Status:** Historical idea, superseded by shipped Discord integration; see the roadmap.

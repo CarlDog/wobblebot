@@ -28,7 +28,41 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-_Nothing yet._
+## [2.0.8] - 2026-09-08
+
+### Fixed
+
+- Starved grids now explain the last layout's placements, refusal reasons,
+  cost-basis deferrals and retry cadence on the status card, including configured
+  symbols without prior orders or fills. Pause/offside and current open orders
+  suppress contradictory starvation claims; tick counters never imply elapsed age.
+- Persisted starvation diagnostics degrade together on corrupt data and carry a
+  separate freshness marker so a prior-version writer cannot refresh stale details
+  after rollback. Existing pause/offside state survives migration and readback.
+- Malformed pending-command rows now raise a sanitized `StorageError` from both
+  readers. The live loop keeps ticking and reports blocked command dispatch until
+  the row is repaired; approvals are neither discarded nor dispatched partially.
+  Error tracebacks omit the malformed payload.
+- Operator TTL-expirer and heartbeat-monitor failures now log ERROR and propagate
+  to supervision; cancellation and normal shutdown retain distinct INFO messages.
+- Discord confirmation refusals now contain connection, DNS and timeout failures
+  while keeping the approval gate closed and the shared confirmation unchanged.
+- Missing or whitespace-only Discord tokens now stop the operator with exit 2
+  before background tasks start. Recalibration also returns exit 2 for missing
+  reader credentials while retaining exit 1 for an exchange balance-read failure.
+- The imported package version now agrees with distribution metadata and the
+  release manifest. The import smoke test checks their agreement instead of
+  repeating a stale version literal.
+- HTTP healthchecks now close error responses before returning unhealthy, fixing
+  an owned-response leak exposed by Python 3.14's resource warnings.
+
+### Maintenance
+
+- The closeout backlog now reconciles historical candidates, issue dispositions
+  and gated next-phase work. Release limitations and accepted scoped standards exceptions
+  are explicit; the roadmap remains the only phase-status ledger.
+- Dependabot groups only the reviewed dev-only minor/patch updates for fleet
+  routing. Runtime packages and major upgrades retain individual review.
 
 ## [2.0.7] - 2026-09-05
 

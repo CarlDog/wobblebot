@@ -1,5 +1,11 @@
 # WobbleBot – Architecture Documentation
 
+ADR numbering is a single register in `decisions.md`. ADR-019 is the accepted
+advisor-purpose decision, ADR-041 is accepted deployment capability isolation,
+and ADR-042 is the proposed sell-only extension. New command-lifecycle, runtime
+identity and equity-risk decisions use semantic working names until an unused
+number is allocated; historical release-plan placeholders are not reservations.
+
 This folder contains the high-level system architecture for WobbleBot.  
 Each document here is a single source of truth for one architectural aspect.
 

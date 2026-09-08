@@ -5,6 +5,341 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**2.0.x closeout execution (2026-09-07; checks 2026-09-08 UTC):**
+[`2.0-closeout-and-2.1-entry-plan.md`](2.0-closeout-and-2.1-entry-plan.md) reconciles
+the remaining 2.0.x maintenance work, tracker dispositions and gated backlog with
+the proposed 2.1 scope. The user authorized local implementation and verification
+with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-256
+receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
+independent reviewers' findings were accepted into the plan (gate ordering and
+old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
+the 57-test focused starvation/offside baseline. C1/C2 and the bounded C4 startup
+repairs are complete locally. C3/C4 evidence is prepared in the
+[audit packet](2.0-closeout-audit.md). The operator accepted E01-E03 with
+"continue" on 2026-09-08 and authorized C5 release preparation. Publication,
+deployment, tracker status changes and phase closure remain at their later gates;
+2.1 implementation has not begun. C5 local release preparation is now verified;
+the final receipt below and [publication handoff](../release/v2.0.8-upgrade.md)
+identify the candidate. The user authorized source/PR/tag publication with "Yes"
+on 2026-09-08; publication is in progress. Production deployment and phase
+acceptance remain separate.
+
+**C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
+starvation patch is complete through the rendered card. Persistence adds a
+diagnostic freshness marker; malformed diagnostics preserve pause/offside state.
+Configured symbols remain visible before their first order/fill. Two independent
+review dimensions found no actionable code defects. Eleven isolated-worktree
+mutations were caught, with green baseline and restored runs; six synthetic card
+states were inspected in the browser. Full default `pytest` with mandatory upgrade
+and strict config gates: **3,953 passed, 29 integration tests deselected** in
+127.42 seconds, Python 3.13.14. Black/isort checks, mypy (153 source files) and
+pylint (10.00/10) pass. Tagged 2.0.7 schema and actual reader/writer methods were
+exercised; this is not a prior-container or production deployment receipt. Commit:
+`cff54a9`.
+
+**C2.1 task-wiring regression ✅ 2026-09-08 UTC:** real `_main_async` construction
+and supervision now have an offline regression for all five background tasks,
+their required/one-shot roles, clean shutdown and every required-task failure.
+Independent review found no defect; both production-wiring mutants were caught.
+Targeted tests: 18 passed. Full default suite: **3,958 passed, 29 deselected** in
+149.00 seconds with upgrade/config gates armed. No runtime code changed in this
+batch; C1's static source gates remain applicable, and the edited tests pass
+Black/isort. Commit: `fde181c`.
+
+**C2.2 pending-command corruption boundary ✅ 2026-09-08 UTC:** both SQLite
+readers translate malformed JSON, validation, timestamp and persisted-type failures
+to `StorageError`. A corrupt row blocks its whole requested batch and reports the
+row UUID; it neither disappears nor dispatches valid siblings ahead of repair.
+The actual live loop regression proves repeated ticks survive, approvals remain
+intact, and explicit fixture repair restores dispatch. Independent review caught a
+raw payload in the chained decoder traceback; suppressing that chain resolves it,
+with a formatted-traceback sentinel regression. The reviewer confirmed resolution.
+Five isolated behavior mutants were caught with restored tests green. Final full
+suite: **3,971 passed, 29 deselected** in 158.15 seconds; Black/isort, mypy (153
+source files) and pylint (10.00/10) pass with upgrade/config gates armed. C2.3-C2.4
+remain next. No production data was repaired or commands executed. Commit: `e29c483`.
+
+**C2.3 operator-loop terminal logging ✅ 2026-09-08 UTC:** TTL expiry and
+heartbeat monitoring now match the forwarder's normal/cancel/failure contract.
+Unexpected failures log ERROR with traceback and propagate to supervision;
+expected port failures keep their existing retry behavior. The regression first
+failed on four old-code cases; 36 focused tests pass on the repair. Independent
+review found no defect; all six isolated logging/propagation mutants were caught.
+Full suite: **3,977 passed, 29 deselected** in 154.96 seconds. Black/isort, mypy
+(153 source files) and pylint (10.00/10) pass with upgrade/config gates armed.
+Commit: `076b933`.
+
+**C2.4 confirmation-refusal transport containment ✅ 2026-09-08 UTC:** the
+private refusal-response seam catches Discord, aiohttp and timeout errors using
+the same narrow tuple as the transport. The actual interaction gate remains false
+after a failed refusal, with no handler call or shared-message edit. Unexpected
+programming errors and cancellation propagate. Six old-code cases reproduced the
+escape; 85 focused Discord tests pass. Independent review found no defect, and
+all three isolated catch-width mutants were caught. Full suite: **3,987 passed,
+29 deselected** in 132.44 seconds; Black/isort, mypy (153 source files), pylint
+(10.00/10), strict config and mandatory upgrade gates pass. C3/C4 reconciliation
+and audit remain; the four repairs are not a release or production acceptance.
+Commit: `6930549`.
+
+**C3 reconciliation evidence — 2026-09-08 UTC; decisions pending:**
+[backlog.md](backlog.md) maps all **133 candidate headings** in the nine legacy
+files, plus their index, smaller refactor registers, four-homes items, standing
+rules, future ideas, probe punch list and seven GitHub items. Independent review
+found no missing heading; logging installments 1-3 and the existing config CLI
+size rationale are classified as shipped/resolved. Old plans retain historical
+reasoning and forward pointers; phase/ADR navigation and file-stack deployment
+instructions are corrected. The API reference now separates public test evidence,
+private documentation review and unverified authenticated behavior.
+
+GitHub issues **#18, #22, #23, #97** and PRs **#138, #139, #140** were verified
+open; none was closed or merged. Exact PR heads and check findings are in the
+audit packet. Pylint/stub candidate checks pass separately and together; isort 9
+is parked for its pylint constraint, explicit UTF-8 verification and platform
+checks. The old July Anthropic quant run is still incomplete; later seat work
+does not retroactively complete it. Explicit retirement as superseded is the
+proposed #23 disposition. #22 remains standing watch state; #97 retains N5's
+watcher/funding decision.
+
+Canonical Fleet **python-service v3.0** audit: **19 PASS, 1 FAIL (PY-01)** after
+the scoped LF, Dependabot, provenance, status-pointer and confidence-marker
+repairs. Manual review preserves **E01 Ruff, E02 ledger location and E03 CI
+shape** as proposed exceptions, not accepted conformance. The root pointer
+satisfies the machine check but not UNI-08's semantic root-ledger rule.
+The `pip-dev` whitelist contains ten exact development package names, with no
+overlap in the installed Windows runtime closure; `python-dotenv` is excluded
+because uvicorn installs it at runtime. No main dependency pins or CI jobs changed.
+
+**C3 data-readiness snapshot — 2026-09-08 UTC; G1/G3 remain held:** read-only
+queries used completed SQLite online backups from **01:34 UTC**, opened immutable
+and read-only, rather than a live WAL database. The window is the **30 complete
+UTC days, 2026-08-09 through 2026-09-07**. These are coverage observations, not
+attributions of outages, trading losses or missing records.
+
+| Input / authoritative DB | Rows in window | Days with rows | Largest gap between rows |
+| --- | ---: | ---: | ---: |
+| Trades / live | 128 | 17 | 103.76 hours |
+| Order creation timestamps / live | 1,577 | 22 | 94.24 hours |
+| Balance snapshots / observe | 4,051 | 29 | 29.85 hours |
+| Advisor suggestions / advise | 1,740 | 30 | 4.10 hours |
+| LLM calls / operator | 3,433 | 30 | 13.56 hours |
+| Transfer proposals / harvest | 10 | 1 | Event-driven; no periodic expectation inferred |
+
+The balance window lacks August 16. Trades and proposals are irregular events,
+so empty days alone do not establish a fault. Orders retain their latest state,
+not a cancellation event stream; the heartbeat table is latest-only upserts.
+LLM calls reside in **operator.db**, so an empty advise.db LLM table is not
+missing billing evidence. Current retention code protects forensic trade/order/
+transfer history; configured retention targets are news, conversations and
+notifications, with separate price pruning. This code policy does not prove past
+operator settings or explain every gap. N3 design must choose usable per-signal
+baselines and a consumer before G1 implementation.
+
+Each traded USD pair (BTC, ETH, SOL, DOGE, XRP, ADA) has **984 hourly bars** bounded
+by July 29 00:00 through September 7 23:00 UTC in the inspected backup; this does
+not cover Q2. Older one-minute fragments are not a complete quarter. Local
+`2026Q1` hourly files for all six end March 31 23:00 UTC; no Q2 directory was
+present in the inspected local history root. The canonical advise backup contains
+**0 recommendation outcomes**, with **4,153 suggestions** lacking outcomes.
+No scoring job or production data repair ran. G3 requires complete imports and
+the authorized canonical NAS scoring receipt, including pending/missing-bar cases.
+
+Read-only Portainer evidence: **file-managed stack 158, StackFileVersion 85,
+IMAGE_TAG 2.0.7**, no GitConfig/AutoUpdate, and **eight healthy containers**.
+The inspected maintenance container uses Python **3.14.7**. This is the baseline
+deployment, not candidate acceptance; no task-failure/recovery event was verified.
+No trading, transfer, settings, Compose or image mutation occurred in this audit.
+
+**C4 bounded audit repairs ✅ 2026-09-08 UTC:** the walkthrough exposed missing
+credential behavior in two CLIs. Operator startup now rejects an absent, empty
+or whitespace-only configured Discord token before creating async work; the
+configured variable is honored. Recalibration returns **2** for missing reader
+credentials and retains **1** for a failed exchange read. Independent review
+caught the whitespace case and confirmed its correction. Eight new regressions
+and existing related tests give **29 targeted passes**. Commit: `1e704a9`.
+
+The explicit offline integration lane also exposed a stale multi-turn fixture:
+`status?` now takes the shipped deterministic path. The corrected test covers
+both that path and a prose/model path, exact model calls, preserved first-turn
+history and final reply. It does not disable the classifier or weaken the
+history assertion. Independent review confirmed the correction. The selected
+mock-exchange/operator/simulator lane passes **10 tests**. Commit: `71c33db`.
+Six additional isolated-worktree mutations were caught with both baseline and
+restored lanes green: missing-token guard, whitespace handling, credential/read
+exit distinction, dropped history and disabled fast status. Across C1-C4,
+**33 targeted mutations** were caught; mutation evidence is local mechanism
+verification, not a production fault/recovery receipt.
+
+**C4 final local verification ✅ 2026-09-08 UTC; release gate still pending:**
+the integrated runtime/test candidate is **`71c33db`**. An isolated environment
+installed from the current manifest replaces the initial environment as final
+evidence: **Python 3.13.14**, all declared dev pins matching, `pip check` clean.
+The old environment was behind six pins (Starlette, uvicorn, mypy, pylint,
+python-dotenv, httpx2); it was preserved. The sanitized
+[package snapshot](../release/2.0-closeout-environment.txt) records installed
+versions; it is not a hash lock or a Docker/runtime acceptance claim.
+
+Commands used the same interpreter below; each command was checked separately
+and execution stopped on failure. The final run completed all gates:
+
+```powershell
+$verifyPython = 'tmp/c4-environment/Scripts/python.exe'
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& $verifyPython -m pip check
+& $verifyPython -m black --check src/ tests/
+& $verifyPython -m isort --check-only src/ tests/
+& $verifyPython -m mypy src/
+& $verifyPython -m pylint src/
+& $verifyPython -m pytest
+& $verifyPython -m pytest tests/config/test_schema_drift.py -q --no-cov
+& $verifyPython -m pytest tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py -m integration -q --no-cov
+```
+
+Final default suite: **3,995 passed, 30 integration tests deselected**, no skips,
+**193.77 seconds**, **87.62% source coverage**. Black checks **403 files**;
+isort passes, mypy checks **153 source files**, pylint is **10.00/10**. Strict
+schema-drift checks: **32 passed**, no warnings/skips, including local operator
+files without printing values. The final documentation/routing-only commit
+reuses these unchanged runtime/test gates and has its own diff/link/hook checks.
+
+The finite subprocess walkthrough passes **127 cases** across all **16 CLIs**:
+missing config directory, missing settings with no fallback, bad explicit path,
+bad profile, example-file fallback (stopped by a named bad profile before service
+work), and **15** applicable missing-section cases. Recalibrate has no dedicated
+section. Each CLI also received absent `.env` and empty-credential fixtures.
+Optional-credential paths use finite work: sandbox's mock cycle, empty apply/
+screener databases, disabled news sources and empty maintenance targets.
+Those optional paths return their documented result/data/config codes; they do
+not acquire a new credential requirement. News/maintenance missing-reader/no-source
+unit coverage also ran. Prompt paths and dotenv ancestor discovery were isolated.
+The harness's initial socket guard was insufficient to block async loopback
+warmup; the pre-fix operator reached local Ollama and received a 404. No paid
+provider or financial API was called. Final missing-token startup exits before
+warmup; the regression independently asserts no async work is constructed.
+
+Five existing public Kraken contract checks also passed (**3.95 seconds**) via
+`pytest tests/integration/test_kraken_api_health.py -m integration -q --no-cov`
+in the initial environment. Private/paid integration lanes were deliberately
+excluded after inventory; public evidence does not certify private permissions.
+Domain outward-import scan was empty. Category commits passed gitleaks, PII and
+identity hooks. Actual Kraken key scopes, candidate Linux/image behavior,
+prior-container rollback and the proposed finite deployment window retain C5
+checks. No new money operation ran, so no cost-ledger debit is added.
+
+**Handoff:** local implementation/reconciliation evidence is ready for the
+operator's E01-E03 decisions. C3/C4 are not accepted as formal close gates until
+those decisions are recorded. C5 source publication, release/tag, image,
+deployment and phase acceptance are outstanding. P3/P4 gates remain named in
+the backlog, and N1 is the proposed first 2.1 slice only after formal close.
+
+**C5 kickoff — 2026-09-08 UTC:** the operator accepted E01 (retain the current
+lint chain), E02 (roadmap as status ledger), and E03 (expanded CI at N2). Their
+scoped owners/triggers remain in the audit packet. This clears those decisions
+for release preparation, not publication/deployment or formal phase acceptance.
+Remote main was re-read at `aff47fc`; the latest Release remains v2.0.7 and no
+v2.0.8 tag exists. Local work starts from `27132ad`. Version preparation found
+`wobblebot.__version__` and its smoke-test literal still at 2.0.5 despite 2.0.7
+distribution metadata. The amended test reproduced that mismatch. C5 aligns
+manifest/imported/installed versions at 2.0.8 and checks their agreement.
+Isolated candidate-image, prior-image rollback and final package checks follow;
+no production service or external tracker was changed.
+
+**C5 Windows package gate ✅ 2026-09-08 UTC:** 2.0.8 candidate metadata was
+installed into the isolated C4 verifier without changing dependencies. Full
+default `pytest`, with strict config and mandatory tagged-upgrade gates:
+**3,995 passed, 30 deselected**, 174.78 seconds, **87.62%** coverage. `pip check`,
+Black (403 files), isort, mypy (153 source files) and pylint (10.00/10) pass.
+Both isolated version mutants (stale imported version and stale installed
+metadata) fail the strengthened test; its baseline and restored cases pass.
+The independently reviewed image rehearsal now also requires a non-trade ledger
+sentinel and exact logical-content comparison of restored data. These checks
+do not yet establish candidate-image or production acceptance.
+
+**C5 Linux finding and bounded repair — 2026-09-08 UTC:** the first installed
+Linux/Python 3.14.7 candidate-wheel run passed static checks but returned **1 failed,
+3,988 passed, 6 skipped, 30 deselected** in 96.71 seconds. The failure was the
+HTTP healthcheck's unclosed `HTTPError` response, exposed by Python 3.14's
+resource-warning handling. A deterministic response-closure test failed before
+the fix and passes after it; the behavior-removal mutant also fails in the isolated
+worktree, with baseline/restored tests passing. The generated tagged-upgrade code
+now uses an angle-bracket virtual filename, eliminating a coverage attempt to read
+a nonexistent source file without suppressing warnings. The affected Linux lane
+passes **11 tests** in 5.82 seconds with coverage enabled and neither warning.
+Independent review found no further repair defect. Full final gates follow.
+
+**C5 local release preparation ✅ 2026-09-08 UTC:** package, tools and tests are
+frozen at `fff8f956d749a115225abe880aa77c5dd767aada` (2.0.8). The final receipt
+changes documentation only. [The evidence attachment](../release/2.0.8-local-evidence.json)
+retains complete image identities, environment versions, commands, skips and
+rehearsal results; [the handoff](../release/v2.0.8-upgrade.md) contains the proposed
+PR/Release text, publication sequence and later deployment/rollback gates.
+
+- **Windows / Python 3.13.14:** `pip check`, `black --check src/ tests/`,
+  `isort --check-only src/ tests/`, `mypy src/` and `pylint src/` pass in the isolated
+  current-manifest verifier. Black checks 403 files, mypy checks 153 source files,
+  and pylint scores 10.00/10. Full `python -m pytest` with mandatory upgrade and
+  strict config flags: **3,996 passed, 30 deselected**, 165.18 seconds,
+  **87.62%** coverage. No operator-file checks skipped.
+- **Linux / Python 3.14.7:** the same static commands pass. Full
+  `python -m pytest -ra --junitxml=/evidence/linux-pytest.xml`:
+  **3,990 passed, 6 skipped, 30 deselected**, 98.84 seconds, **87.59%** coverage.
+  Every skip is an explicitly absent operator `.env`/`settings.yml` check in
+  `tests/config/test_schema_drift.py`; the attachment names each test. The
+  v1.0.0 and v2.0.7 tagged upgrade gates ran with
+  `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1`. No resource or coverage warning remains.
+  The selected mock-exchange/operator/simulator integration command
+  (`python -m pytest -m integration -q --no-cov` with the three paths in the
+  attachment) passes **10 tests** in 20.90 seconds.
+- **Artifact identity:** the candidate was built from `git archive` of the frozen
+  commit, with installed version 2.0.8 and no host source/settings/credentials
+  mounted. Local image ID:
+  `sha256:8ac6ca7188bd44edffeff9a13da4ff1a50513d55e2049d975a4e0bb37adb43df`.
+  The test-only derivative preserves every installed runtime version; package
+  Python files and the packaged healthcheck match the frozen source byte-for-byte.
+  This is a local image identity, not a published GHCR digest.
+- **Actual prior-image compatibility:** the published 2.0.7 image at digest
+  `sha256:7aab19e0eafbf5ba778f5729501d045a5cb0b1b36044c769cd5a6dfab994f513`
+  matches tag commit `688315321a86c09f0967dfefdaf483e27c24e1c5`. Its installed
+  distribution is 2.0.7 while its imported version remains the historical 2.0.5
+  defect. All **six** isolated stages pass against the final candidate: seed/online
+  backup, upgrade/reconnect, prior insert/upsert/reconnect, re-upgrade/fresh write,
+  restore/prior read and restore/candidate upgrade. Every stage preserves approved
+  commands, queued notifications and the financial sentinels, including a
+  fee-bearing non-trade ledger row. Restored old engine fields match the backup;
+  prior writes retain raw diagnostics that the new reader correctly suppresses.
+  All fixture integrity checks pass. Networking is disabled; database writes use
+  disposable named volumes and container writable layers are ephemeral. No
+  production database or external effect is used.
+- **Review and guard evidence:** independent plan/safety/completeness reviews
+  resolved ledger/restore coverage and the pause-authority wording. The healthcheck
+  repair has a failing old-code regression, caught isolated mutation and passing
+  restored lane. The version-contract mutants were recorded in the earlier C5
+  receipt. Remaining changes are documentation/evidence only.
+
+Remote `main` was reverified at `aff47fc`; v2.0.8 remains unused. E01-E03 are
+accepted with their existing owners/triggers. **Publication is awaiting explicit
+approval:** push/open PR, merge after named checks, tag/Release and verify the
+published image. No source was pushed, issue/PR status changed, image published,
+production service deployed or monitor scheduled. Current production backups,
+live config/key-scope checks, final tag-image identity and authorized observation
+remain deployment gates. Formal 2.0.x acceptance and N0/N1 entry remain outstanding.
+
+**C5 publication review — 2026-09-08 UTC:** the authorized branch is published
+as [PR #141](https://github.com/CarlDog/wobblebot/pull/141). Its first CI, secret
+scan and CodeQL checks passed at `3db0455`. An automated review then identified
+a storage-contract edge case: zero persisted starvation ticks could retain other
+nonzero diagnostic counters. The current UI already suppresses zero ticks; no
+misleading current card or trading-state defect is claimed. A persisted-row
+regression reproduced the inconsistent tuple. The reader now returns the empty
+diagnostic tuple for zero ticks while retaining the separate pause/offside fields.
+Independent review confirmed the bounded fix. The affected storage/web/upgrade
+lane passes **30 tests**; isolated baseline/restored corruption lanes pass **15**,
+and removing the guard fails the new case. Full Windows verification passes
+**3,997 tests, 30 deselected**, 126.80 seconds, **87.62%** coverage, with all static,
+strict-config and mandatory upgrade gates passing. Updated image/Linux and PR CI
+checks must complete before merge/tag publication; the earlier image receipt
+remains historical evidence for the pre-review candidate.
+
 ## Post-v2.0 Security Maintenance
 
 - **2026-09-01 — logging redaction at the formatter boundary.** A CodeQL wave
@@ -2814,9 +3149,15 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     does is whether the operator container exits and comes BACK, rather than
     sitting unhealthy.
 
-## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
+## Phase 9 – Kraken Securities Equities (Committed Track, After 2.1 Close)
 
-**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
+**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after the accepted 2.1 closure. No implementation has begun; this remains a historical scoping sketch.
+
+**Reconciliation 2026-09-08:** the market/API, account, session, PDT, settlement,
+tax and capital figures below are May 2026 design assumptions, not verified
+current rules or approved implementation requirements. Refresh official sources
+at kickoff and ratify a new equity-risk ADR. ADR-019 already governs advisor
+purpose and cannot be reused. See backlog G9 for the active gate.
 
 **Motivating context.** Kraken added US-listed stock + ETF trading via a FINRA-regulated Kraken Securities LLC (broker-dealer partnership with Alpaca; announced April 2025; ~11,000 commission-free symbols; 24h M-F on Kraken Pro). Kraken extended their REST API in August 2025 with an additive `asset_class` parameter on existing endpoints (Add Order, Open Orders, Ticker, etc.) — equities support is API-accessible via the same authentication + signing path as crypto. Operator's strategic case: decorrelation from crypto (alt-to-alt grids are highly correlated; stock-to-crypto less so), larger universe (11k vs ~50 useful Kraken crypto pairs), volatile single-stocks (TSLA, NVDA) have wider daily ranges than BTC = real edge multiplier when capital allows.
 
@@ -2826,7 +3167,7 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 
 **Proposed slicing.** Six substantive slices + a closing check. Approximate effort: 2-3 months of focused work.
 
-1. **Stage 9.0 – Kickoff + ADR-019.** Ratify the equity-grid risk model: PDT-aware grid variant; settlement-aware cycle pacing; earnings-pause posture; wash-sale-aware tax accounting; below-$25k operating profile. New `docs/planning/stage-9.0-design.md` ratifying ~10 implementation decisions. No code in kickoff.
+1. **Stage 9.0 – Kickoff + equity-risk ADR (number unallocated).** Ratify the equity-grid risk model: PDT-aware grid variant; settlement-aware cycle pacing; earnings-pause posture; wash-sale-aware tax accounting; below-$25k operating profile. New `docs/planning/stage-9.0-design.md` ratifying ~10 implementation decisions. No code in kickoff.
 2. **Stage 9.1 – `KrakenAdapter` equities extension.** Add `asset_class` parameter awareness to relevant calls; stock-symbol parsing + asset-pair metadata handling for stocks (precision, lot size, market-hours metadata); new error mapping for equities-specific Kraken responses. Doesn't change the engine — just teaches the adapter to talk stocks. ~2-3 weeks; substantial tests.
 3. **Stage 9.2 – PDT-aware safety layer.** New `services/pdt_safety.py` maintains a rolling 5-trading-day same-day-round-trip count from the existing `trades` table; new safety check refuses counter-placement that _could_ complete a same-day round-trip if it would push the count to 4-in-5-days. Account-equity check at engine startup: refuse to operate (or warn loudly) if equity < $25k AND PDT-aware mode is not explicitly opted into. New `safety.pdt:` config block. The Stage 8.1 reconciler patterns transfer cleanly — this is the same "engine knows its own history" shape.
 4. **Stage 9.3 – Earnings calendar integration.** New `services/earnings_calendar.py` ingests earnings dates from a data source (TBD: Alpaca's calendar endpoint? EDGAR? a third-party feed?). New safety check pauses the grid for a configurable window around announced earnings (default e.g. 2 days before, 1 day after). Operator-overridable per-symbol. New `notifications` events for pause-entered/pause-exited.
@@ -2834,13 +3175,13 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 6. **Stage 9.5 – Tax export + wash-sale tracking.** New `cli/tax-export` (or `tools/tax_export.py`) producing 1099-B-compatible CSV from the `trades` table. Wash-sale lot tracking per IRS rules (substantially-identical security + 30-day rule; the grid does this every cycle by design). Integration with web UI's cost dashboard for year-to-date tax-relevant summaries. Tax accounting is non-optional for equities long-term; ship it before tax filing season.
 7. **Stage 9.6 – Phase 9 Integration Check.** Multi-symbol equity-grid live test (TSLA + 2-3 other choppy names); PDT counter exercised end-to-end; earnings-pause exercised against a real upcoming earnings date; tax export verified. Closing summary at `docs/planning/phase-9-summary.md`.
 
-**Open design questions for ADR-019 to settle** (deferred until kickoff):
+**Open design questions for the new equity-risk ADR to settle** (deferred until kickoff):
 
 - PDT counter implementation: rolling 5-trading-day window vs. calendar-week approximation. Trading-day awareness adds NYSE calendar dependency (holidays, half-days, early closes).
 - Day-trade-vs-swing classification: when does a "fill + counter-fill" pair count as a day trade for our purposes? At actual execution timestamp on the exchange? At intent timestamp on our side?
 - Wash-sale tracking granularity: per-symbol or per-substantially-identical-cluster (TSLA + TSLA-options = same cluster)?
 - Earnings-pause data source: Alpaca's calendar (we already partner with them via Kraken), EDGAR (free, official, fiddly), or a third-party feed (paid, polished)?
-- T+1 settlement and cash-account rules: can the counter-order place before settlement? Margin account would solve this but introduces margin's risk model (gated by ADR-019's risk model decisions).
+- T+1 settlement and cash-account rules: can the counter-order place before settlement? Margin account would solve this but introduces margin's risk model (gated by the new equity-risk ADR's decisions).
 - Multi-grid portfolio sizing: capital allocator across crypto + stocks. Operator's $100 → $1000 trajectory makes this a real concern, not hypothetical.
 - Symbol format: confirm via live API exploration whether TSLA equity is `TSLA` or `TSLA.US` or some other format; document the asset-class metadata schema.
 

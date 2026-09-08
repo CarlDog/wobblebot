@@ -1,5 +1,10 @@
 # Four-homes audit — hardcoded mutable facts (v1.1 P0.1)
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 **What:** a systematic sweep of `src/wobblebot` for facts hardcoded in *code* that are
 actually *mutable* (drift on a cadence we don't fully control), classifying each by the
 **four-homes test** to decide its right home. The audit gates every later storage-tier

@@ -1,5 +1,11 @@
 # Closing the current release line and opening the next
 
+> **Follow-on proposal (2026-09-07):** see
+> [2.0.x closeout and 2.1 entry](2.0-closeout-and-2.1-entry-plan.md) for the
+> reconciled remaining work and gates. This document preserves the original
+> proposal and its outcome; its old tag tasks and proposed ADR numbers are not
+> a current execution checklist.
+
 **Written 2026-08-28.** Answers the operator's six questions from the same
 day: aggregate the 2026-08-27/28 external-repository research against the
 already-planned backlog, decide what belongs in the current release, define
@@ -389,7 +395,7 @@ it does not replace either.
 
 **Sequencing note:** the red Compose contract test (§2d) is written first.
 
-### 5b. Slice 2 — Command lifecycle atomicity (M–L) · **ADR-042**
+### 5b. Slice 2 — Command lifecycle atomicity (M–L) · **Command-lifecycle ADR (number unallocated)**
 
 Narrow fix, not a generic lifecycle framework. Proposed state machine:
 
@@ -417,7 +423,7 @@ already closed by ADR-026, so this work is not re-solving it — and that
 **`reanchor` is the concrete non-idempotent redispatch case** the tests must
 cover.
 
-### 5c. Slice 3 — Supply-chain and runtime identity (M–L) · **ADR-043**
+### 5c. Slice 3 — Supply-chain and runtime identity (M–L) · **Runtime-identity ADR (number unallocated)**
 
 Three verified gaps, one slice:
 
@@ -543,7 +549,7 @@ Phase 9 is **already operator-committed** (2026-05-20) with a seven-slice
 sketch in the roadmap. It is not re-planned here. Two things about its
 position:
 
-- **Stage 9.0 (kickoff + ADR-019) is design-only and not capital-gated.** The
+- **Stage 9.0 (kickoff + new equity-risk ADR) is design-only and not capital-gated.** The
   PDT-aware risk model, settlement-aware pacing, earnings-pause posture, and
   wash-sale accounting can all be ratified while capital is below the
   activation threshold. That work can start any time after 2.1 without
@@ -564,15 +570,17 @@ Not scheduled; listed so the register survives the release boundary:
 
 ### 5h. ADRs this plan requires
 
-Proposed, not written — ratification is the operator's. Numbers follow ADR-040.
+Historical placeholders reconciled 2026-09-08: ADR-041 is now accepted and
+ADR-042 belongs to the proposed sell extension. The remaining decisions below
+use semantic names; allocate numbers from the current register at design time.
 
 | ADR | Scope | Why it needs an ADR |
 |---|---|---|
 | **ADR-041** | Per-service deployment capability matrix: which credentials, which mounts, which mode, per service; and the explicit limit that Compose proves presence, not semantic authority. | Changes deployment/config ownership and makes a boundary that ADR-003 asserts into one the deployment enforces. |
-| **ADR-042** | Pending-command lifecycle: atomic decision, immutable approved payload, `executing` claim with owner/token/deadline, `unknown_after_effect`. | Changes command lifecycle **states** — the firewall ADR-002 and ADR-034 depend on. |
-| **ADR-043** | Deployment supply-chain identity: dependency lock, base-image digest pins, deploy-by-digest, and the bounded startup receipt (with persistent manifest explicitly out of scope). | Changes what "the deployed artifact" means and introduces a new provenance surface. |
+| **Command-lifecycle ADR (number unallocated)** | Pending-command lifecycle: atomic decision, immutable approved payload, `executing` claim with owner/token/deadline, `unknown_after_effect`. | Changes command lifecycle **states** — the firewall ADR-002 and ADR-034 depend on. |
+| **Runtime-identity ADR (number unallocated)** | Deployment supply-chain identity: dependency lock, base-image digest pins, deploy-by-digest, and the bounded startup receipt (with persistent manifest explicitly out of scope). | Changes what "the deployed artifact" means and introduces a new provenance surface. |
 | **ADR-014 amendment** | Only if local-inference telemetry becomes persistent. ADR-014 currently exempts Ollama from cost accounting; broadening `llm_calls` (or adding an inference ledger) contradicts that as written. | Amends a standing decision. |
-| **ADR-019** | Already reserved by the roadmap for the Phase 9 equity-grid risk model. | Pre-existing. |
+| **Equity-risk ADR (number unallocated)** | Fresh Phase 9 risk-model decision after 2.1 closes. ADR-019 already belongs to the advisor-purpose decision. | New decision; not a reservation. |
 
 Explicitly **not** requiring an ADR: the CI collection gate, the central
 redaction filter, and pin/lock maintenance — provided their implementation does

@@ -33,10 +33,23 @@ updates:
     labels:
       - "dependencies"
       - "python"
-    # Group minor + patch updates together; major upgrades remain
-    # individual PRs because they typically require code review.
+    # Only reviewed dev-only packages enter the fleet's auto-merge group.
+    # Runtime dependencies and all majors remain individual, human-reviewed PRs.
+    # python-dotenv appears in dev extras but ships via uvicorn[standard], so
+    # it is deliberately excluded. Recheck runtime closure before adding a name.
     groups:
-      python-minor-and-patch:
+      pip-dev:
+        patterns:
+          - "pytest"
+          - "pytest-cov"
+          - "pytest-asyncio"
+          - "black"
+          - "isort"
+          - "mypy"
+          - "pylint"
+          - "pylint-pydantic"
+          - "types-pyyaml"
+          - "httpx2"
         update-types:
           - "minor"
           - "patch"
@@ -59,12 +72,12 @@ updates:
       - "github-actions"
     # Action bumps are frequent and low-risk; group the routine ones.
     groups:
-      actions-minor-and-patch:
+      actions-all:
         update-types:
           - "minor"
           - "patch"
 
-  # Docker base image (docker/Dockerfile — python:3.13-slim). Base-image
+  # Docker base image (docker/Dockerfile — Python 3.14 slim). Base-image
   # bumps are infrequent and worth individual review, so no grouping.
   - package-ecosystem: "docker"
     directory: "/docker"
