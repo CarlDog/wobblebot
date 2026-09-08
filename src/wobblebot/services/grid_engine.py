@@ -1824,7 +1824,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         result of every prior placement in the same tick — no
         in-memory delta tracking needed.
         """
-        decision = await self._check_safety(symbol, level, coin_cfg)
+        # Resolve sizing once: caps and placement must use the same quantity,
+        # including partial fills and counters from an older configured size.
+        if amount is None:
+            amount = Amount(value=coin_cfg.order_size_usd / level.price, asset=symbol.base)
+        decision = await self._check_safety(symbol, level, amount)
         if not decision.ok:
             # 2026-09-03: while a symbol is starved this line repeats
             # verbatim on every retry, forever, for a condition the engine
@@ -1869,7 +1873,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                 return "sell_deferred", ""
 
         try:
-            await self._place_level(symbol, level, coin_cfg, amount=amount)
+            await self._place_level(symbol, level, amount)
         except InsufficientBalance as exc:
             # v1.1 backlog "partial-grid placement WARN -> INFO": a
             # per-level insufficient-balance refusal is routine, not a
@@ -1924,23 +1928,13 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         self,
         symbol: Symbol,
         level: GridLevel,
-        coin_cfg: CoinGridConfig,
-        amount: Amount | None = None,
+        amount: Amount,
     ) -> None:
         """Build, place, and persist a single limit order at ``level``.
 
-        Default sizing: amount in base currency = ``order_size_usd /
-        level.price``, treating the configured size as a quote-currency
-        budget per order (matches the YAML's ``order_size_usd``
-        semantics). Pass an explicit ``amount`` to override — counter
-        orders use this to match the filled order's base amount so
-        cycles balance.
+        ``amount`` is already resolved and safety-checked by ``_try_place``.
+        Counter orders retain the filled base quantity so cycles balance.
         """
-        if amount is None:
-            amount = Amount(
-                value=coin_cfg.order_size_usd / level.price,
-                asset=symbol.base,
-            )
         order = Order(
             symbol=symbol,
             side=level.side,
@@ -1957,7 +1951,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         self,
         symbol: Symbol,
         level: GridLevel,
-        coin_cfg: CoinGridConfig,
+        amount: Amount,
     ) -> _SafetyDecision:
         """Evaluate every safety cap for a proposed order.
 
@@ -1968,14 +1962,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         this method can return, so a consumer can tell a cap refusal from
         the non-cap ones ``_try_place`` also records.
 
-        ``proposed`` is ``coin_cfg.order_size_usd`` — the configured
-        per-order USD budget. Existing-order sums use
-        ``price.amount * amount.value``, which equals ``order_size_usd``
-        modulo Decimal-division rounding (acceptable: cap thresholds
-        are operator-set in whole dollars, far above any rounding
-        artifact).
+        Charge the actual proposed notional, using the same price and base
+        quantity passed to the exchange. Counters may differ from the current
+        configured budget because of price changes, partial fills or a restart
+        with a new order size. Existing-order sums use the same multiplication.
         """
-        proposed = coin_cfg.order_size_usd
+        proposed = level.price * amount.value
         cap = self._safety
 
         coin_open = await self._storage.get_open_orders(symbol=symbol)
