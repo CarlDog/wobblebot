@@ -20,7 +20,9 @@ repairs are complete locally. C3/C4 evidence is prepared in the
 deployment, tracker status changes and phase closure remain at their later gates;
 2.1 implementation has not begun. C5 local release preparation is now verified;
 the final receipt below and [publication handoff](../release/v2.0.8-upgrade.md)
-identify the candidate awaiting source/PR/tag publication approval.
+identify the candidate. The user authorized source/PR/tag publication with "Yes"
+on 2026-09-08; publication is in progress. Production deployment and phase
+acceptance remain separate.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a

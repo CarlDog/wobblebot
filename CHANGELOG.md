@@ -28,8 +28,7 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-Release candidate: **2.0.8**. Package preparation is not publication or deployment;
-the roadmap records those gates separately.
+## [2.0.8] - 2026-09-08
 
 ### Fixed
 
