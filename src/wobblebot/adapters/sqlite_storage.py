@@ -157,6 +157,26 @@ def _read_starvation(row: aiosqlite.Row) -> tuple[int, int, int, int, dict[str, 
         return empty
 
 
+def _decode_pending_command(row: aiosqlite.Row) -> PendingCommand:
+    """Translate stored-data failures without exposing the command payload.
+
+    Both readers use this boundary. One malformed row blocks the requested
+    batch; it never becomes an empty result or a silently discarded approval.
+    """
+    try:
+        return row_to_pending_command(row)
+    except (ValueError, TypeError) as exc:
+        raw_id = row["id"]
+        try:
+            identifier = str(UUID(raw_id)) if isinstance(raw_id, str) else "<invalid-id>"
+        except ValueError:
+            identifier = "<invalid-id>"
+        raise StorageError(
+            f"Failed to decode pending command {identifier} ({type(exc).__name__}); "
+            "command batch blocked: inspect the persisted row before retrying"
+        ) from None
+
+
 class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
     """SQLite-backed StoragePort implementation.
 
@@ -1466,7 +1486,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 row = await cursor.fetchone()
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load pending command {pending_id}: {exc}") from exc
-        return row_to_pending_command(row) if row else None
+        return _decode_pending_command(row) if row else None
 
     async def get_pending_commands(
         self,
@@ -1502,7 +1522,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 rows = await cursor.fetchall()
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load pending commands: {exc}") from exc
-        return [row_to_pending_command(row) for row in rows]
+        return [_decode_pending_command(row) for row in rows]
 
     # ----- notifications (Stage 5.5 — outbound notifications) -----
 

@@ -37,6 +37,10 @@ fresh `[Unreleased]` heading created at that time.
 - Persisted starvation diagnostics degrade together on corrupt data and carry a
   separate freshness marker so a prior-version writer cannot refresh stale details
   after rollback. Existing pause/offside state survives migration and readback.
+- Malformed pending-command rows now raise a sanitized `StorageError` from both
+  readers. The live loop keeps ticking and reports blocked command dispatch until
+  the row is repaired; approvals are neither discarded nor dispatched partially.
+  Error tracebacks omit the malformed payload.
 
 ## [2.0.7] - 2026-09-05
 

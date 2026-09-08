@@ -13,7 +13,7 @@ with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-2
 receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
 independent reviewers' findings were accepted into the plan (gate ordering and
 old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
-the 57-test focused starvation/offside baseline. C1 is in progress. Release,
+the 57-test focused starvation/offside baseline. C1 and C2.1-C2.2 are complete locally. Release,
 deployment, tracker status changes and phase closure remain at their later gates;
 2.1 implementation has not begun.
 
@@ -37,7 +37,20 @@ Independent review found no defect; both production-wiring mutants were caught.
 Targeted tests: 18 passed. Full default suite: **3,958 passed, 29 deselected** in
 149.00 seconds with upgrade/config gates armed. No runtime code changed in this
 batch; C1's static source gates remain applicable, and the edited tests pass
-Black/isort. C2.2-C2.4 remain next.
+Black/isort. Commit: `fde181c`.
+
+**C2.2 pending-command corruption boundary ✅ 2026-09-08 UTC:** both SQLite
+readers translate malformed JSON, validation, timestamp and persisted-type failures
+to `StorageError`. A corrupt row blocks its whole requested batch and reports the
+row UUID; it neither disappears nor dispatches valid siblings ahead of repair.
+The actual live loop regression proves repeated ticks survive, approvals remain
+intact, and explicit fixture repair restores dispatch. Independent review caught a
+raw payload in the chained decoder traceback; suppressing that chain resolves it,
+with a formatted-traceback sentinel regression. The reviewer confirmed resolution.
+Five isolated behavior mutants were caught with restored tests green. Final full
+suite: **3,971 passed, 29 deselected** in 158.15 seconds; Black/isort, mypy (153
+source files) and pylint (10.00/10) pass with upgrade/config gates armed. C2.3-C2.4
+remain next. No production data was repaired or commands executed.
 
 ## Post-v2.0 Security Maintenance
 
