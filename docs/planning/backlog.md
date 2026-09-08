@@ -3,22 +3,24 @@
 This is the execution index for the accepted
 [2.0.x closeout sequence](2.0-closeout-and-2.1-entry-plan.md). Completion dates,
 verification receipts and current phase live only in [the roadmap](roadmap.md).
-GitHub remains authoritative for issue and PR state. Open tracker items were
-re-read on 2026-09-08 UTC; no status changes or merges were made.
+GitHub remains authoritative for issue and PR state. The legacy tracker items
+listed below were re-read on 2026-09-08 UTC and left unchanged by this batch.
+The roadmap records the separate stabilization publication PR and its release.
 
 An eligible trigger permits a scope decision; it does not schedule implementation.
 Owners below are accountable roles, not claims that another person accepted a task.
-The operator assigns the implementation owner when a slice starts. E01-E03 were accepted on 2026-09-08 for release preparation; publication and
-deployment still require the decisions in the closeout plan.
+The operator assigns the implementation owner when a slice starts. E01-E03 were
+accepted on 2026-09-08; source/tag publication was subsequently authorized.
+Production deployment and formal acceptance retain their closeout-plan decisions.
 
 ## Closeout and tracker disposition
 
 | ID | Disposition | Owner / next trigger | Acceptance evidence |
 | --- | --- | --- | --- |
 | C0 | Scope, branch and WIP preservation completed locally. | Closeout integrator; preserve provenance through release. | Roadmap C0 receipt and local baseline manifest. |
-| C1 | Starvation reporting completed locally. | Closeout integrator; candidate release and deployment gates. | Engine/storage/rendered-card tests, old-writer compatibility, mutations and visual inspection in roadmap. |
+| C1 | Starvation reporting completed locally. | Closeout integrator; C5 deployment and acceptance gates. | Engine/storage/rendered-card tests, old-writer compatibility, mutations and visual inspection in roadmap. |
 | C2.1-C2.4 | Four maintenance repairs completed locally. | Closeout integrator; operator decisions and C5. | Production task wiring, corrupt-command containment, loop failure logs and confirmation transport regressions; roadmap receipts. |
-| C3/C4 | Evidence prepared; two additional startup repairs and a stale integration fixture corrected. | Closeout integrator + operator; E01-E03 accepted; proceed through the release gate. | [Audit and decision packet](2.0-closeout-audit.md); no blanket conformance or phase-close claim. |
+| C3/C4 | Evidence prepared; two additional startup repairs and a stale integration fixture corrected. | Closeout integrator + operator; E01-E03 accepted; remaining C5 deployment and acceptance gates. | [Audit and decision packet](2.0-closeout-audit.md); no blanket conformance or phase-close claim. |
 | GH18 | Keep [#18](https://github.com/CarlDog/wobblebot/issues/18) open. Mechanical repairs complete; Ruff, ledger-location and CI-shape exceptions accepted for the 2.0.x patch. | Operator + tooling owner; retain accepted exceptions and meet their N0/N2 adoption triggers. | Individual standard rows in audit; fresh machine result plus manual checks. |
 | GH22 | Keep [#22](https://github.com/CarlDog/wobblebot/issues/22) as standing model-watch state. | Model-review owner; N5, with separately authorized Fleet Kit changes. | Per-seat coverage including Atlas, current seat register, all G4 prerequisites; no automatic reseating. |
 | GH23 | Recommend closing [#23](https://github.com/CarlDog/wobblebot/issues/23) as superseded by later seat evidence, subject to explicit operator approval. | Model-review owner; explicitly retire the incomplete July Anthropic quant campaign, or retain it under G4; later news/risk runs do not complete that campaign. | July campaign comments and August [seat register](../reference/advisor-seats.md); preserve historical probe caveats, no paid rerun for administrative closure. |
@@ -26,7 +28,8 @@ deployment still require the decisions in the closeout plan.
 | PR138 | [Pylint bump](https://github.com/CarlDog/wobblebot/pull/138) reviewed; individual CI and local tooling check pass. Merge pending instruction. | Tooling owner; authorized merge, rebase/retest final head if it changes. | Exact head and combined compatibility in audit; source/image publication stays separate. |
 | PR139 | [PyYAML stubs bump](https://github.com/CarlDog/wobblebot/pull/139) reviewed; individual CI and local mypy check pass. Merge pending instruction. | Tooling owner; same head/retest gate as PR138. | Exact head and combined compatibility in audit. |
 | PR140 | Park [isort major](https://github.com/CarlDog/wobblebot/pull/140). Current CI cannot resolve with pylint 4.0.7; pylint 4.0.8 permits it. Windows default-encoding checks also warn while returning success. | Tooling owner; PR138 first, then explicitly adopt UTF-8 verification and obtain clean Windows/Linux checks. | Isolated isort 9 check passes with UTF-8 and warnings-as-errors; default mode is not accepted. No bulk reformat or environment switch in this patch. |
-| C5 | Release/deployment/formal close remain gated. | Operator + release integrator; approve the concrete candidate and limitations. | Exact source/tag/image/stack, consistent backup and rollback rehearsal, finite behavior receipt, explicit close. |
+| C5 | Publication receipt recorded in the roadmap; deployment/formal close remain gated. | Operator + release integrator; approve the concrete deployment and limitations. | Verified source/tag/image, current stack and consistent backup, rollback rehearsal, finite behavior receipt, explicit close. |
+| C5-R1 | Failed-connect shutdown timing remains unresolved after the initial tag-CI worker warning; a passing retry is not a repair. | Release integrator + operator; reproduce/resolve or explicitly accept before deployment. | First failed attempt, independent assessment and narrow read-only checks in the roadmap/publication receipt; no further unchanged retries if it recurs. |
 
 ## Proposed next phase
 

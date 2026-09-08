@@ -1,0 +1,1306 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-08T06:19:18.631071+00:00",
+  "scope": "Completed v2.0.8 source, tag, Release and GHCR publication. No production deployment, phase acceptance or 2.1 implementation.",
+  "local_gates": {
+    "schema_version": 1,
+    "captured_at": "2026-09-08T06:02:24.400267+00:00",
+    "scope": "Local gates for the reviewed 2.0.8 publication candidate. Publication is authorized; these local results do not establish production deployment or phase acceptance.",
+    "candidate": {
+      "commit": "28b58203c82db0d98e077a41a6c2679fea33bc58",
+      "local_tag": "wobblebot:c5-2.0.8-28b5820",
+      "id": "sha256:22ccd69c75248769b6207d28f4589e0a810fe90231f178b15e68d137cf146d24",
+      "created": "2026-09-08T05:55:51.815759342Z",
+      "platform": "linux/amd64",
+      "labels": {
+        "org.opencontainers.image.revision": "28b58203c82db0d98e077a41a6c2679fea33bc58",
+        "org.opencontainers.image.version": "2.0.8"
+      },
+      "user": "wobblebot"
+    },
+    "prior_tag_commit": "688315321a86c09f0967dfefdaf483e27c24e1c5",
+    "remote_main_verified": "aff47fcbee8763096e308efc5c66cd092798d12e",
+    "windows": {
+      "python": "3.13.14",
+      "interpreter": "tmp/c4-environment/Scripts/python.exe",
+      "static_commands_passed": [
+        "python -m pip check",
+        "python -m black --check src/ tests/",
+        "python -m isort --check-only src/ tests/",
+        "python -m mypy src/",
+        "python -m pylint src/"
+      ],
+      "test_command": "python -m pytest",
+      "environment_flags": {
+        "WOBBLEBOT_REQUIRE_UPGRADE_GATE": "1",
+        "WOBBLEBOT_STRICT_CONFIG_DRIFT": "1"
+      },
+      "pytest_summary": "3997 passed, 30 deselected in 126.80s (0:02:06)",
+      "coverage_total": "TOTAL                                                 14987   1855  87.62%"
+    },
+    "linux": {
+      "environment": {
+        "python": "3.14.7",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "source_commit": "28b58203c82db0d98e077a41a6c2679fea33bc58",
+        "runtime_constraints_sha256": "d848b9399cb54b91fa6810bf2d73b801d6c94c4fbaa36e260a56c8c48dea931a",
+        "runtime_versions_preserved": true,
+        "wheel_python_sources_match": true,
+        "packaged_healthcheck_matches": true,
+        "packages": [
+          "Jinja2==3.1.6",
+          "MarkupSafe==3.0.3",
+          "PyYAML==6.0.3",
+          "Pygments==2.21.0",
+          "RapidFuzz==3.14.6",
+          "aiohappyeyeballs==2.7.1",
+          "aiohttp==3.14.3",
+          "aiosignal==1.4.0",
+          "aiosqlite==0.22.1",
+          "annotated-doc==0.0.5",
+          "annotated-types==0.8.0",
+          "anyio==4.15.1",
+          "ast_serialize==0.10.0",
+          "astroid==4.0.4",
+          "attrs==26.1.0",
+          "audioop-lts==0.2.2",
+          "bcrypt==5.0.0",
+          "black==26.5.1",
+          "certifi==2026.7.22",
+          "click==8.5.0",
+          "coverage==7.16.0",
+          "dill==0.4.1",
+          "discord.py==2.7.1",
+          "fastapi==0.141.1",
+          "feedparser-sgmllib==2.1.0",
+          "feedparser==6.0.14",
+          "frozenlist==1.8.0",
+          "h11==0.16.0",
+          "httpcore2==2.12.0",
+          "httpcore==1.0.9",
+          "httptools==0.8.0",
+          "httpx2==2.12.0",
+          "httpx==0.28.1",
+          "idna==3.19",
+          "iniconfig==2.3.0",
+          "isort==8.0.1",
+          "itsdangerous==2.2.0",
+          "librt==0.15.0",
+          "mccabe==0.7.0",
+          "multidict==6.7.1",
+          "mypy==2.3.1",
+          "mypy_extensions==1.1.0",
+          "packaging==26.3",
+          "pathspec==1.1.1",
+          "pip==26.2.1",
+          "platformdirs==4.11.7",
+          "pluggy==1.6.0",
+          "propcache==0.5.2",
+          "pydantic==2.13.5",
+          "pydantic_core==2.46.5",
+          "pylint-plugin-utils==0.9.0",
+          "pylint-pydantic==0.4.1",
+          "pylint==4.0.7",
+          "pytest-asyncio==1.4.0",
+          "pytest-cov==7.1.0",
+          "pytest==9.1.1",
+          "python-dotenv==1.2.3",
+          "python-frontmatter==1.3.0",
+          "python-multipart==0.0.32",
+          "pytokens==0.4.1",
+          "ruamel.yaml==0.19.1",
+          "starlette==1.6.0",
+          "tomlkit==0.15.1",
+          "truststore==0.10.4",
+          "types-PyYAML==6.0.12.20260724",
+          "typing-inspection==0.4.4",
+          "typing_extensions==4.16.0",
+          "uvicorn==0.52.4",
+          "uvloop==0.22.1",
+          "watchfiles==1.2.0",
+          "websockets==17.1",
+          "wobblebot==2.0.8",
+          "yarl==1.24.5"
+        ]
+      },
+      "network": "none",
+      "commands": [
+        {
+          "label": "pip-check",
+          "command": [
+            "python",
+            "-m",
+            "pip",
+            "check"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "black",
+          "command": [
+            "python",
+            "-m",
+            "black",
+            "--check",
+            "src/",
+            "tests/"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "isort",
+          "command": [
+            "python",
+            "-m",
+            "isort",
+            "--check-only",
+            "src/",
+            "tests/"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "mypy",
+          "command": [
+            "python",
+            "-m",
+            "mypy",
+            "src/"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "pylint",
+          "command": [
+            "python",
+            "-m",
+            "pylint",
+            "src/"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "pytest",
+          "command": [
+            "python",
+            "-m",
+            "pytest",
+            "-ra",
+            "--junitxml=/evidence/linux-pytest.xml"
+          ],
+          "exit": 0
+        },
+        {
+          "label": "offline-integration",
+          "command": [
+            "python",
+            "-m",
+            "pytest",
+            "-m",
+            "integration",
+            "-q",
+            "--no-cov",
+            "tests/integration/test_grid_engine_e2e.py",
+            "tests/integration/test_phase5_operator_e2e.py",
+            "tests/services/test_simulator.py"
+          ],
+          "exit": 0
+        }
+      ],
+      "pytest_summary": "3991 passed, 6 skipped, 30 deselected in 109.47s (0:01:49)",
+      "coverage_total": "TOTAL                                                                                     14953   1855  87.59%",
+      "operator_file_skips": [
+        {
+          "test": "tests.config.test_schema_drift.TestSettingsDrift::test_operator_has_no_stale_keys",
+          "reason": "no operator settings.yml; nothing to compare"
+        },
+        {
+          "test": "tests.config.test_schema_drift.TestSettingsDrift::test_operator_has_all_example_keys",
+          "reason": "no operator settings.yml; nothing to compare"
+        },
+        {
+          "test": "tests.config.test_schema_drift.TestSettingsDrift::test_operator_has_all_canonical_profiles",
+          "reason": "no operator settings.yml; nothing to compare"
+        },
+        {
+          "test": "tests.config.test_schema_drift.TestEnvDrift::test_operator_has_no_stale_keys",
+          "reason": "no operator .env; nothing to compare"
+        },
+        {
+          "test": "tests.config.test_schema_drift.TestEnvDrift::test_operator_has_all_example_keys",
+          "reason": "no operator .env; nothing to compare"
+        },
+        {
+          "test": "tests.config.test_schema_drift.TestNoDuplicateEnvAssignments::test_operator_env_defines_each_key_once",
+          "reason": "no operator .env; nothing to check"
+        }
+      ],
+      "offline_integration_summary": "10 passed in 25.35s"
+    },
+    "image_rehearsal": [
+      {
+        "image": "ghcr.io/carldog/wobblebot@sha256:7aab19e0eafbf5ba778f5729501d045a5cb0b1b36044c769cd5a6dfab994f513",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "seed",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.7",
+        "imported_version": "2.0.5",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      },
+      {
+        "image": "sha256:22ccd69c75248769b6207d28f4589e0a810fe90231f178b15e68d137cf146d24",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "upgrade",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.8",
+        "imported_version": "2.0.8",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      },
+      {
+        "image": "ghcr.io/carldog/wobblebot@sha256:7aab19e0eafbf5ba778f5729501d045a5cb0b1b36044c769cd5a6dfab994f513",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "rollback",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.7",
+        "imported_version": "2.0.5",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      },
+      {
+        "image": "sha256:22ccd69c75248769b6207d28f4589e0a810fe90231f178b15e68d137cf146d24",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "reupgrade",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.8",
+        "imported_version": "2.0.8",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      },
+      {
+        "image": "ghcr.io/carldog/wobblebot@sha256:7aab19e0eafbf5ba778f5729501d045a5cb0b1b36044c769cd5a6dfab994f513",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "restore_old",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.7",
+        "imported_version": "2.0.5",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      },
+      {
+        "image": "sha256:22ccd69c75248769b6207d28f4589e0a810fe90231f178b15e68d137cf146d24",
+        "network": "none",
+        "mount_type": "disposable_named_volume",
+        "stage": "restore_upgrade",
+        "result": "pass",
+        "python": "3.14.7",
+        "distribution": "2.0.8",
+        "imported_version": "2.0.8",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+        "preserved_tables": {
+          "orders": 1,
+          "trades": 1,
+          "transfer_proposals": 1,
+          "transfer_results": 1,
+          "ledger_entries": 1,
+          "notifications": 1,
+          "pending_commands": 1
+        }
+      }
+    ],
+    "local_rehearsal_script_sha256": {
+      "tmp/c5-image-probe.py": "025b5b93b3df28045852fd2497e48ed75f4edc504b7fa186e062c2d3c524a539",
+      "tmp/c5-run-images.py": "7070773566c3c035481f1d49368ba0e456a6d48214ad3346e7c1ad2ae96e2653",
+      "tmp/c5-linux-gate.py": "b765772c466cac70e4932ef369e388d9106ee6155ea9cb5ac4df8a91faf0fff2",
+      "tmp/c5-build-image.py": "4b80a64018d8f5be6cb6693265a7e6f70d0bd15001dc1f025b741cc2c7d0d84b",
+      "tmp/c5-build-linux-verifier.py": "251c8e9b40e9bc951ec81f46fca70545e0f57f9b575e6543ba90f7366521cdc8",
+      "tmp/c5-run-linux.py": "cec812b5ba4c325f3bba5105df40696b05ab165b1abf7b40817bb65949ef1ae7"
+    },
+    "review": "Independent plan, safety and completeness reviews resolved ledger/restore coverage and pause-authority wording. Review of the healthcheck repair found no further issue. PR review found a zero-tick storage-contract gap; the persisted-row regression reproduced it, independent review confirmed the minimal guard, and an isolated removal mutant failed with baseline/restored lanes passing."
+  },
+  "publication": {
+    "pull_request": {
+      "headRefOid": "28b58203c82db0d98e077a41a6c2679fea33bc58",
+      "mergeCommit": {
+        "oid": "50ac92e674dba42b33fe965edafd81d6060af89b"
+      },
+      "mergedAt": "2026-09-08T06:02:38Z",
+      "number": 141,
+      "state": "MERGED",
+      "url": "https://github.com/CarlDog/wobblebot/pull/141"
+    },
+    "tag": {
+      "name": "v2.0.8",
+      "object": "7c6275eacf60c6a30f35174a9706c2673d6b4050",
+      "commit": "50ac92e674dba42b33fe965edafd81d6060af89b"
+    },
+    "release": {
+      "id": "RE_kwDOQcQLOc4W6reF",
+      "isDraft": false,
+      "isPrerelease": false,
+      "name": "2.0.8 \u2014 stabilization and operator reliability",
+      "publishedAt": "2026-09-08T06:08:15Z",
+      "tagName": "v2.0.8",
+      "targetCommitish": "main",
+      "url": "https://github.com/CarlDog/wobblebot/releases/tag/v2.0.8"
+    },
+    "merged_tree_equals_reviewed_candidate": true,
+    "workflows": {
+      "pr-ci": {
+        "conclusion": "success",
+        "createdAt": "2026-09-08T05:55:24Z",
+        "databaseId": 34192503095,
+        "event": "pull_request",
+        "headBranch": "codex/2.0x-closeout",
+        "headSha": "28b58203c82db0d98e077a41a6c2679fea33bc58",
+        "jobs": [
+          {
+            "completedAt": "2026-09-08T05:59:27Z",
+            "conclusion": "success",
+            "databaseId": 101953256986,
+            "name": "test",
+            "startedAt": "2026-09-08T05:55:28Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T05:55:30Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T05:55:29Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:55:31Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T05:55:30Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:55:31Z",
+                "conclusion": "success",
+                "name": "Set up Python 3.13",
+                "number": 3,
+                "startedAt": "2026-09-08T05:55:31Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:55:50Z",
+                "conclusion": "success",
+                "name": "Install (editable + dev extras)",
+                "number": 4,
+                "startedAt": "2026-09-08T05:55:31Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:56:01Z",
+                "conclusion": "success",
+                "name": "Format check (black)",
+                "number": 5,
+                "startedAt": "2026-09-08T05:55:50Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:56:02Z",
+                "conclusion": "success",
+                "name": "Import order (isort)",
+                "number": 6,
+                "startedAt": "2026-09-08T05:56:01Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:56:38Z",
+                "conclusion": "success",
+                "name": "Lint (pylint)",
+                "number": 7,
+                "startedAt": "2026-09-08T05:56:02Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:56:51Z",
+                "conclusion": "success",
+                "name": "Type check (mypy)",
+                "number": 8,
+                "startedAt": "2026-09-08T05:56:38Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:59:23Z",
+                "conclusion": "success",
+                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "number": 9,
+                "startedAt": "2026-09-08T05:56:51Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:59:24Z",
+                "conclusion": "success",
+                "name": "Post Set up Python 3.13",
+                "number": 17,
+                "startedAt": "2026-09-08T05:59:23Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:59:24Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 18,
+                "startedAt": "2026-09-08T05:59:24Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T05:59:24Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 19,
+                "startedAt": "2026-09-08T05:59:24Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192503095/job/101953256986"
+          },
+          {
+            "completedAt": "2026-09-08T05:59:27Z",
+            "conclusion": "skipped",
+            "databaseId": 101954023287,
+            "name": "build-and-push",
+            "startedAt": "2026-09-08T05:59:27Z",
+            "status": "completed",
+            "steps": [],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192503095/job/101954023287"
+          }
+        ],
+        "name": "CI & Publish to GHCR",
+        "status": "completed",
+        "updatedAt": "2026-09-08T05:59:28Z",
+        "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192503095",
+        "workflowName": "CI & Publish to GHCR",
+        "attempt": 1,
+        "pytest_summary": "3991 passed, 6 skipped, 30 deselected in 150.82s (0:02:30)",
+        "operator_file_skips": [
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_canonical_profiles",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestNoDuplicateEnvAssignments::test_operator_env_defines_each_key_once"
+        ]
+      },
+      "main-ci": {
+        "conclusion": "success",
+        "createdAt": "2026-09-08T06:02:41Z",
+        "databaseId": 34192988015,
+        "event": "push",
+        "headBranch": "main",
+        "headSha": "50ac92e674dba42b33fe965edafd81d6060af89b",
+        "jobs": [
+          {
+            "completedAt": "2026-09-08T06:06:32Z",
+            "conclusion": "success",
+            "databaseId": 101954693535,
+            "name": "test",
+            "startedAt": "2026-09-08T06:02:44Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T06:02:45Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T06:02:44Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:02:47Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T06:02:45Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:02:47Z",
+                "conclusion": "success",
+                "name": "Set up Python 3.13",
+                "number": 3,
+                "startedAt": "2026-09-08T06:02:47Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:03:04Z",
+                "conclusion": "success",
+                "name": "Install (editable + dev extras)",
+                "number": 4,
+                "startedAt": "2026-09-08T06:02:47Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:03:15Z",
+                "conclusion": "success",
+                "name": "Format check (black)",
+                "number": 5,
+                "startedAt": "2026-09-08T06:03:04Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:03:16Z",
+                "conclusion": "success",
+                "name": "Import order (isort)",
+                "number": 6,
+                "startedAt": "2026-09-08T06:03:15Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:03:49Z",
+                "conclusion": "success",
+                "name": "Lint (pylint)",
+                "number": 7,
+                "startedAt": "2026-09-08T06:03:16Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:04:01Z",
+                "conclusion": "success",
+                "name": "Type check (mypy)",
+                "number": 8,
+                "startedAt": "2026-09-08T06:03:49Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:30Z",
+                "conclusion": "success",
+                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "number": 9,
+                "startedAt": "2026-09-08T06:04:01Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:30Z",
+                "conclusion": "success",
+                "name": "Post Set up Python 3.13",
+                "number": 17,
+                "startedAt": "2026-09-08T06:06:30Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:30Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 18,
+                "startedAt": "2026-09-08T06:06:30Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:30Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 19,
+                "startedAt": "2026-09-08T06:06:30Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192988015/job/101954693535"
+          },
+          {
+            "completedAt": "2026-09-08T06:07:31Z",
+            "conclusion": "success",
+            "databaseId": 101955473693,
+            "name": "build-and-push",
+            "startedAt": "2026-09-08T06:06:35Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T06:06:39Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T06:06:36Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:40Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T06:06:39Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:52Z",
+                "conclusion": "success",
+                "name": "Set up Docker Buildx",
+                "number": 3,
+                "startedAt": "2026-09-08T06:06:40Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:53Z",
+                "conclusion": "success",
+                "name": "Log in to GHCR",
+                "number": 4,
+                "startedAt": "2026-09-08T06:06:52Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:06:53Z",
+                "conclusion": "success",
+                "name": "Extract metadata (tags + labels)",
+                "number": 5,
+                "startedAt": "2026-09-08T06:06:53Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:27Z",
+                "conclusion": "success",
+                "name": "Build and push",
+                "number": 6,
+                "startedAt": "2026-09-08T06:06:53Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:29Z",
+                "conclusion": "success",
+                "name": "Post Build and push",
+                "number": 9,
+                "startedAt": "2026-09-08T06:07:27Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:29Z",
+                "conclusion": "success",
+                "name": "Post Log in to GHCR",
+                "number": 10,
+                "startedAt": "2026-09-08T06:07:29Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:29Z",
+                "conclusion": "success",
+                "name": "Post Set up Docker Buildx",
+                "number": 11,
+                "startedAt": "2026-09-08T06:07:29Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:30Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 12,
+                "startedAt": "2026-09-08T06:07:29Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:07:30Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 13,
+                "startedAt": "2026-09-08T06:07:30Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192988015/job/101955473693"
+          }
+        ],
+        "name": "CI & Publish to GHCR",
+        "status": "completed",
+        "updatedAt": "2026-09-08T06:07:32Z",
+        "url": "https://github.com/CarlDog/wobblebot/actions/runs/34192988015",
+        "workflowName": "CI & Publish to GHCR",
+        "attempt": 1,
+        "pytest_summary": "3991 passed, 6 skipped, 30 deselected in 146.90s (0:02:26)",
+        "operator_file_skips": [
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_canonical_profiles",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestNoDuplicateEnvAssignments::test_operator_env_defines_each_key_once"
+        ]
+      },
+      "tag-ci": {
+        "conclusion": "success",
+        "createdAt": "2026-09-08T06:08:15Z",
+        "databaseId": 34193374946,
+        "event": "push",
+        "headBranch": "v2.0.8",
+        "headSha": "50ac92e674dba42b33fe965edafd81d6060af89b",
+        "jobs": [
+          {
+            "completedAt": "2026-09-08T06:18:17Z",
+            "conclusion": "success",
+            "databaseId": 101957115978,
+            "name": "test",
+            "startedAt": "2026-09-08T06:14:34Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T06:14:36Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T06:14:35Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:14:37Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T06:14:36Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:14:38Z",
+                "conclusion": "success",
+                "name": "Set up Python 3.13",
+                "number": 3,
+                "startedAt": "2026-09-08T06:14:37Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:14:53Z",
+                "conclusion": "success",
+                "name": "Install (editable + dev extras)",
+                "number": 4,
+                "startedAt": "2026-09-08T06:14:38Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:15:03Z",
+                "conclusion": "success",
+                "name": "Format check (black)",
+                "number": 5,
+                "startedAt": "2026-09-08T06:14:53Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:15:04Z",
+                "conclusion": "success",
+                "name": "Import order (isort)",
+                "number": 6,
+                "startedAt": "2026-09-08T06:15:03Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:15:36Z",
+                "conclusion": "success",
+                "name": "Lint (pylint)",
+                "number": 7,
+                "startedAt": "2026-09-08T06:15:04Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:15:48Z",
+                "conclusion": "success",
+                "name": "Type check (mypy)",
+                "number": 8,
+                "startedAt": "2026-09-08T06:15:36Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:14Z",
+                "conclusion": "success",
+                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "number": 9,
+                "startedAt": "2026-09-08T06:15:48Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:15Z",
+                "conclusion": "success",
+                "name": "Post Set up Python 3.13",
+                "number": 17,
+                "startedAt": "2026-09-08T06:18:14Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:15Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 18,
+                "startedAt": "2026-09-08T06:18:15Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:15Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 19,
+                "startedAt": "2026-09-08T06:18:15Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101957115978"
+          },
+          {
+            "completedAt": "2026-09-08T06:18:36Z",
+            "conclusion": "success",
+            "databaseId": 101957919974,
+            "name": "build-and-push",
+            "startedAt": "2026-09-08T06:18:19Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T06:18:22Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T06:18:20Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:23Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T06:18:22Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:27Z",
+                "conclusion": "success",
+                "name": "Set up Docker Buildx",
+                "number": 3,
+                "startedAt": "2026-09-08T06:18:23Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:27Z",
+                "conclusion": "success",
+                "name": "Log in to GHCR",
+                "number": 4,
+                "startedAt": "2026-09-08T06:18:27Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:27Z",
+                "conclusion": "success",
+                "name": "Extract metadata (tags + labels)",
+                "number": 5,
+                "startedAt": "2026-09-08T06:18:27Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:33Z",
+                "conclusion": "success",
+                "name": "Build and push",
+                "number": 6,
+                "startedAt": "2026-09-08T06:18:27Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:34Z",
+                "conclusion": "success",
+                "name": "Post Build and push",
+                "number": 9,
+                "startedAt": "2026-09-08T06:18:33Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:34Z",
+                "conclusion": "success",
+                "name": "Post Log in to GHCR",
+                "number": 10,
+                "startedAt": "2026-09-08T06:18:34Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:35Z",
+                "conclusion": "success",
+                "name": "Post Set up Docker Buildx",
+                "number": 11,
+                "startedAt": "2026-09-08T06:18:34Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:35Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 12,
+                "startedAt": "2026-09-08T06:18:35Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:18:35Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 13,
+                "startedAt": "2026-09-08T06:18:35Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101957919974"
+          }
+        ],
+        "name": "CI & Publish to GHCR",
+        "status": "completed",
+        "updatedAt": "2026-09-08T06:18:37Z",
+        "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946",
+        "workflowName": "CI & Publish to GHCR",
+        "attempt": 2,
+        "pytest_summary": "3991 passed, 6 skipped, 30 deselected in 145.27s (0:02:25)",
+        "operator_file_skips": [
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestSettingsDrift::test_operator_has_all_canonical_profiles",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_no_stale_keys",
+          "tests/config/test_schema_drift.py::TestEnvDrift::test_operator_has_all_example_keys",
+          "tests/config/test_schema_drift.py::TestNoDuplicateEnvAssignments::test_operator_env_defines_each_key_once"
+        ]
+      }
+    },
+    "named_checks": [
+      {
+        "id": 101957919974,
+        "name": "build-and-push",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101957919974"
+      },
+      {
+        "id": 101957115978,
+        "name": "test",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101957115978"
+      },
+      {
+        "id": 101955830368,
+        "name": "Scan for secrets",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374919/job/101955830368"
+      },
+      {
+        "id": 101955473693,
+        "name": "build-and-push",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192988015/job/101955473693"
+      },
+      {
+        "id": 101954695571,
+        "name": "Analyze (actions)",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192986987/job/101954695571"
+      },
+      {
+        "id": 101954695530,
+        "name": "Analyze (javascript-typescript)",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192986987/job/101954695530"
+      },
+      {
+        "id": 101954695279,
+        "name": "Analyze (python)",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192986987/job/101954695279"
+      },
+      {
+        "id": 101954693645,
+        "name": "Scan for secrets",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192987995/job/101954693645"
+      },
+      {
+        "id": 101954693535,
+        "name": "test",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/CarlDog/wobblebot/actions/runs/34192988015/job/101954693535"
+      }
+    ],
+    "published_image": {
+      "tag": "v2.0.8",
+      "source_commit": "50ac92e674dba42b33fe965edafd81d6060af89b",
+      "image": "ghcr.io/carldog/wobblebot:2.0.8",
+      "image_id": "sha256:98c2d89521cd2605093860ca331b352ae202a06ab6bfa70037b8d63762c5b297",
+      "repo_digests": [
+        "ghcr.io/carldog/wobblebot@sha256:98c2d89521cd2605093860ca331b352ae202a06ab6bfa70037b8d63762c5b297"
+      ],
+      "image_labels": {
+        "org.opencontainers.image.created": "2026-09-08T06:18:27.959Z",
+        "org.opencontainers.image.description": "Deterministic, safety-first micro-trading system using hexagonal architecture",
+        "org.opencontainers.image.licenses": "MIT",
+        "org.opencontainers.image.revision": "50ac92e674dba42b33fe965edafd81d6060af89b",
+        "org.opencontainers.image.source": "https://github.com/CarlDog/wobblebot",
+        "org.opencontainers.image.title": "wobblebot",
+        "org.opencontainers.image.url": "https://github.com/CarlDog/wobblebot",
+        "org.opencontainers.image.version": "2.0.8"
+      },
+      "platform": "linux/amd64",
+      "image_user": "wobblebot",
+      "network": "none",
+      "read_only": true,
+      "wheel_matches_tagged_source": true,
+      "healthcheck_matches_tagged_source": true,
+      "runtime_package_differences": {},
+      "runtime": {
+        "python": "3.14.7",
+        "imported_version": "2.0.8",
+        "distribution_version": "2.0.8",
+        "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot",
+        "packages": {
+          "pip": "26.2.1",
+          "typing_extensions": "4.16.0",
+          "multidict": "6.7.1",
+          "attrs": "26.1.0",
+          "click": "8.5.0",
+          "aiosignal": "1.4.0",
+          "wobblebot": "2.0.8",
+          "idna": "3.19",
+          "aiohappyeyeballs": "2.7.1",
+          "fastapi": "0.141.1",
+          "bcrypt": "5.0.0",
+          "websockets": "17.1",
+          "httptools": "0.8.0",
+          "annotated-types": "0.8.0",
+          "uvloop": "0.22.1",
+          "aiosqlite": "0.22.1",
+          "feedparser": "6.0.14",
+          "audioop-lts": "0.2.2",
+          "watchfiles": "1.2.0",
+          "annotated-doc": "0.0.5",
+          "starlette": "1.6.0",
+          "certifi": "2026.7.22",
+          "MarkupSafe": "3.0.3",
+          "ruamel.yaml": "0.19.1",
+          "python-frontmatter": "1.3.0",
+          "yarl": "1.24.5",
+          "httpcore": "1.0.9",
+          "aiohttp": "3.14.3",
+          "uvicorn": "0.52.4",
+          "python-dotenv": "1.2.3",
+          "itsdangerous": "2.2.0",
+          "discord.py": "2.7.1",
+          "h11": "0.16.0",
+          "python-multipart": "0.0.32",
+          "frozenlist": "1.8.0",
+          "RapidFuzz": "3.14.6",
+          "anyio": "4.15.1",
+          "pydantic": "2.13.5",
+          "httpx": "0.28.1",
+          "pydantic_core": "2.46.5",
+          "typing-inspection": "0.4.4",
+          "propcache": "0.5.2",
+          "PyYAML": "6.0.3",
+          "feedparser-sgmllib": "2.1.0",
+          "Jinja2": "3.1.6"
+        },
+        "healthcheck_sha256": "4f4b408c625b421cfc7fbae52a36e30b5ec9e8b58aa98cd67d4eac2ce96854a3"
+      },
+      "tag_build_digest": "sha256:98c2d89521cd2605093860ca331b352ae202a06ab6bfa70037b8d63762c5b297",
+      "pulled_digest_matches_tag_build": true,
+      "verified_python_source_file_count": 153,
+      "wheel_static_and_templates_match_tagged_source": true,
+      "verified_asset_file_count": 36,
+      "asset_hash_manifest_sha256": "f1ac385306973e8958bd2739707a785c84751fe089fd3152df663fa99ecb8ca3"
+    },
+    "initial_tag_failure": {
+      "attempt": 1,
+      "workflow": {
+        "conclusion": "failure",
+        "createdAt": "2026-09-08T06:08:15Z",
+        "databaseId": 34193374946,
+        "event": "push",
+        "headBranch": "v2.0.8",
+        "headSha": "50ac92e674dba42b33fe965edafd81d6060af89b",
+        "jobs": [
+          {
+            "completedAt": "2026-09-08T06:11:36Z",
+            "conclusion": "failure",
+            "databaseId": 101955830782,
+            "name": "test",
+            "startedAt": "2026-09-08T06:08:19Z",
+            "status": "completed",
+            "steps": [
+              {
+                "completedAt": "2026-09-08T06:08:20Z",
+                "conclusion": "success",
+                "name": "Set up job",
+                "number": 1,
+                "startedAt": "2026-09-08T06:08:19Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:08:22Z",
+                "conclusion": "success",
+                "name": "Checkout",
+                "number": 2,
+                "startedAt": "2026-09-08T06:08:20Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:08:22Z",
+                "conclusion": "success",
+                "name": "Set up Python 3.13",
+                "number": 3,
+                "startedAt": "2026-09-08T06:08:22Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:08:39Z",
+                "conclusion": "success",
+                "name": "Install (editable + dev extras)",
+                "number": 4,
+                "startedAt": "2026-09-08T06:08:22Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:08:47Z",
+                "conclusion": "success",
+                "name": "Format check (black)",
+                "number": 5,
+                "startedAt": "2026-09-08T06:08:39Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:08:48Z",
+                "conclusion": "success",
+                "name": "Import order (isort)",
+                "number": 6,
+                "startedAt": "2026-09-08T06:08:47Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:09:17Z",
+                "conclusion": "success",
+                "name": "Lint (pylint)",
+                "number": 7,
+                "startedAt": "2026-09-08T06:08:48Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:09:26Z",
+                "conclusion": "success",
+                "name": "Type check (mypy)",
+                "number": 8,
+                "startedAt": "2026-09-08T06:09:17Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:11:34Z",
+                "conclusion": "failure",
+                "name": "Tests (pytest \u00e2\u20ac\u201d unit; integration excluded by addopts)",
+                "number": 9,
+                "startedAt": "2026-09-08T06:09:26Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:11:34Z",
+                "conclusion": "skipped",
+                "name": "Post Set up Python 3.13",
+                "number": 17,
+                "startedAt": "2026-09-08T06:11:34Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:11:34Z",
+                "conclusion": "success",
+                "name": "Post Checkout",
+                "number": 18,
+                "startedAt": "2026-09-08T06:11:34Z",
+                "status": "completed"
+              },
+              {
+                "completedAt": "2026-09-08T06:11:34Z",
+                "conclusion": "success",
+                "name": "Complete job",
+                "number": 19,
+                "startedAt": "2026-09-08T06:11:34Z",
+                "status": "completed"
+              }
+            ],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101955830782"
+          },
+          {
+            "completedAt": "2026-09-08T06:11:36Z",
+            "conclusion": "skipped",
+            "databaseId": 101956515247,
+            "name": "build-and-push",
+            "startedAt": "2026-09-08T06:11:37Z",
+            "status": "completed",
+            "steps": [],
+            "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946/job/101956515247"
+          }
+        ],
+        "name": "CI & Publish to GHCR",
+        "status": "completed",
+        "updatedAt": "2026-09-08T06:11:37Z",
+        "url": "https://github.com/CarlDog/wobblebot/actions/runs/34193374946",
+        "workflowName": "CI & Publish to GHCR"
+      },
+      "pytest_summary": "1 failed, 3990 passed, 6 skipped, 30 deselected in 126.99s (0:02:06)",
+      "reported_test": "tests/adapters/test_sqlite_storage.py::TestReadOnlyMode::test_write_through_read_only_handle_raises_storage_error",
+      "error": "PytestUnhandledThreadExceptionWarning: aiosqlite completion callback raised RuntimeError: Event loop is closed",
+      "assessment": "Independent review supports a shutdown timing failure, with no failed read-only protection assertion or demonstrated financial-state consequence. Attribution to the preceding missing-file connect failure is inference; its aiosqlite _connect error path calls stop() without awaiting the returned future. Rapid runtime shutdown after connect failure can also expose this path.",
+      "narrow_followup": "Installed Linux/Python3.14.7 wheel: python -m pytest tests/adapters/test_sqlite_storage.py::TestReadOnlyMode -q --no-cov: 3 passed in 0.63s, no warnings.",
+      "recovery": "One unchanged failed-job rerun; no source, dependency, warning filter, test or tag change. A passing rerun does not repair the possible shutdown race.",
+      "deployment_gate": "C5-R1: reproduce/resolve failed-connect shutdown or obtain explicit operator acceptance before deployment. No further unchanged retries on recurrence."
+    }
+  },
+  "remaining_gates": [
+    "Explicit production deployment authorization after the concrete file-stack and backup/key-scope checks",
+    "C5-R1 failed-connect shutdown behavior resolved or explicitly accepted before deployment",
+    "Authorized finite observation and acceptance, with any missing natural recovery evidence named",
+    "Specific issue and dependency-PR disposition decisions",
+    "Formal 2.0.x close and N0/N1 entry"
+  ]
+}

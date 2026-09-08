@@ -16,13 +16,11 @@ old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
 the 57-test focused starvation/offside baseline. C1/C2 and the bounded C4 startup
 repairs are complete locally. C3/C4 evidence is prepared in the
 [audit packet](2.0-closeout-audit.md). The operator accepted E01-E03 with
-"continue" on 2026-09-08 and authorized C5 release preparation. Publication,
-deployment, tracker status changes and phase closure remain at their later gates;
-2.1 implementation has not begun. C5 local release preparation is now verified;
-the final receipt below and [publication handoff](../release/v2.0.8-upgrade.md)
-identify the candidate. The user authorized source/PR/tag publication with "Yes"
-on 2026-09-08; publication is in progress. Production deployment and phase
-acceptance remain separate.
+"continue" on 2026-09-08 and authorized C5 release preparation. The later "Yes"
+authorized source/PR/tag publication. **v2.0.8 is published and its GHCR artifact
+verified**; the C5 publication receipt below identifies the source, checks and digest.
+Production deployment, existing issue/dependency-PR dispositions and formal phase
+acceptance remain gated. 2.1 implementation has not begun.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a
@@ -339,6 +337,63 @@ and removing the guard fails the new case. Full Windows verification passes
 strict-config and mandatory upgrade gates passing. Updated image/Linux and PR CI
 checks must complete before merge/tag publication; the earlier image receipt
 remains historical evidence for the pre-review candidate.
+
+**C5 publication ✅ 2026-09-08 UTC:** [PR #141](https://github.com/CarlDog/wobblebot/pull/141)
+merged reviewed head `28b58203c82db0d98e077a41a6c2679fea33bc58` as
+`50ac92e674dba42b33fe965edafd81d6060af89b`; their complete Git trees are identical.
+The annotated `v2.0.8` tag and [GitHub Release](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.8) point to that
+merge commit. [The publication evidence](../release/2.0.8-publication-evidence.json)
+preserves the final local gates, exact named workflow jobs and artifact readback.
+The earlier `fff8f95` attachment remains historical pre-review evidence.
+
+- Final **Windows / Python 3.13.14**: 3997 passed, 30 deselected in 126.80s (0:02:06);
+  **87.62%** coverage. `python -m pip check`, `python -m black --check src/ tests/`,
+  `python -m isort --check-only src/ tests/`, `python -m mypy src/` and
+  `python -m pylint src/` all pass. Full `python -m pytest` ran with strict config
+  and mandatory tagged-upgrade flags. No operator-file check skipped.
+- Final installed **Linux / Python 3.14.7** wheel:
+  3991 passed, 6 skipped, 30 deselected in 109.47s (0:01:49); **87.59%** coverage.
+  The same static commands pass. The evidence attachment lists the six absent
+  operator-file checks; both mandatory tagged-upgrade gates ran. The explicit
+  offline mock-exchange/operator/simulator lane reports
+  10 passed in 25.35s.
+- All **six** prior/candidate image migration, old-writer, re-upgrade and online
+  backup/restore stages pass again for the final `28b5820` candidate. Approved
+  commands, notification and financial sentinels, and existing pause state survive
+  exact comparison. Fixtures are disposable and networking is disabled.
+- GitHub PR and merged-source test/security gates pass. The merged-source
+  [test/build workflow](https://github.com/CarlDog/wobblebot/actions/runs/34192988015) and the tag's own
+  [test/build workflow](https://github.com/CarlDog/wobblebot/actions/runs/34193374946) both pass;
+  their exact test summaries and six operator-file skips are in the attachment.
+  Push secret scans and merged-source CodeQL analyses pass. The PR image job was
+  skipped by design, so publication relies on the actual main/tag build jobs.
+- Published image: `ghcr.io/carldog/wobblebot@sha256:98c2d89521cd2605093860ca331b352ae202a06ab6bfa70037b8d63762c5b297`.
+  Independent pull/readback matches the tag build digest, source revision and
+  version. Its installed Python files, declared static/template package data and
+  packaged healthcheck match tagged Git bytes. Every runtime package version
+  matches the tested local image.
+  This inspection used `--network none --read-only` and started no daemon.
+
+**C5-R1 remains open for deployment review.** The first tag attempt returned
+**1 failed, 3,990 passed, 6 skipped, 30 deselected**: pytest collected an aiosqlite
+worker-thread `Event loop is closed` warning during a read-only test. Its write
+rejection assertion did not fail. Independent review supports a shutdown timing
+failure; attribution to the preceding missing-file connection is an inference.
+The dependency's failed-connect path calls `stop()` without awaiting its future,
+so rapid runtime shutdown after connection failure can also expose this path.
+No database modification or financial-state consequence was demonstrated. The
+isolated Linux read-only group passes **3 tests** in 0.63 seconds. One unchanged
+tag-workflow retry passes; it does **not** establish that the race was repaired.
+The attachment preserves both attempts. Reproduce/resolve this behavior or obtain
+explicit operator acceptance before deployment; recurrence gets investigation,
+not another unchanged retry. Warning filters and tests were not relaxed.
+
+This closes the authorized **publication** batch. The receipt update changes only
+documentation; runtime and tests remain identical to the released commit. It does
+not deploy production, close existing issues, merge dependency PRs, schedule a
+monitor or accept the phase. Current production backups, the concrete file-stack
+diff, live config/key-scope checks, authorized finite observation and explicit
+2.0.x acceptance remain before N0/N1.
 
 ## Post-v2.0 Security Maintenance
 
