@@ -1,0 +1,275 @@
+{
+  "work_item": "CarlDog/wobblebot:C5-R1",
+  "verified_date_utc": "2026-09-08",
+  "work_status": "completed locally; publication and deployment pending separate authorization",
+  "code_commit": "b6d9649ed81cccd4f7ca234ea943cf7c215d4fda",
+  "base_commit": "d7175c368f3401f65de1223c98e268afeb8c61e8",
+  "published_v2_0_8_unchanged": true,
+  "historical_evidence": "2.0.8-publication-evidence.json",
+  "scope": "SQLiteStorageAdapter ordinary failed-open worker shutdown on both writable and read-only paths",
+  "mechanism": "Retain the connection; join its already-stopping worker before propagating the open error. No second stop call.",
+  "limits": [
+    "The synchronous failed-open join is capped at five seconds; timeout or unsupported worker shape reports StorageError with the original cause.",
+    "Successful opens and initial-open cancellation retain upstream behavior; this is not a cancellation or all-aiosqlite-callers repair.",
+    "Controlled reproduction demonstrates the shutdown mechanism; the specific historical CI thread still cannot be attributed conclusively.",
+    "The helper reads the modern private _thread or the legacy Connection(Thread); verified across 0.20.0, 0.21.0, 0.22.0 and 0.22.1."
+  ],
+  "source_references": [
+    "https://raw.githubusercontent.com/omnilib/aiosqlite/v0.22.1/aiosqlite/core.py",
+    "https://raw.githubusercontent.com/omnilib/aiosqlite/v0.22.0/aiosqlite/core.py",
+    "https://raw.githubusercontent.com/omnilib/aiosqlite/v0.20.0/aiosqlite/core.py"
+  ],
+  "review": {
+    "plan_and_safety": "independent review completed; no remaining actionable findings",
+    "test_honesty": "independent isolated worktree mutation verification",
+    "mutation_runs": [
+      {
+        "case": "baseline",
+        "exit": 0,
+        "passed": 5,
+        "failed": [],
+        "errors": [],
+        "closed_loop_error_captured": false
+      },
+      {
+        "case": "remove-both-adapter-call-sites",
+        "exit": 1,
+        "passed": 0,
+        "failed": [
+          "test_failed_open_drains_worker_before_loop_close[missing-reader]",
+          "test_failed_open_drains_worker_before_loop_close[invalid-writer]"
+        ],
+        "errors": [],
+        "closed_loop_error_captured": true
+      },
+      {
+        "case": "remove-timeout-post-check",
+        "exit": 1,
+        "passed": 0,
+        "failed": [
+          "test_failed_open_cleanup_errors_are_explicit[running]"
+        ],
+        "errors": [],
+        "closed_loop_error_captured": false
+      },
+      {
+        "case": "skip-unsupported-worker-check",
+        "exit": 1,
+        "passed": 0,
+        "failed": [
+          "test_failed_open_cleanup_errors_are_explicit[unknown]"
+        ],
+        "errors": [],
+        "closed_loop_error_captured": false
+      },
+      {
+        "case": "join-unstarted-worker",
+        "exit": 1,
+        "passed": 0,
+        "failed": [
+          "test_failed_open_cleanup_errors_are_explicit[unstarted]"
+        ],
+        "errors": [],
+        "closed_loop_error_captured": false
+      },
+      {
+        "case": "restored",
+        "exit": 0,
+        "passed": 5,
+        "failed": [],
+        "errors": [],
+        "closed_loop_error_captured": false
+      }
+    ],
+    "restored_bytes_match": true,
+    "original_error_captured_in_both_adapter_paths": true
+  },
+  "windows": {
+    "python": "3.13.14",
+    "aiosqlite": "0.22.1",
+    "summary": "4002 passed, 30 deselected in 170.65s (0:02:50)",
+    "coverage": "87.64%",
+    "strict_config_drift": true,
+    "mandatory_upgrade_gate": true,
+    "commands_passed": [
+      "python -m pip check",
+      "python -m black --check src/ tests/",
+      "python -m isort --check-only src/ tests/",
+      "python -m mypy src/",
+      "python -m pylint src/",
+      "python -m pytest -ra"
+    ],
+    "mypy": "154 source files, passed on the identical source snapshot before the full suite",
+    "tested_file_sha256": {
+      "src/wobblebot/adapters/sqlite_connection.py": "4d838eefd2c4559bc23ad38bb365b364174a7acb43f15ab58d550a6185e67e55",
+      "src/wobblebot/adapters/sqlite_storage.py": "d3bcc8c7da2709ad694e93b14742736fc4f5d80d511a1248399dce76794c34a3",
+      "tests/adapters/test_sqlite_connection_shutdown.py": "9298c1d16efb956b0229d98377d0c97ae74ee18ddf0c3e27ea29ba373e6a9fbb"
+    }
+  },
+  "linux": {
+    "python": "3.14.7",
+    "aiosqlite": "0.22.1",
+    "summary": "3996 passed, 6 skipped, 30 deselected in 93.77s (0:01:33)",
+    "coverage": "87.61%",
+    "skips": [
+      {
+        "test": "tests.config.test_schema_drift.TestSettingsDrift.test_operator_has_no_stale_keys",
+        "reason": "no operator settings.yml; nothing to compare"
+      },
+      {
+        "test": "tests.config.test_schema_drift.TestSettingsDrift.test_operator_has_all_example_keys",
+        "reason": "no operator settings.yml; nothing to compare"
+      },
+      {
+        "test": "tests.config.test_schema_drift.TestSettingsDrift.test_operator_has_all_canonical_profiles",
+        "reason": "no operator settings.yml; nothing to compare"
+      },
+      {
+        "test": "tests.config.test_schema_drift.TestEnvDrift.test_operator_has_no_stale_keys",
+        "reason": "no operator .env; nothing to compare"
+      },
+      {
+        "test": "tests.config.test_schema_drift.TestEnvDrift.test_operator_has_all_example_keys",
+        "reason": "no operator .env; nothing to compare"
+      },
+      {
+        "test": "tests.config.test_schema_drift.TestNoDuplicateEnvAssignments.test_operator_env_defines_each_key_once",
+        "reason": "no operator .env; nothing to check"
+      }
+    ],
+    "offline_integration": {
+      "summary": "10 passed in 19.71s",
+      "coverage": null
+    },
+    "commands": [
+      {
+        "label": "pip-check",
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "check"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "black",
+        "command": [
+          "python",
+          "-m",
+          "black",
+          "--check",
+          "src/",
+          "tests/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "isort",
+        "command": [
+          "python",
+          "-m",
+          "isort",
+          "--check-only",
+          "src/",
+          "tests/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "mypy",
+        "command": [
+          "python",
+          "-m",
+          "mypy",
+          "src/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "pylint",
+        "command": [
+          "python",
+          "-m",
+          "pylint",
+          "src/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "pytest",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-ra",
+          "--junitxml=/evidence/linux-pytest.xml"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "offline-integration",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-m",
+          "integration",
+          "-q",
+          "--no-cov",
+          "tests/integration/test_grid_engine_e2e.py",
+          "tests/integration/test_phase5_operator_e2e.py",
+          "tests/services/test_simulator.py"
+        ],
+        "exit": 0
+      }
+    ],
+    "network": "none",
+    "operator_files_present": false,
+    "installed_wheel_sources_match_commit": true,
+    "runtime_versions_preserved": true,
+    "packaged_healthcheck_matches": true,
+    "strict_config_drift": true,
+    "mandatory_upgrade_gate": true
+  },
+  "compatibility": [
+    {
+      "aiosqlite": "0.20.0",
+      "exit": 0,
+      "summary": "============================= 51 passed in 0.91s ==============================",
+      "scope": "selected storage/lifecycle tests with actual isolated dependency import"
+    },
+    {
+      "aiosqlite": "0.21.0",
+      "exit": 0,
+      "summary": "============================= 51 passed in 0.99s ==============================",
+      "scope": "selected storage/lifecycle tests with actual isolated dependency import"
+    },
+    {
+      "aiosqlite": "0.22.0",
+      "exit": 0,
+      "summary": "============================= 51 passed in 0.94s ==============================",
+      "scope": "selected storage/lifecycle tests with actual isolated dependency import"
+    }
+  ],
+  "local_image": {
+    "commit": "b6d9649ed81cccd4f7ca234ea943cf7c215d4fda",
+    "local_tag": "wobblebot:c5-r1-2.0.8-b6d9649",
+    "id": "sha256:a56245136b2dd245840f058f0827e43ac3b33e48cecfae5abfc325993c3b5d05",
+    "created": "2026-09-08T06:57:08.528649244Z",
+    "platform": "linux/amd64",
+    "labels": {
+      "org.opencontainers.image.revision": "b6d9649ed81cccd4f7ca234ea943cf7c215d4fda",
+      "org.opencontainers.image.version": "2.0.8"
+    },
+    "user": "wobblebot",
+    "publication": "local only; package version retained at 2.0.8, post-tag repair source"
+  },
+  "verification_harness_corrections": [
+    "Initial 0.22.0 compatibility harness timed out because it did not allow upstream's awaited stop to release the artificial barrier; corrected and passed. Not a product failure.",
+    "Windows evidence collector initially rejected a silent successful isort result; corrected and resumed remaining checks without repeating already-recorded successes."
+  ],
+  "no_schema_or_dependency_changes": true,
+  "deployment": "not performed",
+  "phase_acceptance": "not granted"
+}

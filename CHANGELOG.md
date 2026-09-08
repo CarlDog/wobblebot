@@ -28,6 +28,16 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-09-08
+
+### Fixed
+
+- SQLite storage now waits for a failed-open connection's worker to terminate
+  before surfacing the database error (C5-R1). This prevents its final callback
+  from racing the caller's event-loop shutdown. Cleanup has a finite timeout
+  and reports an explicit error if termination cannot be verified; read-only
+  enforcement and successful database opens retain their existing behavior.
+
 ## [2.0.8] - 2026-09-08
 
 ### Fixed
