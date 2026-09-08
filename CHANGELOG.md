@@ -30,6 +30,9 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Maintenance exports now use a unique name per attempt, so same-day restarts and
+  retries after a failed deletion can archive remaining rows without overwriting
+  an earlier export. Existing archives and archive-before-delete protection remain.
 - Counter-order safety checks now charge the proposed price times quantity rather
   than today's configured order size, including partial fills and startup recovery.
   Oversized counters are refused; smaller counters can use the available headroom.

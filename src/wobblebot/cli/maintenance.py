@@ -104,6 +104,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
@@ -201,6 +202,12 @@ def _resolve_retention_targets(
     return resolved
 
 
+def _new_archive_name(prefix: str, cutoff: datetime) -> str:
+    """Keep each export: restarts advance the cutoff and failed deletes may retry it."""
+    stamp = cutoff.astimezone(UTC).strftime("%Y-%m-%dT%H%M%S.%fZ")
+    return f"{prefix}-{stamp}-{uuid4().hex}.csv.gz"
+
+
 def _retention_prunes(retention_targets: list[tuple[str, Path, int]], archive_dir: Path) -> int:
     """Run the ADR-036 registry prunes. Per-table failures are logged
     and the loop continues (same fail-soft shape as ``_vacuum_all``).
@@ -209,7 +216,7 @@ def _retention_prunes(retention_targets: list[tuple[str, Path, int]], archive_di
     now = datetime.now(UTC)
     for table, db_path, days in retention_targets:
         older_than = now - timedelta(days=days)
-        archive_name = f"{table}-{older_than.strftime('%Y-%m-%d')}.csv.gz"
+        archive_name = _new_archive_name(table, older_than)
         try:
             total += prune_table(
                 db_path,
@@ -248,7 +255,7 @@ async def _prune_one_cycle(maintenance: MaintenanceConfig) -> int:
     )
     # .csv.gz since ADR-036 decision 5 — new archives gzip on write;
     # pre-existing raw .csv archives stay as they are.
-    archive_name = f"{source_path.stem}-{older_than.strftime('%Y-%m-%d')}.csv.gz"
+    archive_name = _new_archive_name(source_path.stem, older_than)
     storage = SQLiteStorageAdapter(str(source_path))
     try:
         await storage.connect()

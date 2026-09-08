@@ -5,6 +5,44 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Fallback activation + archive collision follow-up — in progress 2026-09-08 UTC:**
+The operator requested activating the preselected fallback chains and investigating
+maintenance's archive collisions. Read-only NAS comparison confirmed both existing
+gzip archives are intact: 30,921 price snapshots and 237 news rows. At 19:50 UTC,
+23,485 newly eligible prices and 312 news rows remained in SQLite, with **zero**
+overlap with those archives. A moving intraday cutoff reused a date-only filename
+after restart, so the intentional no-overwrite check blocked the next export.
+
+The local maintenance fix gives each export a UTC cutoff timestamp plus UUID.
+Prior exports and archive-before-delete behavior remain intact; a failed deletion
+can leave a duplicate recovery export on retry rather than losing the first file.
+Two new real-SQLite regression tests failed on old code and pass after the fix:
+same-day/exact-time reruns with a pre-existing archive, and retry after a completed
+archive plus injected DELETE failure. Targeted verification:
+`python -m pytest tests/cli/test_maintenance_archive_names.py tests/cli/test_maintenance.py tests/services/test_maintenance.py tests/services/test_retention.py --no-cov -q --tb=short`
+— **61 passed**. Black/isort, targeted mypy and pylint (10.00/10) pass.
+
+Six bounded live fallback smoke checks used synthetic inputs, the production call
+ledger/daily cap and a stricter $0.20 probe session ceiling; recorded cost was
+**$0.021926**. Atlas Haiku news/arbitrator, Atlas Grok news, OpenAI GPT-5 mini
+arbitrator and Atlas DeepSeek V4 Pro risk passed parsed-output and basic role guards.
+Atlas's `is_ready: false` is insufficient to infer availability: its Haiku and Grok
+endpoints worked. DeepSeek quant proposed 1.5% spacing against a 3% current grid.
+The initial smoke check incorrectly applied arbitration's blanket no-tighten rule
+to the quant role, whose prompt permits tightening in genuine ranging. That result
+does **not** establish an unsafe quant judgment. The operator requested evaluation
+of an Ollama Cloud alternative; a balanced quant-fixture comparison of GPT-OSS 120B
+and DeepSeek is in progress. This small smoke test does not replace the recorded
+model-selection batteries.
+
+The passing risk/news/arbitrator routes have been written to NAS `cpu-only` and
+the repository operator file's matching `cloud-only-moe` profile. News/arbitrator
+use equivalent Atlas Haiku before their prior Grok/GPT-5 mini backups. Risk uses
+DeepSeek; quant remains empty. Primary models, budgets and safety settings are
+unchanged; NAS backup `config/pre-fallback-activation-20260908T195452Z`. The advisor
+was restarted to load them; live workflow confirmation and archive repair deployment
+are still pending. No issue status, phase acceptance or G6 changes.
+
 **Ollama Cloud publication + NAS deployment — ✅ 2026-09-08 UTC:**
 [PR #147](https://github.com/CarlDog/wobblebot/pull/147) merged the counter-order
 cap fix, settings layout, cloud fallback plumbing/presets and Ollama Cloud provider
