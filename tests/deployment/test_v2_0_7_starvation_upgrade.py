@@ -63,7 +63,8 @@ def legacy():
     # Trusted tagged methods, with their unchanged helper imports. Execute the
     # real prior SQL and row mapper, not an approximation of its upsert.
     exec(
-        compile(ast.Module(body=methods, type_ignores=[]), "v2.0.7-engine-state", "exec"), namespace
+        compile(ast.Module(body=methods, type_ignores=[]), "<v2.0.7-engine-state>", "exec"),
+        namespace,
     )
     return schema, namespace["save_engine_state"], namespace["get_engine_states"]
 

@@ -54,11 +54,13 @@ the roadmap records those gates separately.
 - The imported package version now agrees with distribution metadata and the
   release manifest. The import smoke test checks their agreement instead of
   repeating a stale version literal.
+- HTTP healthchecks now close error responses before returning unhealthy, fixing
+  an owned-response leak exposed by Python 3.14's resource warnings.
 
 ### Maintenance
 
 - The closeout backlog now reconciles historical candidates, issue dispositions
-  and gated next-phase work. Release limitations and proposed standards exceptions
+  and gated next-phase work. Release limitations and accepted scoped standards exceptions
   are explicit; the roadmap remains the only phase-status ledger.
 - Dependabot groups only the reviewed dev-only minor/patch updates for fleet
   routing. Runtime packages and major upgrades retain individual review.

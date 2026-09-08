@@ -55,6 +55,9 @@ def _check_http(url: str, timeout: float) -> int:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             status = resp.status
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        # HTTPError is also a response; urlopen raised before entering `with`.
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
         print(f"unhealthy: GET {url} failed: {exc}")
         return 1
     if 200 <= status < 300:
