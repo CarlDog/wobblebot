@@ -5,6 +5,37 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**LLM interruption follow-up — local implementation ✅ 2026-09-08 UTC:**
+the operator requested actionable error reporting and fallback options after news
+and arbitrator hit an Anthropic credit denial. [ADR-043](../architecture/adr-043-llm-fallbacks.md)
+accepts explicit per-role alternatives, with at most two backups, inherited
+prompt/role/arbitrator context and the existing shared spend gate. Safe error
+classifications distinguish credit/quota/billing/access failures and preserve the
+cause after retry exhaustion. Provider messages are not copied into the new
+diagnostics. Successful cloud backups retain visibility of recent failed calls;
+actual model attempts persist and render on advisor suggestions. Generic bad
+requests, refusals, invalid output, local cap denials and cancellation do not
+trigger model substitution. The existing heuristic remains the final cascade fallback.
+
+The original credit regression failed on the old classifier. Final local checks
+on `codex/llm-failure-fallbacks`, based on `5ebf60f`:
+`tmp/c4-environment/Scripts/python.exe -m pytest -q` with
+`WOBBLEBOT_REQUIRE_UPGRADE_GATE=1` and `WOBBLEBOT_STRICT_CONFIG_DRIFT=1`:
+**4,072 passed, 30 integration tests deselected**, 144.59 seconds, Python 3.13.14.
+Black `--check src/ tests/`, isort `--check-only src/ tests/`, mypy `src/` (156
+source files), pylint `src/` (10.00/10), and `git diff --check` pass. Regressions
+exercise real provider adapters with mocked HTTP, shared-budget denial before a
+backup request, identical arbitrator context, the news firewall, forged metadata,
+primary recovery, complete-chain failure, persistence and escaped rendering.
+The additive migration was checked against tagged 2.0.9 schema, read-only legacy
+readback and legacy-shaped inserts after upgrade; no prior container was run.
+
+[Configuration instructions](../implementation/llm-fallbacks.md) describe opt-in
+cloud or local backups. No fallback targets were activated, provider seats changed,
+paid probes run, or deployment performed by this follow-up. Anthropic billing
+recovery and live verification remain pending. This is local maintenance work;
+formal 2.0.x acceptance and 2.1 entry retain their existing gates below.
+
 **2.0.x closeout execution (2026-09-07; checks 2026-09-08 UTC):**
 [`2.0-closeout-and-2.1-entry-plan.md`](2.0-closeout-and-2.1-entry-plan.md) reconciles
 the remaining 2.0.x maintenance work, tracker dispositions and gated backlog with

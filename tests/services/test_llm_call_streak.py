@@ -166,6 +166,20 @@ class TestFetch:
 
 
 class TestOverallRollup:
+    def test_successful_backup_does_not_hide_recent_provider_failure(self) -> None:
+        streak = streak_from_rows(
+            "news", _rows((0.1, True, None), (0.2, False, "insufficient_credit"))
+        )
+        assert not streak.failing
+        assert "most recent succeeded" in streak.detail
+        assert "1 failed call in window" in streak.detail
+        assert "insufficient_credit" in streak.detail
+        assert "billing balance" in streak.detail
+
+    def test_credit_streak_has_recovery_action(self) -> None:
+        streak = streak_from_rows("arbitrator", _rows((0.1, False, "insufficient_credit")))
+        assert "billing balance" in streak.detail
+
     def test_a_failing_streak_turns_the_light_yellow(self) -> None:
         from wobblebot.web.routes.health import OverallStatus, compute_overall_status
 

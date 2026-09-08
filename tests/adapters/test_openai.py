@@ -550,7 +550,7 @@ class TestAdvisorFailures:
         rows = await storage.get_llm_calls()
         assert len(rows) == 1
         assert rows[0].success is False
-        assert rows[0].error_kind == "http_401"
+        assert rows[0].error_kind == "authentication_error"
 
     async def test_empty_content_raises_advisor_error(self, storage: SQLiteStorageAdapter) -> None:
         envelope = _envelope(content="")

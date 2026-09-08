@@ -88,6 +88,16 @@
       {% endif %}
       <p class="rationale">{{ rec.rationale }}</p>
 
+      {% if rec.llm_attempts %}
+        <h2 class="card-subtitle">LLM routing</h2>
+        <ul>
+          {% for attempt in rec.llm_attempts %}
+            <li>{{ attempt.role }}: {{ attempt.provider }}/{{ attempt.model }} —
+              {% if attempt.error_kind %}failed ({{ attempt.error_kind }}){% else %}answered{% endif %}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
       {% if rec.expert_opinions %}
         <h2 class="card-subtitle">Per-Expert Opinions ({{ rec.expert_opinions|length }})</h2>
         <table class="data compact">

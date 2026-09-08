@@ -581,6 +581,10 @@ The existing real-money cost ledger is **$0.08** (one tiny Kraken round-trip dur
 **Status:** Accepted (planned for Phase 6)
 **Date:** 2026-05-17
 
+**2026-09-08 amendment:** [ADR-043](adr-043-llm-fallbacks.md) allows explicit,
+bounded fallback targets for advisor roles and adds safe failure classification.
+Its opt-in provenance/cost requirements supersede the v1 substitution restriction below.
+
 **Context:** Cloud LLM APIs fail. 429 rate limits during quota bursts, 5xx transient errors during provider-side incidents, network blips between Synology NAS and provider edge, full provider outages lasting minutes to hours. Phase 5's Ollama-only assistant didn't face this — local model, no provider-side outages, the only failure modes were "ollama process not running" and "model not pulled." Phase 6's cloud adapters need a clear policy: what happens when Anthropic returns 503 mid-conversational-turn? Mid-MoE-cycle?
 
 The shape of this decision matters because the wrong answer has compounding implications. Silent failover to a different provider (or to local Ollama) means the trading advisor is silently using a different decision-maker — phi4:14b vs Claude Sonnet 4.6 are genuinely different judges, even given identical prompts. The operator deserves to know which model produced which recommendation. Failover-to-different-provider also has cost implications — provider prices vary 5–20× — which interacts with ADR-014's cost caps.
@@ -3542,6 +3546,14 @@ orders bill against). Backlog plan: `docs/planning/post-2.0.4-backlog-plan.md`
 Group 4. Operator's question and the four holes:
 `docs/release/v1.1/engine.md`.
 
-<!-- ADR-042 is the last in this file; new ADRs append below. -->
-<!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
+## ADR-043 — Explicit Advisor Fallback Targets and Safe Provider Failures
 
+**Status:** Accepted for local implementation; operator activation remains separate.
+**Date:** 2026-09-08
+**Decision:** [Full ADR](adr-043-llm-fallbacks.md). Permit at most two explicit,
+role-preserving alternatives under the existing spend caps. Persist actual model
+provenance and display safe actionable failure labels. Partially supersedes ADR-015's
+v1 prohibition on provider substitution; retains advisory and news-role firewalls.
+
+<!-- ADR-043 is the last in this file; new ADRs append below. -->
+<!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->

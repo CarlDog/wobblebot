@@ -15,7 +15,7 @@ from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.value_objects import Timestamp
-from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion
+from wobblebot.ports.advisor import AdvisorRecommendation, AdvisorSuggestion, LLMAdvisorAttempt
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 from wobblebot.web.routes.advisor import _as_float
@@ -129,6 +129,36 @@ def _build_client(
 
 
 class TestAdvisorRoute:
+    @pytest.mark.asyncio
+    async def test_renders_persisted_fallback_history(
+        self, operator_storage, advise_storage
+    ) -> None:
+        suggestion = _make_suggestion(role="news")
+        rec = suggestion.recommendation.model_copy(
+            update={
+                "llm_attempts": [
+                    LLMAdvisorAttempt(
+                        role="news",
+                        provider="anthropic",
+                        model="primary",
+                        error_kind="insufficient_credit",
+                    ),
+                    LLMAdvisorAttempt(role="news", provider="openai", model="backup<script>"),
+                ]
+            }
+        )
+        await advise_storage.save_advisor_suggestion(
+            suggestion.model_copy(update={"recommendation": rec})
+        )
+        with _build_client(operator_storage, advise_storage) as client:
+            login_as(client)
+            response = client.get("/advisor")
+        assert response.status_code == 200
+        assert "LLM routing" in response.text
+        assert "anthropic/primary" in response.text and "insufficient_credit" in response.text
+        assert "openai/backup&lt;script&gt;" in response.text and "answered" in response.text
+        assert "backup<script>" not in response.text
+
     def test_anonymous_redirects(self, operator_storage: SQLiteStorageAdapter) -> None:
         with _build_client(operator_storage, None) as client:
             resp = client.get("/advisor")

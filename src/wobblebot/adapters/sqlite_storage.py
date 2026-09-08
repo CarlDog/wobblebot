@@ -33,6 +33,7 @@ import aiosqlite
 
 from wobblebot.adapters.sqlite_connection import open_connection
 from wobblebot.adapters.sqlite_migrations import (
+    migrate_advisor_llm_attempts,
     migrate_advisor_suggestions_expert_opinions,
     migrate_advisor_suggestions_news_materially_drove,
     migrate_engine_state_offside_since,
@@ -284,6 +285,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await self._conn.executescript(SCHEMA)
             await migrate_advisor_suggestions_expert_opinions(self._conn)
             await migrate_advisor_suggestions_news_materially_drove(self._conn)
+            await migrate_advisor_llm_attempts(self._conn)
             await migrate_news_items_publisher_url(self._conn)
             await migrate_llm_calls_cache_token_columns(self._conn)
             await migrate_llm_calls_trace_id(self._conn)
@@ -955,8 +957,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     recommendation_id, created_at, role,
                     recommendations, rationale, confidence,
                     input_summary, model_name, expert_opinions,
-                    news_materially_drove
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    news_materially_drove, llm_attempts
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     suggestion.recommendation.recommendation_id,
@@ -969,6 +971,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     suggestion.model_name,
                     serialize_expert_opinions(suggestion.recommendation.expert_opinions),
                     1 if suggestion.recommendation.news_materially_drove else 0,
+                    json.dumps([a.model_dump() for a in suggestion.recommendation.llm_attempts]),
                 ),
             )
             await conn.commit()

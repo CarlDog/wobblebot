@@ -564,6 +564,18 @@ advisor:
   provider: ollama
   model: deepseek-r1:7b
   prompt_file: "config/prompts/quant.md"
+  # Optional ADR-043 failover: omitted/[] keeps the primary-only behavior.
+  # Put this list here for single mode, or inside each MoE expert/arbitrator.
+  # At most two distinct targets, tried in order on provider interruptions.
+  # Each inherits the parent prompt/role; set inference knobs for THAT model.
+  # Cloud candidates require their key, an llm: block, and the shared cost gate.
+  # Example only; choose and validate a backup for the role before enabling:
+  # fallbacks:
+  #   - provider: openai
+  #     model: gpt-5-mini
+  #     inference_params: {temperature: 1.0, max_tokens: 4000, timeout_seconds: 120}
+  # An explicitly configured provider: ollama is also allowed (local, unbilled).
+  # See docs/implementation/llm-fallbacks.md for operation and provenance.
   inference_params:
     temperature: 0.5
     max_tokens: 512                   # bump to 2048 for thinking models (R1, o1) —

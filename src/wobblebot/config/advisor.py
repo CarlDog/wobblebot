@@ -82,6 +82,22 @@ class InferenceParams(BaseModel):
         frozen = True
 
 
+class FallbackTarget(BaseModel):
+    """An opt-in alternate model; inherits its parent target's prompt and role.
+
+    Inference settings are independent because models have different token and
+    temperature requirements. Nested fallback chains are intentionally forbidden.
+    """
+
+    provider: LLMProvider
+    model: str = Field(min_length=1)
+    inference_params: InferenceParams = Field(default_factory=InferenceParams)
+
+    class Config:
+        frozen = True
+        extra = "forbid"
+
+
 class ExpertConfig(BaseModel):
     """One expert in the MoE.
 
@@ -96,6 +112,7 @@ class ExpertConfig(BaseModel):
     role: ExpertRole
     prompt_file: str = Field(min_length=1)
     inference_params: InferenceParams = Field(default_factory=InferenceParams)
+    fallbacks: list[FallbackTarget] = Field(default_factory=list, max_length=2)
 
     class Config:
         frozen = True
@@ -114,6 +131,7 @@ class ArbitratorConfig(BaseModel):
     model: str = Field(min_length=1)
     prompt_file: str = Field(min_length=1)
     inference_params: InferenceParams = Field(default_factory=InferenceParams)
+    fallbacks: list[FallbackTarget] = Field(default_factory=list, max_length=2)
 
     class Config:
         frozen = True
@@ -219,6 +237,7 @@ class AdvisorConfig(BaseModel):
     model: str | None = Field(default=None, min_length=1)
     prompt_file: str | None = Field(default=None, min_length=1)
     inference_params: InferenceParams = Field(default_factory=InferenceParams)
+    fallbacks: list[FallbackTarget] = Field(default_factory=list, max_length=2)
 
     aggregator: AggregatorStrategy = "voting"
     arbitrator: ArbitratorConfig | None = None
@@ -250,6 +269,8 @@ class AdvisorConfig(BaseModel):
         if not needs_llm:
             # Pure heuristic engine — the LLM target fields are unused.
             return self
+
+        self._validate_fallback_targets()
 
         if self.type == "moe":
             if len(self.experts) < 3:
@@ -290,6 +311,26 @@ class AdvisorConfig(BaseModel):
             )
         return self
 
+    def _validate_fallback_targets(self) -> None:
+        """Bound role-specific routes without permitting duplicate/self substitution."""
+        targets: list[AdvisorConfig | ExpertConfig | ArbitratorConfig] = (
+            [self] if self.type == "single" else list(self.experts)
+        )
+        if self.arbitrator is not None:
+            targets.append(self.arbitrator)
+        for target in targets:
+            identities = [(target.provider, target.model)] + [
+                (fallback.provider, fallback.model) for fallback in target.fallbacks
+            ]
+            if len(set(identities)) != len(identities):
+                raise ValueError(
+                    "advisor fallback targets must be distinct from the primary and each other"
+                )
+        if self.type == "moe" and self.fallbacks:
+            raise ValueError(
+                "MoE fallbacks belong on each expert/arbitrator, not advisor.fallbacks"
+            )
+
 
 __all__ = [
     "AdvisorConfig",
@@ -300,6 +341,7 @@ __all__ = [
     "AutoApplyConfig",
     "ExpertConfig",
     "ExpertRole",
+    "FallbackTarget",
     "InferenceParams",
     "LLMProvider",
 ]

@@ -544,7 +544,7 @@ class TestAdvisorFailures:
         rows = await storage.get_llm_calls()
         assert len(rows) == 1
         assert rows[0].success is False
-        assert rows[0].error_kind == "http_403"
+        assert rows[0].error_kind == "permission_denied"
 
     async def test_empty_content_raises(self, storage: SQLiteStorageAdapter) -> None:
         envelope = {"candidates": [], "usageMetadata": {"promptTokenCount": 5}}

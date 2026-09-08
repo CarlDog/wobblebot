@@ -163,6 +163,18 @@ class PerformanceSummary(BaseModel):
         frozen = True
 
 
+class LLMAdvisorAttempt(BaseModel):
+    """Runtime-owned model provenance; never accepted from generated LLM output."""
+
+    role: str
+    provider: str
+    model: str
+    error_kind: str | None = None  # None means this target answered successfully.
+
+    class Config:
+        frozen = True
+
+
 class AdvisorRecommendation(BaseModel):
     """Recommendation from the Strategy Advisor (``advisor_recommendation_v1``).
 
@@ -220,6 +232,7 @@ class AdvisorRecommendation(BaseModel):
     confidence: ConfidenceLevel
     expert_opinions: list[AdvisorRecommendation] = Field(default_factory=list)
     news_materially_drove: bool = False
+    llm_attempts: list[LLMAdvisorAttempt] = Field(default_factory=list)
 
     class Config:
         frozen = True

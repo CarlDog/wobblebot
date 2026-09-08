@@ -412,11 +412,11 @@ class TestRetryPath:
         with pytest.raises(AdvisorError, match="HTTP 401"):
             await adapter.get_recommendation(_make_summary())
         assert call_count[0] == 1  # no retries
-        # Failure record persisted with error_kind=http_401.
+        # Failure record persists the actionable authentication classification.
         rows = await storage.get_llm_calls()
         assert len(rows) == 1
         assert rows[0].success is False
-        assert rows[0].error_kind == "http_401"
+        assert rows[0].error_kind == "authentication_error"
 
     async def test_exhausted_retries_records_failure(self, storage: SQLiteStorageAdapter) -> None:
         call_count = [0]
