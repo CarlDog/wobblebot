@@ -43,6 +43,8 @@ fresh `[Unreleased]` heading created at that time.
   Error tracebacks omit the malformed payload.
 - Operator TTL-expirer and heartbeat-monitor failures now log ERROR and propagate
   to supervision; cancellation and normal shutdown retain distinct INFO messages.
+- Discord confirmation refusals now contain connection, DNS and timeout failures
+  while keeping the approval gate closed and the shared confirmation unchanged.
 
 ## [2.0.7] - 2026-09-05
 

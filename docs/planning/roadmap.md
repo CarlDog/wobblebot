@@ -13,7 +13,7 @@ with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-2
 receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
 independent reviewers' findings were accepted into the plan (gate ordering and
 old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
-the 57-test focused starvation/offside baseline. C1 and C2.1-C2.3 are complete locally. Release,
+the 57-test focused starvation/offside baseline. C1 and C2 are complete locally. Release,
 deployment, tracker status changes and phase closure remain at their later gates;
 2.1 implementation has not begun.
 
@@ -60,7 +60,18 @@ failed on four old-code cases; 36 focused tests pass on the repair. Independent
 review found no defect; all six isolated logging/propagation mutants were caught.
 Full suite: **3,977 passed, 29 deselected** in 154.96 seconds. Black/isort, mypy
 (153 source files) and pylint (10.00/10) pass with upgrade/config gates armed.
-C2.4 is the remaining runtime repair.
+Commit: `076b933`.
+
+**C2.4 confirmation-refusal transport containment ✅ 2026-09-08 UTC:** the
+private refusal-response seam catches Discord, aiohttp and timeout errors using
+the same narrow tuple as the transport. The actual interaction gate remains false
+after a failed refusal, with no handler call or shared-message edit. Unexpected
+programming errors and cancellation propagate. Six old-code cases reproduced the
+escape; 85 focused Discord tests pass. Independent review found no defect, and
+all three isolated catch-width mutants were caught. Full suite: **3,987 passed,
+29 deselected** in 132.44 seconds; Black/isort, mypy (153 source files), pylint
+(10.00/10), strict config and mandatory upgrade gates pass. C3/C4 reconciliation
+and audit remain; the four repairs are not a release or production acceptance.
 
 ## Post-v2.0 Security Maintenance
 

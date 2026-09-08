@@ -7,12 +7,16 @@ channel can click a button; only allowlisted operators may decide.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import aiohttp
+import discord
 import pytest
+from aiohttp.client_reqrep import ConnectionKey
 
 from wobblebot.adapters.discord_confirm_view import (
     COLOR_APPROVED,
@@ -28,6 +32,60 @@ from wobblebot.adapters.discord_transport import DiscordTransport, DiscordTransp
 from wobblebot.ports.operator import ConfirmOutcome
 
 pytestmark = pytest.mark.unit
+
+
+def _refusal_error(kind: str) -> Exception:
+    if kind == "dns":
+        key = ConnectionKey("discord.com", 443, True, None, None, None, None)
+        return aiohttp.ClientConnectorDNSError(key, OSError(-2, "Name or service not known"))
+    if kind == "client":
+        return aiohttp.ClientError("connection failed")
+    if kind == "timeout":
+        return asyncio.TimeoutError("request timed out")
+    return discord.DiscordException("Discord unavailable")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["dns", "client", "timeout", "discord"])
+@pytest.mark.parametrize("missing_context", [False, True])
+async def test_refusal_transport_failure_stays_closed(
+    kind: str, missing_context: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    handler = AsyncMock()
+    button = ConfirmButton("approve", str(uuid4()))
+    interaction = _interaction(
+        user_id="999",
+        context=None if missing_context else _context(_transport(), handler),
+    )
+    failure = _refusal_error(kind)
+    interaction.response.send_message.side_effect = failure
+
+    assert await button.interaction_check(interaction) is False
+
+    handler.assert_not_awaited()
+    interaction.response.send_message.assert_awaited_once()
+    assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
+    interaction.response.edit_message.assert_not_awaited()
+    assert button.decision == "approve" and button.item.label == "Approve"
+    records = [r for r in caplog.records if r.message == "failed to send refusal response"]
+    assert len(records) == 1 and records[0].levelname == "ERROR"
+    assert records[0].exc_info is not None and records[0].exc_info[1] is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError("programming defect"), asyncio.CancelledError()])
+async def test_refusal_does_not_hide_unexpected_errors(failure: BaseException) -> None:
+    handler = AsyncMock()
+    interaction = _interaction(user_id="999", context=_context(_transport(), handler))
+    interaction.response.send_message.side_effect = failure
+    button = ConfirmButton("approve", str(uuid4()))
+
+    with pytest.raises(type(failure)) as caught:
+        await button.interaction_check(interaction)
+
+    assert caught.value is failure
+    handler.assert_not_awaited()
+    interaction.response.edit_message.assert_not_awaited()
 
 
 def _transport(

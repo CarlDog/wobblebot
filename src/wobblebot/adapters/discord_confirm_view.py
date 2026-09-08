@@ -24,12 +24,14 @@ polls remain the sole path to the engine (ADR-002/ADR-013).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+import aiohttp
 import discord
 
 from wobblebot.ports.operator import ConfirmDecision, ConfirmOutcome
@@ -231,7 +233,7 @@ class ConfirmButton(
         """Reply privately; never edits the shared confirmation message."""
         try:
             await interaction.response.send_message(message, ephemeral=True)
-        except discord.DiscordException:
+        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError):
             LOGGER.exception("failed to send refusal response")
 
 
