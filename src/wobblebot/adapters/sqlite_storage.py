@@ -31,6 +31,7 @@ from uuid import UUID
 
 import aiosqlite
 
+from wobblebot.adapters.sqlite_connection import open_connection
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_suggestions_expert_opinions,
     migrate_advisor_suggestions_news_materially_drove,
@@ -237,7 +238,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             if parent and not parent.exists():
                 parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._conn = await aiosqlite.connect(self._db_path)
+            self._conn = await open_connection(self._db_path)
             # Setting row_factory on the connection makes cursors inherit
             # it at execute() time; setting it on a cursor afterward is
             # unreliable and version-dependent in aiosqlite.
@@ -318,7 +319,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         """
         try:
             uri = f"file:{self._db_path}?mode=ro"
-            self._conn = await aiosqlite.connect(uri, uri=True)
+            self._conn = await open_connection(uri, uri=True)
             self._conn.row_factory = aiosqlite.Row
         except Exception as exc:
             raise StorageError(
