@@ -282,5 +282,8 @@ async def test_migration_adds_cache_token_columns_to_legacy_table(tmp_path) -> N
         await adapter.save_llm_call(_record().model_copy(update={"tokens_cache_read": 1024}))
         newest = (await adapter.get_llm_calls())[0]
         assert newest.tokens_cache_read == 1024
+        # This fixture's unconstrained provider column already accepts ADR-045.
+        await adapter.save_llm_call(_record(provider="ollama_cloud", model="gpt-oss:120b"))
+        assert len(await adapter.get_llm_calls(provider="ollama_cloud")) == 1
     finally:
         await adapter.close()

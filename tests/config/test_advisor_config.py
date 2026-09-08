@@ -215,7 +215,7 @@ class TestAggregatorArbitratorCoupling:
 
 class TestExpertConfig:
     def test_all_providers_accepted(self) -> None:
-        for provider in ("ollama", "anthropic", "openai", "google"):
+        for provider in ("ollama", "anthropic", "openai", "google", "atlas", "ollama_cloud"):
             cfg = ExpertConfig(
                 name="x",
                 provider=provider,  # type: ignore[arg-type]

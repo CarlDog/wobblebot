@@ -27,6 +27,7 @@ Reads the appropriate API key from the env (per ADR-015 decision 6):
 - ``ANTHROPIC_API_KEY``
 - ``OPENAI_API_KEY`` (plus optional ``OPENAI_ORGANIZATION``)
 - ``GOOGLE_API_KEY``
+- ``OLLAMA_API_KEY`` (ollama_cloud; advisor roles only)
 
 After the call lands, query ``tools/show_llm_costs.py`` to see the
 full ledger.
@@ -46,6 +47,7 @@ from pathlib import Path
 from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
 from wobblebot.adapters.anthropic_assistant import AnthropicAssistantAdapter
 from wobblebot.adapters.google import GoogleAdvisorAdapter, GoogleAssistantAdapter
+from wobblebot.adapters.ollama_cloud import OllamaCloudAdvisorAdapter
 from wobblebot.adapters.openai import OpenAIAdvisorAdapter, OpenAIAssistantAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli._common import load_operator_env
@@ -64,6 +66,7 @@ _LOGGER = logging.getLogger("wobblebot.tools.run_cloud_check")
 _DEFAULT_DB = Path("data") / "wobblebot-operator.db"
 
 _DEFAULT_MODELS: dict[LLMProvider, str] = {
+    "ollama_cloud": "gpt-oss:20b",
     "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o-mini",  # cheapest default for the smoke test
     "google": "gemini-2.5-flash",  # cheapest default for the smoke test
@@ -81,6 +84,7 @@ _VALID_ROLES: tuple[LLMRole, ...] = (
 
 def _api_key_env_var(provider: LLMProvider) -> str:
     return {
+        "ollama_cloud": "OLLAMA_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "google": "GOOGLE_API_KEY",
@@ -165,6 +169,8 @@ def _build_advisor(  # pylint: disable=too-many-arguments,too-many-positional-ar
             organization=os.environ.get("OPENAI_ORGANIZATION") or None,
             **common,  # type: ignore[arg-type]
         )
+    if args.provider == "ollama_cloud":
+        return OllamaCloudAdvisorAdapter(**common)  # type: ignore[arg-type]
     return GoogleAdvisorAdapter(**common)  # type: ignore[arg-type]
 
 
@@ -201,6 +207,11 @@ def _build_assistant(  # pylint: disable=too-many-arguments,too-many-positional-
 async def _run(  # pylint: disable=too-many-locals,too-many-return-statements
     args: argparse.Namespace,
 ) -> int:
+    if args.provider == "ollama_cloud" and args.role == "operator":
+        _LOGGER.error(
+            "Ollama Cloud supports advisor roles; select --role quant/risk/news/arbitrator/single"
+        )
+        return 2
     # Validate env first — fail fast before opening DBs / building configs.
     key_var = _api_key_env_var(args.provider)
     if not os.environ.get(key_var):
@@ -338,7 +349,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--provider",
-        choices=("anthropic", "openai", "google"),
+        choices=("anthropic", "openai", "google", "ollama_cloud"),
         required=True,
         help="Which provider to exercise.",
     )
@@ -357,7 +368,7 @@ def main() -> int:
         default=None,
         help=(
             "Model id. Defaults: anthropic→claude-sonnet-4-6, openai→gpt-4o-mini, "
-            "google→gemini-2.5-flash (cheapest in each family)."
+            "google→gemini-2.5-flash, ollama_cloud→gpt-oss:20b."
         ),
     )
     parser.add_argument(

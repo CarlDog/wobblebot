@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, model_validator
 # seat could be measured by the probes and then not expressed in
 # settings.yml. Cost rows are recorded under provider ``openai``, which
 # is how services/llm_pricing already keys the Atlas roster.
-LLMProvider = Literal["ollama", "anthropic", "openai", "google", "atlas"]
+LLMProvider = Literal["ollama", "anthropic", "openai", "google", "atlas", "ollama_cloud"]
 
 # Specialty role — informational only; the advisor uses this to
 # label expert opinions in logs and (later) in the aggregator's
@@ -163,7 +163,8 @@ class GremlinConfig(BaseModel):
     """
 
     enabled: bool = False
-    provider: LLMProvider = "ollama"
+    # Preserve the pre-ADR-045 provider set; Cloud gremlin support is not implemented.
+    provider: Literal["ollama", "anthropic", "openai", "google", "atlas"] = "ollama"
     model: str = Field(default="qwen2.5:3b-instruct-q4_K_M", min_length=1)
     prompt_file: str = Field(default="config/prompts/gremlin.md", min_length=1)
     inference_params: InferenceParams = Field(

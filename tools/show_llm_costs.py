@@ -41,7 +41,7 @@ _LOGGER = logging.getLogger("wobblebot.tools.show_llm_costs")
 _DEFAULT_DB = Path("data") / "wobblebot-operator.db"
 
 
-_VALID_PROVIDERS: tuple[LLMProvider, ...] = ("anthropic", "openai", "google")
+_VALID_PROVIDERS: tuple[LLMProvider, ...] = ("anthropic", "openai", "google", "ollama_cloud")
 _VALID_ROLES: tuple[LLMRole, ...] = (
     "operator",
     "quant",

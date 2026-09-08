@@ -185,7 +185,7 @@ services:
     environment:
       <<: *common-env
       # cli/advise.py:128-131 (_CLOUD_KEY_ENV). No Kraken adapter — the
-      # advisor reads DBs, never the exchange (ADR-002). Ollama needs no
+      # advisor reads DBs, never the exchange (ADR-002). Local Ollama needs no
       # credential. NOTE the exact Atlas name: cli/advise reads
       # ATLASCLOUD_API_KEY, not ATLAS_API_KEY (the quant seat's
       # xai/grok-4.5 is reachable only through that gateway).
@@ -193,6 +193,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/advise", "--profile", "cpu-only"]
       interval: ${HEALTHCHECK_INTERVAL:-60s}
@@ -366,6 +367,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
     volumes:
       # THE AUTHORIZED SETTINGS WRITER. cli/apply --commit and
       # cli/recalibrate --commit reach services/settings_rewriter, which

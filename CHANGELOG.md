@@ -30,16 +30,38 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Counter-order safety checks now charge the proposed price times quantity rather
+  than today's configured order size, including partial fills and startup recovery.
+  Oversized counters are refused; smaller counters can use the available headroom.
+- Malformed Ollama response envelopes and non-object answers now raise clean
+  advisor errors, preserving the final heuristic fallback when a local candidate
+  fails after cloud interruptions.
 - Cloud LLM failures now distinguish insufficient credit, quota, billing and access
   problems with safe operator hints. Retry exhaustion preserves the underlying
   cause, and successful calls no longer hide earlier failures in the health window.
 
 ### Added
 
+- Distinct `ollama_cloud` advisor provider (ADR-045), with native authenticated
+  requests, verified token prices, shared budgets/retries and local JSON validation.
+  Supports primary and fallback targets; optional key wiring and setup guidance are
+  included. A transactional SQLite migration preserves call history and widens the
+  provider constraint. Older readers cannot read new Cloud rows after activation.
 - Optional per-role advisor fallback targets (ADR-043), with at most two explicit
   alternatives, existing spend caps and unchanged news/approval gates. Runtime model
   attempts persist through an additive SQLite column and appear on the advisor page.
   Fallbacks default to disabled; production seats require separate configuration.
+- Disabled advisor presets prefer a nominally equivalent cloud route before the
+  previously selected cloud backup. Atlas Haiku/Sonnet prices are catalog-verified;
+  their readiness remains unverified. Local Ollama backups are removed from presets.
+
+### Changed
+
+- Settings files now share a grouped section order, profile purpose index and
+  static/future-POLICY ownership notes. Active values and fallback candidates are
+  preserved; writable POLICY remains gated under ADR-040/044.
+- Repository advisor settings select the existing cascade engine so exhausted cloud
+  routes return the heuristic and the next scheduled evaluation retries the primary.
 
 ## [2.0.9] - 2026-09-08
 

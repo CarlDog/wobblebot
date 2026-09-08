@@ -32,6 +32,7 @@ from uuid import UUID
 import aiosqlite
 
 from wobblebot.adapters.sqlite_connection import open_connection
+from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_llm_attempts,
     migrate_advisor_suggestions_expert_opinions,
@@ -289,6 +290,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_news_items_publisher_url(self._conn)
             await migrate_llm_calls_cache_token_columns(self._conn)
             await migrate_llm_calls_trace_id(self._conn)
+            await migrate_llm_calls_ollama_cloud(self._conn)
             await migrate_price_snapshots_unique(self._conn)
             await migrate_transfer_results_unique_proposal_id(self._conn)
             await migrate_notifications_read_at(self._conn)

@@ -4,6 +4,9 @@ ADR numbering is a single register in `decisions.md`. ADR-019 is the accepted
 advisor-purpose decision, ADR-041 is accepted deployment capability isolation,
 ADR-042 is the proposed sell-only extension, and
 [ADR-043](adr-043-llm-fallbacks.md) accepts explicit advisor fallback targets.
+[ADR-044](adr-044-settings-layout-and-policy-authority.md) records the settings layout
+and counter-cap repair; its ADR-040 POLICY authority amendments remain proposed.
+[ADR-045](adr-045-ollama-cloud-provider.md) adds the distinct Ollama Cloud advisor provider.
 New command-lifecycle, runtime
 identity and equity-risk decisions use semantic working names until an unused
 number is allocated; historical release-plan placeholders are not reservations.

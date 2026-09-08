@@ -452,7 +452,7 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     #
     # These exist so the ADR-014 gate will admit them at all: it RAISES
     # on an unpriced (provider, model) rather than estimating. Scope is
-    # PROBES — no daemon selects an `atlas` provider.
+    # originally PROBES; advisor configurations now also select `atlas`.
     #
     # SELECTION IS CAPABILITY-FIRST, NOT PRICE-FIRST (operator
     # correction, 2026-08-10). The routine's <=3x cost gate is a filter
@@ -462,6 +462,29 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
     # chance). A sweep of flash/mini variants would mostly re-derive
     # that. So: flagship/frontier models that are unreachable natively,
     # plus two mid-tier entries to test whether cheap is viable at all.
+    # Nominal Anthropic equivalents via Atlas, verified 2026-09-08 from the
+    # authenticated GET https://api.atlascloud.ai/v1/models catalog. Its pricing
+    # fields are USD/token (prompt, completion, input_cache_read), converted to
+    # USD/million here. Both rows reported is_ready=false: pricing/listing is
+    # not inference readiness or proof of identical native-provider behavior.
+    ("openai", "anthropic/claude-haiku-4.5-20251001"): LLMPricePoint(
+        provider="openai",
+        model="anthropic/claude-haiku-4.5-20251001",
+        input_per_million_usd=Decimal("1.00"),
+        output_per_million_usd=Decimal("5.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.10"),
+        verified_date=date(2026, 9, 8),
+    ),
+    ("openai", "anthropic/claude-sonnet-4.6"): LLMPricePoint(
+        provider="openai",
+        model="anthropic/claude-sonnet-4.6",
+        input_per_million_usd=Decimal("3.00"),
+        output_per_million_usd=Decimal("15.00"),
+        reasoning_per_million_usd=None,
+        cached_input_per_million_usd=Decimal("0.30"),
+        verified_date=date(2026, 9, 8),
+    ),
     # Flagship tier — the capability question, cost gate notwithstanding.
     ("openai", "moonshotai/kimi-k3"): LLMPricePoint(
         provider="openai",
@@ -575,6 +598,27 @@ _PRICING: dict[tuple[LLMProvider, str], LLMPricePoint] = {
         verified_date=_VERIFIED_2026_07_31,
     ),
 }
+
+
+# Ollama Cloud native API model IDs and constant token-credit rates.
+# Sources: https://ollama.com/pricing and https://ollama.com/api/tags,
+# verified 2026-09-08. Included plan credits are still metered usage, not free
+# local inference; subscription fees / credit top-ups are outside this ledger.
+# DeepSeek's peak/off-peak rates need time-aware pricing before registration.
+for _model, _input, _cached, _output in (
+    ("gpt-oss:120b", "0.15", "0.014", "0.60"),
+    ("gpt-oss:20b", "0.07", "0.035", "0.30"),
+    ("qwen3.5:397b", "0.60", None, "3.60"),
+    ("gemma4:31b", "0.14", "0.05", "0.40"),
+):
+    _PRICING[("ollama_cloud", _model)] = LLMPricePoint(
+        provider="ollama_cloud",
+        model=_model,
+        input_per_million_usd=Decimal(_input),
+        cached_input_per_million_usd=Decimal(_cached) if _cached is not None else None,
+        output_per_million_usd=Decimal(_output),
+        verified_date=date(2026, 9, 8),
+    )
 
 
 class PricingLookupError(Exception):
