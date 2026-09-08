@@ -496,8 +496,8 @@ change from the locally tested package candidate was documentation only.
   redirects to login. All six symbol cards render: BTC/ETH remain OFFSIDE and XRP
   shows the complete STARVED explanation without an invented elapsed duration.
   No error/critical/traceback or closed-loop match appears in the captured startup
-  logs of the eight daemons. The ephemeral signed maintenance session does not
-  verify password-login UX or the external reverse proxy.
+  logs of the eight daemons. The ephemeral signed session for the existing operator
+  does not verify password-login UX or the external reverse proxy.
 
 [The deployment evidence](../release/2.0.9-deployment-evidence.json) records the
 commands, named jobs, image chain, verified backups and live readbacks. This completes
