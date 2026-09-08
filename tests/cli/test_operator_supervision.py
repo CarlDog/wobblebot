@@ -12,11 +12,10 @@ further 10h11m with the forwarder dead, because:
   while the process stayed alive and `restart: unless-stopped` (which
   acts on process exit, not on the healthcheck) had no reason to fire.
 
-These tests pin the three module-level helpers that fix it. They target
-helpers rather than ``_main_async`` deliberately: nothing in the suite
-can build the whole daemon (a config with an ``operator:`` section, a
-Discord transport and up to seven storages), which is precisely why the
-supervision logic was extracted to module level instead of left inline.
+These tests pin the three module-level helpers that fix it. The companion
+``test_operator_task_wiring.py`` now exercises the real ``_main_async``
+construction with offline transport/loop seams and the real supervisor,
+including the required versus one-shot task roles and process exit.
 
 That leaves exactly one link the helpers cannot cover — that a returned
 dead task becomes a non-zero process exit — so

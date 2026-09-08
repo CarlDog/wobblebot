@@ -27,7 +27,17 @@ states were inspected in the browser. Full default `pytest` with mandatory upgra
 and strict config gates: **3,953 passed, 29 integration tests deselected** in
 127.42 seconds, Python 3.13.14. Black/isort checks, mypy (153 source files) and
 pylint (10.00/10) pass. Tagged 2.0.7 schema and actual reader/writer methods were
-exercised; this is not a prior-container or production deployment receipt. C2 is next.
+exercised; this is not a prior-container or production deployment receipt. Commit:
+`cff54a9`.
+
+**C2.1 task-wiring regression ✅ 2026-09-08 UTC:** real `_main_async` construction
+and supervision now have an offline regression for all five background tasks,
+their required/one-shot roles, clean shutdown and every required-task failure.
+Independent review found no defect; both production-wiring mutants were caught.
+Targeted tests: 18 passed. Full default suite: **3,958 passed, 29 deselected** in
+149.00 seconds with upgrade/config gates armed. No runtime code changed in this
+batch; C1's static source gates remain applicable, and the edited tests pass
+Black/isort. C2.2-C2.4 remain next.
 
 ## Post-v2.0 Security Maintenance
 
