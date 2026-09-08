@@ -51,6 +51,7 @@ from typing import Any
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.cli._common import (
     CONFIG_LOAD_ERRORS,
+    OperatorConfigError,
     add_config_args,
     config_load_exit,
     load_operator_env,
@@ -71,8 +72,8 @@ _LOGGER = logging.getLogger("wobblebot.cli.recalibrate")
 
 
 async def _read_kraken_usd_balance() -> Decimal | None:
-    """Read live USD balance via the read-only key. Returns ``None`` on
-    read failure (logged); caller decides whether that's fatal."""
+    """Read live USD balance. Missing credentials raise OperatorConfigError;
+    exchange read failures return None after logging."""
     try:
         kraken_config = KrakenConfig.from_env()
     except ValueError as exc:
@@ -81,7 +82,7 @@ async def _read_kraken_usd_balance() -> Decimal | None:
             exc,
             extra={"error": str(exc)},
         )
-        return None
+        raise OperatorConfigError("Kraken reader credentials are missing") from exc
     adapter = KrakenAdapter(config=kraken_config)
     try:
         balance = await adapter.get_balance("USD")
@@ -157,7 +158,10 @@ async def _run(
             extra={"current_balance_usd": str(current_balance)},
         )
     else:
-        balance = await _read_kraken_usd_balance()
+        try:
+            balance = await _read_kraken_usd_balance()
+        except OperatorConfigError:
+            return 2
         if balance is None:
             return 1
         if balance <= Decimal("0"):

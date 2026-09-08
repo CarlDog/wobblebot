@@ -30,15 +30,14 @@ Exit codes:
 
 - ``0`` — clean shutdown (SIGINT/SIGTERM set the stop event).
 - ``1`` — the Discord transport failed, **or** one of the five
-  supervised background tasks died (which includes the gateway task, so
-  an unset bot-token env var lands here rather than on 2). The daemon
+  supervised background tasks died. The daemon
   exits rather than lingering as a zombie so the container's
   ``restart:`` policy restarts it; ``restart: unless-stopped`` acts on
   process exit, not on the healthcheck (2026-09-05: the forwarder died,
   the container reported ``unhealthy`` 591 times, and nothing acted for
   10h11m).
-- ``2`` — no loadable config file (neither ``settings.yml`` nor
-  ``settings.example.yml``), an unparseable one, or an unknown
+- ``2`` — missing Discord bot token; no loadable config file (neither
+  ``settings.yml`` nor ``settings.example.yml``), an unparseable one, or an unknown
   ``--profile`` — this is the likeliest cause in the Portainer
   deployment, whose command line hardcodes ``--profile cpu-only``
   against a read-only ``config/`` bind mount; no ``operator:`` config
@@ -1909,6 +1908,11 @@ def main() -> int:
     log_format = config.operator.log_format if config.operator is not None else "plain"
     log_file_path = config.operator.log_file_path if config.operator is not None else None
     configure_logging(level="INFO", log_format=log_format, rotating_file_path=log_file_path)
+    if config.operator is not None:
+        token_var = config.operator.auth.bot_token_env_var
+        if not os.environ.get(token_var, "").strip():
+            _LOGGER.error("missing Discord bot token: set %s before starting operator", token_var)
+            return 2
     # Catch KeyboardInterrupt at the top so Ctrl+C produces a clean
     # exit-code-0 line instead of a CancelledError traceback —
     # mirrors the pattern cli/live and cli/web already use.
