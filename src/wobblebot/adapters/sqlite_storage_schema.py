@@ -363,8 +363,13 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     -- ADR-033: cache-served / cache-written prompt tokens as disjoint
     -- buckets alongside tokens_in (which holds only UNCACHED prompt
     -- tokens for rows written after the migration). NOT NULL DEFAULT 0
-    -- and no CHECK — ALTER TABLE can't add a CHECK, so a CHECK here
-    -- would make fresh and migrated DBs diverge; Pydantic ge=0 guards.
+    -- and no CHECK — migrate_llm_calls_cache_token_columns shipped
+    -- these without one, and the two definitions must stay
+    -- byte-identical or fresh and migrated DBs diverge; Pydantic ge=0
+    -- guards the values. (This comment used to say ALTER TABLE cannot
+    -- add a CHECK. It can — engine_state's starved_* columns are added
+    -- that way. The conclusion stands, the reason was wrong; corrected
+    -- 2026-09-05. Adding a CHECK here now would CAUSE the divergence.)
     tokens_cache_read   INTEGER NOT NULL DEFAULT 0,
     tokens_cache_write  INTEGER NOT NULL DEFAULT 0,
     cost_usd            TEXT NOT NULL,
@@ -500,6 +505,29 @@ CREATE TABLE IF NOT EXISTS cap_trips (
 -- column existed (or before this row's daemon could observe its
 -- start)" -- an honest unknown, never a stamp of the boot time. Only
 -- an observed onside->offside transition writes it.
+--
+-- starved_* (2.0.8): one symbol's StarvationState (services/
+-- grid_starvation.py), which otherwise never leaves engine memory. The
+-- web tier cannot recompute them -- sells_deferred needs the
+-- authenticated TradeVolume maker fee (ADR-038) that cli/live logs and
+-- never persists -- so the engine has to tell the dashboard.
+--
+-- All five are NOT NULL with a non-NULL DEFAULT, which is load-bearing
+-- twice. (1) Existing rows backfill to 0 / '{}' instead of NULL, and
+-- cli/live's boot restore reads these rows BEFORE any tick write:
+-- EngineStateRow is a frozen dataclass with no validation, so a NULL
+-- would slide in silently and the dashboard would render a badge built
+-- from Nones. (2) A rolled-back 2.0.7 writer's INSERT omits these
+-- columns entirely and still succeeds. A separate nullable freshness
+-- marker suppresses values an old writer leaves behind on upsert.
+--
+-- CHECK (>= 0) on the four counters, mirroring offside_ticks. ALTER
+-- TABLE ADD COLUMN accepts a CHECK (measured; see
+-- migrate_engine_state_starvation in sqlite_migrations.py), so the
+-- migrated definition is byte-identical to this one. No CHECK on
+-- starved_reasons: a json_valid() constraint would turn a corrupt
+-- visibility blob into a failed write on a real-money tick, and the
+-- reader already degrades a bad blob to {}.
 CREATE TABLE IF NOT EXISTS engine_state (
     symbol_base     TEXT NOT NULL CHECK (length(symbol_base) > 0),
     symbol_quote    TEXT NOT NULL CHECK (length(symbol_quote) > 0),
@@ -508,11 +536,23 @@ CREATE TABLE IF NOT EXISTS engine_state (
     offside_ticks   INTEGER NOT NULL DEFAULT 0 CHECK (offside_ticks >= 0),
     reference_price TEXT,
     anchored_at     TEXT,
-    -- No CHECK: ALTER TABLE can't add one, so a CHECK here would make
-    -- fresh and migrated DBs diverge (same rule as llm_calls' cache
-    -- columns above).
+    -- No CHECK: NULL is a legitimate value here ("this episode's start
+    -- was never observed"), and an ISO timestamp has no cheap SQL
+    -- invariant worth constraining. NOT because ALTER TABLE cannot add
+    -- a CHECK -- it can (this table's starved_* columns below are added
+    -- by exactly that shape, and sqlite_migrations already ships it for
+    -- news_materially_drove). That earlier claim was false; corrected
+    -- 2026-09-05.
     offside_since   TEXT,
     updated_at      TEXT NOT NULL,
+    -- Appended after updated_at so this block reads in the same order
+    -- ALTER TABLE produces on a migrated DB.
+    starved_ticks          INTEGER NOT NULL DEFAULT 0 CHECK (starved_ticks >= 0),
+    starved_target         INTEGER NOT NULL DEFAULT 0 CHECK (starved_target >= 0),
+    starved_refusals       INTEGER NOT NULL DEFAULT 0 CHECK (starved_refusals >= 0),
+    starved_sells_deferred INTEGER NOT NULL DEFAULT 0 CHECK (starved_sells_deferred >= 0),
+    starved_reasons        TEXT NOT NULL DEFAULT '{}',
+    starved_updated_at     TEXT,
     PRIMARY KEY (symbol_base, symbol_quote)
 );
 

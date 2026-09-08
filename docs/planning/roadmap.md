@@ -17,6 +17,18 @@ the 57-test focused starvation/offside baseline. C1 is in progress. Release,
 deployment, tracker status changes and phase closure remain at their later gates;
 2.1 implementation has not begun.
 
+**C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
+starvation patch is complete through the rendered card. Persistence adds a
+diagnostic freshness marker; malformed diagnostics preserve pause/offside state.
+Configured symbols remain visible before their first order/fill. Two independent
+review dimensions found no actionable code defects. Eleven isolated-worktree
+mutations were caught, with green baseline and restored runs; six synthetic card
+states were inspected in the browser. Full default `pytest` with mandatory upgrade
+and strict config gates: **3,953 passed, 29 integration tests deselected** in
+127.42 seconds, Python 3.13.14. Black/isort checks, mypy (153 source files) and
+pylint (10.00/10) pass. Tagged 2.0.7 schema and actual reader/writer methods were
+exercised; this is not a prior-container or production deployment receipt. C2 is next.
+
 ## Post-v2.0 Security Maintenance
 
 - **2026-09-01 — logging redaction at the formatter boundary.** A CodeQL wave

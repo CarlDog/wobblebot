@@ -124,6 +124,7 @@ from wobblebot.ports.operator import CommandResult, ExecuteProposalCommand, Oper
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.grid_engine import GridEngine
+from wobblebot.services.grid_starvation import StarvationState
 from wobblebot.services.operator_service import OperatorService
 from wobblebot.services.reconciler import apply_reconciliation
 from wobblebot.services.screener import (
@@ -1622,6 +1623,12 @@ async def _emit_engine_states(
     rather than skipping the row — paused/offside visibility is the
     load-bearing part. No-op when operator_db is unwired (skips the
     grid-state reads too).
+
+    The five ``starved_*`` fields are written on EVERY row — populated
+    from ``engine.starvation(symbol)`` only when the symbol is neither
+    paused nor offside, and CLEARED otherwise. See the comment on that
+    branch: the engine's record is frozen, not current, in those two
+    states.
     """
     if operator_storage is None:
         return
@@ -1637,12 +1644,34 @@ async def _emit_engine_states(
             reference_price = grid_state.reference_price
             anchored_at = grid_state.created_at.dt
         ticks = engine.offside_ticks(symbol)
+        paused = engine.is_paused(symbol)
+        offside = ticks > 0
+        # Starvation is CLEARED, never written through, whenever the symbol is
+        # paused or offside — because the engine's record for those two states
+        # is FROZEN, not current. ``GridEngine._starved`` is cleared at exactly
+        # four sites (``resume_symbol``, ``_reanchor_unlocked``, a layout that
+        # placed something, and ``_tick`` finding orders still open) and NONE of
+        # them is the pause or the offside transition; the whole starvation path
+        # also sits behind ``if not offside:``. So a symbol that starves and then
+        # parks (or is paused) keeps its last StarvationState in engine memory
+        # indefinitely, and ``GridEngine.starvation`` reports it deliberately
+        # ungated (suppressing it there would make the engine disagree with its
+        # own WARNING). Writing that frozen record through would put "0/6 placed
+        # ... retrying every N ticks" on a real-money dashboard for a symbol the
+        # engine is retrying nothing for: a parked one returns before the gate,
+        # a paused one returns ``skipped_paused``. Do NOT "simplify" this to an
+        # unconditional write.
+        starved = None if paused or offside else engine.starvation(symbol)
+        if starved is None:
+            # Cleared, not skipped. All five fields are written on every row so
+            # a stale value can never survive a change of state.
+            starved = StarvationState(ticks=0, target=0, refusals=0, sells_deferred=0)
         await emit_engine_state(
             operator_storage,
             EngineStateRow(
                 symbol=symbol,
-                paused=engine.is_paused(symbol),
-                offside=ticks > 0,
+                paused=paused,
+                offside=offside,
                 offside_ticks=ticks,
                 reference_price=reference_price,
                 anchored_at=anchored_at,
@@ -1652,6 +1681,11 @@ async def _emit_engine_states(
                 # already parked.
                 offside_since=engine.offside_since(symbol),
                 updated_at=now,
+                starved_ticks=starved.ticks,
+                starved_target=starved.target,
+                starved_refusals=starved.refusals,
+                starved_sells_deferred=starved.sells_deferred,
+                starved_reasons=starved.reasons,
             ),
         )
 

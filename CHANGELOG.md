@@ -28,7 +28,15 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- Starved grids now explain the last layout's placements, refusal reasons,
+  cost-basis deferrals and retry cadence on the status card, including configured
+  symbols without prior orders or fills. Pause/offside and current open orders
+  suppress contradictory starvation claims; tick counters never imply elapsed age.
+- Persisted starvation diagnostics degrade together on corrupt data and carry a
+  separate freshness marker so a prior-version writer cannot refresh stale details
+  after rollback. Existing pause/offside state survives migration and readback.
 
 ## [2.0.7] - 2026-09-05
 

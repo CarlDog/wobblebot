@@ -72,6 +72,10 @@ from wobblebot.web.routes.status_reanchor import (
     load_reanchor_recommendations,
     load_reanchor_snoozes,
 )
+from wobblebot.web.routes.status_starvation import (
+    StarvationExplanation,
+    build_starvation_explanations,
+)
 
 _LOGGER = logging.getLogger(__name__)
 # ADR-030 freshness guard: an engine_state row counts as CURRENT only
@@ -270,6 +274,10 @@ class StatusSnapshot:  # pylint: disable=too-many-instance-attributes
     # ``engine_states`` and built only from its FRESH offside rows, so a
     # popover can never outlive the badge it explains.
     offside_explanations: dict[Symbol, OffsideExplanation] = field(default_factory=dict)
+    # 2.0.8: WHY each STARVED symbol placed nothing. Keyed like
+    # ``engine_states``; the builder owns PAUSED > OFFSIDE > STARVED
+    # precedence, so a paused/offside card gets no entry at all.
+    starvation_explanations: dict[Symbol, StarvationExplanation] = field(default_factory=dict)
     # Per-symbol held inventory (P3 slice 21) — the second half of the
     # buying-power item, whose aggregate strip shipped 2026-06-03. Same
     # observe.db balance snapshot the strip uses, split per symbol via
@@ -665,7 +673,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     # (e.g. BTC offside) still shows its price + trend, not a bare name.
     trade_symbols = {t.symbol for t in recent}
     prices, trends = await _load_current_prices(
-        observe_storage, symbols_with_orders | held_symbols | trade_symbols
+        observe_storage, symbols_with_orders | held_symbols | trade_symbols | configured
     )
     free_usd, account_value, held_value = _compute_balance_metrics(balances, prices)
     held_inventory = held_by_symbol(balances, prices)
@@ -675,12 +683,14 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     trade_ages = {t.id: int((now - t.executed_at.dt).total_seconds()) for t in recent}
     fills_summary = _summarize_fills(recent)
     # A card renders for every symbol you have orders for, hold a balance
-    # in, or traded recently — so a parked/held coin (e.g. offside BTC)
+    # in, traded recently, or configure for live trading. The last set keeps
+    # a newly starved grid visible even before its first order or fill.
+    # A parked/held coin (e.g. offside BTC)
     # keeps its card + price even when its last fill ages out of the
     # display window. Sorted by (base, quote) for stable order.
     all_symbols = tuple(
         sorted(
-            symbols_with_orders | held_symbols | {t.symbol for t in recent},
+            symbols_with_orders | held_symbols | {t.symbol for t in recent} | configured,
             key=lambda s: (s.base, s.quote),
         )
     )
@@ -717,6 +727,8 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
     # stays wired into _load_engine_states, where it gates the ADR-030
     # freshness window — that is a real bound, not an approximation.
     offside_explanations = await load_offside_explanations(live_storage, engine_states, prices, now)
+    # No await, no storage: every starvation input is already on the row.
+    starvation_explanations = build_starvation_explanations(engine_states)
     last_cap_trip_age: float | None = None
     cool_down = check_cool_down(
         last_cap_trip.tripped_at if last_cap_trip else None,
@@ -758,6 +770,7 @@ async def _load_snapshot(  # pylint: disable=too-many-locals,too-many-arguments
         cool_down_resumes_at=cool_down.resumes_at,
         engine_states=engine_states,
         offside_explanations=offside_explanations,
+        starvation_explanations=starvation_explanations,
         held_inventory=held_inventory,
         trade_ages=trade_ages,
         fills_summary=fills_summary,

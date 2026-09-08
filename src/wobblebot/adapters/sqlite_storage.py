@@ -35,6 +35,7 @@ from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_suggestions_expert_opinions,
     migrate_advisor_suggestions_news_materially_drove,
     migrate_engine_state_offside_since,
+    migrate_engine_state_starvation,
     migrate_llm_calls_cache_token_columns,
     migrate_llm_calls_trace_id,
     migrate_news_items_publisher_url,
@@ -111,6 +112,49 @@ def _parse_optional_utc(raw: str | None) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _parse_counter(raw: object) -> int:
+    """Require a non-negative SQLite integer without truncating floats."""
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
+        raise ValueError("invalid starvation counter")
+    return raw
+
+
+def _parse_reason_counts(raw: object) -> dict[str, int]:
+    """Require the complete reason breakdown; never publish a partial parse."""
+    if not isinstance(raw, str):
+        raise ValueError("invalid starvation reasons")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("invalid starvation reasons")
+    reasons = {key: _parse_counter(value) for key, value in parsed.items()}
+    if any(not key or value == 0 for key, value in reasons.items()):
+        raise ValueError("invalid starvation reason entry")
+    return reasons
+
+
+def _read_starvation(row: aiosqlite.Row) -> tuple[int, int, int, int, dict[str, int]]:
+    """Suppress stale/corrupt diagnostics without losing a persisted pause.
+
+    A prior writer can update the base row after rollback but cannot refresh
+    ``starved_updated_at``. Matching timestamps distinguish a diagnostic write
+    from an old writer merely making retained counters look current.
+    """
+    empty: tuple[int, int, int, int, dict[str, int]] = (0, 0, 0, 0, {})
+    if row["starved_updated_at"] != row["updated_at"]:
+        return empty
+    try:
+        ticks = _parse_counter(row["starved_ticks"])
+        target = _parse_counter(row["starved_target"])
+        refusals = _parse_counter(row["starved_refusals"])
+        deferred = _parse_counter(row["starved_sells_deferred"])
+        reasons = _parse_reason_counts(row["starved_reasons"])
+        if sum(reasons.values()) != refusals or (ticks and refusals + deferred != target):
+            return empty
+        return ticks, target, refusals, deferred, reasons
+    except (TypeError, ValueError):
+        return empty
 
 
 class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-methods
@@ -224,6 +268,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_transfer_results_unique_proposal_id(self._conn)
             await migrate_notifications_read_at(self._conn)
             await migrate_engine_state_offside_since(self._conn)
+            await migrate_engine_state_starvation(self._conn)
             await self._conn.commit()
         except Exception as exc:
             raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
@@ -1908,17 +1953,31 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         row per symbol. Storage failures raise; cli/live's
         ``emit_engine_state`` wraps the call so a transient DB hiccup
         never breaks a trading tick.
+
+        EVERY column appears THREE times below — the INSERT column list,
+        a ``?`` in VALUES, and a ``DO UPDATE SET`` assignment — plus its
+        parameter. A missing ``?`` raises on the first call; a column
+        missing from ``DO UPDATE SET`` alone is SILENT: the first insert
+        writes the real value and every later tick refreshes only the
+        columns that are listed, so the field freezes forever while
+        ``updated_at`` keeps it looking fresh past any freshness guard.
         """
         conn = self._require_conn()
+        try:
+            starved_reasons = json.dumps(dict(row.starved_reasons), sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise StorageError("Failed to encode engine-state starvation reasons") from exc
         try:
             await conn.execute(
                 """
                 INSERT INTO engine_state (
                     symbol_base, symbol_quote, paused, offside,
                     offside_ticks, reference_price, anchored_at,
-                    offside_since, updated_at
+                    offside_since, updated_at, starved_ticks,
+                    starved_target, starved_refusals,
+                    starved_sells_deferred, starved_reasons, starved_updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol_base, symbol_quote) DO UPDATE SET
                     paused = excluded.paused,
                     offside = excluded.offside,
@@ -1926,7 +1985,13 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     reference_price = excluded.reference_price,
                     anchored_at = excluded.anchored_at,
                     offside_since = excluded.offside_since,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    starved_ticks = excluded.starved_ticks,
+                    starved_target = excluded.starved_target,
+                    starved_refusals = excluded.starved_refusals,
+                    starved_sells_deferred = excluded.starved_sells_deferred,
+                    starved_reasons = excluded.starved_reasons,
+                    starved_updated_at = excluded.starved_updated_at
                 """,
                 (
                     row.symbol.base,
@@ -1945,6 +2010,12 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                         if row.offside_since is not None
                         else None
                     ),
+                    row.updated_at.astimezone(UTC).isoformat(),
+                    row.starved_ticks,
+                    row.starved_target,
+                    row.starved_refusals,
+                    row.starved_sells_deferred,
+                    starved_reasons,
                     row.updated_at.astimezone(UTC).isoformat(),
                 ),
             )
@@ -1965,7 +2036,9 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             async with conn.execute("""
                 SELECT symbol_base, symbol_quote, paused, offside,
                        offside_ticks, reference_price, anchored_at,
-                       offside_since, updated_at
+                       offside_since, updated_at, starved_ticks,
+                       starved_target, starved_refusals,
+                       starved_sells_deferred, starved_reasons, starved_updated_at
                 FROM engine_state
                 """) as cursor:
                 rows = await cursor.fetchall()
@@ -1996,7 +2069,8 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # dropped row costs a pause. (offside_ticks was previously
             # parsed bare out here, so a corrupt integer raised ValueError
             # straight out of a StoragePort method, past the StorageError
-            # the port contract promises. Fixed 2026-09-04.)
+            # the port contract promises. Fixed 2026-09-04.) Starvation
+            # diagnostics degrade together, preserving this same pause row.
             try:
                 offside_ticks = int(db_row["offside_ticks"])
             except (TypeError, ValueError):
@@ -2006,6 +2080,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                 updated_at = updated_at.replace(tzinfo=UTC)
             if anchored_at is not None and anchored_at.tzinfo is None:
                 anchored_at = anchored_at.replace(tzinfo=UTC)
+            starvation = _read_starvation(db_row)
             out.append(
                 EngineStateRow(
                     symbol=Symbol(base=db_row["symbol_base"], quote=db_row["symbol_quote"]),
@@ -2016,6 +2091,11 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     anchored_at=anchored_at,
                     updated_at=updated_at,
                     offside_since=offside_since,
+                    starved_ticks=starvation[0],
+                    starved_target=starvation[1],
+                    starved_refusals=starvation[2],
+                    starved_sells_deferred=starvation[3],
+                    starved_reasons=starvation[4],
                 )
             )
         return out

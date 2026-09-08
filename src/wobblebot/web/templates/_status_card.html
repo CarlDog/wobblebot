@@ -261,6 +261,7 @@
            no-orders state degraded to a flat header which read as a
            different visual hierarchy. Consistent framing is clearer. #}
         {% set estate = snapshot.engine_states.get(symbol) %}
+        {% set sexp = snapshot.starvation_explanations.get(symbol) if not sym_orders else none %}
         {% set is_paused = estate and estate.paused %}
         <section class="symbol-section{% if is_paused %} symbol-paused{% endif %}">
           <div class="symbol-header">
@@ -306,6 +307,10 @@
                     {% endif %}
                   </span>
                 </span>
+              {% endif %}
+              {% if sexp %}
+                <span class="engine-badge engine-badge-offside engine-badge-starved"
+                      aria-describedby="starved-detail-{{ symbol.base }}-{{ symbol.quote }}">STARVED</span>
               {% endif %}
               {% set price = snapshot.current_prices.get(symbol) %}
               {% if price %}
@@ -493,7 +498,22 @@
               </tbody>
             </table>
           {% else %}
-            <p class="placeholder">No open orders for this symbol.</p>
+            {% if sexp %}
+              <p class="placeholder" id="starved-detail-{{ symbol.base }}-{{ symbol.quote }}">
+                Last layout attempt: {{ sexp.placed }}/{{ sexp.target }} placed;
+                {{ sexp.refusals }} refused; {{ sexp.sells_deferred }} sells deferred by the cost-basis guard.
+                {% if sexp.reason_breakdown %}
+                  Refusal reasons: {{ sexp.reason_breakdown }}.
+                  {% if sexp.reason_kind == "cap" %}
+                    Most frequent reported cap: {{ sexp.leading_reason }}. Other limits may also bind.
+                  {% endif %}
+                {% endif %}
+                Retry every {{ sexp.retry_every_ticks }} eligible engine ticks while onside and unpaused.
+                {{ sexp.ticks }} consecutive starved ticks in this process; elapsed starvation time is unknown.
+              </p>
+            {% else %}
+              <p class="placeholder">No open orders for this symbol.</p>
+            {% endif %}
           {% endif %}
         </section>
       {% endfor %}
