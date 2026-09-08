@@ -11,8 +11,8 @@ BTC → notification fires back".
 The flow exercised:
 
   1. Operator sends "pause BTC" in Discord.
-  2. cli/operator's _handle_inbound_message receives, calls the
-     stub assistant which returns IntentCommand(PauseCommand(BTC/USD)).
+  2. cli/operator's _handle_inbound_message receives; the deterministic
+     parser resolves pause BTC to IntentCommand(PauseCommand(BTC/USD)).
   3. The handler persists a PendingCommand in awaiting_confirmation
      status and posts a confirm embed (stubbed transport records
      the call + returns a message id).
@@ -269,23 +269,25 @@ async def test_reject_flow_does_not_dispatch(storage: SQLiteStorageAdapter) -> N
 # --------------------------------------------------------------------- #
 
 
+@pytest.mark.parametrize("first_message", ["how are we doing overall?", "status?"])
 async def test_multi_turn_conversation_records_history(
     storage: SQLiteStorageAdapter,
+    first_message: str,
 ) -> None:
-    """Two operator messages produce a full turn history in conversation_turns."""
+    """Both parsing paths preserve the first turn pair in the next LLM context."""
     exchange = MockExchangeAdapter(starting_balances={}, starting_prices={})
     engine = GridEngine(exchange, storage, grid_config(), safety_config())
     operator_service = OperatorService(engine=engine, storage=storage)
     transport = _mock_transport()
-    assistant = _ScriptedAssistant(
-        [
-            IntentQuery(query=StatusQuery()),
-            IntentConversational(reply_text="here you go"),
-        ]
-    )
+    scripted: list[OperatorIntent] = [IntentConversational(reply_text="here you go")]
+    expected_messages = ["thanks"]
+    if first_message != "status?":
+        scripted.insert(0, IntentQuery(query=StatusQuery()))
+        expected_messages.insert(0, first_message)
+    assistant = _ScriptedAssistant(scripted)
 
     await _handle_inbound_message(
-        _inbound("status?"),
+        _inbound(first_message),
         operator_storage=storage,
         live_storage=None,
         observe_storage=None,
@@ -298,6 +300,8 @@ async def test_multi_turn_conversation_records_history(
         confirm_ttl_seconds=300,
         assistant_model_name="test-model",
     )
+    first_turns = await storage.get_conversation_turns("C-1", "U-1")
+    assert len(first_turns) == 2
     await _handle_inbound_message(
         _inbound("thanks"),
         operator_storage=storage,
@@ -321,9 +325,10 @@ async def test_multi_turn_conversation_records_history(
     assert len(operator_turns) == 2
     assert len(assistant_turns) == 2
 
-    # Second invocation's context should include the first turn pair as recent_turns
-    second_context = assistant.contexts[1]
-    assert len(second_context.recent_turns) >= 2
+    assert [context.current_message for context in assistant.contexts] == expected_messages
+    assert assistant.contexts[-1].recent_turns == tuple(first_turns)
+    assert turns[-1].role == "assistant"
+    assert turns[-1].content == "here you go"
 
 
 # --------------------------------------------------------------------- #
