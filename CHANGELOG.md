@@ -28,6 +28,19 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- Cloud LLM failures now distinguish insufficient credit, quota, billing and access
+  problems with safe operator hints. Retry exhaustion preserves the underlying
+  cause, and successful calls no longer hide earlier failures in the health window.
+
+### Added
+
+- Optional per-role advisor fallback targets (ADR-043), with at most two explicit
+  alternatives, existing spend caps and unchanged news/approval gates. Runtime model
+  attempts persist through an additive SQLite column and appear on the advisor page.
+  Fallbacks default to disabled; production seats require separate configuration.
+
 ## [2.0.9] - 2026-09-08
 
 ### Fixed

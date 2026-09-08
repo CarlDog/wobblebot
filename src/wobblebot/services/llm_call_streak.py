@@ -47,6 +47,8 @@ from pathlib import Path
 
 import aiosqlite
 
+from wobblebot.services.llm_failures import failure_hint
+
 # Three in a row is past coincidence: the retry layer already absorbs
 # transient blips, so each row here is an EXHAUSTED call, not one bad
 # HTTP response.
@@ -58,7 +60,7 @@ DEFAULT_WINDOW_HOURS = 24.0
 class LLMCallStreak:  # pylint: disable=too-many-instance-attributes
     """How the most recent LLM calls for one role have been going.
 
-    Eight fields trips pylint's 7-attribute default. This is a frozen
+    This frozen DTO exceeds pylint's 7-attribute default. It is a
     DTO, not a class with behaviour — every field is a distinct fact the
     /health row needs, and grouping ``window_hours`` + ``threshold``
     behind a policy object would thread an extra type through four
@@ -75,6 +77,8 @@ class LLMCallStreak:  # pylint: disable=too-many-instance-attributes
     #: Set when the DB could not be read at all (missing file, locked,
     #: no ``llm_calls`` table). Distinct from "no calls" — we don't know.
     unavailable_reason: str | None = None
+    failed_calls_in_window: int = 0
+    recent_error_kind: str | None = None
 
     @property
     def has_data(self) -> bool:
@@ -94,10 +98,21 @@ class LLMCallStreak:  # pylint: disable=too-many-instance-attributes
         if not self.has_data:
             return f"no calls in the last {self.window_hours:g}h"
         if self.consecutive_failures == 0:
-            return f"{_plural(self.calls_in_window, 'call')}, most recent succeeded"
+            detail = f"{_plural(self.calls_in_window, 'call')}, most recent succeeded"
+            if self.failed_calls_in_window:
+                detail += f"; {_plural(self.failed_calls_in_window, 'failed call')} in window"
+                if self.recent_error_kind:
+                    detail += f"; recent error {self.recent_error_kind}"
+                    hint = failure_hint(self.recent_error_kind)
+                    if hint:
+                        detail += f"; {hint}"
+            return detail
         parts = [f"{_plural(self.consecutive_failures, 'consecutive failure')}"]
         if self.last_error_kind:
             parts.append(f"last error {self.last_error_kind}")
+            hint = failure_hint(self.last_error_kind)
+            if hint:
+                parts.append(hint)
         if self.last_success_at is None:
             parts.append(f"no success in the last {self.window_hours:g}h")
         else:
@@ -145,6 +160,8 @@ def streak_from_rows(
         last_success_at=last_success,
         window_hours=window_hours,
         threshold=threshold,
+        failed_calls_in_window=sum(1 for _, success, _ in rows if not success),
+        recent_error_kind=next((kind for _, success, kind in rows if not success), None),
     )
 
 

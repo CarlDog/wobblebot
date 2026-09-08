@@ -42,6 +42,7 @@ from uuid import uuid4
 
 from wobblebot.adapters.anthropic import AnthropicAdvisorAdapter
 from wobblebot.adapters.cascading_advisor import CascadingAdvisorAdapter
+from wobblebot.adapters.fallback_advisor import AdvisorCandidate, FallbackAdvisorAdapter
 from wobblebot.adapters.google import GoogleAdvisorAdapter
 from wobblebot.adapters.heuristic_advisor import HeuristicAdvisorAdapter
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
@@ -68,6 +69,7 @@ from wobblebot.config.advisor import (
     AdvisorConfig,
     ArbitratorConfig,
     ExpertConfig,
+    FallbackTarget,
     InferenceParams,
 )
 from wobblebot.config.heuristic import load_heuristic_spec
@@ -80,6 +82,7 @@ from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
 from wobblebot.ports.advisor import (
     AdvisorPort,
+    AdvisorRecommendation,
     AdvisorSuggestion,
     CurrentGridParams,
     PerformanceSummary,
@@ -296,14 +299,54 @@ def _build_advisor_adapter(  # pylint: disable=too-many-arguments,too-many-posit
     raise ValueError(f"unknown provider {provider!r}")
 
 
+def _build_advisor_route(  # pylint: disable=too-many-arguments
+    *,
+    provider: str,
+    model: str,
+    prompt_file: str,
+    inference_params: InferenceParams,
+    role: str,
+    cloud_wiring: _CloudWiring | None,
+    fallbacks: list[FallbackTarget],
+) -> AdvisorPort:
+    """Validate every configured target before constructing clients; preserve default wiring."""
+    targets = [(provider, model, inference_params)] + [
+        (target.provider, target.model, target.inference_params) for target in fallbacks
+    ]
+    if len(targets) > 3 or len({(p, m) for p, m, _ in targets}) != len(targets):
+        raise OperatorConfigError("advisor fallback requires at most two distinct alternatives")
+    for target_provider, _, _ in targets:
+        if target_provider in _CLOUD_KEY_ENV:
+            _require_cloud_key(target_provider, cloud_wiring)
+    candidates = [
+        AdvisorCandidate(
+            provider=target_provider,
+            model=target_model,
+            advisor=_build_advisor_adapter(
+                provider=target_provider,
+                model=target_model,
+                prompt_file=prompt_file,
+                inference_params=params,
+                role=role,
+                cloud_wiring=cloud_wiring,
+            ),
+        )
+        for target_provider, target_model, params in targets
+    ]
+    if not fallbacks:
+        return candidates[0].advisor
+    return FallbackAdvisorAdapter(role=role, candidates=candidates)
+
+
 def _build_expert_entry(expert: ExpertConfig, cloud_wiring: _CloudWiring | None) -> MoEExpertEntry:
-    adapter = _build_advisor_adapter(
+    adapter = _build_advisor_route(
         provider=expert.provider,
         model=expert.model,
         prompt_file=expert.prompt_file,
         inference_params=expert.inference_params,
         role=expert.role,
         cloud_wiring=cloud_wiring,
+        fallbacks=expert.fallbacks,
     )
     return MoEExpertEntry(name=expert.name, role=expert.role, advisor=adapter)
 
@@ -311,13 +354,14 @@ def _build_expert_entry(expert: ExpertConfig, cloud_wiring: _CloudWiring | None)
 def _build_arbitrator_entry(
     arbitrator: ArbitratorConfig, cloud_wiring: _CloudWiring | None
 ) -> MoEExpertEntry:
-    adapter = _build_advisor_adapter(
+    adapter = _build_advisor_route(
         provider=arbitrator.provider,
         model=arbitrator.model,
         prompt_file=arbitrator.prompt_file,
         inference_params=arbitrator.inference_params,
         role="arbitrator",
         cloud_wiring=cloud_wiring,
+        fallbacks=arbitrator.fallbacks,
     )
     # Arbitrator's name slot in the audit log. Operator config doesn't
     # supply one (ArbitratorConfig has no `name` field) — the role is
@@ -347,13 +391,14 @@ def _build_llm_advisor(
         assert advisor.provider is not None  # validator enforces for type=single
         assert advisor.model is not None
         assert advisor.prompt_file is not None
-        adapter = _build_advisor_adapter(
+        adapter = _build_advisor_route(
             provider=advisor.provider,
             model=advisor.model,
             prompt_file=advisor.prompt_file,
             inference_params=advisor.inference_params,
             role="single",
             cloud_wiring=cloud_wiring,
+            fallbacks=advisor.fallbacks,
         )
         return adapter, advisor.model
 
@@ -479,6 +524,15 @@ def _moe_model_label(advisor: AdvisorConfig) -> str:
     return f"moe[{advisor.aggregator}:{parts}{suffix}]"
 
 
+def _actual_model_label(recommendation: AdvisorRecommendation, configured: str) -> str:
+    """Keep the configured lineup and explicitly identify routed models that answered."""
+    successful = [attempt for attempt in recommendation.llm_attempts if attempt.error_kind is None]
+    if not successful:
+        return configured
+    routes = ", ".join(f"{a.role}={a.provider}/{a.model}" for a in successful)
+    return f"{configured} [actual routes: {routes}]"
+
+
 async def _run_cycle(  # pylint: disable=too-many-arguments
     advisor: AdvisorPort,
     summary_builder: SummaryBuilder,
@@ -550,6 +604,9 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
         )
         return False
 
+    # The original label identifies the configured committee. A substitution
+    # must name its actual producer; structured attempts survive SQLite too.
+    model_name = _actual_model_label(recommendation, model_name)
     suggestion = AdvisorSuggestion(
         recommendation=recommendation,
         created_at=Timestamp(dt=datetime.now(UTC)),

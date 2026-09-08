@@ -101,7 +101,7 @@ class TestClassifyError:
             (503, "server_error"),
             (599, "server_error"),
             (400, "http_400"),
-            (401, "http_401"),
+            (401, "authentication_error"),
             (404, "http_404"),
             (422, "http_422"),
         ],
@@ -364,7 +364,7 @@ class TestFailurePath:
         rows = await storage.get_llm_calls()
         assert len(rows) == 1
         assert rows[0].success is False
-        assert rows[0].error_kind == "http_401"
+        assert rows[0].error_kind == "authentication_error"
         assert rows[0].cost_usd == Decimal("0")
 
     async def test_transient_exhaustion_records_failure_and_reraises(
@@ -383,9 +383,8 @@ class TestFailurePath:
         rows = await storage.get_llm_calls()
         assert len(rows) == 1
         assert rows[0].success is False
-        # LLMRetryExhausted is the outermost; classify_error sees that
-        # rather than the inner 503.
-        assert rows[0].error_kind == "LLMRetryExhausted"
+        # Persist the actionable cause, even when the retry wrapper is outermost.
+        assert rows[0].error_kind == "server_error"
 
     async def test_connect_error_records_connect_error_kind(
         self, storage: SQLiteStorageAdapter
@@ -403,7 +402,7 @@ class TestFailurePath:
         rows = await storage.get_llm_calls()
         # All retries exhausted with connect error → recorded once at exhaustion.
         assert rows[-1].success is False
-        assert rows[-1].error_kind == "LLMRetryExhausted"
+        assert rows[-1].error_kind == "connect_error"
 
 
 class TestBuildAdvisorRecommendation:

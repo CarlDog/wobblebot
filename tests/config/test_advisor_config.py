@@ -12,6 +12,7 @@ from wobblebot.config.advisor import (
     ArbitratorConfig,
     AutoApplyConfig,
     ExpertConfig,
+    FallbackTarget,
     GremlinConfig,
     InferenceParams,
 )
@@ -52,6 +53,37 @@ def _single_kwargs(**overrides: object) -> dict[str, object]:
     }
     base.update(overrides)
     return base
+
+
+def test_fallbacks_default_empty_and_support_distinct_explicit_targets() -> None:
+    assert AdvisorConfig(**_single_kwargs()).fallbacks == []
+    backup = FallbackTarget(provider="openai", model="gpt-5-mini")
+    assert AdvisorConfig(**_single_kwargs(fallbacks=[backup])).fallbacks == [backup]
+
+
+@pytest.mark.parametrize(
+    "fallbacks",
+    [
+        [{"provider": "ollama", "model": "deepseek-r1:7b"}],
+        [{"provider": "openai", "model": "backup"}] * 2,
+        [{"provider": "openai", "model": str(i)} for i in range(3)],
+        [{"provider": "unknown", "model": "backup"}],
+        [{"provider": "openai", "model": "backup", "fallbacks": []}],
+        [{"provider": "openai", "model": "backup", "prompt_file": "different.md"}],
+    ],
+)
+def test_invalid_or_implicit_fallback_routes_reject(fallbacks: list[dict[str, object]]) -> None:
+    with pytest.raises(ValidationError):
+        AdvisorConfig(**_single_kwargs(fallbacks=fallbacks))
+
+
+def test_moe_requires_role_scoped_fallbacks() -> None:
+    with pytest.raises(ValidationError, match="each expert/arbitrator"):
+        AdvisorConfig(
+            type="moe",
+            experts=[_expert("a"), _expert("b"), _expert("c")],
+            fallbacks=[FallbackTarget(provider="openai", model="gpt-5-mini")],
+        )
 
 
 class TestSingleMode:

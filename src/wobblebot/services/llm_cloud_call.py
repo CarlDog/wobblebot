@@ -55,6 +55,7 @@ from wobblebot.services.llm_cost_gate import (
     SessionCostTracker,
     check_budget,
 )
+from wobblebot.services.llm_failures import classify_error, failure_detail
 from wobblebot.services.llm_pricing import PricingLookupError, cost_for
 from wobblebot.services.llm_retry import LLMRetryConfig, retry_with_backoff
 from wobblebot.services.llm_trace import current_trace_id
@@ -104,26 +105,6 @@ class CloudCallContext:
     role: LLMRole
     provider: LLMProvider
     model: str
-
-
-def classify_error(exc: Exception) -> str:
-    """Short label for ``LLMCallRecord.error_kind`` on a failed call.
-
-    Same shape as the per-adapter ``_classify_error`` Stage 6.2 had —
-    promoted here so every cloud adapter labels failures consistently.
-    """
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status == 429:
-            return "rate_limited"
-        if 500 <= status < 600:
-            return "server_error"
-        return f"http_{status}"
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-        return "connect_error"
-    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
-        return "timeout"
-    return type(exc).__name__
 
 
 def _make_failure_record(ctx: CloudCallContext, exc: Exception) -> LLMCallRecord:
@@ -563,13 +544,16 @@ async def wrap_provider_errors(
     try:
         yield
     except httpx.HTTPStatusError as exc:
-        raise error_cls(f"{provider_name} request failed: HTTP {exc.response.status_code}") from exc
+        raise error_cls(f"{provider_name} request failed: {failure_detail(exc)}") from exc
     except httpx.HTTPError as exc:
-        raise error_cls(f"{provider_name} transport error: {exc}") from exc
+        raise error_cls(f"{provider_name} transport error: {failure_detail(exc)}") from exc
     except PricingLookupError as exc:
         raise error_cls(f"{provider_name} pricing unavailable: {exc}") from exc
     except LLMRetryExhausted as exc:
-        raise error_cls(f"{provider_name} retries exhausted: {exc}") from exc
+        raise error_cls(
+            f"{provider_name} retries exhausted after {exc.attempts} attempts: "
+            f"{failure_detail(exc)}"
+        ) from exc
 
 
 async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many-positional-arguments

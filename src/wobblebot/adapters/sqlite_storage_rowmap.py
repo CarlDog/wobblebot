@@ -144,6 +144,7 @@ def row_to_advisor_suggestion(row: aiosqlite.Row) -> AdvisorSuggestion:
                 fallback_timestamp=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
             ),
             news_materially_drove=bool(news_materially_drove_raw),
+            llm_attempts=json.loads(row["llm_attempts"]) if "llm_attempts" in row.keys() else [],
         ),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         input_summary=json.loads(row["input_summary"]),
@@ -191,6 +192,7 @@ def serialize_expert_opinions(opinions: list[AdvisorRecommendation]) -> str:
                 "confidence": op.confidence,
                 "recommendations": op.recommendations,
                 "rationale": op.rationale,
+                "llm_attempts": [a.model_dump() for a in op.llm_attempts],
             }
             for op in opinions
         ]
@@ -218,6 +220,7 @@ def deserialize_expert_opinions(
             recommendation_id=f"opinion-{idx}",
             timestamp=fallback_timestamp,
             role=entry["role"],
+            llm_attempts=entry.get("llm_attempts", []),
             recommendations=entry.get("recommendations") or {},
             rationale=entry["rationale"],
             confidence=entry["confidence"],

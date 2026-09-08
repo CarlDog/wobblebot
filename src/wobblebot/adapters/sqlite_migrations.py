@@ -99,6 +99,13 @@ async def migrate_advisor_suggestions_news_materially_drove(
     )
 
 
+async def migrate_advisor_llm_attempts(conn: aiosqlite.Connection) -> None:
+    """ADR-043: additive model provenance; old rows/writers retain unknown (empty) history."""
+    await add_column_if_missing(
+        conn, "advisor_suggestions", "llm_attempts", "TEXT NOT NULL DEFAULT '[]'"
+    )
+
+
 async def migrate_news_items_publisher_url(conn: aiosqlite.Connection) -> None:
     """Add ``publisher`` + ``url`` columns to pre-2026-05-23 news_items tables.
 

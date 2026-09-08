@@ -174,6 +174,8 @@ class MoEAdvisorAdapter(AdvisorPort):
                 "role": "aggregated",
                 "expert_opinions": opinions,
                 "news_materially_drove": news_materially_drove(aggregated, opinions),
+                "llm_attempts": [attempt for op in opinions for attempt in op.llm_attempts]
+                + aggregated.llm_attempts,
             }
         )
 

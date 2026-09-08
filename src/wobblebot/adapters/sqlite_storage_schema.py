@@ -167,7 +167,8 @@ CREATE TABLE IF NOT EXISTS advisor_suggestions (
     -- news opinion materially drove an aggregated recommendation's
     -- value. Always 0 outside MoE / for non-aggregated roles.
     news_materially_drove INTEGER NOT NULL DEFAULT 0
-                                    CHECK (news_materially_drove IN (0, 1))
+                                    CHECK (news_materially_drove IN (0, 1)),
+    llm_attempts        TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_advisor_suggestions_created

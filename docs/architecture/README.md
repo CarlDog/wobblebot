@@ -2,7 +2,9 @@
 
 ADR numbering is a single register in `decisions.md`. ADR-019 is the accepted
 advisor-purpose decision, ADR-041 is accepted deployment capability isolation,
-and ADR-042 is the proposed sell-only extension. New command-lifecycle, runtime
+ADR-042 is the proposed sell-only extension, and
+[ADR-043](adr-043-llm-fallbacks.md) accepts explicit advisor fallback targets.
+New command-lifecycle, runtime
 identity and equity-risk decisions use semantic working names until an unused
 number is allocated; historical release-plan placeholders are not reservations.
 

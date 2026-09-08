@@ -14,8 +14,9 @@ Per ADR-015:
 - Retries cap at ``max_retries`` (default 3); total attempts = 1 + retries.
 - Backoff is fixed exponential: ``initial * multiplier ** attempt_index``
   for attempts 0..max_retries-1. With defaults that's 1s, 2s, 4s.
-- No cross-provider failover. No silent Ollama fallback. The caller
-  decides what to do with the eventual ``LLMRetryExhausted``.
+- This helper never changes providers. ADR-043 adds explicit advisor
+  fallback targets outside it, after this retry budget is exhausted.
+- Provider billing/quota denials are permanent even when returned as 429.
 
 The classifier is a hook so Stages 6.2-6.4 (per-provider adapters) can
 override for provider-specific bodies (e.g. Anthropic's
@@ -33,13 +34,14 @@ import httpx
 from pydantic import BaseModel, Field
 
 from wobblebot.domain.exceptions import LLMRetryExhausted
+from wobblebot.services.llm_failures import classify_error
 
 T = TypeVar("T")
 
 RetryClass = Literal["transient", "permanent"]
 
 _TRANSIENT_HTTPX_TYPES: tuple[type[Exception], ...] = (
-    httpx.ConnectError,
+    httpx.NetworkError,
     httpx.ConnectTimeout,
     httpx.ReadTimeout,
     httpx.WriteTimeout,
@@ -72,6 +74,13 @@ def default_classifier(exc: Exception) -> RetryClass:
     if isinstance(exc, _TRANSIENT_HTTPX_TYPES):
         return "transient"
     if isinstance(exc, httpx.HTTPStatusError):
+        if classify_error(exc) in {
+            "quota_exceeded",
+            "insufficient_credit",
+            "billing_error",
+            "content_refused",
+        }:
+            return "permanent"
         status = exc.response.status_code
         if status == 429 or 500 <= status < 600:
             return "transient"
