@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Fleet standards: python-service v3.0 — audited 2026-09-08.
-Unresolved exceptions and verification limits: `docs/planning/2.0-closeout-audit.md`.
+Accepted exceptions and verification limits: `docs/planning/2.0-closeout-audit.md`.
 `STATUS.md` is a compatibility pointer; the roadmap remains authoritative.
 
 ## Project Status

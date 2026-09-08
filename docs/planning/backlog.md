@@ -8,8 +8,8 @@ re-read on 2026-09-08 UTC; no status changes or merges were made.
 
 An eligible trigger permits a scope decision; it does not schedule implementation.
 Owners below are accountable roles, not claims that another person accepted a task.
-The operator assigns the implementation owner when a slice starts. Proposed
-exceptions and releases still require the decisions in the closeout plan.
+The operator assigns the implementation owner when a slice starts. E01-E03 were accepted on 2026-09-08 for release preparation; publication and
+deployment still require the decisions in the closeout plan.
 
 ## Closeout and tracker disposition
 
@@ -18,8 +18,8 @@ exceptions and releases still require the decisions in the closeout plan.
 | C0 | Scope, branch and WIP preservation completed locally. | Closeout integrator; preserve provenance through release. | Roadmap C0 receipt and local baseline manifest. |
 | C1 | Starvation reporting completed locally. | Closeout integrator; candidate release and deployment gates. | Engine/storage/rendered-card tests, old-writer compatibility, mutations and visual inspection in roadmap. |
 | C2.1-C2.4 | Four maintenance repairs completed locally. | Closeout integrator; operator decisions and C5. | Production task wiring, corrupt-command containment, loop failure logs and confirmation transport regressions; roadmap receipts. |
-| C3/C4 | Evidence prepared; two additional startup repairs and a stale integration fixture corrected. | Closeout integrator + operator; decide E01-E03, then release gate. | [Audit and decision packet](2.0-closeout-audit.md); no blanket conformance or phase-close claim. |
-| GH18 | Keep [#18](https://github.com/CarlDog/wobblebot/issues/18) open. Mechanical repairs prepared; Ruff, ledger-location and CI-shape exceptions require disposition. | Operator + tooling owner; accept scoped exceptions or schedule adoption. | Individual standard rows in audit; fresh machine result plus manual checks. |
+| C3/C4 | Evidence prepared; two additional startup repairs and a stale integration fixture corrected. | Closeout integrator + operator; E01-E03 accepted; proceed through the release gate. | [Audit and decision packet](2.0-closeout-audit.md); no blanket conformance or phase-close claim. |
+| GH18 | Keep [#18](https://github.com/CarlDog/wobblebot/issues/18) open. Mechanical repairs complete; Ruff, ledger-location and CI-shape exceptions accepted for the 2.0.x patch. | Operator + tooling owner; retain accepted exceptions and meet their N0/N2 adoption triggers. | Individual standard rows in audit; fresh machine result plus manual checks. |
 | GH22 | Keep [#22](https://github.com/CarlDog/wobblebot/issues/22) as standing model-watch state. | Model-review owner; N5, with separately authorized Fleet Kit changes. | Per-seat coverage including Atlas, current seat register, all G4 prerequisites; no automatic reseating. |
 | GH23 | Recommend closing [#23](https://github.com/CarlDog/wobblebot/issues/23) as superseded by later seat evidence, subject to explicit operator approval. | Model-review owner; explicitly retire the incomplete July Anthropic quant campaign, or retain it under G4; later news/risk runs do not complete that campaign. | July campaign comments and August [seat register](../reference/advisor-seats.md); preserve historical probe caveats, no paid rerun for administrative closure. |
 | GH97 | Keep [#97](https://github.com/CarlDog/wobblebot/issues/97) open. Public shape checks refreshed; private documentation reviewed, live private behavior unverified. | Provider-maintenance owner; N5 plus the legacy funding decision before funding maintenance. | [API reference](../reference/kraken-api-reference.md), funding migration/retention decision and deduplicated watcher ownership. |

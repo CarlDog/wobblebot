@@ -28,6 +28,9 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+Release candidate: **2.0.8**. Package preparation is not publication or deployment;
+the roadmap records those gates separately.
+
 ### Fixed
 
 - Starved grids now explain the last layout's placements, refusal reasons,
@@ -48,6 +51,9 @@ fresh `[Unreleased]` heading created at that time.
 - Missing or whitespace-only Discord tokens now stop the operator with exit 2
   before background tasks start. Recalibration also returns exit 2 for missing
   reader credentials while retaining exit 1 for an exchange balance-read failure.
+- The imported package version now agrees with distribution metadata and the
+  release manifest. The import smoke test checks their agreement instead of
+  repeating a stale version literal.
 
 ### Maintenance
 

@@ -15,9 +15,10 @@ independent reviewers' findings were accepted into the plan (gate ordering and
 old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
 the 57-test focused starvation/offside baseline. C1/C2 and the bounded C4 startup
 repairs are complete locally. C3/C4 evidence is prepared in the
-[audit packet](2.0-closeout-audit.md); its three standards exceptions remain
-unaccepted. Release, deployment, tracker status changes and phase closure remain
-at their later gates; 2.1 implementation has not begun.
+[audit packet](2.0-closeout-audit.md). The operator accepted E01-E03 with
+"continue" on 2026-09-08 and authorized C5 release preparation. Publication,
+deployment, tracker status changes and phase closure remain at their later gates;
+2.1 implementation has not begun.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a
@@ -226,6 +227,29 @@ operator's E01-E03 decisions. C3/C4 are not accepted as formal close gates until
 those decisions are recorded. C5 source publication, release/tag, image,
 deployment and phase acceptance are outstanding. P3/P4 gates remain named in
 the backlog, and N1 is the proposed first 2.1 slice only after formal close.
+
+**C5 kickoff — 2026-09-08 UTC:** the operator accepted E01 (retain the current
+lint chain), E02 (roadmap as status ledger), and E03 (expanded CI at N2). Their
+scoped owners/triggers remain in the audit packet. This clears those decisions
+for release preparation, not publication/deployment or formal phase acceptance.
+Remote main was re-read at `aff47fc`; the latest Release remains v2.0.7 and no
+v2.0.8 tag exists. Local work starts from `27132ad`. Version preparation found
+`wobblebot.__version__` and its smoke-test literal still at 2.0.5 despite 2.0.7
+distribution metadata. The amended test reproduced that mismatch. C5 aligns
+manifest/imported/installed versions at 2.0.8 and checks their agreement.
+Isolated candidate-image, prior-image rollback and final package checks follow;
+no production service or external tracker was changed.
+
+**C5 Windows package gate ✅ 2026-09-08 UTC:** 2.0.8 candidate metadata was
+installed into the isolated C4 verifier without changing dependencies. Full
+default `pytest`, with strict config and mandatory tagged-upgrade gates:
+**3,995 passed, 30 deselected**, 174.78 seconds, **87.62%** coverage. `pip check`,
+Black (403 files), isort, mypy (153 source files) and pylint (10.00/10) pass.
+Both isolated version mutants (stale imported version and stale installed
+metadata) fail the strengthened test; its baseline and restored cases pass.
+The independently reviewed image rehearsal now also requires a non-trade ledger
+sentinel and exact logical-content comparison of restored data. These checks
+do not yet establish candidate-image or production acceptance.
 
 ## Post-v2.0 Security Maintenance
 
