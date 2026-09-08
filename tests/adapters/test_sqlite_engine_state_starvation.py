@@ -64,6 +64,7 @@ async def test_insert_upsert_and_clear_round_trip_every_field(storage):
     "column,value",
     [
         ("starved_ticks", "bad"),
+        ("starved_ticks", 0),
         ("starved_ticks", -1),
         ("starved_target", 0.5),
         ("starved_refusals", "bad"),

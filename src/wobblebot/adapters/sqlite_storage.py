@@ -146,6 +146,8 @@ def _read_starvation(row: aiosqlite.Row) -> tuple[int, int, int, int, dict[str, 
         return empty
     try:
         ticks = _parse_counter(row["starved_ticks"])
+        if ticks == 0:
+            return empty
         target = _parse_counter(row["starved_target"])
         refusals = _parse_counter(row["starved_refusals"])
         deferred = _parse_counter(row["starved_sells_deferred"])

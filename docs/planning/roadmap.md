@@ -324,6 +324,22 @@ production service deployed or monitor scheduled. Current production backups,
 live config/key-scope checks, final tag-image identity and authorized observation
 remain deployment gates. Formal 2.0.x acceptance and N0/N1 entry remain outstanding.
 
+**C5 publication review — 2026-09-08 UTC:** the authorized branch is published
+as [PR #141](https://github.com/CarlDog/wobblebot/pull/141). Its first CI, secret
+scan and CodeQL checks passed at `3db0455`. An automated review then identified
+a storage-contract edge case: zero persisted starvation ticks could retain other
+nonzero diagnostic counters. The current UI already suppresses zero ticks; no
+misleading current card or trading-state defect is claimed. A persisted-row
+regression reproduced the inconsistent tuple. The reader now returns the empty
+diagnostic tuple for zero ticks while retaining the separate pause/offside fields.
+Independent review confirmed the bounded fix. The affected storage/web/upgrade
+lane passes **30 tests**; isolated baseline/restored corruption lanes pass **15**,
+and removing the guard fails the new case. Full Windows verification passes
+**3,997 tests, 30 deselected**, 126.80 seconds, **87.62%** coverage, with all static,
+strict-config and mandatory upgrade gates passing. Updated image/Linux and PR CI
+checks must complete before merge/tag publication; the earlier image receipt
+remains historical evidence for the pre-review candidate.
+
 ## Post-v2.0 Security Maintenance
 
 - **2026-09-01 — logging redaction at the formatter boundary.** A CodeQL wave
