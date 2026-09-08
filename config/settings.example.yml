@@ -397,8 +397,8 @@ screener:
 # ============================================================================
 
 # Operator-controlled SETTINGS: shared cloud spend caps and retry policy.
-# Applies to Anthropic, OpenAI, Google and Atlas, including cloud fallbacks.
-# Ollama bypasses this cloud cost gate. enforce: false records without denying.
+# Applies to Anthropic, OpenAI, Google, Atlas and Ollama Cloud, including fallbacks.
+# Local Ollama bypasses this cost gate. enforce: false records without denying.
 # Omit/null only for a deployment that does not require cloud cost gating.
 llm:
   cost:

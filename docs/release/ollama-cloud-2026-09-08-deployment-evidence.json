@@ -1,0 +1,766 @@
+{
+  "scope": "Authorized Ollama Cloud, fallback and settings publication/NAS deployment. No seat activation, new release tag, phase acceptance or G6 entry.",
+  "publication": {
+    "source_commit": "1cbae64cbfead2a7b295e3291f332e1a5d14d171",
+    "pull_request": "https://github.com/CarlDog/wobblebot/pull/147",
+    "commits": [
+      "ea76d72",
+      "8f04027"
+    ],
+    "ci_and_publish": "https://github.com/CarlDog/wobblebot/actions/runs/34269250175",
+    "ci_status": "success",
+    "ci_completed_at": "2026-09-08T19:34:06Z",
+    "package_version": "2.0.9",
+    "image_identity": "Immutable source SHA tag and digest, not a new semantic release"
+  },
+  "deployment": {
+    "at": "2026-09-08T19:38:58.290710+00:00",
+    "action": "deploy",
+    "source": "1cbae64cbfead2a7b295e3291f332e1a5d14d171",
+    "image": "ghcr.io/carldog/wobblebot:sha-1cbae64",
+    "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+    "repo_digests": [
+      "ghcr.io/carldog/wobblebot@sha256:a58f873880441195d6decbcf5e334fbfc5928861f9f2f8ea6160abd4629165ce"
+    ],
+    "stack_id": 158,
+    "stack_file_version": 86,
+    "previous_image_tag": "2.0.9",
+    "unchanged_other_env": true,
+    "compose_sha256": "b9fb6b6a340f63b9a6319dc46cdc668442b69699a8a8f0cb9c76f9afb1eef599"
+  },
+  "verified_runtime": {
+    "at": "2026-09-08T19:40:40.127416+00:00",
+    "action": "verify",
+    "source": "1cbae64cbfead2a7b295e3291f332e1a5d14d171",
+    "image": "ghcr.io/carldog/wobblebot:sha-1cbae64",
+    "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+    "repo_digests": [
+      "ghcr.io/carldog/wobblebot@sha256:a58f873880441195d6decbcf5e334fbfc5928861f9f2f8ea6160abd4629165ce"
+    ],
+    "containers": [
+      {
+        "service": "advise",
+        "id": "cad52b936875d0b95eb046f6d5e5c870693f4367ff33237b7c52435d2521497e",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:05.397100414Z"
+      },
+      {
+        "service": "harvest",
+        "id": "e259bcf60aef7cbe451425ce9971c3dd87bdda279aeaf7b0f259ac818000e5ce",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:07.519974271Z"
+      },
+      {
+        "service": "live",
+        "id": "6c55a3abcceeecb87384ef8777a9bcceb831b4e08dc3630fdd9dfe5b79d756cc",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:07.928310651Z"
+      },
+      {
+        "service": "maintenance",
+        "id": "95c5e2da8f333daf72dbaf06ddf61a9eaeca4d1d05a7efd5fe8f96d956a6a40b",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:06.520780711Z"
+      },
+      {
+        "service": "news",
+        "id": "c9393f1249ea36f1c69003a9bc2bb899643fa6127ec79a33822972d85e31e917",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:03.611921518Z"
+      },
+      {
+        "service": "observe",
+        "id": "480d81572531fa8dc999a2010b7016b87c56ca368d3750ccf1ec52785c5cc9e1",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:07.70572902Z"
+      },
+      {
+        "service": "operator",
+        "id": "2533b6d46c741bbed6a0ca5a46d7b27cb236d4c1a51947daabe77dcf876795be",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:05.641509434Z"
+      },
+      {
+        "service": "web",
+        "id": "61460f264d55b0237169c61c05a37011bc3c5d869294177e77fbb46ef61d02c9",
+        "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "health": "healthy",
+        "restart_count": 0,
+        "started_at": "2026-09-08T19:39:06.360421013Z"
+      }
+    ]
+  },
+  "configuration": {
+    "at": "2026-09-08T19:34:39.221126+00:00",
+    "backup_directory": "pre-ollama-cloud-20260908T193439Z",
+    "files": [
+      {
+        "name": "settings.yml",
+        "before_sha256": "035f013ee1f525beca90db4cae37350f6ebf2c10249d32f5d758eb3605888b9f",
+        "after_sha256": "dfecfa249aa6171d1776a4b13ceb8605c72e9925f4984e31a78d4649030c7137"
+      },
+      {
+        "name": "settings.example.yml",
+        "before_sha256": "888f224db4d1799917b543efbcabcad15dacabb53ad32f2b3c1771de66187859",
+        "after_sha256": "6290544ab83359f97d6a94861b939a189c612ebd9393ff46a567b4a4308a8951"
+      }
+    ],
+    "profiles_verified": [
+      "base",
+      "conservative",
+      "aggressive",
+      "moe-advisor",
+      "cloud-only-moe",
+      "cpu-only"
+    ],
+    "resolved_values_unchanged": true
+  },
+  "compose_changes": [
+    {
+      "path": "/services/advise/environment/OLLAMA_API_KEY",
+      "before": null,
+      "after": "${OLLAMA_API_KEY:-}"
+    },
+    {
+      "path": "/services/tools/environment/OLLAMA_API_KEY",
+      "before": null,
+      "after": "${OLLAMA_API_KEY:-}"
+    }
+  ],
+  "preserved_live_compose": "Watchtower labels on all nine services, tools healthcheck, mounts, permissions and all unrelated environment values retained.",
+  "preflight": {
+    "at": "2026-09-08T19:36:11.406365+00:00",
+    "action": "preflight",
+    "source": "1cbae64cbfead2a7b295e3291f332e1a5d14d171",
+    "image": "ghcr.io/carldog/wobblebot:sha-1cbae64",
+    "image_id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+    "repo_digests": [
+      "ghcr.io/carldog/wobblebot@sha256:a58f873880441195d6decbcf5e334fbfc5928861f9f2f8ea6160abd4629165ce"
+    ],
+    "preflight_exit_code": 0
+  },
+  "preflight_scope": "Isolated new-image container, read-only NAS config, in-memory database, Kraken validate=true, six of six BTC orders accepted, trader Withdraw permission absent; no real orders placed.",
+  "money_shutdown": {
+    "live_exit_code": 0,
+    "harvest_exit_code": 0,
+    "method": "Standard Docker stop with 180-second graceful window; both exited within seconds."
+  },
+  "money_path": {
+    "remaining_orders_for_configured_symbols": 0,
+    "other_account_orders": 0,
+    "transfer_command_status_counts": {},
+    "approved_transfer_commands": 0,
+    "pending_transfer_results": 0
+  },
+  "database_backups": {
+    "started_at": "2026-09-08T19:37:27.744080+00:00",
+    "directory": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z",
+    "backups": [
+      {
+        "source": "/app/data/wobblebot-advise.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-advise-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 27013120,
+        "sha256": "bcf8972d3c9b60da2b2437e626a1b308896f31c3592bef5301c18a44e6878a0d"
+      },
+      {
+        "source": "/app/data/wobblebot-harvest.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-harvest-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 368640,
+        "sha256": "c112ff55e5ffdb1c8977d0593ad130527a3a64d152745337d56636705dba7616"
+      },
+      {
+        "source": "/app/data/wobblebot-live.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-live-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 1134592,
+        "sha256": "1dba773da5835cc72665ad1f9f997db9b5cab61d5e518850ccdd4bf41449ea1b"
+      },
+      {
+        "source": "/app/data/wobblebot-news.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-news-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 11538432,
+        "sha256": "579583371b4ef80a0da52d1f63979a839371196ccf61710d913925c062211c06"
+      },
+      {
+        "source": "/app/data/wobblebot-observe.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-observe-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 173080576,
+        "sha256": "32a0afec659e4015eedf92a9f1a36b3e17a8a4a398d6e62d88dad49651f3daaf"
+      },
+      {
+        "source": "/app/data/wobblebot-operator.db",
+        "path": "/app/data/backups/deploy-ollama-cloud-20260908T193727Z/wobblebot-operator-20260908-1937.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 2625536,
+        "sha256": "aaccb5441166e37af7b5cee7e5931886b668bebf15e4c5291a7ec41723a01f17"
+      }
+    ],
+    "finished_at": "2026-09-08T19:37:36.061185+00:00"
+  },
+  "database_integrity": {
+    "wobblebot-advise.db": "ok",
+    "wobblebot-harvest.db": "ok",
+    "wobblebot-live.db": "ok",
+    "wobblebot-news.db": "ok",
+    "wobblebot-observe.db": "ok",
+    "wobblebot-operator.db": "ok"
+  },
+  "record_preservation": {
+    "before": "2026-09-08T19:38:15.535896+00:00",
+    "after": "2026-09-08T19:39:35.402418+00:00",
+    "comparisons": [
+      {
+        "database": "wobblebot-advise.db",
+        "table": "orders",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "trades",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "ledger_entries",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "transfer_proposals",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "pending_commands",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "engine_state",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "notifications",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-advise.db",
+        "table": "llm_calls",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "orders",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "trades",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "ledger_entries",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "transfer_proposals",
+        "retained": 54,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "pending_commands",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "engine_state",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "notifications",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-harvest.db",
+        "table": "llm_calls",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "orders",
+        "retained": 2199,
+        "added": 12,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "trades",
+        "retained": 219,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "ledger_entries",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "transfer_proposals",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "pending_commands",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "engine_state",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "notifications",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-live.db",
+        "table": "llm_calls",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "orders",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "trades",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "ledger_entries",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "transfer_proposals",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "pending_commands",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "engine_state",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "notifications",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-news.db",
+        "table": "llm_calls",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "orders",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "trades",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "ledger_entries",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "transfer_proposals",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "pending_commands",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "engine_state",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "notifications",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-observe.db",
+        "table": "llm_calls",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "orders",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "trades",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "ledger_entries",
+        "retained": 491,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "cap_trips",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "transfer_proposals",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "transfer_results",
+        "retained": 0,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "pending_commands",
+        "retained": 59,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "engine_state",
+        "retained": 6,
+        "added": 0,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "notifications",
+        "retained": 389,
+        "added": 1,
+        "changed_statuses": {}
+      },
+      {
+        "database": "wobblebot-operator.db",
+        "table": "llm_calls",
+        "retained": 4935,
+        "added": 2,
+        "changed_statuses": {}
+      }
+    ],
+    "failures": [],
+    "passed": true
+  },
+  "provider_support": {
+    "provider_importable": true,
+    "key_present_nonempty": true,
+    "engine": "cascade",
+    "routes": [
+      {
+        "role": "quant",
+        "provider": "atlas",
+        "model": "xai/grok-4.5",
+        "fallbacks": 0
+      },
+      {
+        "role": "risk",
+        "provider": "openai",
+        "model": "gpt-5-mini",
+        "fallbacks": 0
+      },
+      {
+        "role": "news",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "fallbacks": 0
+      },
+      {
+        "role": "arbitrator",
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "fallbacks": 0
+      }
+    ],
+    "priced_models": [
+      "gpt-oss:120b",
+      "gpt-oss:20b",
+      "qwen3.5:397b",
+      "gemma4:31b"
+    ],
+    "ledger_provider_migrated": true,
+    "cloud_call_rows": 0,
+    "config_sha256": "dfecfa249aa6171d1776a4b13ceb8605c72e9925f4984e31a78d4649030c7137"
+  },
+  "web_smoke": {
+    "at": "2026-09-08T19:39:36.870896+00:00",
+    "method": "GET",
+    "origin": "container_loopback",
+    "authentication": "ephemeral_existing_operator_signed_session",
+    "routes": {
+      "anonymous:/healthz": 200,
+      "anonymous:/auth/login": 200,
+      "anonymous:/dashboard": 302,
+      "authenticated:/dashboard": 200,
+      "authenticated:/status/card": 200,
+      "authenticated:/advisor": 200
+    },
+    "cards": [
+      {
+        "symbol": "ADA/USD",
+        "states": []
+      },
+      {
+        "symbol": "BTC/USD",
+        "states": [
+          "OFFSIDE"
+        ]
+      },
+      {
+        "symbol": "DOGE/USD",
+        "states": []
+      },
+      {
+        "symbol": "ETH/USD",
+        "states": [
+          "OFFSIDE"
+        ]
+      },
+      {
+        "symbol": "SOL/USD",
+        "states": []
+      },
+      {
+        "symbol": "XRP/USD",
+        "states": [
+          "STARVED"
+        ]
+      }
+    ],
+    "passed": true
+  },
+  "local_verification": {
+    "full_suite": "4224 passed; 30 integration tests deselected; upgrade and strict-drift gates enabled.",
+    "final_config_command": "python -m pytest tests/config/test_schema_drift.py -q --tb=short with WOBBLEBOT_STRICT_CONFIG_DRIFT=1",
+    "final_config_result": "32 passed; data-only tests import no application code, so pytest-cov emitted no-data warnings.",
+    "config_semantics": "Base and all five NAS profiles equal before and after; only thirteen empty fallback lists added to raw values."
+  },
+  "cutover_note": "New fallback fields were briefly installed before the old 2.0.9 image stopped; old-image health checks rejected them. Prior settings were restored for the final old-image checks, then candidate settings activated adjacent to stack redeploy. Final new-image health and config checks all passed.",
+  "remaining_observations": [
+    "News and arbitrator still receive Anthropic HTTP 400 insufficient_credit; the new cascade was observed returning heuristic HOLD at 19:40:01 UTC. No credentials, balances or model selections changed.",
+    "All active fallback lists remain empty. Ollama Cloud key presence and installed support verified; no Ollama Cloud inference or key-validity/seat qualification probe performed. Zero Ollama Cloud ledger rows at verification.",
+    "Maintenance startup pruning refused to overwrite existing observe and news archive files. Service healthy; retention jobs will retry. Not remediated in this deployment."
+  ],
+  "rollback": "Revert image tag to 2.0.9 and restore config from pre-ollama-cloud-20260908T193439Z before restart. Preserve all database history. After future Ollama Cloud activation, old readers cannot decode Cloud provider rows; use a compatible reader or reviewed restore plan rather than deleting rows."
+}

@@ -5,6 +5,49 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Ollama Cloud publication + NAS deployment — ✅ 2026-09-08 UTC:**
+[PR #147](https://github.com/CarlDog/wobblebot/pull/147) merged the counter-order
+cap fix, settings layout, cloud fallback plumbing/presets and Ollama Cloud provider
+as `1cbae64cbfead2a7b295e3291f332e1a5d14d171`. The merged-source
+[CI and image publication](https://github.com/CarlDog/wobblebot/actions/runs/34269250175)
+passed. Stack 158 / endpoint 2 now uses `ghcr.io/carldog/wobblebot:sha-1cbae64`
+(Compose version 86). This is a source-pinned maintenance deployment; the package
+version remains 2.0.9 and no new release tag or phase acceptance is claimed.
+
+At 19:40 UTC, all eight daemons were healthy with zero restarts and the expected
+image digest/revision. Validation-only preflight accepted six of six orders;
+the trader key has no withdrawal scope. Trading and harvesting stopped cleanly
+with exit 0; no configured-symbol orders or pending/approved transfers remained.
+Six online database backups passed restoration checks, all six deployed databases
+passed integrity checks, and 60 logical record-preservation comparisons passed,
+including the LLM ledger migration. Health, login, authenticated dashboard,
+status cards and advisor-page GET checks passed.
+
+The operator also requested the NAS config directory update. Its settings and
+example now carry the new layout/provider guidance; thirteen explicit empty
+fallback lists were added. The base and all five profiles resolve identically
+before/after, preserving the NAS committee, budgets, caps, schedules and identity
+values. Prompts, heuristic and config README already matched. Original settings
+are backed up under `config/pre-ollama-cloud-20260908T193439Z`. The old image briefly
+rejected the new fields during health checks; prior settings were restored for
+old-image verification, then the new settings activated at the image cutover.
+Future upgrades/rollbacks must pair the settings schema with the compatible image.
+
+`OLLAMA_API_KEY` is present and nonempty in the advisor; no value was exposed.
+Support, four price entries and the ledger constraint are verified. Existing
+seats and empty fallback lists remain unchanged; no Ollama Cloud inference or
+seat qualification ran. Anthropic still returns `insufficient_credit` for news
+and arbitration; the live cascade was observed returning heuristic HOLD instead
+of failing the cycle. Maintenance also reported existing-archive collisions that
+defer retention pruning; this deployment does not resolve those warnings.
+
+The [sanitized deployment evidence](../release/ollama-cloud-2026-09-08-deployment-evidence.json)
+records image identities, config hashes, backups and exact checks. The final
+comment-only settings correction passed all 32 strict schema-drift tests; coverage
+reported no application data because these tests only inspect configuration files.
+The implementation's 4224-test receipt below remains the full-suite baseline.
+ADR-044 POLICY remains proposed and G6 remains gated.
+
 **Ollama Cloud provider — local ✅ 2026-09-08 UTC:**
 the operator authorized the distinct `ollama_cloud` provider for single-advisor,
 MoE expert/arbitrator and fallback targets. [ADR-045](../architecture/adr-045-ollama-cloud-provider.md)
@@ -57,8 +100,9 @@ isort `--check-only` on the same paths pass (422 files checked by Black).
 Mypy `src/` passes (158 source files); pylint `src/` passes at 10.00/10, with
 changed config/migration modules rechecked after final fixes. `git diff --check`
 passes. Earlier uncommitted fallback/cap/layout work is preserved and covered by
-the full suite. No paid calls, activation, commit/push, NAS deployment, live ledger
-migration, phase acceptance or G6 entry occurred.
+the full suite. At this local-verification checkpoint, no paid calls, activation,
+commit/push, NAS deployment, live ledger migration, phase acceptance or G6 entry
+had occurred; the later publication/deployment receipt is above.
 
 **Equivalent-cloud fallback order — local ✅ 2026-09-08 UTC:**
 the operator clarified that the previously selected first cloud fallback should
