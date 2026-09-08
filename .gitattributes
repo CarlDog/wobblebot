@@ -1,3 +1,6 @@
+# Default to LF for text; binary overrides below remain authoritative.
+* text=auto eol=lf
+
 # Force LF line endings for files that MUST stay LF on Linux
 # regardless of the developer's Git core.autocrlf setting.
 #

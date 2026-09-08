@@ -202,8 +202,10 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 
 Run a phase-end audit at every phase close (Phase 1 → Phase 2,
 Phase 2 → Phase 3, etc.) before starting the next phase. The
-**global rule lives at `~/.Codex/rules/phase-end-audit.md`** —
-read that first; the cadence table and process discipline apply
+**global rule is the installed Fleet Kit phase-end-audit skill and its
+bundled `reference/rules/phase-end-audit.md`** —
+read that first (resolve the current plugin location rather than a stale host path);
+the cadence table and process discipline apply
 to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)

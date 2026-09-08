@@ -45,6 +45,17 @@ fresh `[Unreleased]` heading created at that time.
   to supervision; cancellation and normal shutdown retain distinct INFO messages.
 - Discord confirmation refusals now contain connection, DNS and timeout failures
   while keeping the approval gate closed and the shared confirmation unchanged.
+- Missing or whitespace-only Discord tokens now stop the operator with exit 2
+  before background tasks start. Recalibration also returns exit 2 for missing
+  reader credentials while retaining exit 1 for an exchange balance-read failure.
+
+### Maintenance
+
+- The closeout backlog now reconciles historical candidates, issue dispositions
+  and gated next-phase work. Release limitations and proposed standards exceptions
+  are explicit; the roadmap remains the only phase-status ledger.
+- Dependabot groups only the reviewed dev-only minor/patch updates for fleet
+  routing. Runtime packages and major upgrades retain individual review.
 
 ## [2.0.7] - 2026-09-05
 

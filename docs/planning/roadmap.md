@@ -13,9 +13,11 @@ with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-2
 receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
 independent reviewers' findings were accepted into the plan (gate ordering and
 old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
-the 57-test focused starvation/offside baseline. C1 and C2 are complete locally. Release,
-deployment, tracker status changes and phase closure remain at their later gates;
-2.1 implementation has not begun.
+the 57-test focused starvation/offside baseline. C1/C2 and the bounded C4 startup
+repairs are complete locally. C3/C4 evidence is prepared in the
+[audit packet](2.0-closeout-audit.md); its three standards exceptions remain
+unaccepted. Release, deployment, tracker status changes and phase closure remain
+at their later gates; 2.1 implementation has not begun.
 
 **C1 local implementation and verification ✅ 2026-09-08 UTC:** the preserved
 starvation patch is complete through the rendered card. Persistence adds a
@@ -72,6 +74,158 @@ all three isolated catch-width mutants were caught. Full suite: **3,987 passed,
 29 deselected** in 132.44 seconds; Black/isort, mypy (153 source files), pylint
 (10.00/10), strict config and mandatory upgrade gates pass. C3/C4 reconciliation
 and audit remain; the four repairs are not a release or production acceptance.
+Commit: `6930549`.
+
+**C3 reconciliation evidence — 2026-09-08 UTC; decisions pending:**
+[backlog.md](backlog.md) maps all **133 candidate headings** in the nine legacy
+files, plus their index, smaller refactor registers, four-homes items, standing
+rules, future ideas, probe punch list and seven GitHub items. Independent review
+found no missing heading; logging installments 1-3 and the existing config CLI
+size rationale are classified as shipped/resolved. Old plans retain historical
+reasoning and forward pointers; phase/ADR navigation and file-stack deployment
+instructions are corrected. The API reference now separates public test evidence,
+private documentation review and unverified authenticated behavior.
+
+GitHub issues **#18, #22, #23, #97** and PRs **#138, #139, #140** were verified
+open; none was closed or merged. Exact PR heads and check findings are in the
+audit packet. Pylint/stub candidate checks pass separately and together; isort 9
+is parked for its pylint constraint, explicit UTF-8 verification and platform
+checks. The old July Anthropic quant run is still incomplete; later seat work
+does not retroactively complete it. Explicit retirement as superseded is the
+proposed #23 disposition. #22 remains standing watch state; #97 retains N5's
+watcher/funding decision.
+
+Canonical Fleet **python-service v3.0** audit: **19 PASS, 1 FAIL (PY-01)** after
+the scoped LF, Dependabot, provenance, status-pointer and confidence-marker
+repairs. Manual review preserves **E01 Ruff, E02 ledger location and E03 CI
+shape** as proposed exceptions, not accepted conformance. The root pointer
+satisfies the machine check but not UNI-08's semantic root-ledger rule.
+The `pip-dev` whitelist contains ten exact development package names, with no
+overlap in the installed Windows runtime closure; `python-dotenv` is excluded
+because uvicorn installs it at runtime. No main dependency pins or CI jobs changed.
+
+**C3 data-readiness snapshot — 2026-09-08 UTC; G1/G3 remain held:** read-only
+queries used completed SQLite online backups from **01:34 UTC**, opened immutable
+and read-only, rather than a live WAL database. The window is the **30 complete
+UTC days, 2026-08-09 through 2026-09-07**. These are coverage observations, not
+attributions of outages, trading losses or missing records.
+
+| Input / authoritative DB | Rows in window | Days with rows | Largest gap between rows |
+| --- | ---: | ---: | ---: |
+| Trades / live | 128 | 17 | 103.76 hours |
+| Order creation timestamps / live | 1,577 | 22 | 94.24 hours |
+| Balance snapshots / observe | 4,051 | 29 | 29.85 hours |
+| Advisor suggestions / advise | 1,740 | 30 | 4.10 hours |
+| LLM calls / operator | 3,433 | 30 | 13.56 hours |
+| Transfer proposals / harvest | 10 | 1 | Event-driven; no periodic expectation inferred |
+
+The balance window lacks August 16. Trades and proposals are irregular events,
+so empty days alone do not establish a fault. Orders retain their latest state,
+not a cancellation event stream; the heartbeat table is latest-only upserts.
+LLM calls reside in **operator.db**, so an empty advise.db LLM table is not
+missing billing evidence. Current retention code protects forensic trade/order/
+transfer history; configured retention targets are news, conversations and
+notifications, with separate price pruning. This code policy does not prove past
+operator settings or explain every gap. N3 design must choose usable per-signal
+baselines and a consumer before G1 implementation.
+
+Each traded USD pair (BTC, ETH, SOL, DOGE, XRP, ADA) has **984 hourly bars** bounded
+by July 29 00:00 through September 7 23:00 UTC in the inspected backup; this does
+not cover Q2. Older one-minute fragments are not a complete quarter. Local
+`2026Q1` hourly files for all six end March 31 23:00 UTC; no Q2 directory was
+present in the inspected local history root. The canonical advise backup contains
+**0 recommendation outcomes**, with **4,153 suggestions** lacking outcomes.
+No scoring job or production data repair ran. G3 requires complete imports and
+the authorized canonical NAS scoring receipt, including pending/missing-bar cases.
+
+Read-only Portainer evidence: **file-managed stack 158, StackFileVersion 85,
+IMAGE_TAG 2.0.7**, no GitConfig/AutoUpdate, and **eight healthy containers**.
+The inspected maintenance container uses Python **3.14.7**. This is the baseline
+deployment, not candidate acceptance; no task-failure/recovery event was verified.
+No trading, transfer, settings, Compose or image mutation occurred in this audit.
+
+**C4 bounded audit repairs ✅ 2026-09-08 UTC:** the walkthrough exposed missing
+credential behavior in two CLIs. Operator startup now rejects an absent, empty
+or whitespace-only configured Discord token before creating async work; the
+configured variable is honored. Recalibration returns **2** for missing reader
+credentials and retains **1** for a failed exchange read. Independent review
+caught the whitespace case and confirmed its correction. Eight new regressions
+and existing related tests give **29 targeted passes**. Commit: `1e704a9`.
+
+The explicit offline integration lane also exposed a stale multi-turn fixture:
+`status?` now takes the shipped deterministic path. The corrected test covers
+both that path and a prose/model path, exact model calls, preserved first-turn
+history and final reply. It does not disable the classifier or weaken the
+history assertion. Independent review confirmed the correction. The selected
+mock-exchange/operator/simulator lane passes **10 tests**. Commit: `71c33db`.
+Six additional isolated-worktree mutations were caught with both baseline and
+restored lanes green: missing-token guard, whitespace handling, credential/read
+exit distinction, dropped history and disabled fast status. Across C1-C4,
+**33 targeted mutations** were caught; mutation evidence is local mechanism
+verification, not a production fault/recovery receipt.
+
+**C4 final local verification ✅ 2026-09-08 UTC; release gate still pending:**
+the integrated runtime/test candidate is **`71c33db`**. An isolated environment
+installed from the current manifest replaces the initial environment as final
+evidence: **Python 3.13.14**, all declared dev pins matching, `pip check` clean.
+The old environment was behind six pins (Starlette, uvicorn, mypy, pylint,
+python-dotenv, httpx2); it was preserved. The sanitized
+[package snapshot](../release/2.0-closeout-environment.txt) records installed
+versions; it is not a hash lock or a Docker/runtime acceptance claim.
+
+Commands used the same interpreter below; each command was checked separately
+and execution stopped on failure. The final run completed all gates:
+
+```powershell
+$verifyPython = 'tmp/c4-environment/Scripts/python.exe'
+$env:WOBBLEBOT_REQUIRE_UPGRADE_GATE = '1'
+$env:WOBBLEBOT_STRICT_CONFIG_DRIFT = '1'
+& $verifyPython -m pip check
+& $verifyPython -m black --check src/ tests/
+& $verifyPython -m isort --check-only src/ tests/
+& $verifyPython -m mypy src/
+& $verifyPython -m pylint src/
+& $verifyPython -m pytest
+& $verifyPython -m pytest tests/config/test_schema_drift.py -q --no-cov
+& $verifyPython -m pytest tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py -m integration -q --no-cov
+```
+
+Final default suite: **3,995 passed, 30 integration tests deselected**, no skips,
+**193.77 seconds**, **87.62% source coverage**. Black checks **403 files**;
+isort passes, mypy checks **153 source files**, pylint is **10.00/10**. Strict
+schema-drift checks: **32 passed**, no warnings/skips, including local operator
+files without printing values. The final documentation/routing-only commit
+reuses these unchanged runtime/test gates and has its own diff/link/hook checks.
+
+The finite subprocess walkthrough passes **127 cases** across all **16 CLIs**:
+missing config directory, missing settings with no fallback, bad explicit path,
+bad profile, example-file fallback (stopped by a named bad profile before service
+work), and **15** applicable missing-section cases. Recalibrate has no dedicated
+section. Each CLI also received absent `.env` and empty-credential fixtures.
+Optional-credential paths use finite work: sandbox's mock cycle, empty apply/
+screener databases, disabled news sources and empty maintenance targets.
+Those optional paths return their documented result/data/config codes; they do
+not acquire a new credential requirement. News/maintenance missing-reader/no-source
+unit coverage also ran. Prompt paths and dotenv ancestor discovery were isolated.
+The harness's initial socket guard was insufficient to block async loopback
+warmup; the pre-fix operator reached local Ollama and received a 404. No paid
+provider or financial API was called. Final missing-token startup exits before
+warmup; the regression independently asserts no async work is constructed.
+
+Five existing public Kraken contract checks also passed (**3.95 seconds**) via
+`pytest tests/integration/test_kraken_api_health.py -m integration -q --no-cov`
+in the initial environment. Private/paid integration lanes were deliberately
+excluded after inventory; public evidence does not certify private permissions.
+Domain outward-import scan was empty. Category commits passed gitleaks, PII and
+identity hooks. Actual Kraken key scopes, candidate Linux/image behavior,
+prior-container rollback and the proposed finite deployment window retain C5
+checks. No new money operation ran, so no cost-ledger debit is added.
+
+**Handoff:** local implementation/reconciliation evidence is ready for the
+operator's E01-E03 decisions. C3/C4 are not accepted as formal close gates until
+those decisions are recorded. C5 source publication, release/tag, image,
+deployment and phase acceptance are outstanding. P3/P4 gates remain named in
+the backlog, and N1 is the proposed first 2.1 slice only after formal close.
 
 ## Post-v2.0 Security Maintenance
 
@@ -2882,9 +3036,15 @@ dms_trigger_at` as of the START of the tick, so a same-tick
     does is whether the operator container exits and comes BACK, rather than
     sitting unhealthy.
 
-## Phase 9 – Kraken Securities Equities (Committed Track, Post-v1.0)
+## Phase 9 – Kraken Securities Equities (Committed Track, After 2.1 Close)
 
-**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after v1.0 tag. No work has begun; this is the scoping sketch.
+**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after the accepted 2.1 closure. No implementation has begun; this remains a historical scoping sketch.
+
+**Reconciliation 2026-09-08:** the market/API, account, session, PDT, settlement,
+tax and capital figures below are May 2026 design assumptions, not verified
+current rules or approved implementation requirements. Refresh official sources
+at kickoff and ratify a new equity-risk ADR. ADR-019 already governs advisor
+purpose and cannot be reused. See backlog G9 for the active gate.
 
 **Motivating context.** Kraken added US-listed stock + ETF trading via a FINRA-regulated Kraken Securities LLC (broker-dealer partnership with Alpaca; announced April 2025; ~11,000 commission-free symbols; 24h M-F on Kraken Pro). Kraken extended their REST API in August 2025 with an additive `asset_class` parameter on existing endpoints (Add Order, Open Orders, Ticker, etc.) — equities support is API-accessible via the same authentication + signing path as crypto. Operator's strategic case: decorrelation from crypto (alt-to-alt grids are highly correlated; stock-to-crypto less so), larger universe (11k vs ~50 useful Kraken crypto pairs), volatile single-stocks (TSLA, NVDA) have wider daily ranges than BTC = real edge multiplier when capital allows.
 
@@ -2894,7 +3054,7 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 
 **Proposed slicing.** Six substantive slices + a closing check. Approximate effort: 2-3 months of focused work.
 
-1. **Stage 9.0 – Kickoff + ADR-019.** Ratify the equity-grid risk model: PDT-aware grid variant; settlement-aware cycle pacing; earnings-pause posture; wash-sale-aware tax accounting; below-$25k operating profile. New `docs/planning/stage-9.0-design.md` ratifying ~10 implementation decisions. No code in kickoff.
+1. **Stage 9.0 – Kickoff + equity-risk ADR (number unallocated).** Ratify the equity-grid risk model: PDT-aware grid variant; settlement-aware cycle pacing; earnings-pause posture; wash-sale-aware tax accounting; below-$25k operating profile. New `docs/planning/stage-9.0-design.md` ratifying ~10 implementation decisions. No code in kickoff.
 2. **Stage 9.1 – `KrakenAdapter` equities extension.** Add `asset_class` parameter awareness to relevant calls; stock-symbol parsing + asset-pair metadata handling for stocks (precision, lot size, market-hours metadata); new error mapping for equities-specific Kraken responses. Doesn't change the engine — just teaches the adapter to talk stocks. ~2-3 weeks; substantial tests.
 3. **Stage 9.2 – PDT-aware safety layer.** New `services/pdt_safety.py` maintains a rolling 5-trading-day same-day-round-trip count from the existing `trades` table; new safety check refuses counter-placement that _could_ complete a same-day round-trip if it would push the count to 4-in-5-days. Account-equity check at engine startup: refuse to operate (or warn loudly) if equity < $25k AND PDT-aware mode is not explicitly opted into. New `safety.pdt:` config block. The Stage 8.1 reconciler patterns transfer cleanly — this is the same "engine knows its own history" shape.
 4. **Stage 9.3 – Earnings calendar integration.** New `services/earnings_calendar.py` ingests earnings dates from a data source (TBD: Alpaca's calendar endpoint? EDGAR? a third-party feed?). New safety check pauses the grid for a configurable window around announced earnings (default e.g. 2 days before, 1 day after). Operator-overridable per-symbol. New `notifications` events for pause-entered/pause-exited.
@@ -2902,13 +3062,13 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 6. **Stage 9.5 – Tax export + wash-sale tracking.** New `cli/tax-export` (or `tools/tax_export.py`) producing 1099-B-compatible CSV from the `trades` table. Wash-sale lot tracking per IRS rules (substantially-identical security + 30-day rule; the grid does this every cycle by design). Integration with web UI's cost dashboard for year-to-date tax-relevant summaries. Tax accounting is non-optional for equities long-term; ship it before tax filing season.
 7. **Stage 9.6 – Phase 9 Integration Check.** Multi-symbol equity-grid live test (TSLA + 2-3 other choppy names); PDT counter exercised end-to-end; earnings-pause exercised against a real upcoming earnings date; tax export verified. Closing summary at `docs/planning/phase-9-summary.md`.
 
-**Open design questions for ADR-019 to settle** (deferred until kickoff):
+**Open design questions for the new equity-risk ADR to settle** (deferred until kickoff):
 
 - PDT counter implementation: rolling 5-trading-day window vs. calendar-week approximation. Trading-day awareness adds NYSE calendar dependency (holidays, half-days, early closes).
 - Day-trade-vs-swing classification: when does a "fill + counter-fill" pair count as a day trade for our purposes? At actual execution timestamp on the exchange? At intent timestamp on our side?
 - Wash-sale tracking granularity: per-symbol or per-substantially-identical-cluster (TSLA + TSLA-options = same cluster)?
 - Earnings-pause data source: Alpaca's calendar (we already partner with them via Kraken), EDGAR (free, official, fiddly), or a third-party feed (paid, polished)?
-- T+1 settlement and cash-account rules: can the counter-order place before settlement? Margin account would solve this but introduces margin's risk model (gated by ADR-019's risk model decisions).
+- T+1 settlement and cash-account rules: can the counter-order place before settlement? Margin account would solve this but introduces margin's risk model (gated by the new equity-risk ADR's decisions).
 - Multi-grid portfolio sizing: capital allocator across crypto + stocks. Operator's $100 → $1000 trajectory makes this a real concern, not hypothetical.
 - Symbol format: confirm via live API exploration whether TSLA equity is `TSLA` or `TSLA.US` or some other format; document the asset-class metadata schema.
 

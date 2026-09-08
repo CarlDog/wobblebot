@@ -1,10 +1,18 @@
 # External triggers — waiting on third parties
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 *Entries here hinge on third-party events (Kraken API changes, Kraken fee changes, the CryptoCompare evaluation deadline). Triggers are calendar- or vendor-driven, not soak-driven.*
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
 
 ### CryptoCompare 90-day evaluation outcome
+
+> Retired: the provider became paid-only on 2026-07-31 and is disabled by
+> default. The old 90-day evaluation below is historical, not an open deadline.
 
 **What:** ADR-010's deferred decision. Due **2026-08-13**. If
 CryptoCompare's free tier reliability hasn't met news-role needs,
@@ -29,6 +37,10 @@ the canonical detection path.
 **Trigger:** any integration test failure post-tag.
 
 ### Kraken trading fee changes
+
+> Historical rate examples below are superseded by ADR-038's account-specific
+> TradeVolume check and per-fill tripwire. Do not use the old percentages as
+> current account rates or run a diagnostic trade merely to refresh this entry.
 
 **What:** Stage 2.3 ratified "live taker fee is 0.40%, not the
 mock's 0.26%". If Kraken's fee schedule shifts, the mock's

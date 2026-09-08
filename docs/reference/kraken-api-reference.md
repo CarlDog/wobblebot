@@ -15,19 +15,32 @@
 > Kraken txid strings, not UUIDs. `Order` uses the dual-ID strategy
 > recommended in section "Architectural Recommendations → 1".
 >
-> The Kraken API descriptions themselves (request/response shapes,
-> field semantics, precision rules) remain accurate and useful as a
-> reference when implementing the Kraken adapter in Phase 2.
+> API examples below are historical snapshots, not a complete current API
+> contract. The current adapter and the bounded verification record below
+> identify the supported surface; consult the linked official endpoint docs
+> before expanding it.
 
-> **Live verification:** 2026-05-14. Public endpoints
-> (`SystemStatus`, `AssetPairs`, `Ticker`, `Assets`) re-fetched against
-> `api.kraken.com` and cross-checked against the shapes below. Private
-> endpoints (`Balance`, `OpenOrders`, `TradesHistory`, `AddOrder`,
-> `Withdraw`) are not live-verified — claims about them come from
-> Kraken's documentation and have not changed in the intervening
-> period to public knowledge. The integration test
-> `tests/integration/test_kraken_api_health.py` re-checks public
-> shapes on demand.
+> **Public live verification: 2026-09-08 UTC.** All five checks in
+> `tests/integration/test_kraken_api_health.py` passed against `SystemStatus`,
+> `AssetPairs` (XBT and XDG), `Ticker`, and `Assets`. This verifies the fields
+> asserted by that test, not every example or every Kraken endpoint.
+>
+> **Private documentation review: 2026-09-08 UTC.** No authenticated request,
+> order validation/placement, or withdrawal was made in this review. Official
+> docs still describe balances as an asset-keyed result, open orders keyed by
+> txid, paginated trade history, and `AddOrder`'s validation-only option. New
+> optional fields and the legacy funding deprecation make the former blanket
+> "unchanged" claim inappropriate. Issue #97 remains open for the funding
+> compatibility decision and provider-watch follow-up in
+> [the backlog](../planning/backlog.md).
+
+| Reviewed surface | Bounded conclusion and current source |
+| --- | --- |
+| Balance | Asset-keyed balances; optional wallet/account and asset suffix semantics require consumer-specific review. [Official Balance reference](https://docs.kraken.com/api-reference/account-data/get-account-balance). |
+| OpenOrders | `result.open` remains keyed by order ID, with status, descriptor, volume and executed volume. [Official OpenOrders reference](https://docs.kraken.com/api-reference/account-data/get-open-orders). |
+| TradesHistory | `ofs` pagination remains; `limit` now documents default 50 and range 1-100. The historical examples are not the complete parameter list. [Official TradesHistory reference](https://docs.kraken.com/api-reference/account-data/get-trades-history). |
+| AddOrder | `validate=true` is documented as validation without matching-engine trading. This review did not call it. [Official AddOrder reference](https://docs.kraken.com/api-reference/trading/add-order). |
+| Withdraw | **Legacy endpoint deprecated.** Kraken says it remains active but will receive no updates and recommends Funding (Beta). The current `asset`/`key`/`amount` request and `refid` response remain documented. This is a migration-design obligation, not evidence of a failed withdrawal or permission to change transfer authority. [Official Withdraw reference](https://docs.kraken.com/api-reference/funding/withdraw-funds). |
 
 **Purpose:** Domain model design decisions based on Kraken REST API v0 data structures and field naming conventions.
 

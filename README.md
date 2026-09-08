@@ -7,6 +7,9 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![CI](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml)
 
+<!-- fleet-confidence -->
+<!-- /fleet-confidence -->
+
 > **⚠ Disclaimer.** WobbleBot is a personal hobby project. It places real
 > orders against real money on a real exchange when you run it in `live`
 > mode. **YOU CAN LOSE REAL MONEY.** The code is provided "AS IS" with no
@@ -42,6 +45,10 @@ Built on **hexagonal architecture (Ports & Adapters)** for clean boundaries, tes
 The roadmap owns current phase, release, quality, and real-money receipts. Release history is
 summarized in [`CHANGELOG.md`](CHANGELOG.md); do not copy point-in-time counts or phase tables from
 either file into this README.
+
+Use the [backlog index](docs/planning/backlog.md) for retained work and its gates,
+the [closeout audit](docs/planning/2.0-closeout-audit.md) for release decisions,
+and the [2.0 limitations](docs/release/v2.0-known-limitations.md) for operational boundaries.
 
 ---
 

@@ -1,17 +1,20 @@
 # WobbleBot v1.1 — Plan & Index
 
-**This file is the master plan and index for v1.1.** The sibling files in this
+**Historical plan and source catalog for work released as 2.0.0.** Current
+execution order and retained candidates are reconciled in
+[the backlog index](../../planning/backlog.md); completion remains in the roadmap.
+The sibling files in this
 directory (`engine.md`, `adaptive-grid.md`, `harvester.md`, `news-pipeline.md`,
 `observability.md`, `operator-ux.md`, `trading-scope.md`, `external-triggers.md`,
 `infrastructure.md`) hold the *detail* for each candidate; this file holds the
-*sequence* — which work happens when, in what order, and behind which gates.
+*historical sequence*; the linked closeout plan and backlog own current order and gates.
 `standing-rules.md` is durable posture (margin/futures gates, SDK stance, Kraken-UI
 declines), **not** plan candidates.
 
 - **Status source of truth:** `docs/planning/roadmap.md` (per-item completion dates land there).
-- **Proposed closeout/handoff:** [2.0.x stabilization and 2.1 entry](../../planning/2.0-closeout-and-2.1-entry-plan.md) reconciles this historical catalog with the remaining work; phase status still belongs to the roadmap.
+- **Authorized closeout sequence:** [2.0.x stabilization and 2.1 entry](../../planning/2.0-closeout-and-2.1-entry-plan.md); release and next-phase gates remain explicit.
 - **Decision records:** `docs/architecture/decisions.md` (ADRs).
-- **Written:** 2026-06-01. Living document — re-sequence as the soak surfaces facts; keep it honest.
+- **Written:** 2026-06-01. Historical reasoning retained; new scheduling decisions belong in the backlog.
 
 > **Historical strategy update (2026-06-02).** Work originally built on the `v1.1` branch
 > proved to be v1.0 hardening and was fast-forwarded into `main` (`73e9388`). The hardened
@@ -574,6 +577,11 @@ next time its file is touched (trigger noted where sharper):
 
 ### 2.0.7-close follow-up queue (2026-09-05 — from the plan + diff reviews)
 
+> All four items below are now implemented and verified locally as C2.1-C2.4;
+> see the roadmap receipts. The original review findings remain below as history.
+> Decoder containment required explicit validation translation in both readers,
+> not merely moving a comprehension inside an SQL-only catch.
+
 Surfaced by the two adversarial reviews that gated 2.0.7 and deliberately left out of it.
 Ordered by consequence, not effort. The first two are the ones a reviewer flagged as
 capable of silently reproducing the incident 2.0.7 exists to fix.
@@ -676,7 +684,7 @@ response quality (2026-05-24, v1.0).
 
 ## Guardrails
 
-1. **Release boundaries stay explicit:** `v1.0.0` (2026-07-31) and `v2.0.0` (2026-08-28) are immutable tags, both with published GitHub Releases; `main` is the development line after each. Image rebuilds only when the workflow's build allowlist matches — except on a `v*` tag push, where GitHub ignores path filters and the release build always runs. **Corrected 2026-08-28:** this rule used to end "the deployed NAS stack remains explicitly pinned by `IMAGE_TAG`, so a push is not a redeploy." The conclusion is right but the reason was wrong, and the wrong reason misleads. Portainer stack 158 has `AutoUpdate: null` — no git poll, no webhook — so a push changes nothing on the NAS regardless of how `IMAGE_TAG` is set. Deploying takes two independent, explicitly operator-authorized steps: a git-stack redeploy (applies compose changes) and an `IMAGE_TAG` bump (applies code). Verify with `portainer_get_stack`'s `ConfigHash` and the container's `org.opencontainers.image.revision` label — never a UI toast.
+1. **Release boundaries stay explicit:** historical tags and Releases remain immutable. The current closeout plan owns release sequencing. **Corrected 2026-09-08:** Portainer stack 158 is file-managed (`GitConfig: null`), with `AutoUpdate: null`. A source push cannot update either its Compose document or selected image. Prepare the exact current stack-file diff and image selection before operator-authorized deployment. Verify the persisted file and `StackFileVersion`, then container revision, version, image digest and behavior independently; do not use a git-stack redeploy or assume `ConfigHash` is available. The tag workflow has its own test/publication gates; a branch build is not tag acceptance.
 2. **Advisory-only (ADR-002):** the LLM never executes trades or transfers. Auto-action features stay parked behind their own ADRs + accrued data; auto-pause needs an ADR-002 ratified-with-exception. `pending_commands WHERE status='approved'` stays the firewall on every mutation.
 3. **Harvester sole transfer authority (ADR-003/004):** no `BankingPort`; trade key has no Withdraw; Withdraw lives only on the Harvester key. Top-up deposits parked behind a feasibility check + new ADR + ADR-003 re-ratification.
 4. **Safety-critical facts stay code-resident:** the P0 audit keeps LLM pricing + Kraken fees in code; only non-safety facts may move, and only after the verdict.

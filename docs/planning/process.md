@@ -4,14 +4,14 @@ This document defines **how** we work on WobbleBot.  It covers the overall appro
 
 ## Overall Approach
 
-- **Phase‑based development:**  Five major phases, each broken into five stages.  A subsequent phase does not begin until its predecessor is stabilized.
+- **Phase-based development:** the roadmap defines the current sequential phases and their gates. A subsequent phase does not begin until its predecessor is formally closed.
 - **Incremental and test‑first mindset:**  Each stage leaves the system in a working, testable state with unit or integration tests covering the new logic.  We avoid long‑lived feature branches without merging.
 
 ## Branching Strategy
 
-- **`main`** – Always stable.  Tagged releases (e.g., `v1.0.0`) are merged here.
-- **`develop`** – Integration branch for the current phase.  Can be slightly ahead of `main` but should never be broken.
-- **`feature/phaseX-stageY-*`** – Short‑lived branches for a specific stage or task.  These branch off `develop` and merge back into `develop` via pull request.
+- **`main`** — accepted integration line. Tags identify reviewed release commits.
+- **`codex/<work-item>`** — short branches from the accepted `main` commit, merged through review. Preserve existing WIP explicitly when starting a batch.
+- Historical `v1.1` and `develop` references describe earlier workflows; they do not create another current integration branch.
 
 Pull requests should reference relevant phases/stages and requirement IDs.  Every change that affects behavior should include appropriate tests and documentation updates.
 
@@ -21,17 +21,19 @@ For each **stage**:
 
 1. Clarify the scope using `requirements.md` and `roadmap.md`.
 2. Design or adjust architecture if needed (update `/docs/architecture`).
-3. Implement the feature or refactoring in a `feature/phaseX-stageY-*` branch.
+3. Implement the accepted scope in a short `codex/<work-item>` branch.
 4. Write or extend tests (unit, integration, or system as appropriate).
 5. Update any relevant documentation (planning, architecture, implementation).
-6. Submit a pull request to `develop`; undergo code review.
-7. Once merged, run a small integration test (manual or automated) to verify that the system still works end‑to‑end.
+6. Prepare a pull request to `main`; obtain the required review and merge authorization.
+7. Verify the integrated commit and applicable CI jobs. Release, publication, deployment and live acceptance are separate evidence gates.
 
 At **phase end**:
 
 - Run broader integration checks across the entire system.
 - Prepare the milestone demo defined in `milestones.md`.
-- Merge `develop` into `main` and tag the release if appropriate.
+- Run the Fleet Kit phase-end procedure plus the project-specific AGENTS.md checks; classify every finding and retain gated work in the backlog index.
+- Complete independent plan/diff review and the required non-destructive checks before release. Record the environment, skips and limitations.
+- Obtain the concrete release/deployment/close decisions required by the current plan. A source push or green boot does not close a phase.
 
 ## Code Review & Quality
 
@@ -41,7 +43,8 @@ At **phase end**:
 
 ## Issue Tracking & Tasks
 
-- Each stage is tracked as an issue (or epic) in the project management tool of choice.  Subtasks may include implementation, testing, documentation updates, and demo preparation.
+- GitHub is authoritative for issue/PR state. A named local work item may hold the bounded checklist until tracker writes are authorized; never invent an issue number.
+- OpenChronicle mirrors the same stable repository/work-item key on a best-effort basis. Keep issue status separate from implementation status.
 - Commits and pull requests should reference the stage’s issue to maintain traceability.
 
 ## Documentation Discipline

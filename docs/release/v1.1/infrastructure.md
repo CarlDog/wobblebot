@@ -1,5 +1,10 @@
 # Infrastructure — CI, dependencies, packaging
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 *Build / test / dependency work. Most defer until contributors materialize or external triggers fire.*
 
 *Companion to [`v1.0-future-improvements.md`](../v1.0-future-improvements.md) (the catalog index) and [`v1.0-known-limitations.md`](../v1.0-known-limitations.md) (what v1.0 explicitly does NOT do).*
@@ -26,6 +31,11 @@ the fallback until then.
 
 ### CI / GitHub Actions
 
+> Reconciled 2026-09-08: test/lint/format CI and test-gated image publication
+> have shipped. The deferred quality-workflow wording below is historical.
+> Wheel distribution remains demand-gated; current CI-shape exceptions and
+> runtime identity work are in the closeout audit and backlog N2.
+
 **Partial — shipped 2026-05-27:** `.github/workflows/docker-publish.yml`
 builds and pushes the runtime image to `ghcr.io/carldog/wobblebot`
 on every main commit touching the runtime surface. Three tags per
@@ -43,6 +53,10 @@ makes them untrustworthy).
 local pre-commit hooks.
 
 ### portainer-mcp: expose AutoUpdate flags on stack creation
+
+> Historical git-stack workflow. Stack 158 is now file-based with no GitConfig
+> or AutoUpdate; a git-stack redeploy is not its current update procedure.
+> Any Portainer MCP enhancement remains separate-repository work.
 
 **What:** `portainer_create_git_stack` doesn't accept any of the
 AutoUpdate-related parameters (`auto_update_interval`,

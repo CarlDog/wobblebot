@@ -1,5 +1,10 @@
 # Adaptive grid — making the grid smarter
 
+> Historical source catalog, reconciled 2026-09-08. Current dispositions, owners
+> and gates are in [the backlog index](../../planning/backlog.md); completion
+> receipts remain in the roadmap. Old future-tense and live-value examples below
+> describe their dated context, not an instruction to implement or activate them.
+
 > **STATUS BANNER (2026-05-30) — partially SUPERSEDED + PARKED by the grid-strategy
 > research arc.** The 2026-05-29/30 backtests closed several ideas in this file:
 > *vol→spacing adaptive tuning* is demoted (real BTC vol sits below the curve floor;

@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Fleet standards: python-service v3.0 — audited 2026-09-08.
+Unresolved exceptions and verification limits: `docs/planning/2.0-closeout-audit.md`.
+`STATUS.md` is a compatibility pointer; the roadmap remains authoritative.
+
 ## Project Status
 
 **Single source of truth: `docs/planning/roadmap.md`** — every stage carries a ✅
@@ -232,8 +236,10 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 
 Run a phase-end audit at every phase close (Phase 1 → Phase 2,
 Phase 2 → Phase 3, etc.) before starting the next phase. The
-**global rule lives at `~/.claude/rules/phase-end-audit.md`** —
-read that first; the cadence table and process discipline apply
+**global rule is the installed Fleet Kit phase-end-audit skill and its
+bundled `reference/rules/phase-end-audit.md`** —
+read that first (resolve the current plugin location rather than a stale host path);
+the cadence table and process discipline apply
 to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
