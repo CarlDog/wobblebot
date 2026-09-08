@@ -7,6 +7,7 @@ Each document in this folder is the single source of truth for one aspect of pro
 | File | Purpose |
 | --- | --- |
 | `roadmap.md` | Authoritative sequential phase/stage roadmap, current status, gates, and completion receipts. |
+| `2.0-closeout-and-2.1-entry-plan.md` | Proposed 2.0.x stabilization closeout, reconciled backlog dispositions, verification gates, and clean entry into 2.1. |
 | `milestones.md` | Concrete phase/stage outcomes and release checkpoints. |
 | `requirements.md` | Functional and non‑functional requirements with phase mapping. |
 | `process.md` | Development workflow, branching, code reviews, and stage progression. |

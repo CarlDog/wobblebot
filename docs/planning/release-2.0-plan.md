@@ -1,5 +1,11 @@
 # Closing the current release line and opening the next
 
+> **Follow-on proposal (2026-09-07):** see
+> [2.0.x closeout and 2.1 entry](2.0-closeout-and-2.1-entry-plan.md) for the
+> reconciled remaining work and gates. This document preserves the original
+> proposal and its outcome; its old tag tasks and proposed ADR numbers are not
+> a current execution checklist.
+
 **Written 2026-08-28.** Answers the operator's six questions from the same
 day: aggregate the 2026-08-27/28 external-repository research against the
 already-planned backlog, decide what belongs in the current release, define

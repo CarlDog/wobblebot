@@ -5,6 +5,18 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**2.0.x closeout execution (2026-09-07; checks 2026-09-08 UTC):**
+[`2.0-closeout-and-2.1-entry-plan.md`](2.0-closeout-and-2.1-entry-plan.md) reconciles
+the remaining 2.0.x maintenance work, tracker dispositions and gated backlog with
+the proposed 2.1 scope. The user authorized local implementation and verification
+with "Begin". C0 is complete: the nine source WIP files are preserved with SHA-256
+receipts in ignored local storage, work continues on `codex/2.0x-closeout`, and two
+independent reviewers' findings were accepted into the plan (gate ordering and
+old-writer diagnostic freshness). The existing Python 3.13.14 environment passes
+the 57-test focused starvation/offside baseline. C1 is in progress. Release,
+deployment, tracker status changes and phase closure remain at their later gates;
+2.1 implementation has not begun.
+
 ## Post-v2.0 Security Maintenance
 
 - **2026-09-01 — logging redaction at the formatter boundary.** A CodeQL wave

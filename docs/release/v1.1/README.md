@@ -9,6 +9,7 @@ directory (`engine.md`, `adaptive-grid.md`, `harvester.md`, `news-pipeline.md`,
 declines), **not** plan candidates.
 
 - **Status source of truth:** `docs/planning/roadmap.md` (per-item completion dates land there).
+- **Proposed closeout/handoff:** [2.0.x stabilization and 2.1 entry](../../planning/2.0-closeout-and-2.1-entry-plan.md) reconciles this historical catalog with the remaining work; phase status still belongs to the roadmap.
 - **Decision records:** `docs/architecture/decisions.md` (ADRs).
 - **Written:** 2026-06-01. Living document — re-sequence as the soak surfaces facts; keep it honest.
 
