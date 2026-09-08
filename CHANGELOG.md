@@ -28,6 +28,8 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-09-08
+
 ### Fixed
 
 - SQLite storage now waits for a failed-open connection's worker to terminate
