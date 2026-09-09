@@ -5,13 +5,61 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**Final patch reader-shutdown repair — active 2026-09-09 UTC:**
+**2.0.11 published and deployed — ✅ 2026-09-09 UTC; acceptance observing:**
+The final stabilization patch is [v2.0.11](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.11),
+integrated by [PR #150](https://github.com/CarlDog/wobblebot/pull/150) at
+`ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05`. PR, main and tag test gates passed;
+both main and tag image builds succeeded. The automated PR review covered all
+13 changed files with zero comments. The Windows gate passed **4,229 tests**;
+the installed Linux wheel passed **4,223 tests**, six absent-private-file skips,
+and **10 offline integration tests**. Static checks and mandatory upgrade gates
+passed. The published tag artifact matches the tested package, dependency
+versions, Python/platform, defaults, tools and entrypoint.
+
+NAS stack 158, endpoint 2, file version **88** now selects one tag-build digest
+for all eight services and tools:
+`sha256:f07af7ec8ae2de5b00a9aacdeb0336c7bc81c4d294a2a66db70faae4d223b0ae`.
+All eight services independently reported running/healthy on that revision.
+The maintenance-only override is removed; all other Compose and environment
+values are preserved. The NAS operator settings hash remains
+`4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671`;
+all six resolved configurations validate with populated actual model-target lists.
+
+Candidate-image validation-only preflight passed. Trading and harvesting stopped
+with exit 0; no configured-symbol orders, approved transfers or pending transfer
+effects remained before recreation. Six fresh online backups passed restoration
+verification; all six post-deployment database integrity checks and **60** logical
+financial/approval preservation comparisons passed. GET-only health, login,
+dashboard, status and advisor rendering checks passed. The schema-compatible
+prior image digests and full Compose/config baseline are retained for reviewed
+rollback. No diagnostic trade, transfer or paid LLM probe was run.
+
+The authorized observation window runs **2026-09-09 01:25:18–09:25:18 UTC**
+(September 8, 8:25 p.m. through September 9, 4:25 a.m. Central), every 15 minutes.
+The bounded task heartbeat `wobblebot-2-0-11-acceptance` is active and stops on
+completion, failure or action required; unchanged results stay quiet. A helper's
+Docker timestamp-format error was corrected before activation, preserving that
+failed setup checkpoint; the successful checkpoint recaptured logs from the
+unchanged start. All eight services, web health and initial alert/cap checks passed.
+The first persisted recommendation records quant/risk primary routes and Atlas
+Haiku for news/arbitration; the checkpoint also observed a successful Atlas
+arbitrator call. This verifies configured failover use after the new deployment.
+
+The [deployment evidence](../release/2.0.11-deployment-evidence.json) records exact
+identities and validation; the [runbook](../release/v2.0.11-upgrade.md) records stop
+and rollback boundaries. **Formal 2.0.x closure is pending** the completed
+observation receipt and operator acceptance of remaining limitations. Natural
+task recovery and six-hour alert repeats require actual events; missing events
+remain limitations. N1/2.1 and G6 have not begun. No dependency PR or legacy issue
+status was changed.
+
+**Final patch reader-shutdown repair — ✅ 2026-09-09 UTC:**
 PR [#149](https://github.com/CarlDog/wobblebot/pull/149) merged at `69c70fd`;
 its main CI and image build passed. The immutable `v2.0.10` tag's
 [test run](https://github.com/CarlDog/wobblebot/actions/runs/34296976423)
 then failed: **1 failed, 4,219 passed, 6 private-file skips, 30 deselected**.
-Image publication was skipped, no GitHub Release was published, and the NAS
-remains on the prior source-pinned images. Acceptance has not started.
+That attempt skipped image publication and published no GitHub Release. At that
+point the NAS remained on the prior source-pinned images and acceptance had not started.
 
 The failure was reported against an unrelated synchronous LLM test after the
 missing-ledger reader ran. A deterministic real-worker barrier reproduced the
@@ -26,12 +74,10 @@ previously isolated installations. The full Windows 3.13.14 candidate gate passe
 **4,229 tests**, 30 deselected, coverage 87.94%; pip check, Black/isort, mypy
 (158 source files) and pylint (10.00/10) passed. Mandatory upgrade and strict
 operator-config checks were enabled. Linux packaged-image and publication gates
-remain required.
+were subsequently satisfied by the publication/deployment receipt above.
 
-The corrected candidate is **2.0.11**; `v2.0.10` is retained as failed publication
-history. Fresh candidate/package and publication gates are required, followed by
-the already authorized unified deployment and eight-hour acceptance campaign.
-Formal phase closure and N1 still wait for the observation receipt and acceptance.
+The corrected patch is **2.0.11**; `v2.0.10` is retained as failed publication
+history. Formal phase closure and N1 still wait for the observation receipt and acceptance.
 
 **Original final-patch preparation — superseded 2026-09-09 UTC:**
 The operator authorized the proposed sequence: package the verified follow-ups as

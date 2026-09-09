@@ -1,0 +1,513 @@
+{
+  "recorded_at": "2026-09-09T01:28:15.576558+00:00",
+  "release": {
+    "version": "2.0.11",
+    "source_commit": "ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05",
+    "pull_request": "https://github.com/CarlDog/wobblebot/pull/150",
+    "url": "https://github.com/CarlDog/wobblebot/releases/tag/v2.0.11",
+    "pull_request_ci": "https://github.com/CarlDog/wobblebot/actions/runs/34297831532",
+    "pull_request_ci_result": "test passed; publication skipped as expected for PR",
+    "main_ci": "https://github.com/CarlDog/wobblebot/actions/runs/34298146824",
+    "main_ci_result": "test and build-and-push succeeded",
+    "tag_ci": "https://github.com/CarlDog/wobblebot/actions/runs/34298461527",
+    "tag_ci_result": "test and build-and-push succeeded",
+    "published_at": "2026-09-09T01:20:24Z",
+    "automated_review": "13 files reviewed; zero comments; recommendation to approve, recorded as COMMENTED"
+  },
+  "scope": "Final stabilization patch published and deployed; eight-hour observation is separate from formal phase acceptance.",
+  "verification": {
+    "windows": {
+      "python": "3.13.14",
+      "aiosqlite": "0.22.1",
+      "base_commit": "69c70fd690eeb9b19704686261dfed0c59513f6e",
+      "files": {
+        "pyproject.toml": "f1939e60bb44f927aac59accfc1263ccfc0123e7442d4039dbe7d35c39eefc30",
+        "src/wobblebot/__init__.py": "5b547dbfc51ae5bcf3dd4a87a8920b0b2ef8d66897fbc3f8d5ae3df88dec3a19",
+        "src/wobblebot/sqlite_connection.py": "5af33560726393d95b6e76bc7c6d5a3b9154cfbbcd4aeaab4daf0c456ca80094",
+        "src/wobblebot/adapters/sqlite_storage.py": "ab8c8853f86eb41c220f66aa2325ec2265a62027efaa05416d667e1bc4cf0b71",
+        "tests/adapters/test_sqlite_connection_shutdown.py": "62127a155187f529256173a433ef0e3537587b096abf22d04b2ded7391636fa0"
+      },
+      "strict_config_drift": true,
+      "mandatory_upgrade_gate": true,
+      "results": [
+        {
+          "label": "pip-check",
+          "command": [
+            "python",
+            "-m",
+            "pip",
+            "check"
+          ],
+          "exit": 0,
+          "summary": "No broken requirements found."
+        },
+        {
+          "label": "black",
+          "command": [
+            "python",
+            "-m",
+            "black",
+            "--check",
+            "src/",
+            "tests/"
+          ],
+          "exit": 0,
+          "summary": "421 files would be left unchanged."
+        },
+        {
+          "label": "isort",
+          "command": [
+            "python",
+            "-m",
+            "isort",
+            "--check-only",
+            "src/",
+            "tests/"
+          ],
+          "exit": 0,
+          "summary": "(no output)"
+        },
+        {
+          "label": "mypy",
+          "command": [
+            "python",
+            "-m",
+            "mypy",
+            "src/"
+          ],
+          "exit": 0,
+          "summary": "Success: no issues found in 158 source files"
+        },
+        {
+          "label": "pylint",
+          "command": [
+            "python",
+            "-m",
+            "pylint",
+            "src/"
+          ],
+          "exit": 0,
+          "summary": "Your code has been rated at 10.00/10 (previous run: 10.00/10, +0.00)"
+        },
+        {
+          "label": "pytest",
+          "command": [
+            "python",
+            "-m",
+            "pytest",
+            "-ra",
+            "--junitxml=tmp/release-2.0.11-windows/pytest.xml"
+          ],
+          "exit": 0,
+          "summary": "=============== 4229 passed, 30 deselected in 187.08s (0:03:07) ==============="
+        }
+      ]
+    },
+    "linux_environment": {
+      "python": "3.14.7",
+      "package_path": "/usr/local/lib/python3.14/site-packages/wobblebot/__init__.py",
+      "source_commit": "896daa1d2ad2b8c57a7201af196e79ea7b7fe753",
+      "runtime_constraints_sha256": "84b053bc864ee3e365799e604c2596bc97b5129c1a972590307ab858f92aaae5",
+      "runtime_versions_preserved": true,
+      "wheel_python_sources_match": true,
+      "packaged_healthcheck_matches": true,
+      "packages": [
+        "Jinja2==3.1.6",
+        "MarkupSafe==3.0.3",
+        "PyYAML==6.0.3",
+        "Pygments==2.21.0",
+        "RapidFuzz==3.14.6",
+        "aiohappyeyeballs==2.7.1",
+        "aiohttp==3.14.3",
+        "aiosignal==1.4.0",
+        "aiosqlite==0.22.1",
+        "annotated-doc==0.0.5",
+        "annotated-types==0.8.0",
+        "anyio==4.15.1",
+        "ast_serialize==0.11.0",
+        "astroid==4.0.4",
+        "attrs==26.1.0",
+        "audioop-lts==0.2.2",
+        "bcrypt==5.0.0",
+        "black==26.5.1",
+        "certifi==2026.7.22",
+        "click==8.5.0",
+        "coverage==7.16.0",
+        "dill==0.4.1",
+        "discord.py==2.7.1",
+        "fastapi==0.141.1",
+        "feedparser-sgmllib==2.1.0",
+        "feedparser==6.0.14",
+        "frozenlist==1.8.0",
+        "h11==0.16.0",
+        "httpcore2==2.12.0",
+        "httpcore==1.0.9",
+        "httptools==0.8.0",
+        "httpx2==2.12.0",
+        "httpx==0.28.1",
+        "idna==3.19",
+        "iniconfig==2.3.0",
+        "isort==8.0.1",
+        "itsdangerous==2.2.0",
+        "librt==0.15.0",
+        "mccabe==0.7.0",
+        "multidict==6.7.1",
+        "mypy==2.3.1",
+        "mypy_extensions==1.1.0",
+        "packaging==26.3",
+        "pathspec==1.1.1",
+        "pip==26.2.1",
+        "platformdirs==4.11.8",
+        "pluggy==1.6.0",
+        "propcache==0.5.2",
+        "pydantic==2.13.5",
+        "pydantic_core==2.46.5",
+        "pylint-plugin-utils==0.9.0",
+        "pylint-pydantic==0.4.1",
+        "pylint==4.0.7",
+        "pytest-asyncio==1.4.0",
+        "pytest-cov==7.1.0",
+        "pytest==9.1.1",
+        "python-dotenv==1.2.3",
+        "python-frontmatter==1.3.0",
+        "python-multipart==0.0.32",
+        "pytokens==0.4.1",
+        "ruamel.yaml==0.19.1",
+        "starlette==1.6.0",
+        "tomlkit==0.15.1",
+        "truststore==0.10.4",
+        "types-PyYAML==6.0.12.20260724",
+        "typing-inspection==0.4.4",
+        "typing_extensions==4.16.0",
+        "uvicorn==0.52.4",
+        "uvloop==0.22.1",
+        "watchfiles==1.2.0",
+        "websockets==17.1",
+        "wobblebot==2.0.11",
+        "yarl==1.24.5"
+      ]
+    },
+    "linux_commands": [
+      {
+        "label": "pip-check",
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "check"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "black",
+        "command": [
+          "python",
+          "-m",
+          "black",
+          "--check",
+          "src/",
+          "tests/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "isort",
+        "command": [
+          "python",
+          "-m",
+          "isort",
+          "--check-only",
+          "src/",
+          "tests/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "mypy",
+        "command": [
+          "python",
+          "-m",
+          "mypy",
+          "src/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "pylint",
+        "command": [
+          "python",
+          "-m",
+          "pylint",
+          "src/"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "pytest",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-ra",
+          "--junitxml=/evidence/linux-pytest.xml"
+        ],
+        "exit": 0
+      },
+      {
+        "label": "offline-integration",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-m",
+          "integration",
+          "-q",
+          "--no-cov",
+          "tests/integration/test_grid_engine_e2e.py",
+          "tests/integration/test_phase5_operator_e2e.py",
+          "tests/services/test_simulator.py"
+        ],
+        "exit": 0
+      }
+    ],
+    "linux_pytest": {
+      "passed": 4223,
+      "skipped": 6,
+      "deselected": 30,
+      "skip_reason": "Private operator settings and .env intentionally absent"
+    },
+    "supported_aiosqlite_readers": [
+      {
+        "aiosqlite": "0.20.0",
+        "exit": 0,
+        "summary": "============================= 93 passed in 1.51s =============================="
+      },
+      {
+        "aiosqlite": "0.21.0",
+        "exit": 0,
+        "summary": "============================= 93 passed in 1.39s =============================="
+      },
+      {
+        "aiosqlite": "0.22.0",
+        "exit": 0,
+        "summary": "============================= 93 passed in 1.28s =============================="
+      }
+    ],
+    "offline_integration_passed": 10,
+    "published_artifact_parity": {
+      "matched": true,
+      "package_file_count": 241,
+      "compared": [
+        "Python version",
+        "machine architecture",
+        "all runtime package versions",
+        "all packaged application files",
+        "baked defaults",
+        "tools",
+        "entrypoint"
+      ],
+      "tested_source": "896daa1d2ad2b8c57a7201af196e79ea7b7fe753",
+      "source_difference": "Release merge only; runtime/build/test inputs unchanged."
+    }
+  },
+  "failed_previous_candidate": {
+    "tag": "v2.0.10",
+    "source": "69c70fd690eeb9b19704686261dfed0c59513f6e",
+    "workflow": "https://github.com/CarlDog/wobblebot/actions/runs/34296976423",
+    "result": "One closed-event-loop SQLite worker failure; image publication skipped; no release or deployment.",
+    "regression_evidence": "Three direct-reader cases failed deterministically before the repair; all now pass."
+  },
+  "deployment": {
+    "stack_id": 158,
+    "endpoint_id": 2,
+    "stack_version_before": 87,
+    "stack_version_after": 88,
+    "verified_at": "2026-09-09T01:24:51.800296+00:00",
+    "image": "ghcr.io/carldog/wobblebot:2.0.11@sha256:f07af7ec8ae2de5b00a9aacdeb0336c7bc81c4d294a2a66db70faae4d223b0ae",
+    "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93",
+    "source": "ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05",
+    "healthy_services": [
+      "advise",
+      "harvest",
+      "live",
+      "maintenance",
+      "news",
+      "observe",
+      "operator",
+      "web"
+    ],
+    "tools_profile_uses_same_digest": true,
+    "only_image_selection_changed": true,
+    "operator_config_sha256": "4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671",
+    "rollback_images": [
+      {
+        "id": "sha256:943621a8ab15f14493f70d85928907bb34796823562a6e18dd9b56e9609e90ab",
+        "repo_digests": [
+          "ghcr.io/carldog/wobblebot@sha256:d614794e668528c520e81b46e2255a98f36f9752832511bd1f8aa3685a7022da"
+        ],
+        "source": "4f5b32b0641d79b7a339c7b8c189e0c2b764775d"
+      },
+      {
+        "id": "sha256:e3386fbaa659cfa425f268cc3690d943642c5c29f69d1e3f13aa6e5db133a6a8",
+        "repo_digests": [
+          "ghcr.io/carldog/wobblebot@sha256:a58f873880441195d6decbcf5e334fbfc5928861f9f2f8ea6160abd4629165ce"
+        ],
+        "source": "1cbae64cbfead2a7b295e3291f332e1a5d14d171"
+      }
+    ],
+    "backup_directory": "/app/data/backups/deploy-2.0.11-20260909T012313Z",
+    "restore_verified_backups": [
+      {
+        "source": "/app/data/wobblebot-advise.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-advise-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 27258880,
+        "sha256": "b48902638a32d4e19fab39e463495b7a274e4328ce17ca76c0b8a13126165cab"
+      },
+      {
+        "source": "/app/data/wobblebot-harvest.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-harvest-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 368640,
+        "sha256": "5b4c5b2c4ae80fae54c7c31fa10fca3b07a0c4c0204fec30c1ea574e9b53b9e0"
+      },
+      {
+        "source": "/app/data/wobblebot-live.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-live-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 1097728,
+        "sha256": "3b084d1d500c378fc0bf2c3ebc0ae21562789e51e95ee075613562139f426908"
+      },
+      {
+        "source": "/app/data/wobblebot-news.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-news-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 11476992,
+        "sha256": "956316450a02695aa59be109d73402b94bc3bfe22cda0625c8b141d7d0c076c9"
+      },
+      {
+        "source": "/app/data/wobblebot-observe.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-observe-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 172888064,
+        "sha256": "02e8888792ad805dfd96a3cffeefaeed9d06153ebd80d56794a99b3bce803c48"
+      },
+      {
+        "source": "/app/data/wobblebot-operator.db",
+        "path": "/app/data/backups/deploy-2.0.11-20260909T012313Z/wobblebot-operator-20260909-0123.db",
+        "ok": true,
+        "integrity": "ok",
+        "tables": 26,
+        "bytes": 2695168,
+        "sha256": "fedf61a913ddceb2270071d3821139429e91f0a42dc91f3a10311c96e174ae9d"
+      }
+    ],
+    "post_deploy_integrity": {
+      "wobblebot-advise.db": "ok",
+      "wobblebot-harvest.db": "ok",
+      "wobblebot-live.db": "ok",
+      "wobblebot-news.db": "ok",
+      "wobblebot-observe.db": "ok",
+      "wobblebot-operator.db": "ok"
+    },
+    "money_path_clearance": {
+      "remaining_orders_for_configured_symbols": 0,
+      "other_account_orders": 0,
+      "transfer_command_status_counts": {},
+      "approved_transfer_commands": 0,
+      "pending_transfer_results": 0
+    },
+    "validation_only_preflight": {
+      "at": "2026-09-09T01:22:02.446843+00:00",
+      "source": "ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05",
+      "image": "ghcr.io/carldog/wobblebot:2.0.11@sha256:f07af7ec8ae2de5b00a9aacdeb0336c7bc81c4d294a2a66db70faae4d223b0ae",
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93",
+      "repo_digest": "ghcr.io/carldog/wobblebot@sha256:f07af7ec8ae2de5b00a9aacdeb0336c7bc81c4d294a2a66db70faae4d223b0ae",
+      "config_sha256": "4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671",
+      "only_image_selection_changed": true,
+      "exit_code": 0
+    },
+    "financial_and_approval_state": {
+      "table_comparisons": 60,
+      "passed": true,
+      "failures": []
+    },
+    "web_get_routes": {
+      "anonymous:/healthz": 200,
+      "anonymous:/auth/login": 200,
+      "anonymous:/dashboard": 302,
+      "authenticated:/dashboard": 200,
+      "authenticated:/status/card": 200,
+      "authenticated:/advisor": 200
+    },
+    "web_card_checks_passed": true,
+    "resolved_configurations_checked": 6,
+    "all_actual_model_targets_have_fallbacks": true
+  },
+  "acceptance": {
+    "status": "active",
+    "started_at": "2026-09-09T01:25:18.943965+00:00",
+    "ends_at": "2026-09-09T09:25:18.943965+00:00",
+    "interval_minutes": 15,
+    "automation_id": "wobblebot-2-0-11-acceptance",
+    "initial_checkpoint_attention": [],
+    "setup_checkpoints": 2,
+    "setup_failure_evidence": [
+      "checkpoint-20260909T012519Z.json"
+    ],
+    "setup_failure_disposition": "Docker API timestamp formatting corrected before activation; successful setup checkpoint recaptured logs from the unchanged start.",
+    "first_successful_checkpoint_application": {
+      "web_health_status": 200,
+      "llm_calls": [
+        {
+          "role": "arbitrator",
+          "provider": "openai",
+          "model": "anthropic/claude-haiku-4.5-20251001",
+          "success": 1,
+          "error_kind": null,
+          "calls": 1
+        }
+      ],
+      "advisor_suggestions": [
+        {
+          "role": "aggregated",
+          "model_name": "cascade[heuristic+moe[arbitrator:quant:xai/grok-4.5/risk:gpt-5-mini/news:claude-haiku-4-5|arb=claude-haiku-4-5]] [actual routes: quant=atlas/xai/grok-4.5, risk=openai/gpt-5-mini, news=atlas/anthropic/claude-haiku-4.5-20251001, arbitrator=atlas/anthropic/claude-haiku-4.5-20251001]",
+          "count": 1
+        }
+      ],
+      "notification_counts": [],
+      "heartbeat_events": {
+        "heartbeat_stale": 0,
+        "heartbeat_recovered": 0,
+        "heartbeat_repeat": 0
+      },
+      "unforwarded_high_severity_over_10_minutes": 0,
+      "new_loss_cap_trips": 0
+    },
+    "stop_conditions": [
+      "Completion",
+      "New failure",
+      "Action or review required"
+    ],
+    "formal_phase_close": "pending explicit acceptance of observation receipt and remaining limitations",
+    "next_phase": "N1 not started"
+  },
+  "limitations": [
+    "Native Anthropic credit failure is acknowledged while Atlas failover succeeds.",
+    "Ollama Cloud provider is supported but no Ollama quant candidate qualified or was enabled.",
+    "Natural task failure/recovery and six-hour alert repetition require production events; absence must be recorded, not inferred from healthy boot.",
+    "Authenticated page rendering used a GET-only ephemeral signed maintenance session; interactive login UX was not tested.",
+    "Observation is sampled; scheduling gaps must be reported. No production fault injection or diagnostic trade/transfer.",
+    "Tagged 2.0.9 is not a compatible rollback after new Ollama Cloud ledger rows. Preserve later effects before any reviewed database recovery."
+  ]
+}
