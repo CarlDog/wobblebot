@@ -53,6 +53,13 @@ task recovery and six-hour alert repeats require actual events; missing events
 remain limitations. N1/2.1 and G6 have not begun. No dependency PR or legacy issue
 status was changed.
 
+**FreeToken comparative research recorded — 2026-09-09 UTC:**
+The [assessment](../reference/freetoken-repository-assessment-2026-09-09.md)
+records an optional local advisory-provider candidate, truthful model/cost
+accounting, service-contract gates, and explicit non-adoptions. Research is
+complete; recommendations remain unratified and unscheduled. Documentation
+only: no provider, runtime, trading authority, or v2.0.11 acceptance change.
+
 **Final patch reader-shutdown repair — ✅ 2026-09-09 UTC:**
 PR [#149](https://github.com/CarlDog/wobblebot/pull/149) merged at `69c70fd`;
 its main CI and image build passed. The immutable `v2.0.10` tag's
