@@ -5,7 +5,7 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**Final 2.0.x release and acceptance campaign — active 2026-09-08 UTC:**
+**Final 2.0.x release and acceptance campaign — active 2026-09-09 UTC:**
 The operator authorized the proposed sequence: package the verified follow-ups as
 2.0.10, publish it, replace the NAS's temporary split image deployment with one
 verified tag-build digest, and observe for eight hours at 15-minute checkpoints.

@@ -28,7 +28,7 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
-## [2.0.10] - 2026-09-08
+## [2.0.10] - 2026-09-09
 
 ### Fixed
 
