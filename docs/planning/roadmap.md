@@ -5,6 +5,27 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Final 2.0.x release and acceptance campaign — active 2026-09-09 UTC:**
+The operator authorized the proposed sequence: package the verified follow-ups as
+2.0.10, publish it, replace the NAS's temporary split image deployment with one
+verified tag-build digest, and observe for eight hours at 15-minute checkpoints.
+The [upgrade/acceptance runbook](../release/v2.0.10-upgrade.md) records the bounded
+scope, rollback baseline and stop conditions. Phase closure and N1 remain gated
+on the observation receipt and acceptance of the remaining limitations.
+
+The candidate changes only package version metadata beyond today's reviewed
+runtime fixes. Existing audit, migration, safety and deprived-environment evidence
+is retained; current candidate Windows/Linux gates and live readback are required.
+The stale changelog readiness note is corrected. Tracker refresh confirmed #138
+closed unmerged with replacement #142 open; #139/#140 and issue #23 remain open.
+No dependency upgrade or issue-status mutation is included in this release.
+
+Candidate Windows gate (Python 3.13.14, refreshed 2.0.10 editable metadata):
+`pip check`, Black (421 files), isort, mypy (158 source files), pylint (10.00/10),
+and `pytest -ra` with mandatory upgrade/strict-config gates passed: **4,226 passed,
+30 deselected**, coverage 87.93%. Linux packaged-image, publication and deployment
+checks are pending; this is not the final acceptance receipt.
+
 **All operator fallback targets populated — ✅ 2026-09-08 UTC:**
 The operator requested filling the remaining empty lists in the NAS settings.
 Nine NAS targets and six repository operator targets now have role-specific cloud

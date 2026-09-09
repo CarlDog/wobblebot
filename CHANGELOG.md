@@ -28,6 +28,8 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.10] - 2026-09-09
+
 ### Fixed
 
 - Maintenance exports now use a unique name per attempt, so same-day restarts and
@@ -54,9 +56,11 @@ fresh `[Unreleased]` heading created at that time.
   alternatives, existing spend caps and unchanged news/approval gates. Runtime model
   attempts persist through an additive SQLite column and appear on the advisor page.
   Fallbacks default to disabled; production seats require separate configuration.
-- Disabled advisor presets prefer a nominally equivalent cloud route before the
+- Generic advisor presets prefer a nominally equivalent cloud route before the
   previously selected cloud backup. Atlas Haiku/Sonnet prices are catalog-verified;
-  their readiness remains unverified. Local Ollama backups are removed from presets.
+  both routes passed bounded role/protocol checks. Operator settings now populate
+  all model-target lists; generic examples remain opt-in. Local Ollama backups are
+  removed from presets. GPT-OSS 120B was evaluated but did not qualify as a quant backup.
 
 ### Changed
 
