@@ -31,7 +31,6 @@ from uuid import UUID
 
 import aiosqlite
 
-from wobblebot.adapters.sqlite_connection import open_connection
 from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_llm_attempts,
@@ -90,6 +89,7 @@ from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
+from wobblebot.sqlite_connection import open_connection
 
 _LOGGER = logging.getLogger("wobblebot.adapters.sqlite_storage")
 

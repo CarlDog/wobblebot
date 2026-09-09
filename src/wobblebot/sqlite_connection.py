@@ -1,5 +1,7 @@
-"""SQLite connection startup with ownership of failed-open worker shutdown."""
+"""Shared SQLite I/O leaf owning failed-open workers for adapters and readers."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from threading import Thread
 
 import aiosqlite
@@ -39,3 +41,15 @@ async def open_connection(database: str, *, uri: bool = False) -> aiosqlite.Conn
                     "Timed out waiting for failed SQLite connection worker shutdown"
                 ) from exc
         raise
+
+
+@asynccontextmanager
+async def managed_connection(
+    database: str, *, uri: bool = False
+) -> AsyncIterator[aiosqlite.Connection]:
+    """Pair guarded startup with normal close without awaiting a connection twice."""
+    connection = await open_connection(database, uri=uri)
+    try:
+        yield connection
+    finally:
+        await connection.close()

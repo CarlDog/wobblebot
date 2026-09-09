@@ -28,7 +28,25 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.11] - 2026-09-09
+
+### Fixed
+
+- Read-only LLM outcome and daemon-health queries now use the same failed-open
+  SQLite worker shutdown guard as the storage adapter. Missing or inaccessible
+  databases still report unavailable health, without leaking a worker callback
+  into a closed event loop. The connection helper is a shared package leaf so
+  these readers do not depend on a concrete storage adapter.
+
+### Release history
+
+- Supersedes the unpublished 2.0.10 candidate. Its tag's test job exposed the
+  remaining direct-reader race and correctly blocked image publication. The
+  original tag and failed run remain intact; the NAS was not changed by that attempt.
+
 ## [2.0.10] - 2026-09-09
+
+Unpublished candidate; superseded by 2.0.11, which includes the changes below.
 
 ### Fixed
 

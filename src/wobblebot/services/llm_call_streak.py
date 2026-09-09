@@ -47,7 +47,9 @@ from pathlib import Path
 
 import aiosqlite
 
+from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.llm_failures import failure_hint
+from wobblebot.sqlite_connection import managed_connection
 
 # Three in a row is past coincidence: the retry layer already absorbs
 # transient blips, so each row here is an EXHAUSTED call, not one bad
@@ -201,7 +203,7 @@ async def fetch_llm_call_streaks(
     cutoff = ((now or datetime.now(UTC)) - timedelta(hours=window_hours)).isoformat()
     try:
         uri = f"file:{operator_db}?mode=ro"
-        async with aiosqlite.connect(uri, uri=True) as conn:
+        async with managed_connection(uri, uri=True) as conn:
             out = []
             for role in roles:
                 async with conn.execute(
@@ -219,7 +221,7 @@ async def fetch_llm_call_streaks(
                     )
                 )
             return out
-    except (aiosqlite.Error, OSError) as exc:
+    except (aiosqlite.Error, OSError, StorageError) as exc:
         return [_unavailable(role, type(exc).__name__, window_hours, threshold) for role in roles]
 
 

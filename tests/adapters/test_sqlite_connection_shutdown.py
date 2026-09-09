@@ -10,16 +10,21 @@ from typing import Any
 import aiosqlite
 import pytest
 
-from wobblebot.adapters.sqlite_connection import open_connection
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.services.daemon_health import _heartbeats_or_empty, _latest_iso_timestamp
+from wobblebot.services.llm_call_streak import fetch_llm_call_streaks
+from wobblebot.sqlite_connection import open_connection
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("read_only", [True, False], ids=["missing-reader", "invalid-writer"])
+@pytest.mark.parametrize(
+    "reader",
+    ["storage-reader", "storage-writer", "llm-streak", "daemon-latest", "daemon-heartbeat"],
+)
 def test_failed_open_drains_worker_before_loop_close(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read_only: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str
 ) -> None:
     """Hold the real worker's stop operation until join or caller teardown.
 
@@ -28,8 +33,24 @@ def test_failed_open_drains_worker_before_loop_close(
     the loop before releasing it reproduces the late callback from C5-R1.
     No wall-clock sleep, retry, or global warning-filter change is involved.
     """
-    db_path = tmp_path / "missing.db" if read_only else tmp_path
-    adapter = SQLiteStorageAdapter(db_path, read_only=read_only)
+    missing = reader in ("storage-reader", "llm-streak")
+    db_path = tmp_path / "missing.db" if missing else tmp_path
+
+    async def read_unavailable() -> None:
+        if reader.startswith("storage-"):
+            adapter = SQLiteStorageAdapter(db_path, read_only=reader == "storage-reader")
+            with pytest.raises(StorageError) as failure:
+                await adapter.connect()
+            assert isinstance(failure.value.__cause__, aiosqlite.OperationalError)
+        elif reader == "llm-streak":
+            result = await fetch_llm_call_streaks(operator_db=db_path, roles=("news",))
+            assert result[0].unavailable_reason == "OperationalError"
+        elif reader == "daemon-latest":
+            with pytest.raises(aiosqlite.OperationalError):
+                await _latest_iso_timestamp(db_path, "news_items", "timestamp")
+        else:
+            assert await _heartbeats_or_empty(db_path) is None
+
     loop = asyncio.new_event_loop()
     release = threading.Event()
     workers: list[threading.Thread] = []
@@ -83,9 +104,7 @@ def test_failed_open_drains_worker_before_loop_close(
     monkeypatch.setattr(aiosqlite, "connect", held_connect)
     monkeypatch.setattr(threading, "excepthook", capture_worker_error)
     try:
-        with pytest.raises(StorageError) as failure:
-            loop.run_until_complete(asyncio.wait_for(adapter.connect(), timeout=15))
-        assert isinstance(failure.value.__cause__, aiosqlite.OperationalError)
+        loop.run_until_complete(asyncio.wait_for(read_unavailable(), timeout=15))
         assert len(workers) == 1, "the real connector must have been exercised"
         still_running = workers[0].is_alive()
         loop.close()
@@ -99,7 +118,7 @@ def test_failed_open_drains_worker_before_loop_close(
             threading.Thread.join(worker, timeout=10)
     assert not still_running, f"failed connect returned before worker termination: {errors!r}"
     assert not errors, f"worker tried to use the closed loop: {errors!r}"
-    if read_only:
+    if missing:
         assert not db_path.exists()
 
 

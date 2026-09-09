@@ -45,6 +45,8 @@ import aiosqlite
 
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.schedules import SchedulesConfig
+from wobblebot.ports.exceptions import StorageError
+from wobblebot.sqlite_connection import managed_connection
 
 # Slack added on top of 2 * configured cadence — covers normal jitter
 # (network blip, LLM call took an extra minute) without false-yellow.
@@ -219,7 +221,7 @@ async def _latest_iso_timestamp(db_path: Path, table: str, column: str) -> str |
     observability tooling, not a writer.
     """
     uri = f"file:{db_path}?mode=ro"
-    async with aiosqlite.connect(uri, uri=True) as conn:
+    async with managed_connection(uri, uri=True) as conn:
         async with conn.execute(f"SELECT MAX({column}) FROM {table}") as cursor:
             row = await cursor.fetchone()
     if row is None or row[0] is None:
@@ -264,7 +266,7 @@ async def _read_daemon(  # pylint: disable=too-many-arguments
         )
     try:
         latest_iso = await _latest_iso_timestamp(db_path, table, column)
-    except (aiosqlite.Error, OSError) as exc:
+    except (aiosqlite.Error, OSError, StorageError) as exc:
         return DaemonHealth(
             name=name,
             label=label,
@@ -325,10 +327,10 @@ async def _heartbeats_or_empty(operator_db: Path | None) -> dict[str, datetime] 
     uri = f"file:{operator_db}?mode=ro"
     out: dict[str, datetime] = {}
     try:
-        async with aiosqlite.connect(uri, uri=True) as conn:
+        async with managed_connection(uri, uri=True) as conn:
             async with conn.execute("SELECT name, last_beat_at FROM daemon_heartbeats") as cursor:
                 rows = await cursor.fetchall()
-    except (aiosqlite.Error, OSError):
+    except (aiosqlite.Error, OSError, StorageError):
         return None
     for name, iso_ts in rows:
         try:
