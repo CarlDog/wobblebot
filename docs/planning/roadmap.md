@@ -5,7 +5,35 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**Final 2.0.x release and acceptance campaign — active 2026-09-09 UTC:**
+**Final patch reader-shutdown repair — active 2026-09-09 UTC:**
+PR [#149](https://github.com/CarlDog/wobblebot/pull/149) merged at `69c70fd`;
+its main CI and image build passed. The immutable `v2.0.10` tag's
+[test run](https://github.com/CarlDog/wobblebot/actions/runs/34296976423)
+then failed: **1 failed, 4,219 passed, 6 private-file skips, 30 deselected**.
+Image publication was skipped, no GitHub Release was published, and the NAS
+remains on the prior source-pinned images. Acceptance has not started.
+
+The failure was reported against an unrelated synchronous LLM test after the
+missing-ledger reader ran. A deterministic real-worker barrier reproduced the
+late closed-loop callback in all three remaining direct reader paths: LLM call
+streak, daemon latest timestamp, and heartbeat reads. Existing guarded adapter
+cases passed. The shared connection leaf now guards every production open,
+preserving normal close and unavailable/unknown health results. Targeted shutdown
+and reader tests passed **47 tests**, after the three new cases failed before the
+repair. No warning suppression or retry-to-green is used. The broader storage and
+reader set passed **93 tests each** on aiosqlite 0.20.0, 0.21.0 and 0.22.0 using
+previously isolated installations. The full Windows 3.13.14 candidate gate passed
+**4,229 tests**, 30 deselected, coverage 87.94%; pip check, Black/isort, mypy
+(158 source files) and pylint (10.00/10) passed. Mandatory upgrade and strict
+operator-config checks were enabled. Linux packaged-image and publication gates
+remain required.
+
+The corrected candidate is **2.0.11**; `v2.0.10` is retained as failed publication
+history. Fresh candidate/package and publication gates are required, followed by
+the already authorized unified deployment and eight-hour acceptance campaign.
+Formal phase closure and N1 still wait for the observation receipt and acceptance.
+
+**Original final-patch preparation — superseded 2026-09-09 UTC:**
 The operator authorized the proposed sequence: package the verified follow-ups as
 2.0.10, publish it, replace the NAS's temporary split image deployment with one
 verified tag-build digest, and observe for eight hours at 15-minute checkpoints.
@@ -24,7 +52,8 @@ Candidate Windows gate (Python 3.13.14, refreshed 2.0.10 editable metadata):
 `pip check`, Black (421 files), isort, mypy (158 source files), pylint (10.00/10),
 and `pytest -ra` with mandatory upgrade/strict-config gates passed: **4,226 passed,
 30 deselected**, coverage 87.93%. Linux packaged-image, publication and deployment
-checks are pending; this is not the final acceptance receipt.
+checks were subsequently completed (4,220 Linux tests plus 10 offline integration
+tests), but the tag failure above prevents treating them as release acceptance.
 
 **All operator fallback targets populated — ✅ 2026-09-08 UTC:**
 The operator requested filling the remaining empty lists in the NAS settings.
