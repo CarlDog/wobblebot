@@ -5,7 +5,46 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**2.0.11 published and deployed — ✅ 2026-09-09 UTC; acceptance observing:**
+**2.0.11 observation completed — ✅ 2026-09-09 UTC; formal acceptance pending:**
+The authorized window ended at **09:25:18 UTC**, exactly eight hours after its
+01:25:18 start. The final checkpoint collected at 09:26:51 capped event queries
+at that original deadline; the heartbeat is independently verified **PAUSED**.
+No extension, production fault injection, service/config change, diagnostic
+trade, transfer or paid probe was performed by the observer.
+
+The [observation evidence](../release/2.0.11-observation-evidence.json) consolidates
+**33 complete checkpoints** (one successful setup plus 32 scheduled), retaining
+the failed setup attempt separately. All eight containers were running/healthy
+with zero restarts and unchanged identity/config at every complete checkpoint;
+all 33 web health responses were 200. Retrospective log/event query intervals
+cover all eight hours without gaps or bounded-log truncation. Health is sampled:
+the first complete sample began 59 seconds after start, the largest interval was
+15 minutes 41 seconds, and final collection began 92 seconds after the deadline.
+These observations do not establish continuous uptime between samples.
+
+The ledger contains **67 cloud calls: 45 successful and 22 failed**, all failures
+being the acknowledged native Anthropic `insufficient_credit` condition. Quant
+and risk each recorded 11 primary successes. Atlas Haiku recorded 11 news and
+12 arbitrator successes; all **12 persisted committee recommendations** record
+the expected primary quant/risk and Atlas news/arbitrator routes. Window boundaries
+split cycles, so call totals need not equal recommendation totals. Twelve local
+Gremlin suggestions also persisted. No single/operator cloud calls were observed.
+
+No unrecognized error/critical log, archive collision, loss-cap trip or overdue
+unforwarded high-severity notification was detected. One informational notification
+was recorded as forwarded; 46 live diagnostic messages were counted. No natural
+required-task failure/recovery, stale-heartbeat event or six-hour alert repeat
+occurred. No maintenance log event appeared, so this window does not establish
+another archive rotation or execution of every longer-cadence task. High-severity
+delivery, provider recovery and total-cloud-outage behavior were not exercised.
+Retain isolated regression evidence and the
+[remaining limitations](../release/v2.0-known-limitations.md) for operator review.
+
+The authorized observation work is complete. **Formal 2.0.x closure still needs
+explicit operator acceptance of this receipt and the remaining limitations.**
+N1/2.1 and G6 have not begun; issue and dependency-PR statuses were not changed.
+
+**2.0.11 published and deployed — ✅ 2026-09-09 UTC:**
 The final stabilization patch is [v2.0.11](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.11),
 integrated by [PR #150](https://github.com/CarlDog/wobblebot/pull/150) at
 `ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05`. PR, main and tag test gates passed;
@@ -34,10 +73,10 @@ dashboard, status and advisor rendering checks passed. The schema-compatible
 prior image digests and full Compose/config baseline are retained for reviewed
 rollback. No diagnostic trade, transfer or paid LLM probe was run.
 
-The authorized observation window runs **2026-09-09 01:25:18–09:25:18 UTC**
+The authorized observation window ran **2026-09-09 01:25:18–09:25:18 UTC**
 (September 8, 8:25 p.m. through September 9, 4:25 a.m. Central), every 15 minutes.
-The bounded task heartbeat `wobblebot-2-0-11-acceptance` is active and stops on
-completion, failure or action required; unchanged results stay quiet. A helper's
+The bounded task heartbeat `wobblebot-2-0-11-acceptance` stopped after completion;
+the final observation receipt is above. A helper's
 Docker timestamp-format error was corrected before activation, preserving that
 failed setup checkpoint; the successful checkpoint recaptured logs from the
 unchanged start. All eight services, web health and initial alert/cap checks passed.
@@ -47,11 +86,11 @@ arbitrator call. This verifies configured failover use after the new deployment.
 
 The [deployment evidence](../release/2.0.11-deployment-evidence.json) records exact
 identities and validation; the [runbook](../release/v2.0.11-upgrade.md) records stop
-and rollback boundaries. **Formal 2.0.x closure is pending** the completed
-observation receipt and operator acceptance of remaining limitations. Natural
-task recovery and six-hour alert repeats require actual events; missing events
-remain limitations. N1/2.1 and G6 have not begun. No dependency PR or legacy issue
-status was changed.
+and rollback boundaries. The deployment JSON retains its initial acceptance
+snapshot; the completed observation receipt above supersedes that campaign status.
+**Formal 2.0.x closure is pending operator acceptance** of the receipt and remaining
+limitations. N1/2.1 and G6 have not begun. No dependency PR or legacy issue status
+was changed.
 
 **FreeToken comparative research recorded — 2026-09-09 UTC:**
 The [assessment](../reference/freetoken-repository-assessment-2026-09-09.md)

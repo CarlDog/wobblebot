@@ -1,0 +1,438 @@
+{
+  "release": "2.0.11",
+  "status": "observation_complete_acceptance_pending",
+  "deployment_evidence": "2.0.11-deployment-evidence.json",
+  "started_at": "2026-09-09T01:25:18.943965+00:00",
+  "ended_at": "2026-09-09T09:25:18.943965+00:00",
+  "final_checkpoint_at": "2026-09-09T09:26:51.056541+00:00",
+  "automation": {
+    "id": "wobblebot-2-0-11-acceptance",
+    "status": "PAUSED",
+    "interval_minutes": 15,
+    "window_extended": false
+  },
+  "coverage": {
+    "retrospective_interval_seconds": 28800.0,
+    "checkpoint_attempts": 34,
+    "complete_checkpoints": 33,
+    "scheduled_checkpoints": 32,
+    "setup_attempts": 2,
+    "successful_setup_checkpoints": 1,
+    "failed_setup_checkpoints": [
+      "checkpoint-20260909T012519Z.json"
+    ],
+    "setup_failure_disposition": "Timestamp-format failure repaired before activation; first successful checkpoint recovered the original start interval. Failed evidence retained.",
+    "retrospective_interval_gaps_seconds": 0,
+    "bounded_log_sample_limit_reached": false,
+    "first_complete_health_sample_after_start_seconds": 59.221737,
+    "maximum_health_sample_interval_seconds": 940.703393,
+    "final_health_sample_after_deadline_seconds": 92.112576,
+    "method": "Each complete checkpoint read retained Docker logs (1000-line per-service limit) and aggregate database events from the prior cutoff to its own cutoff. The final event cutoff is the original deadline. Container health and HTTP health are point samples. The checkpoint timestamp marks collection start, not each individual request. No continuous uptime claim."
+  },
+  "identity": {
+    "stack_id": 158,
+    "endpoint_id": 2,
+    "stack_file_version": 88,
+    "config_sha256": "4dfde23e098fe4fafe43633af169fc81f492bb45ad468b19753df3276cab5671",
+    "unchanged_at_every_complete_checkpoint": true
+  },
+  "services": {
+    "advise": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "harvest": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "live": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "maintenance": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "news": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "observe": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "operator": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    },
+    "web": {
+      "complete_samples": 33,
+      "all_running_healthy": true,
+      "restarts": 0,
+      "image_id": "sha256:b2534a6c50c021b881a2a7cee092f252bbc7593f4311355874ab667db8154d93"
+    }
+  },
+  "application": {
+    "web_health_200_samples": 33,
+    "llm_calls": [
+      {
+        "role": "arbitrator",
+        "ledger_provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "success": 0,
+        "error_kind": "insufficient_credit",
+        "calls": 11
+      },
+      {
+        "role": "arbitrator",
+        "ledger_provider": "openai",
+        "model": "anthropic/claude-haiku-4.5-20251001",
+        "success": 1,
+        "error_kind": null,
+        "calls": 12
+      },
+      {
+        "role": "news",
+        "ledger_provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "success": 0,
+        "error_kind": "insufficient_credit",
+        "calls": 11
+      },
+      {
+        "role": "news",
+        "ledger_provider": "openai",
+        "model": "anthropic/claude-haiku-4.5-20251001",
+        "success": 1,
+        "error_kind": null,
+        "calls": 11
+      },
+      {
+        "role": "quant",
+        "ledger_provider": "openai",
+        "model": "xai/grok-4.5",
+        "success": 1,
+        "error_kind": null,
+        "calls": 11
+      },
+      {
+        "role": "risk",
+        "ledger_provider": "openai",
+        "model": "gpt-5-mini",
+        "success": 1,
+        "error_kind": null,
+        "calls": 11
+      }
+    ],
+    "total_llm_calls": 67,
+    "successful_llm_calls": 45,
+    "failed_llm_calls": 22,
+    "ledger_provider_note": "Atlas routes use the OpenAI-compatible adapter and are recorded as openai in llm_calls; actual provider identity is corroborated by persisted suggestion provenance and the unchanged deployed configuration.",
+    "advisor_suggestions": [
+      {
+        "role": "aggregated",
+        "model_name": "cascade[heuristic+moe[arbitrator:quant:xai/grok-4.5/risk:gpt-5-mini/news:claude-haiku-4-5|arb=claude-haiku-4-5]] [actual routes: quant=atlas/xai/grok-4.5, risk=openai/gpt-5-mini, news=atlas/anthropic/claude-haiku-4.5-20251001, arbitrator=atlas/anthropic/claude-haiku-4.5-20251001]",
+        "count": 12
+      },
+      {
+        "role": "gremlin",
+        "model_name": "qwen2.5:3b-instruct-q4_K_M",
+        "count": 12
+      }
+    ],
+    "notification_counts": [
+      {
+        "level": "info",
+        "forwarded": 1,
+        "count": 1
+      }
+    ],
+    "heartbeat_events": {
+      "heartbeat_stale": 0,
+      "heartbeat_recovered": 0,
+      "heartbeat_repeat": 0
+    },
+    "unforwarded_high_severity_over_10_minutes_at_any_sample": 0,
+    "new_loss_cap_trips": 0
+  },
+  "log_signals": {
+    "advise": {
+      "lines_sampled": 58,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 22,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "harvest": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "live": {
+      "lines_sampled": 246,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 46,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "maintenance": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "news": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "observe": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "operator": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    },
+    "web": {
+      "lines_sampled": 0,
+      "sample_limit_reached": 0,
+      "unrecognized_errors": 0,
+      "known_anthropic_credit_lines": 0,
+      "archive_collisions": 0,
+      "diagnostic_lines": 0,
+      "heartbeat_recovery_lines": 0,
+      "repeat_alert_lines": 0
+    }
+  },
+  "limitations": [
+    "Health is sampled, not continuous. There was no missed retrospective query interval or bounded-log truncation; point samples retain the measured gaps above. The final sample started after the deadline while event queries stopped at the original deadline.",
+    "Native Anthropic insufficient-credit failures persisted; Atlas Haiku succeeded for news and arbitration. This is fallback use, not native-provider recovery. No claim that every possible backup or total-cloud-outage path was exercised.",
+    "The window boundaries may split advisor cycles, so role call totals do not necessarily equal recommendation totals. No operator or single-role cloud calls were observed.",
+    "No natural required-task failure/recovery, stale-heartbeat event or six-hour repeat occurred. Healthy samples cannot establish these event-dependent behaviors; isolated regression evidence remains the basis pending operator acceptance.",
+    "No maintenance log event appeared in the sampled interval. Absence of errors does not establish execution of every daily, weekly or monthly maintenance task or another archive rotation.",
+    "One informational notification was recorded as forwarded. High-severity delivery, crash-after-effect behavior and exactly-once delivery were not exercised.",
+    "The live diagnostic matcher counted retained starvation/offside/loop messages; this is not a complete episode-timing or rendered-card acceptance test.",
+    "No production fault injection, service/config mutation, diagnostic trade, transfer or paid probe was performed by the observer. Ordinary pre-existing service activity continued.",
+    "Ollama Cloud support has no selected qualified quant backup. Prior seat-qualification, safety, rollback and audit limitations remain in v2.0-known-limitations.md.",
+    "Formal 2.0.x closure requires explicit operator acceptance of this receipt and remaining limitations. N1/2.1 and G6 have not begun."
+  ],
+  "evidence_manifest": [
+    {
+      "file": "checkpoint-20260909T012519Z.json",
+      "sha256": "4644a1d7f80df1d141be8dae6a244c237db9a0848dade463882b42b13c0b53d1",
+      "complete": false
+    },
+    {
+      "file": "checkpoint-20260909T012618Z.json",
+      "sha256": "048f6db8f58926eaefc1d1b288cfbd9ebdb13d88034164954491c65622014630",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T014158Z.json",
+      "sha256": "e2642f519b662cf6e814255abdb96ea6646a95ce3033d00f126bec934b6bec55",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T015642Z.json",
+      "sha256": "d3ff67820b7c639c938520bdf7ae67594a03af866622c58fadadb95697ed6431",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T021124Z.json",
+      "sha256": "c51191160c9ffc26088f181836544c11abc6f176a5fdb052fd0103231e974301",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T022630Z.json",
+      "sha256": "5fd81e07456815e7e5b8debc2532eb4135d495f0585b4f54cc56be821cfba00b",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T024136Z.json",
+      "sha256": "6076958106c351f4bd7e6a5c4bfb7c8be3209ccb640db58cee212469f53c4793",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T025637Z.json",
+      "sha256": "6190df1e12914a81d169d96a7c29ae0f91605c51223d0cdc7078c17897256611",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T031129Z.json",
+      "sha256": "357ad98d5d9ed50b09bb546d470c0ee8d330fe5fdd66a9ffeb50b486bded0c3a",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T032630Z.json",
+      "sha256": "4bd2a75976836cb687053e427eb167371066a3aa4da1d633fa37c129106fdeb4",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T034135Z.json",
+      "sha256": "72ac9f57e2aef2921ee3299d8a823285a1f60ac0bf34a8b09a4db1e50604b783",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T035633Z.json",
+      "sha256": "b133d35b4fa391228c13120050091b2e2cc2c83b941ece248fc66cfa45f07dda",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T041133Z.json",
+      "sha256": "383e061eb2877191b9f7be1cbd8caf4e3f66a510536502ad95ee20acbca8b097",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T042640Z.json",
+      "sha256": "8e509880f0609f545384e7747e41401327ddf261b9987b6d2b9c0dbdc98af46d",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T044138Z.json",
+      "sha256": "090a749dd91b46ade2f37609c280071b2fef7d814a9a0ae1f3d78c169ea4334e",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T045635Z.json",
+      "sha256": "87ae6e10976f1ce1fff4795dc3f281066fe3365728b9e2d6ade4cde6e2d86b0f",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T051132Z.json",
+      "sha256": "a0776c9859dd83131cc7462157feee2812fa596a16e7b5682c5326d142831d01",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T052634Z.json",
+      "sha256": "12344fb8648c74eaf434b7bcab03e074429e464842b9d8600992846b174d3ddc",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T054133Z.json",
+      "sha256": "94befa62ab761f218c49a017dbd0b5c7aa93143bbba7ab70ec2f84ddd3e533c3",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T055636Z.json",
+      "sha256": "1997e6a0411115839cd133ebfca2789481ae5d02899cbc9601b3c2ed1bd2169f",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T061135Z.json",
+      "sha256": "5b09ba35bbe4b82ec982798571475b46956897381c63b48e9b8bdfcb57e54f0a",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T062633Z.json",
+      "sha256": "ab6ae3dc204a16ea001f9e6850fce6a828b85d59bd21bb5125d5f5ec061c19ea",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T064141Z.json",
+      "sha256": "e2a50582d1606dfc94c8457e4fd795938a1fa1ca7634c0d6e6ba803a2bc9dda7",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T065638Z.json",
+      "sha256": "659b70ae1c6e2623f6a72a3447e45c6f2caf58fe6746ca9e0974c414d01ce888",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T071159Z.json",
+      "sha256": "271e44b014414cfdb5c734cf684acf8f0d25d226263c0627b6246bdf0c4c98b1",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T072636Z.json",
+      "sha256": "6d43b553fbc01b6c7bfd9f68ea6583d8645695d6cea45ed84fc0aab128e2a496",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T074140Z.json",
+      "sha256": "cb4cd27ab2a6b86260f6c1c1d76a38c9197068ad505cfad7b1ba2cafb4890be2",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T075635Z.json",
+      "sha256": "aa6a94fea9efa5d4c227fd54fe08f3f505f31dbef7cf904742da8a1360da4767",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T081144Z.json",
+      "sha256": "b43968627df46f10ec37fed5184353107df94a30b3dbf798a942759f17d762ef",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T082636Z.json",
+      "sha256": "e21dfe8b4844d16411cd06d48757aa30548a53604e33094cacb3c2da8fbd51d2",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T084137Z.json",
+      "sha256": "68317cca7e24158924fbfce01e2f95b173d57e7088700b449597e18ca52be4b5",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T085637Z.json",
+      "sha256": "fe52df2710e68e867bedc5d8e10d38e77c32e4ac9ceb7c3cc1baa34cb33aa5e4",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T091141Z.json",
+      "sha256": "17ea3e2378525406c6bd6c0e271bbef61bc628890ea7e56b3cdf0d892b2ecd04",
+      "complete": true
+    },
+    {
+      "file": "checkpoint-20260909T092651Z.json",
+      "sha256": "3e98a97e9fcc108e426cc562ef707ef9c0a79975547edaa8dd8587a6546a7711",
+      "complete": true
+    }
+  ]
+}
