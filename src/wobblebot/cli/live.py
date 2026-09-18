@@ -1067,12 +1067,15 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 engine, notifier, symbol, tick, from_result=result.trade_recovery_abandoned
             )
             # ADR-046: a row the recovery sweep brought in is fee-checked on
-            # a tick with fills == 0, so the page keys off either signal --
-            # otherwise a drift found by the sweep waited for the symbol's
-            # NEXT fill (2026-09-18 completeness critic).
+            # a tick with fills == 0, and a PARTIAL recovery records rows
+            # without completing, so the page keys off the anomaly counter
+            # alone -- it moves only when a fee was actually judged, and
+            # fee_alerted keeps it to one page per symbol per session. A gate
+            # on same-tick fills made a drift found by the sweep wait for the
+            # symbol's NEXT fill (2026-09-18 completeness critic, then the
+            # fix-round reviewer for the partial-row case).
             if (
                 fee_alerted is not None
-                and (result.fills > 0 or result.trades_recovered > 0)
                 and symbol not in fee_alerted
                 and engine.fee_anomaly_count(symbol) > 0
             ):

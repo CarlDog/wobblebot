@@ -23,7 +23,7 @@ from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _AuthEscalation, _resume_pending_fill_trades, _run_one_tick
 from wobblebot.config.cli import LiveConfig
-from wobblebot.domain.models import Order
+from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services import grid_engine as grid_engine_module
@@ -269,3 +269,78 @@ async def test_boot_resume_warning_counts_only_the_symbols_it_will_sweep(
     assert resumes[0].getMessage().startswith("1 fill(s)")
     assert f"(symbols: {BTC_USD})" in resumes[0].getMessage()
     assert "SOL/USD" in caplog.text and "not in live.symbols" in caplog.text
+
+
+async def test_fee_drift_on_a_partially_recovered_row_pages_when_recorded(
+    storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix-round reviewer, round 2: the page keyed off COMPLETED recoveries, so
+    a drift on a half row the sweep recorded (fill still pending) waited for
+    the completing row -- or, after a give-up, for the symbol's next fill. The
+    page keys off the anomaly counter alone; fee_alerted keeps it to one."""
+    monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS", 1)
+
+    class _HalfFirst(MockExchangeAdapter):
+        half: list[Trade] = []
+
+        async def get_order_trades(self, order: Order) -> list[Trade]:
+            if self.half:
+                return list(self.half)
+            return await super().get_order_trades(order)
+
+    exchange = _HalfFirst(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    notifier = SqliteNotifierAdapter(storage)
+    escalation = _AuthEscalation()
+    fee_alerted: set[Symbol] = set()
+    await engine.step(BTC_USD)
+    buy = next(
+        o
+        for o in await storage.get_open_orders(symbol=BTC_USD)
+        if o.side is OrderSide.BUY and o.price.amount == Decimal("49500")
+    )
+    assert buy.exchange_id
+    exchange.withhold_trades(buy.exchange_id)
+    exchange.set_price(BTC_USD, Decimal("49400"))
+    half_qty = buy.amount.value / 2
+    half = Trade(
+        id="T-HALF",
+        order_id=buy.exchange_id,
+        symbol=BTC_USD,
+        side=OrderSide.BUY,
+        price=Price(amount=Decimal("49500"), currency="USD"),
+        amount=Amount(value=half_qty, asset="BTC"),
+        fee=Decimal("0"),  # matches neither believed rate: a drift
+        cost=Decimal("49500") * half_qty,
+        executed_at=Timestamp(dt=datetime.now(UTC)),
+    )
+
+    async def tick(n: int) -> list[str]:
+        await _run_one_tick(
+            exchange,
+            engine,
+            _live(),
+            n,
+            Decimal("100000"),
+            notifier,
+            escalation=escalation,
+            fee_alerted=fee_alerted,
+        )
+        return [r.notification.title for r in await storage.get_notifications()]
+
+    await tick(1)  # fill detected, rows hidden
+    exchange.half = [half]
+    titles = await tick(2)  # half recorded; fill still pending
+    assert engine.fee_anomaly_count(BTC_USD) == 1
+    assert len(await storage.get_pending_fill_trades(BTC_USD)) == 1
+    assert titles.count(f"Fee drift: {BTC_USD}") == 1
+
+    exchange.half = []
+    exchange.release_trades(buy.exchange_id)
+    titles = await tick(3)  # the real row completes the fill: no second page
+    assert engine.fee_anomaly_count(BTC_USD) == 2
+    assert await storage.get_pending_fill_trades(BTC_USD) == []
+    assert titles.count(f"Fee drift: {BTC_USD}") == 1

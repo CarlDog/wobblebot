@@ -1832,7 +1832,9 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         return counts
 
     def pending_fill_trade_symbols(self) -> frozenset[Symbol]:
-        """Symbols with an active pending-trades marker (ADR-046)."""
+        """Symbols with an active pending-trades marker (ADR-046). A test seam:
+        cli/live derives the same from ``load_pending_fill_trades``' return.
+        """
         return frozenset(self._pending_trade_symbols)
 
     def drain_unpaged_abandonments(self, symbol: Symbol) -> tuple[str, ...]:
@@ -1897,10 +1899,12 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             if order is None:
                 _LOGGER.error(
                     "pending fill trades for %s (%s) reference missing storage order %s; "
-                    "giving up on this marker",
+                    "giving up on this marker (fill of %s; the rows recorded are those "
+                    "carrying that exchange id)",
                     symbol,
                     marker.exchange_id,
                     marker.order_id,
+                    fmt_decimal(marker.filled_amount),
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": marker.exchange_id,

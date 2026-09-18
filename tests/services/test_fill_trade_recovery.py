@@ -795,3 +795,38 @@ class TestFixRoundPins:
         restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
         assert await restarted.load_pending_fill_trades() == {}
         assert await storage.get_pending_fill_trades(BTC_USD, include_given_up=True) == []
+
+    async def test_boot_re_check_ignores_rows_of_other_orders_on_the_symbol(
+        self,
+        storage: SQLiteStorageAdapter,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Fix-round reviewer, round 2 (its mutant R2-M9): the boot re-check's
+        order scoping was correct but unpinned -- with the filter dropped, any
+        row on the symbol at enough volume cleared the marker and the
+        cost-basis gap went silent."""
+        monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_MAX_ATTEMPTS", 1)
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        buy = await _initialize_and_pick_buy(engine, storage)
+        assert buy.exchange_id
+        exchange.withhold_trades(buy.exchange_id)
+        exchange.set_price(BTC_USD, Decimal("49400"))
+        await engine.step(BTC_USD)
+        given_up = await engine.step(BTC_USD)
+        assert given_up.trade_recovery_abandoned == (buy.exchange_id,)
+        # A row for a DIFFERENT order on the same symbol, at twice the volume.
+        await storage.save_trade(
+            _trade("T-OTHER", str(buy.amount.value * 2), order_id="SOME-OTHER-ORDER")
+        )
+
+        restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        with caplog.at_level(logging.ERROR, logger=ENGINE_LOGGER):
+            assert await restarted.load_pending_fill_trades() == {}
+
+        assert len(await storage.get_pending_fill_trades(BTC_USD, include_given_up=True)) == 1
+        assert "unrecovered fill on record" in caplog.text
