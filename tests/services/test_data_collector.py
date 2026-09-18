@@ -178,7 +178,7 @@ class _FailingStorage(StoragePort):
         raise NotImplementedError
 
     async def note_pending_fill_trades_attempt(  # type: ignore[no-untyped-def]
-        self, order_id, *, at, given_up
+        self, order_id, *, at, given_up, counted=True
     ) -> None:
         raise NotImplementedError
 

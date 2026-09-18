@@ -230,14 +230,20 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
     @abstractmethod
     async def note_pending_fill_trades_attempt(
-        self, order_id: UUID, *, at: Timestamp, given_up: bool
+        self, order_id: UUID, *, at: Timestamp, given_up: bool, counted: bool = True
     ) -> None:
-        """Record one lookup that returned nothing for a pending fill.
+        """Record one sweep pass over a pending fill.
 
-        Increments ``attempts`` and sets ``last_attempt_at``. With
-        ``given_up=True`` also sets ``given_up_at``, after which the row
-        is excluded from :meth:`get_pending_fill_trades` by default but
-        kept as the forensic record the daily reconcile pages on.
+        Sets ``last_attempt_at``; increments ``attempts`` only when
+        ``counted`` (a lookup that ran and left the fill uncovered — a
+        transport error or an off-cadence pass is not an attempt, so the
+        engine passes ``counted=False`` and the row's count stays honest).
+        With ``given_up=True`` also sets ``given_up_at``, after which the
+        row is excluded from :meth:`get_pending_fill_trades` by default
+        but kept as the forensic record: the live daemon re-raises it at
+        ERROR on every boot until the rows are backfilled (and clears it
+        once they are), and the daily reconcile reports the gap once the
+        exchange's own trade history lists the trade.
 
         Raises:
             StorageError: If the update fails.

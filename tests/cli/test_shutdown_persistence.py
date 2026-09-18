@@ -244,6 +244,11 @@ class _ReconcileStubAdapter:
     ) -> list[Trade]:
         return self._trades
 
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        return [
+            t for t in await self.get_trade_history(order.symbol) if t.order_id == order.exchange_id
+        ]
+
 
 class TestLiveCancelIdentity:
     """``cli.live._cancel_all_open`` must persist the cancellation onto

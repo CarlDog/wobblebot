@@ -653,7 +653,9 @@ CREATE TABLE IF NOT EXISTS reanchor_snoozes (
 -- engine sweeps active rows every tick and deletes a row once the
 -- recovered trades cover filled_amount. given_up_at is set, not
 -- deleted, when the bounded sweep stops: the row then stays as the
--- forensic record the daily reconcile and the operator act on.
+-- forensic record -- re-raised at ERROR on every cli/live boot until
+-- the rows are backfilled (then cleared), and reported by the daily
+-- reconcile once the exchange's own trade history lists the trade.
 -- Lives in live.db beside orders/trades. Additive: created by the
 -- writable connect() only; read-only openers skip schema by design.
 CREATE TABLE IF NOT EXISTS pending_fill_trades (

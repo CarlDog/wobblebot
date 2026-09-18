@@ -366,8 +366,13 @@ A dict keyed by trade txid. Each entry carries the same core fields as a
 parses both. Position-only fields (`posstatus`, `cprice`, `ccost`, `cfee`,
 `cvol`, `cmargin`, `net`, `trades`) appear only for margin trades.
 
-Rate cost: `QueryOrders` and `QueryTrades` are one point each, versus two per
-`TradesHistory` page. This is why the recovery sweep uses them per tick.
+Rate cost: `QueryOrders` and `QueryTrades` sit in Kraken's cheap (+1) bucket;
+`TradesHistory` is in the account-history bucket, which Kraken's rate-limit
+guide prices at 2 per page and its support article at 4 (the two pages
+disagree; either way it is the expensive one). A lagging fill costs three
+one-point calls in total: the `get_order_status` `QueryOrders`, the
+`trades=true` `QueryOrders`, and one `QueryTrades`. This is why the recovery
+sweep uses these per tick rather than re-walking `TradesHistory`.
 
 **Verified against a live response 2026-09-18** (trader key, from inside
 `wobblebot-live`, read-only, two known filled DOGE/USD orders: the 2026-09-10 buy

@@ -770,11 +770,14 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
     async def get_order_trades(self, order: Order) -> list[Trade]:
         """Trades Kraken attributes to ``order`` via the order's own trade-id list.
 
-        Two calls, one point each on Kraken's private counter (a
-        ``TradesHistory`` page costs two, and the account-wide walk in
-        ``get_trade_history`` is up to ``_TRADES_HISTORY_MAX_PAGES`` of
-        them — which is why the ADR-046 recovery sweep uses THIS path
-        every tick and not that one):
+        Two one-point calls here; on a lagging fill the resolver has
+        already spent one ``QueryOrders`` in ``get_order_status``, so the
+        whole path is three one-point calls. Kraken puts these in its
+        cheap bucket and ``TradesHistory`` in the expensive one (its
+        rate-limit guide says 2 per page, its support article says 4),
+        and ``get_trade_history`` walks up to ``_TRADES_HISTORY_MAX_PAGES``
+        of them — which is why the ADR-046 recovery sweep uses THIS path
+        every tick and not that one:
 
         1. ``QueryOrders`` with ``trades=true``; the order entry then
            carries ``trades``, "List of trade IDs related to order (if

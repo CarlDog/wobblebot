@@ -629,29 +629,38 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await self._execute_save_order(conn, order)
             for trade in trades:
                 await self._execute_save_trade(conn, trade)
-            await conn.execute(
-                """
-                INSERT INTO pending_fill_trades (
-                    order_id, exchange_id, symbol_base, symbol_quote,
-                    filled_amount, first_seen_at, attempts, last_attempt_at, given_up_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL)
-                ON CONFLICT(order_id) DO UPDATE SET
-                    exchange_id = excluded.exchange_id,
-                    filled_amount = excluded.filled_amount
-                """,
-                (
-                    str(order.id),
-                    order.exchange_id,
-                    order.symbol.base,
-                    order.symbol.quote,
-                    str(order.filled_amount),
-                    now_iso,
-                ),
-            )
+            await self._execute_save_pending_marker(conn, order, now_iso)
             await conn.commit()
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save pending fill for order {order.id}: {exc}") from exc
+
+    async def _execute_save_pending_marker(
+        self, conn: aiosqlite.Connection, order: Order, first_seen_iso: str
+    ) -> None:
+        """Run the pending_fill_trades UPSERT without committing -- the last
+        statement of ``save_fill_pending_trades``'s transaction, split out
+        so a test can fail THIS statement alone and prove the order close
+        rolls back with it."""
+        await conn.execute(
+            """
+            INSERT INTO pending_fill_trades (
+                order_id, exchange_id, symbol_base, symbol_quote,
+                filled_amount, first_seen_at, attempts, last_attempt_at, given_up_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL)
+            ON CONFLICT(order_id) DO UPDATE SET
+                exchange_id = excluded.exchange_id,
+                filled_amount = excluded.filled_amount
+            """,
+            (
+                str(order.id),
+                order.exchange_id,
+                order.symbol.base,
+                order.symbol.quote,
+                str(order.filled_amount),
+                first_seen_iso,
+            ),
+        )
 
     async def record_pending_fill_trades(
         self, order_id: UUID, trades: Sequence[Trade], *, complete: bool
@@ -672,25 +681,26 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             ) from exc
 
     async def note_pending_fill_trades_attempt(
-        self, order_id: UUID, *, at: Timestamp, given_up: bool
+        self, order_id: UUID, *, at: Timestamp, given_up: bool, counted: bool = True
     ) -> None:
         conn = self._require_conn()
         at_iso = at.dt.isoformat()
+        increment = "attempts + 1" if counted else "attempts"
         try:
             if given_up:
                 await conn.execute(
-                    """
+                    f"""
                     UPDATE pending_fill_trades
-                    SET attempts = attempts + 1, last_attempt_at = ?, given_up_at = ?
+                    SET attempts = {increment}, last_attempt_at = ?, given_up_at = ?
                     WHERE order_id = ?
                     """,
                     (at_iso, at_iso, str(order_id)),
                 )
             else:
                 await conn.execute(
-                    """
+                    f"""
                     UPDATE pending_fill_trades
-                    SET attempts = attempts + 1, last_attempt_at = ?
+                    SET attempts = {increment}, last_attempt_at = ?
                     WHERE order_id = ?
                     """,
                     (at_iso, str(order_id)),

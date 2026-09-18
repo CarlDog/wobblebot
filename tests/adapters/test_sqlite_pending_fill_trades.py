@@ -269,3 +269,47 @@ class TestRecordAndNote:
         assert [m.exchange_id for m in only_doge] == [TXID]
         both = await storage.get_pending_fill_trades()
         assert [m.exchange_id for m in both] == [TXID, "OSOL00-000000-000001"]
+
+
+class TestReviewRoundPins:
+    async def test_marker_insert_failure_alone_rolls_back_the_order_close(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """The 2026-09-18 review found the earlier rollback test failed the
+        TRADE insert, so a commit slipped in before the marker write would
+        pass it. This fails the marker statement itself."""
+        order = _open_order()
+        await storage.save_order(order)
+
+        class _FailOnMarkerOnly(SQLiteStorageAdapter):
+            async def _execute_save_pending_marker(  # type: ignore[override]
+                self, conn: aiosqlite.Connection, order: Order, first_seen_iso: str
+            ) -> None:
+                raise aiosqlite.OperationalError("simulated failure on the marker insert")
+
+        failing = _FailOnMarkerOnly(":memory:")
+        failing._conn = storage._conn  # pylint: disable=protected-access
+
+        with pytest.raises(StorageError):
+            await failing.save_fill_pending_trades(_filled(order), [_trade("T-1", "30")])
+
+        loaded = await storage.get_order(order.id)
+        assert loaded is not None and loaded.status == "open"
+        assert await storage.get_trades(symbol=DOGE_USD) == []
+        assert await storage.get_pending_fill_trades(include_given_up=True) == []
+
+    async def test_uncounted_attempt_stamps_time_but_not_the_count(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        order = _open_order()
+        await storage.save_order(order)
+        await storage.save_fill_pending_trades(_filled(order))
+        t1 = Timestamp(dt=datetime(2026, 9, 10, 12, 47, 25, tzinfo=UTC))
+
+        await storage.note_pending_fill_trades_attempt(
+            order.id, at=t1, given_up=False, counted=False
+        )
+
+        marker = (await storage.get_pending_fill_trades())[0]
+        assert marker.attempts == 0
+        assert marker.last_attempt_at == t1

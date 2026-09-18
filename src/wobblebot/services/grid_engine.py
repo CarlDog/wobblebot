@@ -121,6 +121,12 @@ from wobblebot.services.reconciler import (
 # operator is paged; the daily reconcile remains the backstop.
 _PENDING_FILL_TRADES_MAX_ATTEMPTS = 120
 _PENDING_FILL_TRADES_MAX_AGE = timedelta(minutes=30)
+# Direct lookups (QueryOrders trades=true, then QueryTrades) land on Kraken's
+# shared private counter, the same one the OpenOrders fetch every symbol
+# depends on rides. The snapshot check is free every tick; the exchange is
+# asked only every N-th sweep tick per symbol, so a lag that lasts the
+# whole ceiling costs about one extra point per 15-18 s, not per tick.
+_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS = 3
 
 
 @dataclass(frozen=True)
@@ -392,6 +398,19 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # kept in sync by the sites that add markers and the sweep that
         # clears them; storage is the source of truth, this is the index.
         self._pending_trade_symbols: set[Symbol] = set()
+        # Per-symbol sweep tick counter that paces the direct exchange lookup
+        # (see _PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS). Cleared with the
+        # symbol's markers; a restart starts at 0, i.e. looks up at once.
+        self._sweep_ticks: dict[Symbol, int] = {}
+        # Abandonments the sweep has written (given_up_at set, a one-shot
+        # durable state change) that cli/live has not yet paged. Kept HERE,
+        # not on the StepResult alone: the step that follows the sweep can
+        # raise, the per-symbol handler in cli/live swallows it, and the
+        # StepResult never exists -- the page would be lost while the
+        # marker is already excluded from every future sweep. Drained by
+        # drain_unpaged_abandonments on both the success and the failure
+        # path of the tick.
+        self._unpaged_abandonments: dict[Symbol, list[str]] = {}
 
     def _lock_for(self, symbol: Symbol) -> asyncio.Lock:
         key = symbol.base.upper()
@@ -447,10 +466,11 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # that already happened, so a paused, offside or wide-spread
             # symbol still gets its rows recorded and its abandonments
             # surfaced. Merged onto whichever StepResult the step returns.
-            recovered, abandoned = await self._recover_pending_fill_trades(symbol, exchange_trades)
+            recovered = await self._recover_pending_fill_trades(symbol, exchange_trades)
             result = await self._step_unlocked(
                 symbol, exchange_open_orders, exchange_trades, ticker
             )
+            abandoned = self.drain_unpaged_abandonments(symbol)
             if recovered or abandoned:
                 result = replace(
                     result, trades_recovered=recovered, trade_recovery_abandoned=abandoned
@@ -1745,48 +1765,112 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         cli/live calls this after startup reconciliation (which may itself
         write markers) and before the first tick, so a fill whose rows were
         pending when the previous process stopped keeps being swept by
-        this one. Returns the number of active markers.
+        this one. Given-up markers are examined too: one whose rows have
+        since landed (an operator backfill) is cleared, one still short is
+        logged at ERROR so an abandonment stays loud across restarts even
+        if its page was lost -- the marker is the record, and this is
+        where it is read. Returns the number of ACTIVE markers.
         """
-        pending = await self._storage.get_pending_fill_trades()
-        self._pending_trade_symbols = {marker.symbol for marker in pending}
-        return len(pending)
+        active = await self._storage.get_pending_fill_trades()
+        self._pending_trade_symbols = {marker.symbol for marker in active}
+        for marker in await self._storage.get_pending_fill_trades(include_given_up=True):
+            if marker.given_up_at is None:
+                continue
+            order = await self._storage.get_order(marker.order_id)
+            rows = (
+                [
+                    trade
+                    for trade in await self._storage.get_trades(symbol=marker.symbol, limit=10_000)
+                    if trade.order_id == marker.exchange_id
+                ]
+                if order is not None
+                else []
+            )
+            if order is not None and trades_cover_fill(order, rows):
+                await self._storage.record_pending_fill_trades(marker.order_id, [], complete=True)
+                _LOGGER.info(
+                    "given-up fill %s %s (%s) now has its %d trade row(s) in storage "
+                    "(backfilled); marker cleared",
+                    marker.symbol,
+                    order.side.value.upper(),
+                    marker.exchange_id,
+                    len(rows),
+                    extra={"symbol": str(marker.symbol), "exchange_id": marker.exchange_id},
+                )
+                continue
+            _LOGGER.error(
+                "unrecovered fill on record: %s (%s) filled %s on %s, %d trade row(s) "
+                "recorded, recovery given up at %s -- backfill per "
+                "tools/reconcile_trade_history.py",
+                marker.symbol,
+                marker.exchange_id,
+                fmt_decimal(marker.filled_amount),
+                marker.first_seen_at.dt.isoformat(timespec="seconds"),
+                len(rows),
+                marker.given_up_at.dt.isoformat(timespec="seconds"),
+                extra={
+                    "symbol": str(marker.symbol),
+                    "exchange_id": marker.exchange_id,
+                    "filled_amount": str(marker.filled_amount),
+                    "trades_recorded": len(rows),
+                },
+            )
+        return len(active)
 
     def pending_fill_trade_symbols(self) -> frozenset[Symbol]:
         """Symbols with an active pending-trades marker (ADR-046)."""
         return frozenset(self._pending_trade_symbols)
 
+    def drain_unpaged_abandonments(self, symbol: Symbol) -> tuple[str, ...]:
+        """Hand back, once, the exchange ids of fills whose recovery the sweep
+        gave up on since the last drain (ADR-046). ``step`` drains on the
+        success path; cli/live drains again on the failure path, so a step
+        that raised after the sweep cannot lose the page."""
+        return tuple(self._unpaged_abandonments.pop(symbol, ()))
+
     async def _recover_pending_fill_trades(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self, symbol: Symbol, exchange_trades: list[Trade] | None
-    ) -> tuple[int, tuple[str, ...]]:
+    ) -> int:
         """Sweep ``symbol``'s pending fills for their trade rows (ADR-046).
 
         Per active marker: take whatever the caller's shared snapshot
         already attributes to the order (free when another symbol's fill
-        caused the snapshot to exist this tick), then ask the exchange for
-        the order's own trade list -- two one-point calls, never a
-        TradesHistory re-walk. Rows that arrive are persisted at once,
-        idempotently; the marker is deleted only when the recovered volume
-        covers ``filled_amount``, because a limit order can fill across
-        several trades seconds apart. An empty lookup counts as an
-        attempt; a transport error does not, but the wall-clock ceiling
-        still applies. When the bound is hit the marker is kept with
-        ``given_up_at`` set and the exchange id is returned so cli/live
-        pages the operator -- the fill is then loud, and the daily
-        reconcile still reports it.
+        caused the snapshot to exist this tick); only every
+        ``_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS``-th sweep tick ask the
+        exchange for the order's own trade list -- two one-point calls
+        that would otherwise land on Kraken's shared private counter every
+        tick for up to half an hour and starve the OpenOrders fetch every
+        symbol depends on. Rows are persisted at once, idempotently; fee
+        drift, the sell-guard cache and the log lines are driven by the
+        rows that are NEW to storage, so a partially covered fill is not
+        re-counted on every pass. The marker is deleted only when the
+        recovered volume covers ``filled_amount``, because a limit order
+        can fill across several trades seconds apart. A direct lookup that
+        leaves the fill uncovered counts as an attempt; a transport error
+        and an off-cadence pass do not, but the wall-clock ceiling still
+        applies. When a bound is hit the marker is kept with ``given_up_at``
+        set and the exchange id is queued in ``_unpaged_abandonments`` for
+        cli/live to page -- the fill is then loud, ``load_pending_fill_trades``
+        re-raises it at every boot until backfilled, and the daily reconcile
+        reports it once Kraken's history lists the trade.
 
-        R0914/R0912 disabled: every local is a distinct stage signal of a
-        linear procedure (snapshot index, per-marker order, direct lookup,
-        completeness, attempt accounting); splitting would obscure the
-        persist-before-count ordering that is the correctness argument.
+        R0914/R0912/R0915 disabled: every local is a distinct stage signal
+        of a linear procedure (snapshot index, pacing, per-marker order,
+        direct lookup, new-row diff, completeness, attempt accounting);
+        splitting would obscure the persist-before-count ordering that is
+        the correctness argument.
 
-        Returns ``(recovered_count, abandoned_exchange_ids)``.
+        Returns the number of fills fully recovered this pass.
         """
         if symbol not in self._pending_trade_symbols:
-            return 0, ()
+            return 0
         pending = await self._storage.get_pending_fill_trades(symbol=symbol)
         if not pending:
             self._pending_trade_symbols.discard(symbol)
-            return 0, ()
+            return 0
+        sweep_tick = self._sweep_ticks.get(symbol, 0)
+        self._sweep_ticks[symbol] = sweep_tick + 1
+        lookup_tick = sweep_tick % _PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS == 0
         snapshot_by_order: dict[str, list[Trade]] = {}
         for trade in exchange_trades or []:
             if trade.symbol == symbol:
@@ -1794,7 +1878,6 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         now = datetime.now(UTC)
         stamp = Timestamp(dt=now)
         recovered = 0
-        abandoned: list[str] = []
         for marker in pending:
             order = await self._storage.get_order(marker.order_id)
             if order is None:
@@ -1811,13 +1894,28 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     },
                 )
                 await self._storage.note_pending_fill_trades_attempt(
-                    marker.order_id, at=stamp, given_up=True
+                    marker.order_id, at=stamp, given_up=True, counted=False
                 )
-                abandoned.append(marker.exchange_id)
+                self._unpaged_abandonments.setdefault(symbol, []).append(marker.exchange_id)
                 continue
-            trades: list[Trade] = list(snapshot_by_order.get(marker.exchange_id, []))
+            # Rows storage already holds for this order: recorded by
+            # _detect_fills (a partial resolution) or by an earlier sweep.
+            # Everything below keys off what is NEW relative to these.
+            # Filtered by order id only, never by time: the order's
+            # created_at is the NAS clock at placement and a trade's time is
+            # Kraken's, so a skew could hide a recorded row and re-count it.
+            existing_rows = [
+                trade
+                for trade in await self._storage.get_trades(symbol=symbol, limit=10_000)
+                if trade.order_id == marker.exchange_id
+            ]
+            known: dict[str, Trade] = {trade.id: trade for trade in existing_rows}
+            for trade in snapshot_by_order.get(marker.exchange_id, []):
+                known.setdefault(trade.id, trade)
             lookup_failed = False
-            if not trades_cover_fill(order, trades):
+            looked_up = False
+            if lookup_tick and not trades_cover_fill(order, list(known.values())):
+                looked_up = True
                 try:
                     direct = await self._exchange.get_order_trades(order)
                 except ExchangeError as exc:
@@ -1837,88 +1935,99 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                             "error_type": type(exc).__name__,
                         },
                     )
-                merged = {trade.id: trade for trade in trades}
                 for trade in direct:
-                    merged[trade.id] = trade
-                trades = sorted(merged.values(), key=lambda trade: trade.executed_at.dt)
+                    known.setdefault(trade.id, trade)
+            all_rows = sorted(known.values(), key=lambda trade: trade.executed_at.dt)
+            existing_ids = {trade.id for trade in existing_rows}
+            new_rows = [trade for trade in all_rows if trade.id not in existing_ids]
+            complete = trades_cover_fill(order, all_rows)
+            covered = sum((trade.amount.value for trade in all_rows), Decimal(0))
             age_seconds = int((now - marker.first_seen_at.dt).total_seconds())
-            if trades:
-                complete = trades_cover_fill(order, trades)
+            if new_rows or complete:
                 # Persist BEFORE any counting, so a storage failure here
                 # leaves the marker exactly as it was and the next tick
                 # retries with nothing double-counted.
                 await self._storage.record_pending_fill_trades(
-                    marker.order_id, trades, complete=complete
+                    marker.order_id, new_rows, complete=complete
                 )
-                for trade in trades:
+            if new_rows:
+                for trade in new_rows:
                     self._check_fee_drift(symbol, trade)
                 # ADR-032: newly recorded trades change this symbol's cost
                 # basis; the guard must not reuse a cache computed before.
                 self._sell_guard.invalidate(symbol)
-                if complete:
-                    recovered += 1
-                    _LOGGER.info(
-                        "recovered %d trade row(s) for %s %s (%s) after %d empty lookup(s), "
-                        "%ds after the fill was confirmed; fill fully recorded",
-                        len(trades),
-                        symbol,
-                        order.side.value.upper(),
-                        marker.exchange_id,
-                        marker.attempts,
-                        age_seconds,
-                        extra={
-                            "symbol": str(symbol),
-                            "exchange_id": marker.exchange_id,
-                            "trades_recovered": len(trades),
-                            "attempts": marker.attempts,
-                            "age_seconds": age_seconds,
-                        },
-                    )
-                    continue
+            if complete:
+                recovered += 1
                 _LOGGER.info(
-                    "recovered %d trade row(s) for %s %s (%s) covering %s of %s; still pending",
-                    len(trades),
+                    "recovered %d trade row(s) for %s %s (%s) after %d lookup(s) without them, "
+                    "%ds after the fill was confirmed; fill fully recorded",
+                    len(all_rows),
                     symbol,
                     order.side.value.upper(),
                     marker.exchange_id,
-                    fmt_decimal(sum((trade.amount.value for trade in trades), Decimal(0))),
+                    marker.attempts,
+                    age_seconds,
+                    extra={
+                        "symbol": str(symbol),
+                        "exchange_id": marker.exchange_id,
+                        "trades_recorded": len(all_rows),
+                        "attempts": marker.attempts,
+                        "age_seconds": age_seconds,
+                    },
+                )
+                continue
+            if new_rows:
+                _LOGGER.info(
+                    "recovered %d new trade row(s) for %s %s (%s) covering %s of %s; still pending",
+                    len(new_rows),
+                    symbol,
+                    order.side.value.upper(),
+                    marker.exchange_id,
+                    fmt_decimal(covered),
                     fmt_decimal(order.filled_amount),
                     extra={"symbol": str(symbol), "exchange_id": marker.exchange_id},
                 )
             aged_out = now - marker.first_seen_at.dt >= _PENDING_FILL_TRADES_MAX_AGE
-            if lookup_failed and not aged_out:
-                # Not an attempt: the exchange never answered. The age
-                # ceiling above is what keeps an outage from making this
+            if not aged_out and (not looked_up or lookup_failed):
+                # Off-cadence pass (exchange not asked) or a transport
+                # failure (exchange never answered): neither is an attempt.
+                # The age ceiling is what keeps an outage from making this
                 # loop endless.
                 continue
-            attempts = marker.attempts + (0 if lookup_failed else 1)
+            counted = looked_up and not lookup_failed
+            attempts = marker.attempts + (1 if counted else 0)
             give_up = aged_out or attempts >= _PENDING_FILL_TRADES_MAX_ATTEMPTS
             await self._storage.note_pending_fill_trades_attempt(
-                marker.order_id, at=stamp, given_up=give_up
+                marker.order_id, at=stamp, given_up=give_up, counted=counted
             )
             if give_up:
-                abandoned.append(marker.exchange_id)
+                self._unpaged_abandonments.setdefault(symbol, []).append(marker.exchange_id)
                 _LOGGER.error(
                     "giving up on trade rows for %s %s (%s): fill of %s confirmed %ds ago, "
-                    "%d empty lookup(s); marker kept, daily reconcile will report it -- "
-                    "backfill per tools/reconcile_trade_history.py",
+                    "%d lookup(s) without the remaining rows, %s of %s recorded; marker kept "
+                    "and re-raised at every boot until backfilled -- see "
+                    "tools/reconcile_trade_history.py",
                     symbol,
                     order.side.value.upper(),
                     marker.exchange_id,
                     fmt_decimal(order.filled_amount),
                     age_seconds,
                     attempts,
+                    fmt_decimal(covered),
+                    fmt_decimal(order.filled_amount),
                     extra={
                         "symbol": str(symbol),
                         "exchange_id": marker.exchange_id,
                         "filled_amount": str(order.filled_amount),
                         "attempts": attempts,
                         "age_seconds": age_seconds,
+                        "recorded_volume": str(covered),
                     },
                 )
         if not await self._storage.get_pending_fill_trades(symbol=symbol):
             self._pending_trade_symbols.discard(symbol)
-        return recovered, tuple(abandoned)
+            self._sweep_ticks.pop(symbol, None)
+        return recovered
 
     async def _detect_fills(
         self,

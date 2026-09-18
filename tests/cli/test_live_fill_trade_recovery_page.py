@@ -9,6 +9,7 @@ one, so the second tick abandons.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from decimal import Decimal
 
@@ -19,9 +20,10 @@ from tests.fixtures import grid_config, safety_config
 from wobblebot.adapters.mock_exchange import MockExchangeAdapter
 from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.cli.live import _AuthEscalation, _run_one_tick
+from wobblebot.cli.live import _AuthEscalation, _resume_pending_fill_trades, _run_one_tick
 from wobblebot.config.cli import LiveConfig
 from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services import grid_engine as grid_engine_module
 from wobblebot.services.grid_engine import GridEngine
 
@@ -114,3 +116,65 @@ async def test_successful_recovery_does_not_page(storage: SQLiteStorageAdapter) 
     assert not any(r.notification.title.startswith("Fill recorded") for r in rows)
     assert len(await storage.get_trades(symbol=BTC_USD)) == 1
     assert await storage.get_pending_fill_trades(BTC_USD) == []
+
+
+async def test_page_survives_a_step_that_raises_right_after_the_give_up(
+    storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding (2026-09-18): the give-up write is durable and one-shot,
+    but the page rode the StepResult. If the trading step raised after the
+    sweep, the per-symbol handler swallowed it and the page was lost."""
+    monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS", 1)
+
+    class _TickerFails(MockExchangeAdapter):
+        fail_ticker = False
+
+        async def get_ticker(self, symbol: Symbol):  # type: ignore[no-untyped-def]
+            if self.fail_ticker:
+                raise ExchangeError("Ticker unavailable")
+            return await super().get_ticker(symbol)
+
+    exchange = _TickerFails(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    notifier = SqliteNotifierAdapter(storage)
+    exchange_id = await _fill_with_hidden_trade(exchange, engine, storage)
+    escalation = _AuthEscalation()
+    await _run_one_tick(
+        exchange, engine, _live(), 1, Decimal("100000"), notifier, escalation=escalation
+    )
+    exchange.fail_ticker = True
+
+    # Tick 2: the sweep gives up, then the step raises inside the same try.
+    await _run_one_tick(
+        exchange, engine, _live(), 2, Decimal("100000"), notifier, escalation=escalation
+    )
+    exchange.fail_ticker = False
+    await _run_one_tick(
+        exchange, engine, _live(), 3, Decimal("100000"), notifier, escalation=escalation
+    )
+
+    rows = await storage.get_notifications()
+    pages = [r.notification for r in rows if r.notification.title.startswith("Fill recorded")]
+    assert len(pages) == 1
+    assert exchange_id in pages[0].message
+
+
+async def test_boot_resume_calls_out_markers_on_symbols_it_will_not_sweep(
+    storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+) -> None:
+    exchange = _exchange()
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    await _fill_with_hidden_trade(exchange, engine, storage)
+    await engine.step(BTC_USD)  # writes the BTC marker
+    restarted = GridEngine(exchange, storage, grid_config(), safety_config())
+
+    with caplog.at_level(logging.WARNING, logger="wobblebot.cli.live"):
+        await _resume_pending_fill_trades(restarted, [Symbol(base="SOL", quote="USD")])
+
+    assert "not in live.symbols" in caplog.text
+    assert "recovery resumes" not in caplog.text
+    assert restarted.pending_fill_trade_symbols() == frozenset({BTC_USD})

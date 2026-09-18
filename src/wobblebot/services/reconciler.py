@@ -173,6 +173,11 @@ def trades_cover_fill(order: Order, trades: Sequence[Trade]) -> bool:
     """
     if order.filled_amount <= 0:
         return True
+    if not trades:
+        # An empty set never covers a positive fill, however small: the
+        # tolerance below is for rounding between vol_exec and a multi-trade
+        # sum, not for a one-lot-unit fill with no rows (2026-09-18 review).
+        return False
     recovered = sum((trade.amount.value for trade in trades), Decimal(0))
     return recovered + _FILL_VOLUME_TOLERANCE >= order.filled_amount
 
