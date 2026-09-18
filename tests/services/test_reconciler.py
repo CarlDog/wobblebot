@@ -181,11 +181,13 @@ class _FakeAdapter:
         fail: bool = False,
         terminal_orders: dict[str, Order] | None = None,
         trades: list[Trade] | None = None,
+        order_trades: dict[str, list[Trade]] | str | None = None,
     ) -> None:
         self._open = open_orders
         self._fail = fail
         self._terminal_orders = terminal_orders or {}
         self._trades = trades or []
+        self._order_trades = order_trades
 
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
         if self._fail:
@@ -207,6 +209,16 @@ class _FakeAdapter:
         if symbol is None:
             return list(self._trades)
         return [t for t in self._trades if t.symbol == symbol][:limit]
+
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        # ADR-046 fast path. ``order_trades`` (set by tests) overrides;
+        # otherwise the order's trades are whatever history holds for it,
+        # so existing recovered-fill tests see the same rows either way.
+        if self._order_trades is not None:
+            if self._order_trades == "fail":
+                raise ExchangeError("simulated QueryTrades failure")
+            return list(self._order_trades.get(order.exchange_id or "", []))
+        return [t for t in self._trades if t.order_id == order.exchange_id]
 
 
 @pytest.mark.asyncio
@@ -459,3 +471,67 @@ class TestApplyReconciliationRecoveredFills:
         assert (
             good_roundtripped.status == "canceled"
         ), "reconciliation must continue past the bad row"
+
+
+@pytest.mark.asyncio
+class TestApplyReconciliationPendingTrades:
+    """ADR-046 at boot: a fill recovered while the daemon was down whose
+    trade rows the exchange has not surfaced yet must close the order,
+    queue its counter, and leave a pending marker for the engine's sweep
+    -- never a closed order with zero trades."""
+
+    async def test_fill_with_no_visible_trades_writes_a_pending_marker(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        stale = _order(exchange_id="LAGGED-1")
+        await storage.save_order(stale)
+        closed = stale.model_copy(update={"status": "closed", "filled_amount": stale.amount.value})
+        adapter = _FakeAdapter(
+            open_orders=[], terminal_orders={"LAGGED-1": closed}, trades=[], order_trades={}
+        )
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.recovered_fill_count == 1
+        assert report.needs_counter_order_ids == (stale.id,)
+        roundtripped = await storage.get_order(stale.id)
+        assert roundtripped is not None and roundtripped.status == "closed"
+        assert await storage.get_trades(symbol=stale.symbol) == []
+        markers = await storage.get_pending_fill_trades(stale.symbol)
+        assert [m.exchange_id for m in markers] == ["LAGGED-1"]
+        assert markers[0].filled_amount == stale.amount.value
+
+    async def test_orders_own_trade_list_completes_the_fill_without_a_marker(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        stale = _order(exchange_id="DIRECT-1")
+        await storage.save_order(stale)
+        closed = stale.model_copy(update={"status": "closed", "filled_amount": stale.amount.value})
+        trade = _trade_for(closed, filled_amount=str(stale.amount.value))
+        adapter = _FakeAdapter(
+            open_orders=[],
+            terminal_orders={"DIRECT-1": closed},
+            trades=[],
+            order_trades={"DIRECT-1": [trade]},
+        )
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.recovered_fill_count == 1
+        assert len(await storage.get_trades(symbol=stale.symbol)) == 1
+        assert await storage.get_pending_fill_trades(stale.symbol) == []
+
+    async def test_lookup_failure_still_closes_with_a_marker(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        stale = _order(exchange_id="FLAKY-1")
+        await storage.save_order(stale)
+        closed = stale.model_copy(update={"status": "closed", "filled_amount": stale.amount.value})
+        adapter = _FakeAdapter(
+            open_orders=[], terminal_orders={"FLAKY-1": closed}, trades=[], order_trades="fail"
+        )
+
+        report = await apply_reconciliation(adapter, storage)
+
+        assert report.recovered_fill_count == 1
+        assert [m.exchange_id for m in await storage.get_pending_fill_trades()] == ["FLAKY-1"]
