@@ -118,7 +118,9 @@ from wobblebot.services.reconciler import (
 # cannot burn the budget for a fill the sweep would recover the moment
 # the API returns. The wall clock is the ceiling that ends the loop
 # regardless, after which the marker is kept (given_up_at set) and the
-# operator is paged; the daily reconcile remains the backstop.
+# operator is paged. Nothing else reads the marker: the daily reconcile
+# reports the gap only once Kraken's history lists the trade, and only
+# for symbols in live.symbols.
 _PENDING_FILL_TRADES_MAX_ATTEMPTS = 120
 _PENDING_FILL_TRADES_MAX_AGE = timedelta(minutes=30)
 # Direct lookups (QueryOrders trades=true, then QueryTrades) land on Kraken's

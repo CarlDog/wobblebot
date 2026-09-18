@@ -242,8 +242,9 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         row is excluded from :meth:`get_pending_fill_trades` by default
         but kept as the forensic record: the live daemon re-raises it at
         ERROR on every boot until the rows are backfilled (and clears it
-        once they are), and the daily reconcile reports the gap once the
-        exchange's own trade history lists the trade.
+        once they are), and the daily reconcile (live.symbols only; it does
+        not read this table) reports the gap once the exchange's own trade
+        history lists the trade.
 
         Raises:
             StorageError: If the update fails.

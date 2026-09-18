@@ -420,7 +420,10 @@ class PendingFillTrades(BaseModel):
     trade was lost until a hand backfill eight days later). The engine
     sweeps these every tick until the trades arrive, then deletes the
     row; ``given_up_at`` marks a fill the sweep stopped retrying so the
-    daily reconcile and the operator can see it was never silent.
+    operator can see it was never silent: cli/live pages it and re-raises
+    it at ERROR on every boot. Nothing else reads this table -- the daily
+    reconcile compares Kraken's history with ``trades`` for ``live.symbols``
+    and reports the gap only once Kraken lists the trade.
 
     Attributes:
         order_id: Storage UUID of the closed order.

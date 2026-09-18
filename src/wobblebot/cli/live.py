@@ -2169,7 +2169,8 @@ async def _page_unrecovered_fill_trades(
     was hit, or the storage order behind a marker is gone). The order is
     closed and the marker is kept: the live daemon re-raises it at ERROR
     on every boot until the rows are backfilled, and the daily reconcile
-    reports the gap once Kraken's own history lists the trade. This page
+    (which checks live.symbols, the set this sweep ran for) reports the
+    gap once Kraken's own history lists the trade. This page
     is the timely one, with the runbook attached. Says only what the code
     knows -- not why Kraken did not answer."""
     ids = ", ".join(abandoned)
@@ -2230,9 +2231,10 @@ async def _resume_pending_fill_trades(engine: GridEngine, configured: Sequence[S
     if unswept:
         _LOGGER.error(
             "fill(s) on %s still owe their trade rows but those symbols are not in "
-            "live.symbols this session, so nothing will sweep them; the daily reconcile "
-            "will report the gap -- backfill per tools/reconcile_trade_history.py or "
-            "add the symbol back",
+            "live.symbols this session, so nothing will sweep them, and the daily "
+            "reconcile checks only live.symbols, so nothing automated will report the "
+            "gap -- backfill per tools/reconcile_trade_history.py --symbols now, or add "
+            "the symbol back so the sweep resumes",
             ", ".join(unswept),
             extra={"pending_fill_trades_unswept_symbols": unswept},
         )
