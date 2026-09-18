@@ -152,6 +152,15 @@ async def test_page_survives_a_step_that_raises_right_after_the_give_up(
     await _run_one_tick(
         exchange, engine, _live(), 2, Decimal("100000"), notifier, escalation=escalation
     )
+    # The page must already exist HERE, from the failure-path drain -- not
+    # only after a later healthy tick happens to drain the buffer.
+    after_failure = await storage.get_notifications()
+    assert [
+        r.notification.title
+        for r in after_failure
+        if r.notification.title.startswith("Fill recorded")
+    ] == [f"Fill recorded without its trade rows: {BTC_USD}"]
+
     exchange.fail_ticker = False
     await _run_one_tick(
         exchange, engine, _live(), 3, Decimal("100000"), notifier, escalation=escalation
@@ -159,7 +168,7 @@ async def test_page_survives_a_step_that_raises_right_after_the_give_up(
 
     rows = await storage.get_notifications()
     pages = [r.notification for r in rows if r.notification.title.startswith("Fill recorded")]
-    assert len(pages) == 1
+    assert len(pages) == 1  # and not paged a second time
     assert exchange_id in pages[0].message
 
 

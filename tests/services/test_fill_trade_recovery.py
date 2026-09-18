@@ -536,12 +536,23 @@ class TestReviewRoundPins:
             first_lines = caplog.text.count("still pending")
             for _ in range(3):
                 await engine.step(BTC_USD)  # same half every time
+            after_repeats = engine.fee_anomaly_count(BTC_USD)
+            attempts_before_release = (await storage.get_pending_fill_trades(BTC_USD))[0].attempts
+            assert [t.id for t in await storage.get_trades(symbol=BTC_USD)] == ["T-HALF"]
+            # Now the real (mock) trade becomes visible next to the recorded
+            # half: exactly ONE new row, so exactly one more anomaly.
+            exchange.half = []
+            exchange.release_trades(buy.exchange_id)
+            await engine.step(BTC_USD)
 
         assert after_first == 1  # fee 0 vs believed 0.4%/0.8% is a drift
-        assert engine.fee_anomaly_count(BTC_USD) == after_first
+        assert after_repeats == after_first
+        assert attempts_before_release == 4
+        assert engine.fee_anomaly_count(BTC_USD) == 2
         assert caplog.text.count("still pending") == first_lines == 1
-        assert [t.id for t in await storage.get_trades(symbol=BTC_USD)] == ["T-HALF"]
-        assert (await storage.get_pending_fill_trades(BTC_USD))[0].attempts == 4
+        assert "fill fully recorded" in caplog.text
+        assert len(await storage.get_trades(symbol=BTC_USD)) == 2
+        assert await storage.get_pending_fill_trades(BTC_USD) == []
 
     async def test_boot_clears_a_given_up_marker_whose_rows_were_backfilled(
         self,
