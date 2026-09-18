@@ -159,6 +159,17 @@ class TestResolveFillTrades:
         assert "order-trade lookup failed" in caplog.text
 
 
+async def _age_marker(storage: SQLiteStorageAdapter, order: Order, *, minutes: int) -> None:
+    """Backdate a marker's first_seen_at, as a long restart leaves it."""
+    assert storage._conn is not None
+    stamp = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
+    await storage._conn.execute(
+        "UPDATE pending_fill_trades SET first_seen_at = ? WHERE order_id = ?",
+        (stamp, str(order.id)),
+    )
+    await storage._conn.commit()
+
+
 async def _initialize_and_pick_buy(engine: GridEngine, storage: SQLiteStorageAdapter) -> Order:
     await engine.step(BTC_USD)  # anchors at 50000 and lays out 3 buys + 3 sells
     return next(
@@ -400,7 +411,7 @@ class TestDetectFillsWithLaggingTrades:
 
         restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
         assert restarted.pending_fill_trade_symbols() == frozenset()
-        assert await restarted.load_pending_fill_trades() == 1
+        assert await restarted.load_pending_fill_trades() == {BTC_USD: 1}
         assert restarted.pending_fill_trade_symbols() == frozenset({BTC_USD})
 
         exchange.release_trades(buy.exchange_id)
@@ -576,7 +587,7 @@ class TestReviewRoundPins:
         # Still short at boot: loud, and not counted as active.
         with caplog.at_level(logging.ERROR, logger=ENGINE_LOGGER):
             restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
-            assert await restarted.load_pending_fill_trades() == 0
+            assert await restarted.load_pending_fill_trades() == {}
         assert "unrecovered fill on record" in caplog.text
         assert len(await storage.get_pending_fill_trades(BTC_USD, include_given_up=True)) == 1
 
@@ -588,7 +599,7 @@ class TestReviewRoundPins:
         caplog.clear()
         with caplog.at_level(logging.INFO, logger=ENGINE_LOGGER):
             again = GridEngine(exchange, storage, _grid_config(), _safety_config())
-            assert await again.load_pending_fill_trades() == 0
+            assert await again.load_pending_fill_trades() == {}
         assert "marker cleared" in caplog.text
         assert await storage.get_pending_fill_trades(BTC_USD, include_given_up=True) == []
 
@@ -676,3 +687,111 @@ class TestCoverageEdge:
         adapter = _ScriptedTradesAdapter([[_trade("T1", "0.00000001")]])
         trades, pending = await resolve_fill_trades(adapter, _order("0.00000001"), [])
         assert (len(trades), pending, adapter.calls) == (1, False, 1)
+
+
+@pytest.mark.asyncio
+class TestFixRoundPins:
+    """2026-09-18 fix-round review (R6) and completeness critic: the second
+    round's findings, each pinned by the probe that reproduced it."""
+
+    async def test_marker_carried_past_the_ceiling_gets_a_fresh_window_after_boot(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """Critic F1 / R6 finding 4: the ceiling was measured from the previous
+        session's first_seen_at alone, so an inherited marker already past 30
+        minutes was given up on ONE transient failure of the new session's
+        first lookup (attempts=0) although Kraken had the trade."""
+
+        class _FlakyOnce(MockExchangeAdapter):
+            fail_next = False
+
+            async def get_order_trades(self, order: Order) -> list[Trade]:
+                if self.fail_next:
+                    self.fail_next = False
+                    raise ExchangeError("EAPI:Rate limit exceeded")
+                return await super().get_order_trades(order)
+
+        exchange = _FlakyOnce(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        first_session = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        buy = await _initialize_and_pick_buy(first_session, storage)
+        assert buy.exchange_id
+        exchange.withhold_trades(buy.exchange_id)
+        exchange.set_price(BTC_USD, Decimal("49400"))
+        await first_session.step(BTC_USD)
+        assert len(await storage.get_pending_fill_trades(BTC_USD)) == 1
+        # The process stops; 31 minutes pass; Kraken's history catches up.
+        await _age_marker(storage, buy, minutes=31)
+        exchange.release_trades(buy.exchange_id)
+
+        second_session = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        assert await second_session.load_pending_fill_trades() == {BTC_USD: 1}
+        exchange.fail_next = True
+        first_tick = await second_session.step(BTC_USD)
+
+        assert first_tick.trade_recovery_abandoned == ()
+        assert len(await storage.get_pending_fill_trades(BTC_USD)) == 1
+        second_tick = await second_session.step(BTC_USD)
+        assert second_tick.trades_recovered == 1
+        assert await storage.get_pending_fill_trades(BTC_USD, include_given_up=True) == []
+
+    async def test_aged_out_marker_is_given_up_on_an_off_cadence_tick(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R6 escaped mutant M14: every ceiling test ran at lookup cadence 1,
+        so a mutant that skipped the aged-out give-up on an off-cadence pass
+        stayed green. Production cadence, ceiling zero, sweep tick seeded
+        off-cadence: the single step must still abandon."""
+        monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS", 3)
+        monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_MAX_AGE", timedelta(0))
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        buy = await _initialize_and_pick_buy(engine, storage)
+        assert buy.exchange_id
+        exchange.withhold_trades(buy.exchange_id)
+        exchange.set_price(BTC_USD, Decimal("49400"))
+        await engine.step(BTC_USD)  # fill detected after this tick's sweep; marker written
+        engine._sweep_ticks[BTC_USD] = 1  # the next sweep is an off-cadence pass
+
+        result = await engine.step(BTC_USD)
+
+        assert result.trade_recovery_abandoned == (buy.exchange_id,)
+        assert await storage.get_pending_fill_trades(BTC_USD) == []
+
+    async def test_boot_clears_a_given_up_marker_whose_order_row_is_gone(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R6 finding 2: boot judged coverage only when the orders row still
+        existed, so a marker whose order row was gone re-raised the ERROR on
+        every boot even after the operator backfilled the trade."""
+        monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_MAX_ATTEMPTS", 1)
+        exchange = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+            starting_prices={BTC_USD: Decimal("50000")},
+        )
+        engine = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        buy = await _initialize_and_pick_buy(engine, storage)
+        assert buy.exchange_id
+        exchange.withhold_trades(buy.exchange_id)
+        exchange.set_price(BTC_USD, Decimal("49400"))
+        await engine.step(BTC_USD)
+        given_up = await engine.step(BTC_USD)
+        assert given_up.trade_recovery_abandoned == (buy.exchange_id,)
+
+        # The orders row disappears (a hand cleanup; retention never prunes
+        # it) and the operator backfills the trade per the runbook.
+        assert storage._conn is not None
+        await storage._conn.execute("DELETE FROM orders WHERE id = ?", (str(buy.id),))
+        await storage._conn.commit()
+        exchange.release_trades(buy.exchange_id)
+        for trade in await exchange.get_order_trades(buy):
+            await storage.save_trade(trade)
+
+        restarted = GridEngine(exchange, storage, _grid_config(), _safety_config())
+        assert await restarted.load_pending_fill_trades() == {}
+        assert await storage.get_pending_fill_trades(BTC_USD, include_given_up=True) == []

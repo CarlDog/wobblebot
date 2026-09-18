@@ -1066,9 +1066,13 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             await _page_abandoned_fills(
                 engine, notifier, symbol, tick, from_result=result.trade_recovery_abandoned
             )
+            # ADR-046: a row the recovery sweep brought in is fee-checked on
+            # a tick with fills == 0, so the page keys off either signal --
+            # otherwise a drift found by the sweep waited for the symbol's
+            # NEXT fill (2026-09-18 completeness critic).
             if (
                 fee_alerted is not None
-                and result.fills > 0
+                and (result.fills > 0 or result.trades_recovered > 0)
                 and symbol not in fee_alerted
                 and engine.fee_anomaly_count(symbol) > 0
             ):
@@ -2181,8 +2185,8 @@ async def _page_unrecovered_fill_trades(
         message=(
             f"{len(abandoned)} confirmed fill(s) on {symbol} (exchange order {ids}) "
             "closed with some or all of their trade rows still missing after the "
-            "recovery window; see the live log's 'giving up on trade rows' line for "
-            f"the recorded volume. The cost basis for {symbol} is short those trades "
+            "recovery window; see the live log's give-up ERROR for the recorded "
+            f"volume. The cost basis for {symbol} is short those trades "
             "until they are backfilled. Run tools/reconcile_trade_history.py for the "
             "symbol and follow its backfill runbook. The daily reconcile reports this "
             "gap once Kraken's trade history lists the trade; until then this page and "
@@ -2217,16 +2221,20 @@ async def _resume_pending_fill_trades(engine: GridEngine, configured: Sequence[S
     pending = await engine.load_pending_fill_trades()
     if not pending:
         return
-    owed = engine.pending_fill_trade_symbols()
-    swept = sorted(str(s) for s in owed if s in set(configured))
-    unswept = sorted(str(s) for s in owed if s not in set(configured))
+    configured_set = set(configured)
+    swept = sorted(str(s) for s in pending if s in configured_set)
+    unswept = sorted(str(s) for s in pending if s not in configured_set)
+    # Count only what THIS session will sweep; the unswept symbols get
+    # their own ERROR below (2026-09-18 fix-round review: the total
+    # beside the swept list read as if every marker were being worked).
+    swept_count = sum(n for s, n in pending.items() if s in configured_set)
     if swept:
         _LOGGER.warning(
             "%d fill(s) still owed their trade rows from a previous session; "
             "recovery resumes on the first tick (symbols: %s)",
-            pending,
+            swept_count,
             ", ".join(swept),
-            extra={"pending_fill_trades": pending, "symbols": swept},
+            extra={"pending_fill_trades": swept_count, "symbols": swept},
         )
     if unswept:
         _LOGGER.error(

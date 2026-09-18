@@ -41,8 +41,32 @@ def test_main_async_awaits_the_boot_resume_after_reconciliation() -> None:
             and node.value.func.id == name
         ]
 
+    def direct_try_body_awaits(name: str) -> list[int]:
+        """Lines where ``await name(...)`` is a DIRECT statement of a
+        top-level ``try:`` body -- not nested under an if/for/while/with,
+        where a guard could make it unreachable. The 2026-09-18 fix-round
+        review wrapped the await in ``if False:`` and the presence-and-
+        ordering check above stayed green (mutant M8b)."""
+        found: list[int] = []
+        for stmt in tree.body:
+            if not isinstance(stmt, ast.Try):
+                continue
+            for inner in stmt.body:
+                if (
+                    isinstance(inner, ast.Expr)
+                    and isinstance(inner.value, ast.Await)
+                    and isinstance(inner.value.value, ast.Call)
+                    and isinstance(inner.value.value.func, ast.Name)
+                    and inner.value.value.func.id == name
+                ):
+                    found.append(inner.lineno)
+        return found
+
     reconcile = awaited_call_lines("apply_reconciliation")
-    resume = awaited_call_lines("_resume_pending_fill_trades")
+    resume = direct_try_body_awaits("_resume_pending_fill_trades")
     assert reconcile, "_main_async never awaits apply_reconciliation"
-    assert resume, "_main_async never awaits _resume_pending_fill_trades"
+    assert resume, (
+        "_main_async must await _resume_pending_fill_trades as a direct statement "
+        "of a top-level try body"
+    )
     assert min(resume) > max(reconcile), "boot resume must follow reconciliation"

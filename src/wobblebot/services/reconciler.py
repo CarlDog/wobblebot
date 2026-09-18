@@ -163,6 +163,25 @@ class TerminalOrderResolution:
 _FILL_VOLUME_TOLERANCE = Decimal("1e-8")
 
 
+def volume_covers(filled_amount: Decimal, trades: Sequence[Trade]) -> bool:
+    """True when ``trades`` account for all of ``filled_amount``.
+
+    The marker-level form of :func:`trades_cover_fill`: the boot re-check
+    of a given-up ``pending_fill_trades`` marker judges coverage from the
+    marker's own recorded fill, so an operator backfill clears it even
+    when the ``orders`` row is gone (2026-09-18 fix-round review).
+    """
+    if filled_amount <= 0:
+        return True
+    if not trades:
+        # An empty set never covers a positive fill, however small: the
+        # tolerance below is for rounding between vol_exec and a multi-trade
+        # sum, not for a one-lot-unit fill with no rows (2026-09-18 review).
+        return False
+    recovered = sum((trade.amount.value for trade in trades), Decimal(0))
+    return recovered + _FILL_VOLUME_TOLERANCE >= filled_amount
+
+
 def trades_cover_fill(order: Order, trades: Sequence[Trade]) -> bool:
     """True when ``trades`` account for all of ``order.filled_amount``.
 
@@ -171,15 +190,7 @@ def trades_cover_fill(order: Order, trades: Sequence[Trade]) -> bool:
     "the fill is recorded" — this is the test every completeness
     decision (resolution, cancel path, recovery sweep) goes through.
     """
-    if order.filled_amount <= 0:
-        return True
-    if not trades:
-        # An empty set never covers a positive fill, however small: the
-        # tolerance below is for rounding between vol_exec and a multi-trade
-        # sum, not for a one-lot-unit fill with no rows (2026-09-18 review).
-        return False
-    recovered = sum((trade.amount.value for trade in trades), Decimal(0))
-    return recovered + _FILL_VOLUME_TOLERANCE >= order.filled_amount
+    return volume_covers(order.filled_amount, trades)
 
 
 async def resolve_fill_trades(

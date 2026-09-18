@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -22,7 +23,8 @@ from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _AuthEscalation, _resume_pending_fill_trades, _run_one_tick
 from wobblebot.config.cli import LiveConfig
-from wobblebot.domain.value_objects import OrderSide, Symbol
+from wobblebot.domain.models import Order
+from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol, Timestamp
 from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.services import grid_engine as grid_engine_module
 from wobblebot.services.grid_engine import GridEngine
@@ -187,3 +189,83 @@ async def test_boot_resume_calls_out_markers_on_symbols_it_will_not_sweep(
     assert "not in live.symbols" in caplog.text
     assert "recovery resumes" not in caplog.text
     assert restarted.pending_fill_trade_symbols() == frozenset({BTC_USD})
+
+
+async def test_fee_drift_found_by_the_sweep_pages_on_the_recovery_tick(
+    storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Completeness critic F2 (2026-09-18): the ADR-038 drift page was gated on
+    ``fills > 0`` in the same tick, so a drift on a row the sweep recovered
+    paged only at the symbol's NEXT fill. The mock charges 0.26%, which
+    matches neither believed rate, so the recovered row IS a drift."""
+    monkeypatch.setattr(grid_engine_module, "_PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS", 1)
+    exchange = _exchange()
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    notifier = SqliteNotifierAdapter(storage)
+    escalation = _AuthEscalation()
+    fee_alerted: set[Symbol] = set()
+    exchange_id = await _fill_with_hidden_trade(exchange, engine, storage)
+
+    await _run_one_tick(
+        exchange,
+        engine,
+        _live(),
+        1,
+        Decimal("100000"),
+        notifier,
+        escalation=escalation,
+        fee_alerted=fee_alerted,
+    )
+    # No row yet, so nothing to judge and nothing paged.
+    assert engine.fee_anomaly_count(BTC_USD) == 0
+    exchange.release_trades(exchange_id)
+    await _run_one_tick(
+        exchange,
+        engine,
+        _live(),
+        2,
+        Decimal("100000"),
+        notifier,
+        escalation=escalation,
+        fee_alerted=fee_alerted,
+    )
+
+    assert engine.fee_anomaly_count(BTC_USD) == 1
+    titles = [r.notification.title for r in await storage.get_notifications()]
+    assert titles.count(f"Fee drift: {BTC_USD}") == 1
+    assert fee_alerted == {BTC_USD}
+
+
+async def test_boot_resume_warning_counts_only_the_symbols_it_will_sweep(
+    storage: SQLiteStorageAdapter, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R6 finding 3: the WARNING printed the all-symbols marker count beside
+    the swept symbols, so "2 fill(s) ... (symbols: BTC/USD)" read as if both
+    were being worked while the next line said SOL would not be."""
+    exchange = _exchange()
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    await _fill_with_hidden_trade(exchange, engine, storage)
+    await engine.step(BTC_USD)  # writes the BTC marker
+    sol = Symbol(base="SOL", quote="USD")
+    stray = Order(
+        symbol=sol,
+        side=OrderSide.BUY,
+        price=Price(amount=Decimal("100"), currency="USD"),
+        amount=Amount(value=Decimal("1"), asset="SOL"),
+        created_at=Timestamp(dt=datetime.now(UTC)),
+    )
+    stray.mark_open("SOL-STRAY-1")
+    await storage.save_order(stray)
+    await storage.save_fill_pending_trades(
+        stray.model_copy(update={"status": "closed", "filled_amount": Decimal("1")})
+    )
+    restarted = GridEngine(exchange, storage, grid_config(), safety_config())
+
+    with caplog.at_level(logging.WARNING, logger="wobblebot.cli.live"):
+        await _resume_pending_fill_trades(restarted, [BTC_USD])
+
+    resumes = [r for r in caplog.records if "recovery resumes" in r.getMessage()]
+    assert len(resumes) == 1
+    assert resumes[0].getMessage().startswith("1 fill(s)")
+    assert f"(symbols: {BTC_USD})" in resumes[0].getMessage()
+    assert "SOL/USD" in caplog.text and "not in live.symbols" in caplog.text

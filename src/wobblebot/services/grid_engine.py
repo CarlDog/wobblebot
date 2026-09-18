@@ -110,6 +110,7 @@ from wobblebot.services.reconciler import (
     _resolve_terminal_order,
     resolve_fill_trades,
     trades_cover_fill,
+    volume_covers,
 )
 
 # ADR-046 recovery-sweep bounds for a confirmed fill whose trade rows the
@@ -404,6 +405,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         # (see _PENDING_FILL_TRADES_LOOKUP_EVERY_TICKS). Cleared with the
         # symbol's markers; a restart starts at 0, i.e. looks up at once.
         self._sweep_ticks: dict[Symbol, int] = {}
+        # Boot stamp of every marker this process INHERITED
+        # (load_pending_fill_trades). The wall-clock ceiling is measured
+        # from the later of first_seen_at and this stamp, so a marker
+        # carried across a long restart gets a fresh window instead of
+        # being given up on the new session's first -- possibly
+        # rate-limited -- lookup (2026-09-18 completeness critic).
+        # Markers written in-process are absent here.
+        self._resumed_at: dict[UUID, datetime] = {}
         # Abandonments the sweep has written (given_up_at set, a one-shot
         # durable state change) that cli/live has not yet paged. Kept HERE,
         # not on the StepResult alone: the step that follows the sweep can
@@ -1761,7 +1770,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         """ADR-038: fills so far whose fee rate matched neither believed rate."""
         return self._fee_anomaly_counts.get(symbol, 0)
 
-    async def load_pending_fill_trades(self) -> int:
+    async def load_pending_fill_trades(self) -> dict[Symbol, int]:
         """Boot hook (ADR-046): index the symbols that still owe trade rows.
 
         cli/live calls this after startup reconciliation (which may itself
@@ -1771,30 +1780,33 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
         since landed (an operator backfill) is cleared, one still short is
         logged at ERROR so an abandonment stays loud across restarts even
         if its page was lost -- the marker is the record, and this is
-        where it is read. Returns the number of ACTIVE markers.
+        where it is read. Returns the ACTIVE marker count per symbol
+        (empty when nothing is owed).
         """
+        now = datetime.now(UTC)
         active = await self._storage.get_pending_fill_trades()
         self._pending_trade_symbols = {marker.symbol for marker in active}
+        self._resumed_at = {marker.order_id: now for marker in active}
+        counts: dict[Symbol, int] = {}
+        for marker in active:
+            counts[marker.symbol] = counts.get(marker.symbol, 0) + 1
         for marker in await self._storage.get_pending_fill_trades(include_given_up=True):
             if marker.given_up_at is None:
                 continue
-            order = await self._storage.get_order(marker.order_id)
-            rows = (
-                [
-                    trade
-                    for trade in await self._storage.get_trades(symbol=marker.symbol, limit=10_000)
-                    if trade.order_id == marker.exchange_id
-                ]
-                if order is not None
-                else []
-            )
-            if order is not None and trades_cover_fill(order, rows):
+            # Coverage is judged from the marker's own filled_amount, so a
+            # backfill clears it even when the orders row is gone (2026-09-18
+            # fix-round review). Newest-first window; see the sweep's note.
+            rows = [
+                trade
+                for trade in await self._storage.get_trades(symbol=marker.symbol, limit=10_000)
+                if trade.order_id == marker.exchange_id
+            ]
+            if volume_covers(marker.filled_amount, rows):
                 await self._storage.record_pending_fill_trades(marker.order_id, [], complete=True)
                 _LOGGER.info(
-                    "given-up fill %s %s (%s) now has its %d trade row(s) in storage "
+                    "given-up fill %s (%s) now has its %d trade row(s) in storage "
                     "(backfilled); marker cleared",
                     marker.symbol,
-                    order.side.value.upper(),
                     marker.exchange_id,
                     len(rows),
                     extra={"symbol": str(marker.symbol), "exchange_id": marker.exchange_id},
@@ -1817,7 +1829,7 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     "trades_recorded": len(rows),
                 },
             )
-        return len(active)
+        return counts
 
     def pending_fill_trade_symbols(self) -> frozenset[Symbol]:
         """Symbols with an active pending-trades marker (ADR-046)."""
@@ -1906,6 +1918,10 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
             # Filtered by order id only, never by time: the order's
             # created_at is the NAS clock at placement and a trade's time is
             # Kraken's, so a skew could hide a recorded row and re-count it.
+            # The read is the symbol's newest-first window (sqlite_storage
+            # orders by executed_at DESC), which a fresh fill's rows sit
+            # inside; a dedicated by-order query is a filed follow-up
+            # (2026-09-18 fix-round review).
             existing_rows = [
                 trade
                 for trade in await self._storage.get_trades(symbol=symbol, limit=10_000)
@@ -1989,7 +2005,14 @@ class GridEngine:  # pylint: disable=too-many-instance-attributes
                     fmt_decimal(order.filled_amount),
                     extra={"symbol": str(symbol), "exchange_id": marker.exchange_id},
                 )
-            aged_out = now - marker.first_seen_at.dt >= _PENDING_FILL_TRADES_MAX_AGE
+            # Measured from the later of first_seen_at and this process's boot
+            # for an inherited marker (see _resumed_at), so a marker carried
+            # across a long restart is not given up on one transient failure.
+            age_anchor = max(
+                marker.first_seen_at.dt,
+                self._resumed_at.get(marker.order_id, marker.first_seen_at.dt),
+            )
+            aged_out = now - age_anchor >= _PENDING_FILL_TRADES_MAX_AGE
             if not aged_out and (not looked_up or lookup_failed):
                 # Off-cadence pass (exchange not asked) or a transport
                 # failure (exchange never answered): neither is an attempt.
