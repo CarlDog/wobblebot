@@ -49,6 +49,22 @@ fresh `[Unreleased]` heading created at that time.
   positive fill with an empty trade list, so no code path can recreate the
   shape quietly. The cancel path and the boot reconciler use the same
   resolution, and a restart resumes any sweep the previous process left.
+  Review round (five reviewers, 16 findings, every confirmed one fixed and
+  pinned): the direct exchange lookup runs every third sweep tick per symbol so
+  a long lag cannot starve the `OpenOrders` fetch on Kraken's shared private
+  counter; an attempt is a lookup that ran and left the fill uncovered, and the
+  storage row and the log count the same thing; fee-drift checks, sell-guard
+  invalidation and the recovery log lines run only on rows new to storage,
+  found by order id; the give-up page is buffered in the engine and drained on
+  both the success and the per-symbol failure path, so a trading step that
+  raises right after the give-up cannot lose it; boot re-raises every given-up
+  marker at ERROR until its rows land and clears it once they do, logs ERROR
+  for markers on symbols outside `live.symbols`, and refuses to boot (exit 1)
+  if the marker read fails; an empty trade set never covers a positive fill,
+  however small (the 1e-8 tolerance had let a one-lot-unit fill count as
+  covered, which `save_fill` then refused every tick). The page and log lines
+  claim only what the code knows: the daily reconcile reports the gap once
+  Kraken's history lists the trade; nothing else reads the marker yet.
 
 ### Added
 
@@ -61,6 +77,11 @@ fresh `[Unreleased]` heading created at that time.
 - Storage: `pending_fill_trades` table (live.db, additive) and the port methods
   `save_fill_pending_trades`, `record_pending_fill_trades`,
   `note_pending_fill_trades_attempt`, `get_pending_fill_trades`.
+- `GridEngine.load_pending_fill_trades`, `pending_fill_trade_symbols`,
+  `drain_unpaged_abandonments`, and `StepResult.trades_recovered` /
+  `trade_recovery_abandoned` for the sweep's boot resume and paging;
+  `MockExchangeAdapter.withhold_trades(history_only=True)` reproduces a
+  `TradesHistory` lag while the order's own trade list is current.
 
 ## [2.0.11] - 2026-09-09
 

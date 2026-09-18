@@ -71,21 +71,61 @@ is the fast path; `save_fill_pending_trades` closes the order and writes a
 `GridEngine.step` sweeps markers every tick outside the pause/offside gates,
 bounded at 120 empty lookups or 30 minutes, then keeps the marker, logs ERROR and
 pages "Fill recorded without its trade rows"; the cancel path and boot reconciler
-share the resolution; a restart resumes the sweep. 51 new tests (counted by
-`pytest --collect-only`) replay the 09-10
-shape (mock exchange withholding trades while status reports the fill), the fast
-path, a paused symbol, abandonment, transport errors not counting, the wall-clock
-ceiling, partial arrival, boot resume, the cancel path, the boot reconciler, the
-storage contract, and the adapter's wire shape. Mutation verification (scripted,
-restore-from-git in a `finally`, baseline and post-restore green): 5 of 5 mutants
-caught — the engine persisting a pending fill through `save_fill`, the `save_fill`
-guard removed, the sweep disabled, the fast path removed, and "any trade row covers
-the fill". Live verification of the two new Kraken calls (2026-09-18, trader key,
-read-only, from `wobblebot-live` on the 2.0.11 image): `QueryOrders trades=true`
-returned a one-id `trades` list for both the 2026-09-10 buy and the 2026-09-18 sell,
-`QueryTrades` entries parsed through the existing trade builder, and volumes matched
-`vol_exec` exactly (capture: `data/verify_order_trades_20260918.json`). The
-multi-dimension review precedes the tag.
+share the resolution; a restart resumes the sweep. 64 test functions added and none
+removed (counted as `def test_` lines in `git diff main...HEAD -- tests/`) replay
+the 09-10 shape (mock exchange withholding trades while status reports the fill),
+the fast path, a paused symbol, abandonment, transport errors not counting, the
+wall-clock ceiling, partial arrival, boot resume, the cancel path, the boot
+reconciler, the storage contract, and the adapter's wire shape. Full suite at the
+branch tip: 4,293 passed, 30 deselected, coverage 88.04%; black/isort/mypy clean,
+pylint 10.00. Live verification of the two new Kraken calls (2026-09-18, trader
+key, read-only, from `wobblebot-live` on the 2.0.11 image): `QueryOrders
+trades=true` returned a one-id `trades` list for both the 2026-09-10 buy and the
+2026-09-18 sell, `QueryTrades` entries parsed through the existing trade builder,
+and volumes matched `vol_exec` exactly (capture:
+`data/verify_order_trades_20260918.json`).
+
+*Review gate (2026-09-18, per `~/.claude/rules/pre-deploy-review.md`).* Five
+reviewers, each in its own worktree reset to `bdebe9b` (engine seam, storage
+atomicity, Kraken adapter, boot/reconciler/live wiring, test honesty), raised 16
+findings; 71029ac fixes every confirmed one and pins each with a test. Engine: fee
+drift, sell-guard invalidation and the recovery log lines re-ran every sweep tick
+over rows already recorded (the reviewer's probe counted one anomalous trade as six
+after six sweeps; now keyed off rows new to storage, found by order id, never by
+the order's local creation time); the direct lookup ran every tick per marker
+against Kraken's shared private counter (now every third sweep tick, the snapshot
+still every tick); the logged attempt count and the storage row disagreed by one at
+an aged-out give-up (now a `counted` flag). Live wiring: the give-up page rode the
+`StepResult`, so a trading step that raised after the sweep lost it for good (now
+buffered in the engine and drained on both paths); the page asserted three things
+the code did not know, including a "daily reconcile" backstop that does not read
+the marker (now says only what the code knows); the boot marker read was the one
+unguarded storage call between two guarded ones (now refuses to boot, exit 1);
+markers on symbols outside `live.symbols` were indexed, never swept, never paged
+(now ERROR at boot); a reconciler test fake lacked the new Protocol method. Storage:
+the atomicity test injected its fault into the trade insert, so a commit placed
+before the marker INSERT escaped (now the marker statement alone fails and the
+order close is shown to roll back); an empty trade set covered a one-lot-unit fill
+under the 1e-8 tolerance, so `save_fill` refused every tick (now `[]` never covers
+a positive fill). Adapter: the cost is three one-point calls per lagging fill, not
+two, and Kraken's guide and support article price `TradesHistory` at 2 and 4 per
+page (reference corrected); whether `QueryTrades` answers a not-yet-indexed id with
+an empty result or an error envelope is unverified — accepted because the 30-minute
+ceiling bounds either shape, with a live probe
+(`data/verify_query_trades_unknown_20260918.py`) queued to decide whether the
+adapter maps that code to "not yet". Test honesty: the reviewer's nine mutants
+escaped five on the pre-review branch (marker atomicity; boot-resume wiring, the one
+line whose deletion left 124 live tests green; the shared-snapshot path; sell-guard
+invalidation; fee drift); a structural guard now asserts `_main_async` awaits the
+boot resume after reconciliation, and the replay test pins one counter placed with
+nothing refused or deferred. Scripted mutation verification (restore-from-git in a
+`finally`): 14 of 14 mutants caught, baseline and post-restore green — the original
+five plus the drain on the failure path, the empty-set edge, fee drift on all rows,
+the pacing, commit-before-marker, boot ignoring given-up markers, the snapshot path,
+sell-guard invalidation, and the unswept-symbol ERROR. One test of the round was
+committed red because the gate's exit code was piped through `tail` (its scripted
+exchange never fell through to the real trade); 76c489c fixes the stub and the
+harness reports baseline green again.
 
 *Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
 notify instead of paging for a hand script); sell-guard invalidation on an external

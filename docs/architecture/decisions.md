@@ -3604,19 +3604,39 @@ completed fill and never a clean cancel.
    zero-fill cancel/expire.
 2. The exchange port gains `get_order_trades(order)`: the exchange's own
    order-to-trade linkage (Kraken: `QueryOrders trades=true` for the id list, then
-   `QueryTrades`, two one-point calls). `reconciler.resolve_fill_trades` uses it once
-   to complete a short snapshot; `trades_cover_fill` is the single completeness test,
-   because a limit order can fill across several trades seconds apart.
+   `QueryTrades`; two one-point calls on top of the `QueryOrders` status
+   confirmation, so a lagging fill costs three per lookup, not two).
+   `reconciler.resolve_fill_trades` uses it once to complete a short snapshot;
+   `trades_cover_fill` is the single completeness test, because a limit order can
+   fill across several trades seconds apart, and an empty set never covers a
+   positive fill, however small (review finding, 2026-09-18: at a one-lot-unit fill
+   the 1e-8 tolerance let `[]` count as covered, so `save_fill` was refused every
+   tick and that symbol's step never completed).
 3. When the rows still fall short, `save_fill_pending_trades` closes the order and
    writes a `pending_fill_trades` marker in one transaction. The counter fires exactly
    once, keyed on `filled_amount`. `GridEngine.step` sweeps active markers every tick,
    before and outside the pause/spread/offside gates, records rows idempotently as
-   they arrive, deletes the marker only once the fill is covered, and invalidates the
-   sell-guard cache. An empty lookup counts as an attempt (bound 120); a transport
-   error does not, but a 30-minute wall clock ends the loop regardless. Giving up
-   keeps the marker (`given_up_at`), logs ERROR, and pages the operator with the
-   exchange id and the backfill runbook. `load_pending_fill_trades` lets a restart
-   resume a sweep. The cancel path and the boot reconciler use the same resolution.
+   they arrive, and deletes the marker only once the fill is covered. The shared
+   `TradesHistory` snapshot is consulted on every sweep tick (free); the direct
+   `get_order_trades` lookup runs on every third sweep tick per symbol, so a lag
+   that lasts the whole window costs about one point per 15-18 s on Kraken's shared
+   private counter rather than one per tick, which could have starved the
+   `OpenOrders` fetch every symbol depends on. An attempt is a lookup that ran and
+   left the fill uncovered (bound 120); a transport error or an off-cadence tick is
+   not, but a 30-minute wall clock ends the loop regardless, and the storage row and
+   the log count the same thing. Fee-drift checks, sell-guard invalidation and the
+   recovery log lines key off rows NEW to storage, found by order id (never by the
+   order's local creation time: that clock is the NAS's, a trade's is Kraken's), so a
+   partially covered fill swept for minutes is not re-counted. Giving up keeps the
+   marker (`given_up_at`), logs ERROR, and buffers the exchange id inside the engine;
+   cli/live drains the buffer into one critical page on both the success path and
+   the per-symbol failure path, so a trading step that raises right after the
+   give-up cannot lose the page. At boot, `load_pending_fill_trades` resumes active
+   sweeps, re-raises every given-up marker at ERROR until its rows land (clearing the
+   marker once they do), and cli/live logs ERROR for markers on symbols outside
+   `live.symbols`, which would otherwise sit indexed and never swept. Only cli/live
+   resumes markers; cli/shadow's exchange never lags its own trades. The cancel path
+   and the boot reconciler use the same resolution.
 
 **Rejected.**
 - *Leave the order open until the trades arrive.* Re-detected every tick as a fill
@@ -3640,6 +3660,25 @@ from docs.kraken.com and then verified 2026-09-18 against a live response with t
 trader key (two filled DOGE/USD orders; both carried a `trades` id list, both
 `QueryTrades` entries parsed through the existing trade builder, volumes matched
 `vol_exec` exactly; `pair` arrives as the altname, which the adapter already resolves).
+The page and the ERROR lines say only what the code knows: the marker is the record,
+and the daily reconcile reports the gap only once Kraken's `TradesHistory` lists the
+trade, because nothing outside the engine reads `pending_fill_trades` (a reconcile
+that reads it is a filed follow-up, not a promise). Open as of 2026-09-18: whether
+Kraken answers `QueryTrades` for a not-yet-indexed id with an empty result (an
+attempt) or an error envelope (a transport failure, uncounted). Either way the
+30-minute ceiling ends the loop and pages; if the live probe shows an error envelope,
+the adapter should map that code to "not yet" so the attempt bound applies and a
+benign lag does not log as an API outage.
+
+**Review (2026-09-18).** Five reviewers in their own worktrees (engine seam, storage
+atomicity, Kraken adapter, boot/reconciler/live wiring, test honesty) raised 16
+findings against `bdebe9b`; every confirmed one is fixed above and pinned by a test,
+and the two documentation findings (the three-call cost; Kraken's own pages pricing
+`TradesHistory` at 2 or 4 per page) are corrected in the Kraken reference. The
+test-honesty reviewer's mutation table escaped five of nine mutants on the pre-review
+branch (marker atomicity, boot-resume wiring, the shared-snapshot path, sell-guard
+invalidation, fee drift); the scripted harness now runs 14 mutants, baseline and
+post-restore green, 14 caught.
 
 <!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
