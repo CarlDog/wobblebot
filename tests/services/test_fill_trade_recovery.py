@@ -516,7 +516,9 @@ class TestReviewRoundPins:
             half: list[Trade] = []
 
             async def get_order_trades(self, order: Order) -> list[Trade]:
-                return list(self.half)
+                if self.half:
+                    return list(self.half)
+                return await super().get_order_trades(order)
 
         exchange = _StuckHalf(
             starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
