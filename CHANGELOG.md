@@ -65,6 +65,15 @@ fresh `[Unreleased]` heading created at that time.
   covered, which `save_fill` then refused every tick). The page and log lines
   claim only what the code knows: the daily reconcile reports the gap once
   Kraken's history lists the trade; nothing else reads the marker yet.
+  Second round (a sixth reviewer on the fix round plus the completeness
+  critic): the 30-minute ceiling is measured from the later of first sighting
+  and this process's boot for a marker inherited across a restart, so a long
+  restart cannot turn one transient lookup failure into a give-up; the ADR-038
+  fee-drift page fires on a recovery tick too, not only at the symbol's next
+  fill; a given-up marker is cleared at boot from its own `filled_amount` even
+  when the `orders` row is gone; the boot WARNING counts only the markers this
+  session will sweep; the backfill runbook states that backfilled rows must
+  carry Kraken's `ordertxid` for the marker to clear.
 
 ### Added
 

@@ -3623,8 +3623,12 @@ completed fill and never a clean cancel.
    private counter rather than one per tick, which could have starved the
    `OpenOrders` fetch every symbol depends on. An attempt is a lookup that ran and
    left the fill uncovered (bound 120); a transport error or an off-cadence tick is
-   not, but a 30-minute wall clock ends the loop regardless, and the storage row and
-   the log count the same thing. Fee-drift checks, sell-guard invalidation and the
+   not, but a 30-minute wall clock ends the loop regardless -- measured, for a marker
+   inherited across a restart, from the later of its first sighting and this
+   process's boot, so a long restart cannot turn one transient failure on the new
+   session's first lookup into a give-up (each restart grants a fresh window; the
+   marker is re-raised at every boot regardless) -- and the storage row and the log
+   count the same thing. Fee-drift checks, sell-guard invalidation and the
    recovery log lines key off rows NEW to storage, found by order id (never by the
    order's local creation time: that clock is the NAS's, a trade's is Kraken's), so a
    partially covered fill swept for minutes is not re-counted. Giving up keeps the
@@ -3633,7 +3637,9 @@ completed fill and never a clean cancel.
    the per-symbol failure path, so a trading step that raises right after the
    give-up cannot lose the page. At boot, `load_pending_fill_trades` resumes active
    sweeps, re-raises every given-up marker at ERROR until its rows land (clearing the
-   marker once they do), and cli/live logs ERROR for markers on symbols outside
+   marker once rows carrying its exchange id cover its own `filled_amount`, whether
+   or not the `orders` row still exists), and cli/live logs a WARNING counting only
+   the markers this session will sweep plus an ERROR for markers on symbols outside
    `live.symbols`, which would otherwise sit indexed and never swept. Only cli/live
    resumes markers; cli/shadow's exchange never lags its own trades. The cancel path
    and the boot reconciler use the same resolution.
@@ -3668,7 +3674,12 @@ Kraken answers `QueryTrades` for a not-yet-indexed id with an empty result (an
 attempt) or an error envelope (a transport failure, uncounted). Either way the
 30-minute ceiling ends the loop and pages; if the live probe shows an error envelope,
 the adapter should map that code to "not yet" so the attempt bound applies and a
-benign lag does not log as an API outage.
+benign lag does not log as an API outage. The ADR-038 fee-drift page fires on a
+recovery tick as well as a fill tick, because a row the sweep brings in is
+fee-checked on a tick with no fill. Paced lookups are phase-aligned: k markers that
+appear in the same tick look up on the same third tick, k points instead of one;
+this account's Kraken counter tier is unmeasured, so the per-marker bound is not a
+per-session bound.
 
 **Review (2026-09-18).** Five reviewers in their own worktrees (engine seam, storage
 atomicity, Kraken adapter, boot/reconciler/live wiring, test honesty) raised 16
@@ -3677,8 +3688,19 @@ and the two documentation findings (the three-call cost; Kraken's own pages pric
 `TradesHistory` at 2 or 4 per page) are corrected in the Kraken reference. The
 test-honesty reviewer's mutation table escaped five of nine mutants on the pre-review
 branch (marker atomicity, boot-resume wiring, the shared-snapshot path, sell-guard
-invalidation, fee drift); the scripted harness now runs 14 mutants, baseline and
-post-restore green, 14 caught.
+invalidation, fee drift); the scripted harness then ran 14 mutants, baseline and
+post-restore green, 14 caught. A second round read the fix round itself: a sixth
+reviewer (five LOW findings; two escaped mutants -- the boot-wiring guard passed
+with the await wrapped in `if False:`, and an aged-out give-up on an off-cadence
+tick was unpinned) and the rule's completeness critic (four LOW findings, two
+reproduced by probe: an inherited marker past the ceiling given up on one
+transient failure, and the fee-drift page waiting for the next fill; verdict:
+deploy, nothing blocks). Every code finding was fixed and pinned by the probe that
+found it (9c10177, 81e8080); the harness runs 22 mutants, 22 caught. The reviewer then read 9c10177 itself: three LOW, no HIGH or MEDIUM -- the ADR still stated the old ceiling rule (amended here); the boot re-check's order scoping was correct but unpinned, so under mutation a foreign same-symbol row cleared the marker (pinned in 81e8080); and the fee-drift page keyed off completed recoveries, so a drift on a partially recovered row still waited (the page now keys off the anomaly counter alone, 81e8080). Its ten mutants caught eight; the escapes were that scoping and a dead statement after a return, noted. Filed, not
+built: a by-order trade query in place of the newest-first window the
+existing-rows read relies on; a reconcile task that reads the marker; a boot-time
+page (the notifier is constructed after the re-raise, so a give-up whose page was
+lost is log-only until the next tick's drain).
 
 <!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->

@@ -71,13 +71,13 @@ is the fast path; `save_fill_pending_trades` closes the order and writes a
 `GridEngine.step` sweeps markers every tick outside the pause/offside gates,
 bounded at 120 empty lookups or 30 minutes, then keeps the marker, logs ERROR and
 pages "Fill recorded without its trade rows"; the cancel path and boot reconciler
-share the resolution; a restart resumes the sweep. 64 test functions added and none
+share the resolution; a restart resumes the sweep. 71 test functions added and none
 removed (counted as `def test_` lines in `git diff main...HEAD -- tests/`) replay
 the 09-10 shape (mock exchange withholding trades while status reports the fill),
 the fast path, a paused symbol, abandonment, transport errors not counting, the
 wall-clock ceiling, partial arrival, boot resume, the cancel path, the boot
 reconciler, the storage contract, and the adapter's wire shape. Full suite at the
-branch tip: 4,293 passed, 30 deselected, coverage 88.04%; black/isort/mypy clean,
+branch tip: 4,300 passed, 30 deselected, coverage 88.07%; black/isort/mypy clean,
 pylint 10.00. Live verification of the two new Kraken calls (2026-09-18, trader
 key, read-only, from `wobblebot-live` on the 2.0.11 image): `QueryOrders
 trades=true` returned a one-id `trades` list for both the 2026-09-10 buy and the
@@ -126,6 +126,36 @@ sell-guard invalidation, and the unswept-symbol ERROR. One test of the round was
 committed red because the gate's exit code was piped through `tail` (its scripted
 exchange never fell through to the real trade); 76c489c fixes the stub and the
 harness reports baseline green again.
+
+*Second round (2026-09-18).* The fix round had no reader who did not write it, and
+the rule's completeness critic had not run; both then did, each in its own worktree
+at `81814db`. The reviewer: five LOW, no HIGH or MEDIUM -- the existing-rows read
+leans on the storage query's newest-first order (stated in a comment; a by-order
+query filed); the page pointed at a log line the missing-order give-up path never
+writes, and boot never judged coverage for a marker whose `orders` row was gone (now
+judged from the marker's own `filled_amount`); the boot WARNING printed the
+all-symbols count beside the swept list (now swept only); a marker past the ceiling
+inherited across a restart was given up on one transient failure (now anchored to
+the boot); the AST boot-wiring guard passed with the await wrapped in `if False:`
+(now requires a direct statement of a top-level try body). Its 15 mutants caught 13;
+the two escapes -- that wrapper, and an aged-out give-up on an off-cadence tick --
+each have a test. The critic: four LOW -- the same inherited-marker give-up,
+reproduced by probe; the ADR-038 fee-drift page gated on same-tick fills, so a drift
+on a recovered row paged only at the next fill (reproduced; now keys off recovered
+rows too); paced lookups phase-aligned across k markers (documented; tier
+unmeasured); the runbook silent on the `ordertxid` a backfilled row must carry for
+the marker to clear (added). It read the dissent (R4's declined option, a reconcile
+that reads the marker, is filed) and ruled: deploy, nothing blocks; the interim
+control for 2.0.11 is the post-session reconcile. It also ran the schema upgrade: a
+2.0.11-shape database opened by the branch's writable `connect()` gains exactly
+`pending_fill_trades`, integrity ok before and after, second open idempotent. Code
+fixes in 9c10177 and 81e8080, each pinned by the probe that found it; the harness runs 22
+mutants, 22 caught, baseline and post-restore green; full suite at the tip 4,298
+passed, 30 deselected, coverage 88.07%; 71 test functions added on the branch, none
+removed. The reviewer then read 9c10177 itself: three LOW, no HIGH or MEDIUM -- the ADR still stated the old ceiling rule (amended here); the boot re-check's order scoping was correct but unpinned, so under mutation a foreign same-symbol row cleared the marker (pinned in 81e8080); and the fee-drift page keyed off completed recoveries, so a drift on a partially recovered row still waited (the page now keys off the anomaly counter alone, 81e8080). Its ten mutants caught eight; the escapes were that scoping and a dead statement after a return, noted. Flagged outside the diff, pre-existing and not fixed here: the
+reconciliation-failure `return 1` in `_main_async` closes neither adapter nor
+storage (its new sibling path closes both), and the boot re-raise is log-only
+because the notifier is constructed later.
 
 *Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
 notify instead of paging for a hand script); sell-guard invalidation on an external
