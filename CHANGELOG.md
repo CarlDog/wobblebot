@@ -28,6 +28,8 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.12] - 2026-09-18
+
 ### Fixed
 
 - **Silent fill loss when Kraken's trade history lags a fill (ADR-046).** The
