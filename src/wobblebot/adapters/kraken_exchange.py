@@ -83,6 +83,10 @@ from wobblebot.ports.exchange import ExchangePort
 # precedent). 20 pages (~1000 raw trades) comfortably covers the current
 # grid_engine.py caller's limit=200 across the account's traded symbols.
 _TRADES_HISTORY_MAX_PAGES = 20
+# Kraken's QueryTrades accepts "Comma delimited list of transaction IDs to
+# query info about (20 maximum)" (docs.kraken.com, Get Trades Info, read
+# 2026-09-18). get_order_trades chunks an order's trade-id list at this.
+_QUERY_TRADES_MAX_IDS = 20
 
 # Same safety bound for the Ledgers walk (ADR-040 follow-up). Ledgers
 # pages at 50 like TradesHistory, so 20 pages is 1000 entries per asset
@@ -762,6 +766,66 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         # Most-recent first to match the ExchangePort convention.
         trades.sort(key=lambda t: t.executed_at.dt, reverse=True)
         return trades[:limit]
+
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        """Trades Kraken attributes to ``order`` via the order's own trade-id list.
+
+        Two calls, one point each on Kraken's private counter (a
+        ``TradesHistory`` page costs two, and the account-wide walk in
+        ``get_trade_history`` is up to ``_TRADES_HISTORY_MAX_PAGES`` of
+        them — which is why the ADR-046 recovery sweep uses THIS path
+        every tick and not that one):
+
+        1. ``QueryOrders`` with ``trades=true``; the order entry then
+           carries ``trades``, "List of trade IDs related to order (if
+           trades info requested and data available)" (docs.kraken.com,
+           Get Orders Info, read 2026-09-18). "Data available" is the
+           same lag ``TradesHistory`` shows, so an absent or empty list
+           is a legitimate "not yet", returned as ``[]``.
+        2. ``QueryTrades`` for those ids in chunks of
+           ``_QUERY_TRADES_MAX_IDS``; entries have the ``TradesHistory``
+           shape, so ``_build_trade_from_kraken`` is shared. Only trades
+           whose ``ordertxid`` is this order are kept.
+
+        Field names come from the docs, not a captured response; the
+        pre-deploy live check (a read-only ``QueryOrders``/``QueryTrades``
+        against a known filled order, with the TRADER key cli/live runs
+        under) is what verifies them.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot query trades for an order with no exchange_id")
+        if order.exchange_id.startswith("DRYRUN-"):
+            # Dry-run orders never reached Kraken, so nothing ever filled.
+            return []
+        await self._ensure_pair_metadata()
+        result = await self._private_post(
+            "/0/private/QueryOrders", {"txid": order.exchange_id, "trades": "true"}
+        )
+        entry = result.get(order.exchange_id)
+        if not isinstance(entry, dict):
+            raise ExchangeError(f"Kraken QueryOrders missing entry for {order.exchange_id!r}")
+        raw_ids = entry.get("trades", [])
+        if raw_ids is None:
+            raw_ids = []
+        if not isinstance(raw_ids, list):
+            raise ExchangeError(
+                f"Kraken QueryOrders 'trades' for {order.exchange_id!r} is not a list"
+            )
+        trade_ids = [tid for tid in raw_ids if isinstance(tid, str) and tid]
+        if not trade_ids:
+            return []
+        trades: list[Trade] = []
+        for start in range(0, len(trade_ids), _QUERY_TRADES_MAX_IDS):
+            chunk = trade_ids[start : start + _QUERY_TRADES_MAX_IDS]
+            page = await self._private_post("/0/private/QueryTrades", {"txid": ",".join(chunk)})
+            for txid, trade_entry in page.items():
+                trade = self._build_trade_from_kraken(txid, trade_entry)
+                if trade.order_id == order.exchange_id:
+                    trades.append(trade)
+        # Oldest first: callers sum these against filled_amount and log
+        # them in execution order; no "most-recent first" convention here.
+        trades.sort(key=lambda t: t.executed_at.dt)
+        return trades
 
     # ------------------------------------------------ ExchangePort: write paths
 

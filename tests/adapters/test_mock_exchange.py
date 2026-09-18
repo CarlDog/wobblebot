@@ -408,3 +408,72 @@ class TestBalanceDustClamp:
         assert balance is not None
         assert balance.total == Decimal("0")
         assert balance.available == Decimal("0")
+
+
+class TestGetOrderTradesAndWithholding:
+    """ADR-046 test controls: the mock can reproduce the 2026-09-10 Kraken
+    shape — the order is gone from the open set and ``get_order_status``
+    reports the fill, but neither ``get_trade_history`` nor
+    ``get_order_trades`` list the trade yet — and then release it."""
+
+    async def test_get_order_trades_returns_only_that_orders_trades(self) -> None:
+        exch = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000"), "BTC": Decimal("1")},
+            starting_prices={BTC_USD: Decimal("52000")},
+        )
+        first = await exch.place_order(_buy_order(price="50000", amount="0.1"))
+        second = await exch.place_order(_buy_order(price="49000", amount="0.2"))
+        assert first.exchange_id and second.exchange_id
+        exch.set_price(BTC_USD, Decimal("48000"))  # fills both
+
+        first_trades = await exch.get_order_trades(first)
+        second_trades = await exch.get_order_trades(second)
+
+        assert [t.order_id for t in first_trades] == [first.exchange_id]
+        assert [t.order_id for t in second_trades] == [second.exchange_id]
+        assert first_trades[0].amount.value == Decimal("0.1")
+
+    async def test_get_order_trades_requires_exchange_id(self) -> None:
+        exch = MockExchangeAdapter(starting_balances={}, starting_prices={})
+        with pytest.raises(ExchangeError, match="no exchange_id"):
+            await exch.get_order_trades(_buy_order())
+
+    async def test_withheld_trades_hide_from_history_but_status_still_reports_fill(
+        self,
+    ) -> None:
+        exch = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000")},
+            starting_prices={BTC_USD: Decimal("52000")},
+        )
+        order = await exch.place_order(_buy_order(price="50000", amount="0.1"))
+        assert order.exchange_id
+        exch.withhold_trades(order.exchange_id)
+        exch.set_price(BTC_USD, Decimal("48000"))  # fills; trade recorded but hidden
+
+        status = await exch.get_order_status(order)
+        assert status.filled_amount == Decimal("0.1")
+        assert await exch.get_open_orders(BTC_USD) == []
+        assert await exch.get_trade_history(BTC_USD) == []
+        assert await exch.get_order_trades(order) == []
+
+        exch.release_trades(order.exchange_id)
+
+        assert len(await exch.get_trade_history(BTC_USD)) == 1
+        assert [t.order_id for t in await exch.get_order_trades(order)] == [order.exchange_id]
+
+    async def test_release_all_clears_every_withhold(self) -> None:
+        exch = MockExchangeAdapter(
+            starting_balances={"USD": Decimal("100000")},
+            starting_prices={BTC_USD: Decimal("52000")},
+        )
+        a = await exch.place_order(_buy_order(price="50000", amount="0.1"))
+        b = await exch.place_order(_buy_order(price="49500", amount="0.1"))
+        assert a.exchange_id and b.exchange_id
+        exch.withhold_trades(a.exchange_id)
+        exch.withhold_trades(b.exchange_id)
+        exch.set_price(BTC_USD, Decimal("48000"))
+        assert await exch.get_trade_history(BTC_USD) == []
+
+        exch.release_trades()
+
+        assert len(await exch.get_trade_history(BTC_USD)) == 2

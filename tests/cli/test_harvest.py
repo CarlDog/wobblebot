@@ -113,6 +113,9 @@ class _StubExchange(ExchangePort):
     async def get_trade_history(self, symbol=None, since=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 
+    async def get_order_trades(self, order):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("not used by harvest")
+
     async def get_ohlc(self, symbol, interval_minutes=1, since=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError("not used by harvest")
 

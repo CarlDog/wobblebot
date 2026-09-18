@@ -88,6 +88,12 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         self._prices: dict[Symbol, Decimal] = dict(starting_prices or {})
         self._open_orders: dict[str, Order] = {}
         self._trade_history: list[Trade] = []
+        # ADR-046 test control: exchange_ids whose trades are hidden from
+        # get_trade_history / get_order_trades while get_order_status
+        # still reports the fill -- the 2026-09-10 Kraken shape (order
+        # gone from OpenOrders, QueryOrders says filled, TradesHistory
+        # not yet listing the trade). Populated by withhold_trades.
+        self._withheld_trade_orders: set[str] = set()
         self._order_counter = 0
         self._trade_counter = 0
         # ADR-023 test control: exchange_id -> the order get_order_status
@@ -316,11 +322,33 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
     async def get_trade_history(
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]:
-        results = self._trade_history
+        results = [t for t in self._trade_history if t.order_id not in self._withheld_trade_orders]
         if symbol is not None:
             results = [t for t in results if t.symbol == symbol]
         # Most-recent first, matching ExchangePort convention.
         return list(reversed(results))[:limit]
+
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        if not order.exchange_id:
+            raise ExchangeError("Cannot query trades for an order with no exchange_id")
+        if order.exchange_id in self._withheld_trade_orders:
+            return []
+        return [t for t in self._trade_history if t.order_id == order.exchange_id]
+
+    def withhold_trades(self, exchange_id: str) -> None:
+        """Test control (ADR-046): hide ``exchange_id``'s trades from
+        ``get_trade_history`` and ``get_order_trades`` until
+        ``release_trades``. ``get_order_status`` is deliberately NOT
+        affected — it keeps reporting the fill, exactly as Kraken's
+        QueryOrders did on 2026-09-10 while TradesHistory lagged."""
+        self._withheld_trade_orders.add(exchange_id)
+
+    def release_trades(self, exchange_id: str | None = None) -> None:
+        """Undo ``withhold_trades`` for one order, or for all when ``None``."""
+        if exchange_id is None:
+            self._withheld_trade_orders.clear()
+        else:
+            self._withheld_trade_orders.discard(exchange_id)
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         if amount <= 0:
