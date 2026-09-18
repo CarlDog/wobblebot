@@ -6,8 +6,9 @@ wire up systems, finish the surfaces, then polish and decorate. This roadmap is 
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
 **Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
-2026-09-17/18 UTC (code merged on `fix/fill-trade-recovery`; release and deploy
-pending the review gate):**
+2026-09-17/18 UTC (code on `fix/fill-trade-recovery`,
+[PR #152](https://github.com/CarlDog/wobblebot/pull/152); review gate passed
+2026-09-18; tag and `IMAGE_TAG` bump pending, the operator's two steps):**
 
 *Incident.* On 2026-09-17 eight consecutive `CancelAllOrdersAfter` resets failed
 between 07:01:18 and 07:03:17 UTC (~17 s apart, every error text empty:
