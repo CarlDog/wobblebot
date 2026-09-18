@@ -167,6 +167,26 @@ class _FailingStorage(StoragePort):
     async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
         raise NotImplementedError
 
+    async def save_fill_pending_trades(  # type: ignore[no-untyped-def]
+        self, order, trades=()
+    ) -> None:
+        raise NotImplementedError
+
+    async def record_pending_fill_trades(  # type: ignore[no-untyped-def]
+        self, order_id, trades, *, complete
+    ) -> None:
+        raise NotImplementedError
+
+    async def note_pending_fill_trades_attempt(  # type: ignore[no-untyped-def]
+        self, order_id, *, at, given_up
+    ) -> None:
+        raise NotImplementedError
+
+    async def get_pending_fill_trades(  # type: ignore[no-untyped-def]
+        self, symbol=None, *, include_given_up=False
+    ):
+        raise NotImplementedError
+
     async def get_trades(
         self,
         symbol: Symbol | None = None,
