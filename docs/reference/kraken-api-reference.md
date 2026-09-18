@@ -369,10 +369,17 @@ parses both. Position-only fields (`posstatus`, `cprice`, `ccost`, `cfee`,
 Rate cost: `QueryOrders` and `QueryTrades` are one point each, versus two per
 `TradesHistory` page. This is why the recovery sweep uses them per tick.
 
-Field names above are from docs.kraken.com as read on 2026-09-18, not a captured
-live response. Per `api-integration.md`, run one read-only `QueryOrders`
-(`trades=true`) + `QueryTrades` against a known filled order with the trader key
-before the first deploy that exercises this path.
+**Verified against a live response 2026-09-18** (trader key, from inside
+`wobblebot-live`, read-only, two known filled DOGE/USD orders: the 2026-09-10 buy
+and the 2026-09-18 sell). Both `QueryOrders` entries carried a `trades` list with
+exactly one id alongside `vol_exec`, `status`, `closetm`, `cost`, `fee`, `descr`
+and the rest of the documented order fields. Both `QueryTrades` entries carried
+`ordertxid`, `postxid`, `pair`, `aclass`, `time`, `type`, `ordertype`,
+`tradeordertype`, `price`, `cost`, `fee`, `vol`, `margin`, `leverage`, `misc`,
+`trade_id`, `maker`. One detail the docs do not spell out: `pair` came back as the
+altname `XDGUSD`, not the `XXDGZUSD` pair key; `_symbol_for_pair_key` resolves
+both, and the parsed volumes matched `vol_exec` to the last digit. Capture:
+`data/verify_order_trades_20260918.json` on the NAS volume.
 
 ## Balance Structure (Balance endpoint)
 

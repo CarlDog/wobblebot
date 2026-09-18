@@ -80,7 +80,12 @@ storage contract, and the adapter's wire shape. Mutation verification (scripted,
 restore-from-git in a `finally`, baseline and post-restore green): 5 of 5 mutants
 caught — the engine persisting a pending fill through `save_fill`, the `save_fill`
 guard removed, the sweep disabled, the fast path removed, and "any trade row covers
-the fill". The multi-dimension review precedes the tag.
+the fill". Live verification of the two new Kraken calls (2026-09-18, trader key,
+read-only, from `wobblebot-live` on the 2.0.11 image): `QueryOrders trades=true`
+returned a one-id `trades` list for both the 2026-09-10 buy and the 2026-09-18 sell,
+`QueryTrades` entries parsed through the existing trade builder, and volumes matched
+`vol_exec` exactly (capture: `data/verify_order_trades_20260918.json`). The
+multi-dimension review precedes the tag.
 
 *Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
 notify instead of paging for a hand script); sell-guard invalidation on an external

@@ -3635,8 +3635,11 @@ completed fill and never a clean cancel.
 the writable `connect()` only, read-only openers skip schema). The `grid fill` log
 line is WARNING while rows are owed and INFO once recorded. A new critical
 notification, "Fill recorded without its trade rows", names the order. Kraken's lag
-magnitude is observed, not documented; field names for the two new calls come from
-docs.kraken.com (2026-09-18) and are verified against a live response before deploy.
+magnitude is observed, not documented. Field names for the two new calls were taken
+from docs.kraken.com and then verified 2026-09-18 against a live response with the
+trader key (two filled DOGE/USD orders; both carried a `trades` id list, both
+`QueryTrades` entries parsed through the existing trade builder, volumes matched
+`vol_exec` exactly; `pair` arrives as the altname, which the adapter already resolves).
 
 <!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
