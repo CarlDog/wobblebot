@@ -60,7 +60,13 @@ _BALANCE_DUST = Decimal("1E-18")
 _DEFAULT_SPREAD_PERCENTAGE = Decimal("0.02")
 
 
-class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
+class MockExchangeAdapter(
+    ExchangePort
+):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
+    # R0904: the port itself is 19 methods; the three past the cap are the
+    # ADR-023/046 test controls (inject_partial_cancel, withhold_trades,
+    # release_trades) that let engine tests reproduce exchange shapes the
+    # mock's price-cross matcher cannot produce on its own.
     """Deterministic in-memory ``ExchangePort`` for simulations and tests.
 
     Construct with starting balances and (optionally) starting prices,
