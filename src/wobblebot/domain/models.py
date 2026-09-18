@@ -407,3 +407,40 @@ class CapTripRecord(BaseModel):
         """Pydantic config."""
 
         frozen = True
+
+
+class PendingFillTrades(BaseModel):
+    """A confirmed fill whose trade rows the exchange has not surfaced yet (ADR-046).
+
+    Written in the same transaction that closes the order when the
+    exchange reports ``filled_amount > 0`` but neither the tick's trade
+    history snapshot nor the order's own trade list covers that amount
+    (Kraken's ``TradesHistory`` lagged a DOGE/USD fill by at least five
+    seconds on 2026-09-10; the fill closed with zero trade rows and the
+    trade was lost until a hand backfill eight days later). The engine
+    sweeps these every tick until the trades arrive, then deletes the
+    row; ``given_up_at`` marks a fill the sweep stopped retrying so the
+    operator can see it was never silent: cli/live pages it and re-raises
+    it at ERROR on every boot. Nothing else reads this table -- the daily
+    reconcile compares Kraken's history with ``trades`` for ``live.symbols``
+    and reports the gap only once Kraken lists the trade.
+
+    Attributes:
+        order_id: Storage UUID of the closed order.
+        exchange_id: The exchange's order id (Kraken txid).
+        symbol: Trading pair.
+        filled_amount: The exchange-reported fill the trades must cover.
+        first_seen_at: When the fill was first confirmed.
+        attempts: Lookups that returned nothing (transport errors don't count).
+        last_attempt_at: When the last lookup ran.
+        given_up_at: Set when the bounded sweep stopped; None while active.
+    """
+
+    order_id: UUID
+    exchange_id: str = Field(..., min_length=1)
+    symbol: Symbol
+    filled_amount: Decimal = Field(..., gt=0)
+    first_seen_at: Timestamp
+    attempts: int = Field(default=0, ge=0)
+    last_attempt_at: Timestamp | None = None
+    given_up_at: Timestamp | None = None

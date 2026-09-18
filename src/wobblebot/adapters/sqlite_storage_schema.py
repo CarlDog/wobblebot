@@ -640,4 +640,33 @@ CREATE TABLE IF NOT EXISTS reanchor_snoozes (
     snoozed_until TEXT NOT NULL,
     PRIMARY KEY (symbol_base, symbol_quote)
 );
+
+-- ---------------------------------------------------------------- --
+-- pending_fill_trades — confirmed fills still owed their trade rows --
+-- ---------------------------------------------------------------- --
+-- ADR-046. One row per order the exchange reported filled while its
+-- trade rows were not yet visible (Kraken's TradesHistory lagged a
+-- DOGE/USD fill by >= 5 s on 2026-09-10; the order closed with zero
+-- trade rows and the trade was lost until a hand backfill). Written
+-- in the SAME transaction that closes the order, so the order can
+-- never be terminal without either its trades or this marker. The
+-- engine sweeps active rows every tick and deletes a row once the
+-- recovered trades cover filled_amount. given_up_at is set, not
+-- deleted, when the bounded sweep stops: the row then stays as the
+-- forensic record -- re-raised at ERROR on every cli/live boot until
+-- the rows are backfilled (then cleared), and reported by the daily
+-- reconcile once the exchange's own trade history lists the trade.
+-- Lives in live.db beside orders/trades. Additive: created by the
+-- writable connect() only; read-only openers skip schema by design.
+CREATE TABLE IF NOT EXISTS pending_fill_trades (
+    order_id        TEXT PRIMARY KEY,
+    exchange_id     TEXT NOT NULL CHECK (length(exchange_id) > 0),
+    symbol_base     TEXT NOT NULL CHECK (length(symbol_base) > 0),
+    symbol_quote    TEXT NOT NULL CHECK (length(symbol_quote) > 0),
+    filled_amount   TEXT NOT NULL,
+    first_seen_at   TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_attempt_at TEXT,
+    given_up_at     TEXT
+);
 """

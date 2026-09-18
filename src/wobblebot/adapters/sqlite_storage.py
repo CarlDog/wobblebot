@@ -73,6 +73,7 @@ from wobblebot.domain.models import (
     LedgerEntry,
     NewsItem,
     Order,
+    PendingFillTrades,
     PriceSnapshot,
     Trade,
 )
@@ -569,17 +570,29 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         SQLite lock, disk hiccup) — the exception propagates and is caught
         generically several frames up, so the order's terminal state is
         never revisited (a closed order never becomes a fill candidate
-        again) while its trade is gone with no trace. Confirmed live
-        2026-08-22 for XRP: the order row showed ``status='closed'`` with
-        the correct ``filled_amount``, but the matching Kraken trade was
-        never in ``trades`` at all.
+        again) while its trade is gone with no trace. The 2026-08-22 XRP
+        loss showed that signature (``status='closed'`` with the correct
+        ``filled_amount`` and no matching trade row); the failed insert
+        was inferred from the signature, not observed in a log. The
+        2026-09-10 DOGE loss had the identical signature with a log that
+        proves no write failed: the resolution simply carried no trades
+        because Kraken's history had not caught up. The guard below is
+        what closes THAT path (ADR-046); the transaction closes the
+        write-failure path.
 
-        Wrapping both writes in one transaction makes the failure mode
-        self-healing instead of silent: if any trade insert fails, the
-        order's status change rolls back with it, so it stays ``open`` in
-        storage and ``_fill_candidates``/reconciliation pick it up again
-        on the next pass instead of losing it.
+        Wrapping both writes in one transaction makes the write-failure
+        mode self-healing instead of silent: if any trade insert fails,
+        the order's status change rolls back with it, so it stays
+        ``open`` in storage and ``_fill_candidates``/reconciliation pick
+        it up again on the next pass instead of losing it.
         """
+        if order.filled_amount > 0 and not trades:
+            raise StorageError(
+                f"save_fill refused for order {order.id} ({order.exchange_id}): "
+                f"filled_amount {order.filled_amount} > 0 with no trade rows. A confirmed "
+                "fill without its trades is pending, not final (ADR-046) -- use "
+                "save_fill_pending_trades so the fill is recovered instead of lost."
+            )
         conn = self._require_conn()
         try:
             await self._execute_save_order(conn, order)
@@ -589,6 +602,155 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             await conn.rollback()
             raise StorageError(f"Failed to save fill for order {order.id}: {exc}") from exc
+
+    async def save_fill_pending_trades(self, order: Order, trades: Sequence[Trade] = ()) -> None:
+        """Close a confirmed fill AND mark its trade rows as owed, atomically (ADR-046).
+
+        The marker is inserted in the same transaction as the order's
+        terminal state, so the two cannot be separated by a failure: a
+        rollback leaves the order open (re-resolved next tick), a commit
+        leaves it closed with a sweepable marker. ``ON CONFLICT`` keeps
+        the original ``first_seen_at``/``attempts`` if the same order is
+        resolved twice (a partial arrival re-detected before the sweep
+        ran), refreshing only the fill amount.
+        """
+        if order.filled_amount <= 0:
+            raise StorageError(
+                f"save_fill_pending_trades refused for order {order.id}: filled_amount "
+                f"{order.filled_amount} is not a fill -- a clean cancel/expire uses save_fill"
+            )
+        if not order.exchange_id:
+            raise StorageError(
+                f"save_fill_pending_trades refused for order {order.id}: no exchange_id"
+            )
+        conn = self._require_conn()
+        now_iso = datetime.now(UTC).isoformat()
+        try:
+            await self._execute_save_order(conn, order)
+            for trade in trades:
+                await self._execute_save_trade(conn, trade)
+            await self._execute_save_pending_marker(conn, order, now_iso)
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(f"Failed to save pending fill for order {order.id}: {exc}") from exc
+
+    async def _execute_save_pending_marker(
+        self, conn: aiosqlite.Connection, order: Order, first_seen_iso: str
+    ) -> None:
+        """Run the pending_fill_trades UPSERT without committing -- the last
+        statement of ``save_fill_pending_trades``'s transaction, split out
+        so a test can fail THIS statement alone and prove the order close
+        rolls back with it."""
+        await conn.execute(
+            """
+            INSERT INTO pending_fill_trades (
+                order_id, exchange_id, symbol_base, symbol_quote,
+                filled_amount, first_seen_at, attempts, last_attempt_at, given_up_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL)
+            ON CONFLICT(order_id) DO UPDATE SET
+                exchange_id = excluded.exchange_id,
+                filled_amount = excluded.filled_amount
+            """,
+            (
+                str(order.id),
+                order.exchange_id,
+                order.symbol.base,
+                order.symbol.quote,
+                str(order.filled_amount),
+                first_seen_iso,
+            ),
+        )
+
+    async def record_pending_fill_trades(
+        self, order_id: UUID, trades: Sequence[Trade], *, complete: bool
+    ) -> None:
+        conn = self._require_conn()
+        try:
+            for trade in trades:
+                await self._execute_save_trade(conn, trade)
+            if complete:
+                await conn.execute(
+                    "DELETE FROM pending_fill_trades WHERE order_id = ?", (str(order_id),)
+                )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to record recovered trades for order {order_id}: {exc}"
+            ) from exc
+
+    async def note_pending_fill_trades_attempt(
+        self, order_id: UUID, *, at: Timestamp, given_up: bool, counted: bool = True
+    ) -> None:
+        conn = self._require_conn()
+        at_iso = at.dt.isoformat()
+        increment = "attempts + 1" if counted else "attempts"
+        try:
+            if given_up:
+                await conn.execute(
+                    f"""
+                    UPDATE pending_fill_trades
+                    SET attempts = {increment}, last_attempt_at = ?, given_up_at = ?
+                    WHERE order_id = ?
+                    """,
+                    (at_iso, at_iso, str(order_id)),
+                )
+            else:
+                await conn.execute(
+                    f"""
+                    UPDATE pending_fill_trades
+                    SET attempts = {increment}, last_attempt_at = ?
+                    WHERE order_id = ?
+                    """,
+                    (at_iso, str(order_id)),
+                )
+            await conn.commit()
+        except (aiosqlite.Error, OSError) as exc:
+            await conn.rollback()
+            raise StorageError(
+                f"Failed to note recovery attempt for order {order_id}: {exc}"
+            ) from exc
+
+    async def get_pending_fill_trades(
+        self, symbol: Symbol | None = None, *, include_given_up: bool = False
+    ) -> list[PendingFillTrades]:
+        conn = self._require_conn()
+        clauses: list[str] = []
+        params: list[str] = []
+        if symbol is not None:
+            clauses.append("symbol_base = ? AND symbol_quote = ?")
+            params.extend([symbol.base, symbol.quote])
+        if not include_given_up:
+            clauses.append("given_up_at IS NULL")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM pending_fill_trades{where} ORDER BY first_seen_at ASC"
+        try:
+            async with conn.execute(sql, tuple(params)) as cursor:
+                rows = await cursor.fetchall()
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError(f"Failed to load pending fill trades: {exc}") from exc
+        return [
+            PendingFillTrades(
+                order_id=UUID(row["order_id"]),
+                exchange_id=row["exchange_id"],
+                symbol=Symbol(base=row["symbol_base"], quote=row["symbol_quote"]),
+                filled_amount=Decimal(row["filled_amount"]),
+                first_seen_at=Timestamp(dt=datetime.fromisoformat(row["first_seen_at"])),
+                attempts=row["attempts"],
+                last_attempt_at=(
+                    Timestamp(dt=datetime.fromisoformat(row["last_attempt_at"]))
+                    if row["last_attempt_at"]
+                    else None
+                ),
+                given_up_at=(
+                    Timestamp(dt=datetime.fromisoformat(row["given_up_at"]))
+                    if row["given_up_at"]
+                    else None
+                ),
+            )
+            for row in rows
+        ]
 
     async def get_trades(
         self,

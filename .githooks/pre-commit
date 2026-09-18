@@ -115,6 +115,25 @@ if [ -n "$INTERNAL_HOSTS" ]; then
   [ -n "$HOST_ALT" ] && PII_PATTERNS+=("($HOST_ALT)")
 fi
 
+# Operator/personal NAMES, supplied OUT OF BAND.
+#
+# Same reasoning as the hosts above: naming the string here would publish the
+# very thing the check exists to hide. Set it per-clone:
+#
+#   git config fleet.personalNames 'Surname,Given Surname'
+#
+# On 2026-09-04 an audit of this public repo found the operator's real full
+# name in 8 tracked files (52 occurrences) and 6 commits of history. Nothing
+# had ever checked: the patterns above match home paths and personal email
+# domains only, and a bare name matches none of them. Configure this and it
+# cannot recur.
+PERSONAL_NAMES=$(git config --get fleet.personalNames 2>/dev/null || true)
+if [ -n "$PERSONAL_NAMES" ]; then
+  NAME_ALT=$(printf '%s' "$PERSONAL_NAMES" | tr ',' '\n' \
+    | sed 's/[][\.|$(){}?+*^]/\\&/g' | paste -sd '|' -)
+  [ -n "$NAME_ALT" ] && PII_PATTERNS+=("($NAME_ALT)")
+fi
+
 # ACMR (not AM): renamed/copied files must be PII-scanned too — a `git mv` of a
 # file containing a home path / personal email would otherwise bypass this scan.
 STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -126,7 +145,13 @@ FOUND=0
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   for pattern in "${PII_PATTERNS[@]}"; do
-    matches=$(git show ":$file" 2>/dev/null | grep -nE "$pattern" || true)
+    # -i: case-insensitive. A name or hostname inside a SCREAMING_SNAKE
+    # constant does not match its configured mixed-case form otherwise: the
+    # configured value is compared literally. Measured 2026-09-12 against a
+    # real file, 0 matches case-sensitive and 8 case-insensitive. Home paths
+    # and email domains are case-insensitive in practice too, so this is
+    # strictly safer for every pattern.
+    matches=$(git show ":$file" 2>/dev/null | grep -niE "$pattern" || true)
     if [ -n "$matches" ]; then
       if [ "$FOUND" -eq 0 ]; then
         echo "" >&2

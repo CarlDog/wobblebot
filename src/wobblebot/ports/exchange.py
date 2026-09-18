@@ -302,6 +302,33 @@ class ExchangePort(ABC):
         pass
 
     @abstractmethod
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        """Get the trades the exchange attributes to ``order`` itself.
+
+        Uses the exchange's own order-to-trade linkage (Kraken: the
+        order record's ``trades`` id list, then ``QueryTrades``) rather
+        than a scan of account-wide trade history. Exists because the
+        account-wide history can lag a fill by seconds: on 2026-09-10 an
+        order left ``OpenOrders`` and ``QueryOrders`` reported it filled
+        while ``TradesHistory`` did not yet list its trade, and the fill
+        was persisted with no trade row (ADR-046).
+
+        Args:
+            order: Order to look up (must have exchange_id)
+
+        Returns:
+            Trades whose order id is ``order.exchange_id``, oldest first.
+            An EMPTY list means the exchange has not surfaced them yet
+            and is not an error; callers must treat it as "try again",
+            never as "no trades".
+
+        Raises:
+            ExchangeError: If the lookup itself fails (transport, auth,
+                malformed response). Distinct from an empty list.
+        """
+        pass
+
+    @abstractmethod
     async def get_ohlc(
         self,
         symbol: Symbol,

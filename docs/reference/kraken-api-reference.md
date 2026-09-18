@@ -325,6 +325,67 @@ class Trade(BaseModel):
 
 ---
 
+## Trade Lookup by Order (QueryOrders `trades=true` + QueryTrades)
+
+Added 2026-09-18 for ADR-046. `TradesHistory` is account-wide, paginated 50 per
+page at two rate-limit points each, and **can lag a fill by seconds**: on
+2026-09-10 an order had left `OpenOrders` and `QueryOrders` reported it filled
+while `TradesHistory` did not yet list its trade. The documentation states no
+latency guarantee either way; the lag is observed, not documented.
+
+### **Request: QueryOrders with trade ids** (`POST /0/private/QueryOrders`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `txid` | string | Order txid; comma-delimited list of up to 50 |
+| `trades` | boolean | "Whether or not to include trades related to position in output" (default false) |
+
+### **Response: QueryOrders order object, additional field**
+
+| Field | Type | Notes |
+|---|---|---|
+| `trades` | array of strings | "List of trade IDs related to order (if trades info requested and data available)" |
+
+The "data available" clause means the list can be absent or empty for a fill the
+order object already reports in `vol_exec`. The adapter returns `[]` for that
+case and the engine treats it as "not yet", never as "no trades".
+
+### **Request: QueryTrades** (`POST /0/private/QueryTrades`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `txid` | string | "Comma delimited list of transaction IDs to query info about (20 maximum)" |
+| `trades` | boolean | Optional; position-related trades, unused here |
+
+### **Response: QueryTrades**
+
+A dict keyed by trade txid. Each entry carries the same core fields as a
+`TradesHistory` entry (`ordertxid`, `postxid`, `pair`, `time`, `type`,
+`ordertype`, `price`, `cost`, `fee`, `vol`, `margin`, `misc`, plus
+`trade_id`, `maker`, `aclass`, `tradeordertype`), so `_build_trade_from_kraken`
+parses both. Position-only fields (`posstatus`, `cprice`, `ccost`, `cfee`,
+`cvol`, `cmargin`, `net`, `trades`) appear only for margin trades.
+
+Rate cost: `QueryOrders` and `QueryTrades` sit in Kraken's cheap (+1) bucket;
+`TradesHistory` is in the account-history bucket, which Kraken's rate-limit
+guide prices at 2 per page and its support article at 4 (the two pages
+disagree; either way it is the expensive one). A lagging fill costs three
+one-point calls in total: the `get_order_status` `QueryOrders`, the
+`trades=true` `QueryOrders`, and one `QueryTrades`. This is why the recovery
+sweep uses these per tick rather than re-walking `TradesHistory`.
+
+**Verified against a live response 2026-09-18** (trader key, from inside
+`wobblebot-live`, read-only, two known filled DOGE/USD orders: the 2026-09-10 buy
+and the 2026-09-18 sell). Both `QueryOrders` entries carried a `trades` list with
+exactly one id alongside `vol_exec`, `status`, `closetm`, `cost`, `fee`, `descr`
+and the rest of the documented order fields. Both `QueryTrades` entries carried
+`ordertxid`, `postxid`, `pair`, `aclass`, `time`, `type`, `ordertype`,
+`tradeordertype`, `price`, `cost`, `fee`, `vol`, `margin`, `leverage`, `misc`,
+`trade_id`, `maker`. One detail the docs do not spell out: `pair` came back as the
+altname `XDGUSD`, not the `XXDGZUSD` pair key; `_symbol_for_pair_key` resolves
+both, and the parsed volumes matched `vol_exec` to the last digit. Capture:
+`data/verify_order_trades_20260918.json` on the NAS volume.
+
 ## Balance Structure (Balance endpoint)
 
 ### **Response: Balance**

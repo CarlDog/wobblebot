@@ -3577,5 +3577,130 @@ until amended; backlog G6 and phase-entry gates remain unchanged.
 validation and a history-preserving SQLite provider migration. Local `ollama`
 remains separate. Existing seats and fallback selections are unchanged.
 
-<!-- ADR-045 is the last in this file; new ADRs append below. -->
+## ADR-046 — A Confirmed Fill With No Trade Rows Is Pending, Never Final
+
+**Status:** Accepted (code on `fix/fill-trade-recovery`, PR #152; ships as the next patch).
+**Date:** 2026-09-18
+
+**Context.** The engine detects a fill when an order leaves Kraken's `OpenOrders`,
+confirms it with `QueryOrders` (which reports `filled_amount`), and looks the trade
+rows up in that tick's whole-account `TradesHistory` snapshot, fetched a moment after
+`OpenOrders`. On 2026-09-10 12:47:13.997 UTC a DOGE/USD buy filled; at 12:47:19.286
+the engine closed the order with `filled_amount` 72.18596201 and logged
+`grid fill`, but the snapshot did not yet list the trade, so
+`save_fill(order_closed, [])` committed a closed order with zero trade rows. A closed
+order is never re-examined. The daily reconcile reported the gap on eight consecutive
+days; the trade was hand-backfilled on 2026-09-18. No error was logged anywhere. The
+2026-08-22 atomic-write fix (`StoragePort.save_fill`) could not catch this: there was
+nothing to be atomic about. The XRP loss of 2026-08-21 carried the identical signature
+and its "failed insert" mechanism was inferred from that signature, not observed.
+
+**Decision.** A terminal-order resolution with `filled_amount > 0` and trade rows
+that do not cover that amount is a *confirmed fill whose rows are owed*, never a
+completed fill and never a clean cancel.
+
+1. `StoragePort.save_fill` refuses `filled_amount > 0` with an empty trade list
+   (`StorageError`, before any write). An empty list stays legal only for a
+   zero-fill cancel/expire.
+2. The exchange port gains `get_order_trades(order)`: the exchange's own
+   order-to-trade linkage (Kraken: `QueryOrders trades=true` for the id list, then
+   `QueryTrades`; two one-point calls on top of the `QueryOrders` status
+   confirmation, so a lagging fill costs three per lookup, not two).
+   `reconciler.resolve_fill_trades` uses it once to complete a short snapshot;
+   `trades_cover_fill` is the single completeness test, because a limit order can
+   fill across several trades seconds apart, and an empty set never covers a
+   positive fill, however small (review finding, 2026-09-18: at a one-lot-unit fill
+   the 1e-8 tolerance let `[]` count as covered, so `save_fill` was refused every
+   tick and that symbol's step never completed).
+3. When the rows still fall short, `save_fill_pending_trades` closes the order and
+   writes a `pending_fill_trades` marker in one transaction. The counter fires exactly
+   once, keyed on `filled_amount`. `GridEngine.step` sweeps active markers every tick,
+   before and outside the pause/spread/offside gates, records rows idempotently as
+   they arrive, and deletes the marker only once the fill is covered. The shared
+   `TradesHistory` snapshot is consulted on every sweep tick (free); the direct
+   `get_order_trades` lookup runs on every third sweep tick per symbol, so a lag
+   that lasts the whole window costs about one point per 15-18 s on Kraken's shared
+   private counter rather than one per tick, which could have starved the
+   `OpenOrders` fetch every symbol depends on. An attempt is a lookup that ran and
+   left the fill uncovered (bound 120); a transport error or an off-cadence tick is
+   not, but a 30-minute wall clock ends the loop regardless -- measured, for a marker
+   inherited across a restart, from the later of its first sighting and this
+   process's boot, so a long restart cannot turn one transient failure on the new
+   session's first lookup into a give-up (each restart grants a fresh window; the
+   marker is re-raised at every boot regardless) -- and the storage row and the log
+   count the same thing. Fee-drift checks, sell-guard invalidation and the
+   recovery log lines key off rows NEW to storage, found by order id (never by the
+   order's local creation time: that clock is the NAS's, a trade's is Kraken's), so a
+   partially covered fill swept for minutes is not re-counted. Giving up keeps the
+   marker (`given_up_at`), logs ERROR, and buffers the exchange id inside the engine;
+   cli/live drains the buffer into one critical page on both the success path and
+   the per-symbol failure path, so a trading step that raises right after the
+   give-up cannot lose the page. At boot, `load_pending_fill_trades` resumes active
+   sweeps, re-raises every given-up marker at ERROR until its rows land (clearing the
+   marker once rows carrying its exchange id cover its own `filled_amount`, whether
+   or not the `orders` row still exists), and cli/live logs a WARNING counting only
+   the markers this session will sweep plus an ERROR for markers on symbols outside
+   `live.symbols`, which would otherwise sit indexed and never swept. Only cli/live
+   resumes markers; cli/shadow's exchange never lags its own trades. The cancel path
+   and the boot reconciler use the same resolution.
+
+**Rejected.**
+- *Leave the order open until the trades arrive.* Re-detected every tick as a fill
+  candidate, so the counter would fire again on each pass: a double counter is worse
+  than a late trade row.
+- *Rely on the daily reconcile.* It detects but is read-only by design; every
+  occurrence cost a hand-run script and a daemon restart, and the cost basis was wrong
+  for a day or more. Letting it heal is a separate design decision (filed).
+- *Re-walk `TradesHistory` each tick while pending.* Two points per page and up to
+  twenty pages against Kraken's private counter; the order's own trade list is two
+  one-point calls.
+- *`QueryOrders trades=true` alone as the fix.* Kraken documents the id list as present
+  "if data available", so it can lag too; it is the fast path, not the guarantee.
+
+**Consequences.** New table `pending_fill_trades` in `live.db` (additive; created by
+the writable `connect()` only, read-only openers skip schema). The `grid fill` log
+line is WARNING while rows are owed and INFO once recorded. A new critical
+notification, "Fill recorded without its trade rows", names the order. Kraken's lag
+magnitude is observed, not documented. Field names for the two new calls were taken
+from docs.kraken.com and then verified 2026-09-18 against a live response with the
+trader key (two filled DOGE/USD orders; both carried a `trades` id list, both
+`QueryTrades` entries parsed through the existing trade builder, volumes matched
+`vol_exec` exactly; `pair` arrives as the altname, which the adapter already resolves).
+The page and the ERROR lines say only what the code knows: the marker is the record,
+and the daily reconcile reports the gap only once Kraken's `TradesHistory` lists the
+trade, because nothing outside the engine reads `pending_fill_trades` (a reconcile
+that reads it is a filed follow-up, not a promise). Open as of 2026-09-18: whether
+Kraken answers `QueryTrades` for a not-yet-indexed id with an empty result (an
+attempt) or an error envelope (a transport failure, uncounted). Either way the
+30-minute ceiling ends the loop and pages; if the live probe shows an error envelope,
+the adapter should map that code to "not yet" so the attempt bound applies and a
+benign lag does not log as an API outage. The ADR-038 fee-drift page fires on a
+recovery tick as well as a fill tick, because a row the sweep brings in is
+fee-checked on a tick with no fill. Paced lookups are phase-aligned: k markers that
+appear in the same tick look up on the same third tick, k points instead of one;
+this account's Kraken counter tier is unmeasured, so the per-marker bound is not a
+per-session bound.
+
+**Review (2026-09-18).** Five reviewers in their own worktrees (engine seam, storage
+atomicity, Kraken adapter, boot/reconciler/live wiring, test honesty) raised 16
+findings against `bdebe9b`; every confirmed one is fixed above and pinned by a test,
+and the two documentation findings (the three-call cost; Kraken's own pages pricing
+`TradesHistory` at 2 or 4 per page) are corrected in the Kraken reference. The
+test-honesty reviewer's mutation table escaped five of nine mutants on the pre-review
+branch (marker atomicity, boot-resume wiring, the shared-snapshot path, sell-guard
+invalidation, fee drift); the scripted harness then ran 14 mutants, baseline and
+post-restore green, 14 caught. A second round read the fix round itself: a sixth
+reviewer (five LOW findings; two escaped mutants -- the boot-wiring guard passed
+with the await wrapped in `if False:`, and an aged-out give-up on an off-cadence
+tick was unpinned) and the rule's completeness critic (four LOW findings, two
+reproduced by probe: an inherited marker past the ceiling given up on one
+transient failure, and the fee-drift page waiting for the next fill; verdict:
+deploy, nothing blocks). Every code finding was fixed and pinned by the probe that
+found it (9c10177, 81e8080); the harness runs 22 mutants, 22 caught. The reviewer then read 9c10177 itself: three LOW, no HIGH or MEDIUM -- the ADR still stated the old ceiling rule (amended here); the boot re-check's order scoping was correct but unpinned, so under mutation a foreign same-symbol row cleared the marker (pinned in 81e8080); and the fee-drift page keyed off completed recoveries, so a drift on a partially recovered row still waited (the page now keys off the anomaly counter alone, 81e8080). Its ten mutants caught eight; the escapes were that scoping and a dead statement after a return, noted. Filed, not
+built: a by-order trade query in place of the newest-first window the
+existing-rows read relies on; a reconcile task that reads the marker; a boot-time
+page (the notifier is constructed after the re-raise, so a give-up whose page was
+lost is log-only until the next tick's drain).
+
+<!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->

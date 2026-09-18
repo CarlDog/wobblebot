@@ -103,6 +103,9 @@ class _FailingExchange(ExchangePort):
     ) -> list[Trade]:
         raise NotImplementedError
 
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        raise NotImplementedError
+
     async def get_ohlc(self, symbol, interval_minutes=1, since=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError("data collector tests don't exercise OHLC")
 
@@ -162,6 +165,26 @@ class _FailingStorage(StoragePort):
         raise NotImplementedError
 
     async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
+        raise NotImplementedError
+
+    async def save_fill_pending_trades(  # type: ignore[no-untyped-def]
+        self, order, trades=()
+    ) -> None:
+        raise NotImplementedError
+
+    async def record_pending_fill_trades(  # type: ignore[no-untyped-def]
+        self, order_id, trades, *, complete
+    ) -> None:
+        raise NotImplementedError
+
+    async def note_pending_fill_trades_attempt(  # type: ignore[no-untyped-def]
+        self, order_id, *, at, given_up, counted=True
+    ) -> None:
+        raise NotImplementedError
+
+    async def get_pending_fill_trades(  # type: ignore[no-untyped-def]
+        self, symbol=None, *, include_given_up=False
+    ):
         raise NotImplementedError
 
     async def get_trades(

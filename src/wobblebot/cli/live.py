@@ -1063,9 +1063,19 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             # session the first time a fill's fee rate matches neither
             # believed rate. Would have paged on 2026-07-13 — the
             # first fill after Kraken's fee doubling.
+            await _page_abandoned_fills(
+                engine, notifier, symbol, tick, from_result=result.trade_recovery_abandoned
+            )
+            # ADR-046: a row the recovery sweep brought in is fee-checked on
+            # a tick with fills == 0, and a PARTIAL recovery records rows
+            # without completing, so the page keys off the anomaly counter
+            # alone -- it moves only when a fee was actually judged, and
+            # fee_alerted keeps it to one page per symbol per session. A gate
+            # on same-tick fills made a drift found by the sweep wait for the
+            # symbol's NEXT fill (2026-09-18 completeness critic, then the
+            # fix-round reviewer for the partial-row case).
             if (
                 fee_alerted is not None
-                and result.fills > 0
                 and symbol not in fee_alerted
                 and engine.fee_anomaly_count(symbol) > 0
             ):
@@ -1101,6 +1111,10 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                     ),
                 )
         except WobbleBotPortError as exc:
+            # ADR-046: the sweep inside step() may have written a give-up
+            # (durable, one-shot) before the trading step raised. Page it
+            # from the engine's buffer now, or the page is lost for good.
+            await _page_abandoned_fills(engine, notifier, symbol, tick)
             _LOGGER.warning(
                 "symbol step failed; continuing other symbols (tick=%s, symbol=%s): %s: %s",
                 tick,
@@ -2137,8 +2151,115 @@ async def _open_observe_storage(observe_db: str | None) -> SQLiteStorageAdapter 
     return storage
 
 
-async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
-    config: WobbleBotConfig, *, ignore_cool_down: bool = False
+async def _page_abandoned_fills(
+    engine: GridEngine,
+    notifier: NotifierPort | None,
+    symbol: Symbol,
+    tick: int,
+    *,
+    from_result: tuple[str, ...] = (),
+) -> None:
+    """Page every fill the sweep gave up on this tick, from the StepResult
+    when the step returned and from the engine's buffer when it raised
+    (ADR-046). Draining here as well as in ``step`` is what makes the page
+    survive a step that failed after the give-up was written."""
+    abandoned = tuple(from_result) + engine.drain_unpaged_abandonments(symbol)
+    if abandoned:
+        await _page_unrecovered_fill_trades(notifier, symbol, abandoned, tick)
+
+
+async def _page_unrecovered_fill_trades(
+    notifier: NotifierPort | None, symbol: Symbol, abandoned: tuple[str, ...], tick: int
+) -> None:
+    """ADR-046: the engine confirmed these fills, placed their counters,
+    and stopped trying to obtain their remaining trade rows (the bound
+    was hit, or the storage order behind a marker is gone). The order is
+    closed and the marker is kept: the live daemon re-raises it at ERROR
+    on every boot until the rows are backfilled, and the daily reconcile
+    (which checks live.symbols, the set this sweep ran for) reports the
+    gap once Kraken's own history lists the trade. This page
+    is the timely one, with the runbook attached. Says only what the code
+    knows -- not why Kraken did not answer."""
+    ids = ", ".join(abandoned)
+    await notify(
+        notifier,
+        level="critical",
+        title=f"Fill recorded without its trade rows: {symbol}",
+        message=(
+            f"{len(abandoned)} confirmed fill(s) on {symbol} (exchange order {ids}) "
+            "closed with some or all of their trade rows still missing after the "
+            "recovery window; see the live log's give-up ERROR for the recorded "
+            f"volume. The cost basis for {symbol} is short those trades "
+            "until they are backfilled. Run tools/reconcile_trade_history.py for the "
+            "symbol and follow its backfill runbook. The daily reconcile reports this "
+            "gap once Kraken's trade history lists the trade; until then this page and "
+            "the boot-time ERROR are the record."
+        ),
+        context={
+            "symbol": str(symbol),
+            "reason": "fill_trades_unrecovered",
+            "exchange_ids": list(abandoned),
+            "tick": tick,
+        },
+    )
+
+
+async def _resume_pending_fill_trades(engine: GridEngine, configured: Sequence[Symbol]) -> None:
+    """ADR-046 boot step: index fills still owed their trade rows.
+
+    Fills the exchange confirmed whose rows were pending when the
+    previous process stopped -- or that this boot's startup
+    reconciliation just wrote -- keep being swept by this process from
+    its first tick. WARNING rather than INFO: an owed row is a cost-basis
+    gap until it lands, and the operator reading a fresh log should see
+    that one is being worked.
+
+    The sweep runs inside ``engine.step``, which the tick loop calls only
+    for ``live.symbols``. A marker on a symbol that is no longer configured
+    (the operator narrowed ``--symbols``, or the boot reconciler recovered
+    a dropped symbol's stale order) would sit indexed and never swept, and
+    a WARNING saying "recovery resumes" would be false. Those are called
+    out at ERROR with the runbook instead, so the boot log tells the truth.
+    """
+    pending = await engine.load_pending_fill_trades()
+    if not pending:
+        return
+    configured_set = set(configured)
+    swept = sorted(str(s) for s in pending if s in configured_set)
+    unswept = sorted(str(s) for s in pending if s not in configured_set)
+    # Count only what THIS session will sweep; the unswept symbols get
+    # their own ERROR below (2026-09-18 fix-round review: the total
+    # beside the swept list read as if every marker were being worked).
+    swept_count = sum(n for s, n in pending.items() if s in configured_set)
+    if swept:
+        _LOGGER.warning(
+            "%d fill(s) still owed their trade rows from a previous session; "
+            "recovery resumes on the first tick (symbols: %s)",
+            swept_count,
+            ", ".join(swept),
+            extra={"pending_fill_trades": swept_count, "symbols": swept},
+        )
+    if unswept:
+        _LOGGER.error(
+            "fill(s) on %s still owe their trade rows but those symbols are not in "
+            "live.symbols this session, so nothing will sweep them, and the daily "
+            "reconcile checks only live.symbols, so nothing automated will report the "
+            "gap -- backfill per tools/reconcile_trade_history.py --symbols now, or add "
+            "the symbol back so the sweep resumes",
+            ", ".join(unswept),
+            extra={"pending_fill_trades_unswept_symbols": unswept},
+        )
+
+
+async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches,too-many-return-statements
+    # R0912/R0911: every early return is a distinct, documented exit code
+    # (2 missing section/creds, 4 cool-down, 1 refused boot) and the ADR-046
+    # startup read joined them as one more refuse-to-boot path; folding
+    # them into a dispatcher would hide the exit-code table this module's
+    # docstring promises.
+    config: WobbleBotConfig,
+    *,
+    ignore_cool_down: bool = False,
 ) -> int:
     if config.live is None:
         return missing_section_exit(_LOGGER, "live")
@@ -2263,6 +2384,22 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         maker_fee_rate=maker_rate,
         taker_fee_rate=taker_rate,
     )
+    try:
+        await _resume_pending_fill_trades(engine, config.live.symbols)
+    except WobbleBotPortError as exc:
+        # Same posture as the reconciliation read above: a storage failure
+        # here means the session cannot know what it owes, and a boot that
+        # silently ran with an empty index would disable the sweep for the
+        # whole session behind one line. Hard-but-clean exit instead.
+        _LOGGER.error(
+            "startup read of pending fill trades failed; refusing to start: %s: %s",
+            type(exc).__name__,
+            exc,
+            extra={"error": str(exc), "error_type": type(exc).__name__},
+        )
+        await adapter.aclose()
+        await storage.close()
+        return 1
 
     # Stage 5.4: optional operator-interaction wiring. When operator_db
     # is set in settings.yml, open it as a second storage adapter and
