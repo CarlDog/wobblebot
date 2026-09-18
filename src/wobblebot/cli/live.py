@@ -1063,6 +1063,32 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             # session the first time a fill's fee rate matches neither
             # believed rate. Would have paged on 2026-07-13 — the
             # first fill after Kraken's fee doubling.
+            if result.trade_recovery_abandoned:
+                # ADR-046: the engine confirmed these fills, placed their
+                # counters, and could not obtain their trade rows within
+                # the bounded sweep. The order is closed and the marker is
+                # kept, so the daily reconcile will report the same gap;
+                # this page is the timely one, with the runbook attached.
+                ids = ", ".join(result.trade_recovery_abandoned)
+                await notify(
+                    notifier,
+                    level="critical",
+                    title=f"Fill recorded without its trade rows: {symbol}",
+                    message=(
+                        f"{len(result.trade_recovery_abandoned)} confirmed fill(s) on {symbol} "
+                        f"(exchange order {ids}) closed without their trade rows: Kraken never "
+                        "surfaced them within the recovery window. The cost basis for "
+                        f"{symbol} is missing those trades until they are backfilled. Run "
+                        "tools/reconcile_trade_history.py for the symbol and follow its "
+                        "backfill runbook; the daily reconcile will keep reporting this gap."
+                    ),
+                    context={
+                        "symbol": str(symbol),
+                        "reason": "fill_trades_unrecovered",
+                        "exchange_ids": list(result.trade_recovery_abandoned),
+                        "tick": tick,
+                    },
+                )
             if (
                 fee_alerted is not None
                 and result.fills > 0
@@ -2137,6 +2163,27 @@ async def _open_observe_storage(observe_db: str | None) -> SQLiteStorageAdapter 
     return storage
 
 
+async def _resume_pending_fill_trades(engine: GridEngine) -> None:
+    """ADR-046 boot step: index fills still owed their trade rows.
+
+    Fills the exchange confirmed whose rows were pending when the
+    previous process stopped -- or that this boot's startup
+    reconciliation just wrote -- keep being swept by this process from
+    its first tick. WARNING rather than INFO: an owed row is a cost-basis
+    gap until it lands, and the operator reading a fresh log should see
+    that one is being worked.
+    """
+    pending = await engine.load_pending_fill_trades()
+    if pending:
+        _LOGGER.warning(
+            "%d fill(s) still owed their trade rows from a previous session; "
+            "recovery resumes on the first tick (symbols: %s)",
+            pending,
+            ", ".join(sorted(str(s) for s in engine.pending_fill_trade_symbols())),
+            extra={"pending_fill_trades": pending},
+        )
+
+
 async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
     config: WobbleBotConfig, *, ignore_cool_down: bool = False
 ) -> int:
@@ -2263,6 +2310,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         maker_fee_rate=maker_rate,
         taker_fee_rate=taker_rate,
     )
+    await _resume_pending_fill_trades(engine)
 
     # Stage 5.4: optional operator-interaction wiring. When operator_db
     # is set in settings.yml, open it as a second storage adapter and
