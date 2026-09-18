@@ -325,6 +325,55 @@ class Trade(BaseModel):
 
 ---
 
+## Trade Lookup by Order (QueryOrders `trades=true` + QueryTrades)
+
+Added 2026-09-18 for ADR-046. `TradesHistory` is account-wide, paginated 50 per
+page at two rate-limit points each, and **can lag a fill by seconds**: on
+2026-09-10 an order had left `OpenOrders` and `QueryOrders` reported it filled
+while `TradesHistory` did not yet list its trade. The documentation states no
+latency guarantee either way; the lag is observed, not documented.
+
+### **Request: QueryOrders with trade ids** (`POST /0/private/QueryOrders`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `txid` | string | Order txid; comma-delimited list of up to 50 |
+| `trades` | boolean | "Whether or not to include trades related to position in output" (default false) |
+
+### **Response: QueryOrders order object, additional field**
+
+| Field | Type | Notes |
+|---|---|---|
+| `trades` | array of strings | "List of trade IDs related to order (if trades info requested and data available)" |
+
+The "data available" clause means the list can be absent or empty for a fill the
+order object already reports in `vol_exec`. The adapter returns `[]` for that
+case and the engine treats it as "not yet", never as "no trades".
+
+### **Request: QueryTrades** (`POST /0/private/QueryTrades`)
+
+| Field | Type | Notes |
+|---|---|---|
+| `txid` | string | "Comma delimited list of transaction IDs to query info about (20 maximum)" |
+| `trades` | boolean | Optional; position-related trades, unused here |
+
+### **Response: QueryTrades**
+
+A dict keyed by trade txid. Each entry carries the same core fields as a
+`TradesHistory` entry (`ordertxid`, `postxid`, `pair`, `time`, `type`,
+`ordertype`, `price`, `cost`, `fee`, `vol`, `margin`, `misc`, plus
+`trade_id`, `maker`, `aclass`, `tradeordertype`), so `_build_trade_from_kraken`
+parses both. Position-only fields (`posstatus`, `cprice`, `ccost`, `cfee`,
+`cvol`, `cmargin`, `net`, `trades`) appear only for margin trades.
+
+Rate cost: `QueryOrders` and `QueryTrades` are one point each, versus two per
+`TradesHistory` page. This is why the recovery sweep uses them per tick.
+
+Field names above are from docs.kraken.com as read on 2026-09-18, not a captured
+live response. Per `api-integration.md`, run one read-only `QueryOrders`
+(`trades=true`) + `QueryTrades` against a known filled order with the trader key
+before the first deploy that exercises this path.
+
 ## Balance Structure (Balance endpoint)
 
 ### **Response: Balance**

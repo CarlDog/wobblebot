@@ -3577,5 +3577,66 @@ until amended; backlog G6 and phase-entry gates remain unchanged.
 validation and a history-preserving SQLite provider migration. Local `ollama`
 remains separate. Existing seats and fallback selections are unchanged.
 
-<!-- ADR-045 is the last in this file; new ADRs append below. -->
+## ADR-046 — A Confirmed Fill With No Trade Rows Is Pending, Never Final
+
+**Status:** Accepted (code merged on `fix/fill-trade-recovery`; ships as the next patch).
+**Date:** 2026-09-18
+
+**Context.** The engine detects a fill when an order leaves Kraken's `OpenOrders`,
+confirms it with `QueryOrders` (which reports `filled_amount`), and looks the trade
+rows up in that tick's whole-account `TradesHistory` snapshot, fetched a moment after
+`OpenOrders`. On 2026-09-10 12:47:13.997 UTC a DOGE/USD buy filled; at 12:47:19.286
+the engine closed the order with `filled_amount` 72.18596201 and logged
+`grid fill`, but the snapshot did not yet list the trade, so
+`save_fill(order_closed, [])` committed a closed order with zero trade rows. A closed
+order is never re-examined. The daily reconcile reported the gap on eight consecutive
+days; the trade was hand-backfilled on 2026-09-18. No error was logged anywhere. The
+2026-08-22 atomic-write fix (`StoragePort.save_fill`) could not catch this: there was
+nothing to be atomic about. The XRP loss of 2026-08-21 carried the identical signature
+and its "failed insert" mechanism was inferred from that signature, not observed.
+
+**Decision.** A terminal-order resolution with `filled_amount > 0` and trade rows
+that do not cover that amount is a *confirmed fill whose rows are owed*, never a
+completed fill and never a clean cancel.
+
+1. `StoragePort.save_fill` refuses `filled_amount > 0` with an empty trade list
+   (`StorageError`, before any write). An empty list stays legal only for a
+   zero-fill cancel/expire.
+2. The exchange port gains `get_order_trades(order)`: the exchange's own
+   order-to-trade linkage (Kraken: `QueryOrders trades=true` for the id list, then
+   `QueryTrades`, two one-point calls). `reconciler.resolve_fill_trades` uses it once
+   to complete a short snapshot; `trades_cover_fill` is the single completeness test,
+   because a limit order can fill across several trades seconds apart.
+3. When the rows still fall short, `save_fill_pending_trades` closes the order and
+   writes a `pending_fill_trades` marker in one transaction. The counter fires exactly
+   once, keyed on `filled_amount`. `GridEngine.step` sweeps active markers every tick,
+   before and outside the pause/spread/offside gates, records rows idempotently as
+   they arrive, deletes the marker only once the fill is covered, and invalidates the
+   sell-guard cache. An empty lookup counts as an attempt (bound 120); a transport
+   error does not, but a 30-minute wall clock ends the loop regardless. Giving up
+   keeps the marker (`given_up_at`), logs ERROR, and pages the operator with the
+   exchange id and the backfill runbook. `load_pending_fill_trades` lets a restart
+   resume a sweep. The cancel path and the boot reconciler use the same resolution.
+
+**Rejected.**
+- *Leave the order open until the trades arrive.* Re-detected every tick as a fill
+  candidate, so the counter would fire again on each pass: a double counter is worse
+  than a late trade row.
+- *Rely on the daily reconcile.* It detects but is read-only by design; every
+  occurrence cost a hand-run script and a daemon restart, and the cost basis was wrong
+  for a day or more. Letting it heal is a separate design decision (filed).
+- *Re-walk `TradesHistory` each tick while pending.* Two points per page and up to
+  twenty pages against Kraken's private counter; the order's own trade list is two
+  one-point calls.
+- *`QueryOrders trades=true` alone as the fix.* Kraken documents the id list as present
+  "if data available", so it can lag too; it is the fast path, not the guarantee.
+
+**Consequences.** New table `pending_fill_trades` in `live.db` (additive; created by
+the writable `connect()` only, read-only openers skip schema). The `grid fill` log
+line is WARNING while rows are owed and INFO once recorded. A new critical
+notification, "Fill recorded without its trade rows", names the order. Kraken's lag
+magnitude is observed, not documented; field names for the two new calls come from
+docs.kraken.com (2026-09-18) and are verified against a live response before deploy.
+
+<!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->

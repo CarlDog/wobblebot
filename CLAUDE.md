@@ -199,6 +199,7 @@ Use Pydantic models for domain entities, value objects in `domain/value_objects.
 - **ADR-004:** No separate banking adapter — Harvester uses Kraken's withdrawal API via `ExchangePort`.
 - **ADR-005:** Kraken-aligned domain models (status values, ID strategy).
 - **ADR-043:** Explicit advisor fallback targets, safe provider errors and actual-model provenance.
+- **ADR-046:** A confirmed fill with no trade rows is pending, never final — `save_fill` refuses the shape; the `pending_fill_trades` sweep recovers the rows.
 
 If you're about to add an abstraction "for future flexibility," check that an ADR doesn't already reject it (ADR-004 explicitly rejects a `BankingPort`).
 

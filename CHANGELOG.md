@@ -28,6 +28,40 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Silent fill loss when Kraken's trade history lags a fill (ADR-046).** The
+  engine confirmed a DOGE/USD buy on 2026-09-10 12:47 UTC via `QueryOrders`,
+  found no trade row in that tick's `TradesHistory` snapshot, and committed the
+  order as closed with zero trades; nothing re-examined it and the daily
+  reconcile paged for eight days until a hand backfill. A confirmed fill whose
+  trade rows do not cover its `filled_amount` is now pending, never final: the
+  order is closed and a `pending_fill_trades` marker is written in one
+  transaction (so the counter still fires exactly once), the engine sweeps the
+  marker every tick using the order's own trade list (`QueryOrders trades=true`
+  then `QueryTrades`), records rows as they arrive, and deletes the marker only
+  once the fill is covered. An empty lookup counts toward a bound of 120
+  attempts; a transport error does not, and a 30-minute wall clock ends the
+  sweep either way. Giving up keeps the marker, logs ERROR, and sends a
+  critical "Fill recorded without its trade rows" notification naming the
+  order and the backfill runbook. The `grid fill` log line is WARNING while
+  rows are owed and INFO once recorded. `StoragePort.save_fill` now refuses a
+  positive fill with an empty trade list, so no code path can recreate the
+  shape quietly. The cancel path and the boot reconciler use the same
+  resolution, and a restart resumes any sweep the previous process left.
+
+### Added
+
+- `ExchangePort.get_order_trades(order)`: the exchange's own order-to-trade
+  linkage, distinct from a scan of account-wide history. Kraken implements it
+  as `QueryOrders` with `trades=true` followed by `QueryTrades` in chunks of 20
+  (field names from docs.kraken.com, 2026-09-18; verified against a live
+  response before deploy). `MockExchangeAdapter.withhold_trades` /
+  `release_trades` let tests reproduce the lagging-history shape.
+- Storage: `pending_fill_trades` table (live.db, additive) and the port methods
+  `save_fill_pending_trades`, `record_pending_fill_trades`,
+  `note_pending_fill_trades_attempt`, `get_pending_fill_trades`.
+
 ## [2.0.11] - 2026-09-09
 
 ### Fixed

@@ -5,6 +5,92 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
+2026-09-17/18 UTC (code merged on `fix/fill-trade-recovery`; release and deploy
+pending the review gate):**
+
+*Incident.* On 2026-09-17 eight consecutive `CancelAllOrdersAfter` resets failed
+between 07:01:18 and 07:03:17 UTC (~17 s apart, every error text empty:
+`transport failure: `); Kraken's timer purged the book at 07:02:43 (DOGE/USD, 1 order)
+and 07:02:44 (SOL/USD, 3 orders), at least 19 s before the client-side deadline of
+07:03:03Z, so the ADR-037 calmer framing did not trigger and both symbols HELD.
+BTC/ETH were offside-parked and XRP/ADA starved, so the account carried **zero open
+orders from 07:02 UTC 09-17 until 19:01 UTC 09-18**. Same shape as the 09-03 purge:
+both Thursdays, both 07:01 UTC (02:01 NAS local), both private-endpoint-only, both
+landing before the deadline. Kraken had returned `EGeneral:Internal error` on
+`OpenOrders` (06:08) and `BalanceEx` (06:17) that morning; observe's public polls
+were clean. Cause not established; the Thursday 02:01 local pattern is a lead
+(DSM Task Scheduler, Pi-hole, router logs; Kraken status history 06:00–07:05 UTC).
+Whether the three-strike critical and the four-hourly held reminders reached
+Discord could not be read from the NAS (operator.db exceeds the read tool's cap).
+
+*Recovery (operator, 2026-09-18).* `resume DOGE` at 19:01:19 re-laid 3/6; the second
+command executed as a resume rather than a re-anchor and SOL parked offside at 112.29
+against its 97.18 band; `re-anchor SOL` at 19:04:59 moved 97.18 → 112.50 and placed
+3/6 (three sells above the 101.20 average cost). DOGE filled a SELL of 68.58657639 @
+0.087480675 at 19:04:20 and parked offside above its band. cli/live was restarted
+19:27:27 UTC for the backfill below: clean shutdown (6 orders cancelled, session end
+at tick 143,122 after 842,616 s, portfolio 104.47 → 92.67 mark-to-market), clean boot
+(fee rates 0.4%/0.8% live, SOL re-laid 4/6, XRP/ADA 0/6, DOGE/BTC/ETH parked).
+
+*Fill-loss root cause, proven.* Kraken trade `TEGXTG-FHHBB-375Q4L` (order
+`OLG4OV-BXTHW-T6IS2H`, DOGE/USD BUY 72.18596201 @ 0.0831186, executed 2026-09-10
+12:47:13.997 UTC) was missing from `live.db` and reported by the daily reconcile on
+eight consecutive days (09-11 → 09-18). Evidence recovered from the Docker log via
+SSH and a read-only dump of `live.db`/`operator.db`: the order row closed at
+12:47:19.286 with `filled_amount` 72.18596201; the log shows `grid fill: DOGE/USD BUY
+72.18596201 @ 0.083118654` at 12:47:19.310 and the counter deferred by the sell
+guard at 12:47:19.312; no WARNING, ERROR, storage error or trade-history fallback
+line between 11:30 and 14:14; no operator command or notification that day.
+Mechanism: `_detect_fills` resolved the fill from `QueryOrders`, the same tick's
+`TradesHistory` snapshot (fetched right after `OpenOrders`, ≤5.3 s after execution)
+did not yet list the trade, and `save_fill(order_closed, [])` committed — the port
+contract permitted an empty list and nothing distinguished it from a clean cancel.
+Excluded: prefetch failure (no fallback warning), pagination truncation (the walk
+runs to Kraken's `count`), id mapping (the 09-15 DOGE fill through the same path was
+recorded). The 08-22 fix (atomic `save_fill`, PR #102) addressed an inferred failed
+insert; the XRP 08-21 loss had this identical signature and no cited log evidence,
+so it is probably the same class. 1 of 8 engine fills in the fully evidenced window
+(09-09 → 09-18) was lost. Effect: DOGE's sell-guard basis read 0.0860098 instead of
+0.0855219 for eight days; no sell level fell in that band, so realized cost was zero.
+
+*Backfill (runbook steps 1–5, 2026-09-18).* `tools/reconcile_trade_history.py --symbols
+DOGE` at 19:09 UTC confirmed exactly one missing, non-deferred trade, 0 non-trade
+ledger entries, and a quantity gap equal to it (Kraken 310.00190300 vs local
+237.81594099). `data/backfill_doge_20260918.py` (the reviewed 08-22 pattern:
+pre-state 49 trades / 237.81594099 asserted, dry run projected 50 / 310.00190300,
+commit, post-state PASS) ran from `wobblebot-maintenance`; the script was first
+exercised locally against a synthetic 49-trade fixture including its abort path.
+Post-restart reconcile at 19:44 UTC: Kraken 50 / local 50, quantities equal.
+
+*Fix (ADR-046, this branch).* A confirmed fill whose trade rows do not cover its
+`filled_amount` is pending, never final: `save_fill` refuses the shape;
+`ExchangePort.get_order_trades` (Kraken `QueryOrders trades=true` + `QueryTrades`)
+is the fast path; `save_fill_pending_trades` closes the order and writes a
+`pending_fill_trades` marker in one transaction so the counter fires once;
+`GridEngine.step` sweeps markers every tick outside the pause/offside gates,
+bounded at 120 empty lookups or 30 minutes, then keeps the marker, logs ERROR and
+pages "Fill recorded without its trade rows"; the cancel path and boot reconciler
+share the resolution; a restart resumes the sweep. 51 new tests (counted by
+`pytest --collect-only`) replay the 09-10
+shape (mock exchange withholding trades while status reports the fill), the fast
+path, a paused symbol, abandonment, transport errors not counting, the wall-clock
+ceiling, partial arrival, boot resume, the cancel path, the boot reconciler, the
+storage contract, and the adapter's wire shape. Mutation verification (scripted,
+restore-from-git in a `finally`, baseline and post-restore green): 5 of 5 mutants
+caught — the engine persisting a pending fill through `save_fill`, the `save_fill`
+guard removed, the sweep disabled, the fast path removed, and "any trade row covers
+the fill". The multi-dimension review precedes the tag.
+
+*Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
+notify instead of paging for a hand script); sell-guard invalidation on an external
+heal; the Thursday 07:01 UTC lead; include the exception class in the adapter's
+transport-failure text (`kraken_exchange.py:1205`/`:1249`, empty on both purge
+days); add margin to the client-side DMS deadline so a purge landing ≥18 s early is
+framed as DMS; the starved-symbol re-layout INFO pair (490–986 lines/day) to DEBUG
+while starved; `kraken_blog` RSS returning 403 since 09-14 15:04 UTC; the
+`wobblebot-shadow.db` maintenance target that does not exist.
+
 **2.0.11 observation completed — ✅ 2026-09-09 UTC; formal acceptance pending:**
 The authorized window ended at **09:25:18 UTC**, exactly eight hours after its
 01:25:18 start. The final checkpoint collected at 09:26:51 capped event queries
