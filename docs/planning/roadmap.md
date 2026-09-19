@@ -8,7 +8,9 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 **Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
 2026-09-17/18 UTC (code on `fix/fill-trade-recovery`,
 [PR #152](https://github.com/CarlDog/wobblebot/pull/152); review gate passed
-2026-09-18; tag and `IMAGE_TAG` bump pending, the operator's two steps):**
+2026-09-18; merged as 5188ae7 and tagged `v2.0.12` 2026-09-19 00:04 UTC, image
+published by the tag run; the `IMAGE_TAG` bump on stack 158 is the remaining
+operator step, so production still runs 2.0.11):**
 
 *Incident.* On 2026-09-17 eight consecutive `CancelAllOrdersAfter` resets failed
 between 07:01:18 and 07:03:17 UTC (~17 s apart, every error text empty:

@@ -3579,7 +3579,7 @@ remains separate. Existing seats and fallback selections are unchanged.
 
 ## ADR-046 — A Confirmed Fill With No Trade Rows Is Pending, Never Final
 
-**Status:** Accepted (code on `fix/fill-trade-recovery`, PR #152; ships as the next patch).
+**Status:** Accepted (PR #152, merged 5188ae7, released as `v2.0.12` on 2026-09-19; NAS deployment is the operator's `IMAGE_TAG` bump).
 **Date:** 2026-09-18
 
 **Context.** The engine detects a fill when an order leaves Kraken's `OpenOrders`,
