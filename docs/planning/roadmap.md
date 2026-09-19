@@ -8,9 +8,9 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 **Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
 2026-09-17/18 UTC (code on `fix/fill-trade-recovery`,
 [PR #152](https://github.com/CarlDog/wobblebot/pull/152); review gate passed
-2026-09-18; merged as 5188ae7 and tagged `v2.0.12` 2026-09-19 00:04 UTC, image
-published by the tag run; the `IMAGE_TAG` bump on stack 158 is the remaining
-operator step, so production still runs 2.0.11):**
+2026-09-18; merged as 5188ae7, tagged `v2.0.12` 2026-09-19 00:04 UTC, and deployed
+to stack 158 at 00:24 UTC as stack file v89, all eight daemons healthy on revision
+5188ae7; deployment receipt below):**
 
 *Incident.* On 2026-09-17 eight consecutive `CancelAllOrdersAfter` resets failed
 between 07:01:18 and 07:03:17 UTC (~17 s apart, every error text empty:
@@ -159,6 +159,31 @@ removed. The reviewer then read 9c10177 itself: three LOW, no HIGH or MEDIUM -- 
 reconciliation-failure `return 1` in `_main_async` closes neither adapter nor
 storage (its new sibling path closes both), and the boot re-raise is log-only
 because the notifier is constructed later.
+
+*Deployment (2026-09-19; `docs/release/2.0.12-deployment-evidence.json`).* Two
+attempts, and the first is the lesson. 00:18 UTC: `IMAGE_TAG` 2.0.11 → 2.0.12 with a
+pull recreated all eight containers, but stack file v88 pins the image to a digest
+(`…:${IMAGE_TAG}@sha256:f07af7ec…`, the 2.0.11 artifact, added at the 2.0.11 deploy),
+so Docker resolved by digest and every container came up as `:2.0.12@f07af7ec` with
+revision label `ddf3e8c` and version label 2.0.11 — old code under a new tag,
+invisible in the container list's tag and in Portainer's "recreated" report, visible
+only in the inspect labels. 00:24 UTC: stack file v89 (v88 with the pin moved to
+GHCR's resolution of `:2.0.12`, `sha256:0536b0b6…`, plus a comment saying a code
+deploy moves both the pin and the tag; derived from v88, not the repo file, so the
+Watchtower labels and the `tools` healthcheck the stack carries and the repo does not
+were kept) redeployed with a pull: all eight on `:2.0.12@sha256:0536b0b6…`, revision
+`5188ae7`, version 2.0.12, image created 00:07:19 UTC, healthy within the start
+period. cli/live booted through the marker read (a failure there exits 1), fee rates
+0.4%/0.8% live, SOL re-laid 4/6, XRP starved, BTC/ETH/DOGE/ADA parked offside as
+before; cli/harvest booted; the maintenance reconcile ran at boot, 6 of 6 clean; the
+advisor's first cycle routed `news` and `arbitrator` to `anthropic/claude-haiku-4-5`
+directly, so the credit refill is verified (the 18:05 UTC cycle on 2.0.11 had still
+fallen back). The deploy sequence on this stack is therefore: tag → publish → move
+the digest pin in the stack file AND bump `IMAGE_TAG` → verify
+`org.opencontainers.image.revision` at the container, never the tag. The repo
+compose's comment, which still called the tag bump the canonical deploy, is corrected
+in the same commit; the label and healthcheck drift between the deployed stack file
+and the repo compose is recorded, not reconciled.
 
 *Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
 notify instead of paging for a hand script); sell-guard invalidation on an external
