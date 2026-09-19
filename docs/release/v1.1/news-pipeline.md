@@ -208,3 +208,72 @@ no behavior changes hinge on it.
 quality degrades and additional sources might help calibrate, OR
 (b) the operator wants per-publisher source-quality metrics (which
 requires the attribution fix first).
+
+### Per-source failure backoff for the news pipeline
+
+**What:** track consecutive fetch failures per ``source_id`` in
+``cli/news``. Past a threshold (roughly a day's worth of cycles),
+stretch that source's retry interval out — mirroring
+``GridEngine``'s starved-layout back-off ("still starved after N
+retries... backing off, retrying every 60 ticks instead of every
+tick") — and demote its per-attempt failure line from WARNING to
+DEBUG. Log one WARNING when a source degrades and one INFO when it
+recovers, instead of a WARNING on every failed fetch. The source is
+never disabled outright: it keeps retrying at the reduced cadence
+forever, so a feed that comes back (URL fixed, bot-block lifted)
+self-heals without an operator touching config.
+
+**Why now:** two independent sources broke within five days and
+both needed a human to notice via log review and hand-disable in
+``settings.yml``. ``rss:kraken_blog`` returned 403 from 2026-09-14
+15:04 UTC onward, caught and disabled 2026-09-19. ``rss:coingape``
+started 403ing 2026-09-19 07:40 UTC, caught the same morning by the
+new scheduled log review, still enabled as of this writing. A 403
+from an RSS host is usually a bot-block or a changed URL, not a
+blip — it won't self-heal, but the current design retries every
+fetch forever and logs a WARNING each time, so the noise (and the
+wasted fetch) compounds silently until someone reads the log.
+
+**Why NOT full auto-disable:** ``settings.yml`` has exactly one
+authorized writer in this codebase — ``cli/apply`` /
+``cli/recalibrate`` through ``services/settings_rewriter``, the
+only container with a writable ``/app/config`` mount (ADR-044).
+Giving ``cli/news`` a second, silent path to edit ``settings.yml``
+would open a write path this project has deliberately kept narrow.
+It would also make the source's absence invisible: right now a
+broken feed at least logs a WARNING every cycle; a source silently
+flipped to ``enabled: false`` in a config file nobody is watching
+is a quieter failure than the noisy status quo. Backoff kept
+in-memory (or a small state table, never the config file) keeps the
+source visible and self-healing without a second writer.
+
+**Precedent for skepticism:** ADR-015 decision 8 explicitly declined
+a general circuit-breaker pattern for LLM provider calls ("adds
+state, requires reasoning about reset semantics, its value depends
+on the actual failure cadence operators see... defer to Phase 8's
+reliability stage if observation justifies it"). That reasoning
+applies here too — but unlike most G10 candidates waiting on
+hypothetical future demand, this one already has the observed
+cadence ADR-015 asked for: two independent, multi-day feed failures
+inside one week.
+
+**Implementation sketch:** an in-memory (or a small
+``news_source_state`` table, if it needs to survive a restart)
+``consecutive_failures`` counter per ``source_id``, incremented on
+fetch failure and reset on success. Past the threshold, switch that
+source to a longer effective retry interval and stop logging at
+WARNING per attempt. No ``settings.yml`` write; no permanent
+disable; the existing ``enabled: false`` manual override remains
+the operator's tool for a source they never want retried again.
+
+**Why deferred (2026-09-19):** two observed triggers is a real
+signal but not yet a design. Open questions: the exact
+threshold/backoff curve; whether state should be in-memory (resets
+to zero on every restart — cheap and self-correcting, but a
+short-lived container could never accumulate enough failures to
+degrade at all, worth weighing against ``cli/news``'s actual
+restart cadence) or persisted; and whether a degraded source should
+surface anywhere in the web UI or Discord, or stay log-only.
+
+**Trigger:** next version's scope decision. Not gated behind G10's
+demand trigger — the demand already fired twice in one week.
