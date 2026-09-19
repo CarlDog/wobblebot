@@ -192,7 +192,10 @@ transport-failure text (`kraken_exchange.py:1205`/`:1249`, empty on both purge
 days); add margin to the client-side DMS deadline so a purge landing ≥18 s early is
 framed as DMS; the starved-symbol re-layout INFO pair (490–986 lines/day) to DEBUG
 while starved; `kraken_blog` RSS returning 403 since 09-14 15:04 UTC; the
-`wobblebot-shadow.db` maintenance target that does not exist.
+`wobblebot-shadow.db` maintenance target that does not exist (both closed 2026-09-19
+00:40 UTC by operator config on the NAS: the feed disabled, the target removed; the news
+and maintenance daemons restarted and their session-start lines confirm seven sources
+and six databases).
 
 **2.0.11 observation completed — ✅ 2026-09-09 UTC; formal acceptance pending:**
 The authorized window ended at **09:25:18 UTC**, exactly eight hours after its
