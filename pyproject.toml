@@ -130,7 +130,7 @@ dev = [
     # to 1.6.0 — it contradicted its own neighbour. Corrected 2026-09-04 by
     # the release-close audit. Runtime `httpx` stays in
     # [project.dependencies]; the Anthropic adapter uses it directly.
-    "httpx2==2.12.0",
+    "httpx2==2.13.0",
 ]
 
 [project.urls]
