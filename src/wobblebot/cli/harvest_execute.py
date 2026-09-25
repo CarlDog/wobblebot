@@ -224,9 +224,9 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
        proposal disagrees — id reuse, an edited row, a regenerated
        proposal — the approval no longer describes this transfer, so we
        refuse rather than move a number nobody agreed to.
-    2b. No prior ``pending``/``completed`` TransferResult may exist for
-       the proposal (idempotency guard — a repeat ``--execute`` must
-       not double-withdraw; a prior ``failed`` row may be retried).
+    2b. No prior TransferResult without a confirmed Kraken rejection may
+       exist for the proposal (idempotency guard — a repeat ``--execute``
+       must not double-withdraw).
     3. Proposal direction must be ``exchange_to_bank``. Deposits
        (``bank_to_exchange``) cannot be executed through Kraken's API
        — they're operator-pushed from the bank side using Kraken's
@@ -292,13 +292,17 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     # proposal that was already submitted. Every gate below re-passes on a
     # second --execute (balance + day-cap still have headroom once the first
     # wire clears), so a duplicate ``--execute <id>`` would double-submit to
-    # Kraken /Withdraw. A prior ``failed`` row does NOT block — Kraken rejected
-    # it, no money moved, so a retry is legitimate; a ``pending``/``completed``
-    # row means funds may be in flight, so we refuse. Withdrawals are rare,
-    # so scope by asset and filter in Python rather than widen the storage port.
+    # Kraken /Withdraw. Only a confirmed rejection permits retry; a legacy
+    # ``failed`` row can mean a lost response after Kraken accepted the request.
+    # Withdrawals are rare, so scope by asset and filter in Python rather than
+    # widen the storage port.
     prior_results = await storage.get_transfer_results(asset=proposal.asset)
     already_submitted = next(
-        (r for r in prior_results if r.proposal_id == proposal_id and r.status != "failed"),
+        (
+            r
+            for r in prior_results
+            if r.proposal_id == proposal_id and r.submission_state != "rejected"
+        ),
         None,
     )
     if already_submitted is not None:

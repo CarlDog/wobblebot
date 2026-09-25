@@ -1816,6 +1816,8 @@ Transport, response, or interrupted outcomes keep a blocking, unverified claim u
 the operator reconciles Kraken funding history; any such claim halts all new bot
 withdrawals, including proposals created later. The partial UNIQUE index continues to
 allow a new attempt only after a confirmed rejection.
+Historical `failed` rows also migrate to `unknown`, because the old error path did not
+distinguish a definite rejection from a lost response.
 
 ## ADR-027 — Kraken Rate-Limit Backoff
 

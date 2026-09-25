@@ -346,8 +346,9 @@ async def migrate_transfer_results_unique_proposal_id(
 async def migrate_transfer_results_submission_state(conn: aiosqlite.Connection) -> None:
     """Distinguish an unverified withdrawal claim from a Kraken refid.
 
-    Old accepted transfers keep the default. A historical failed row is
-    a recorded Kraken rejection, so it cannot hold a withdrawal claim.
+    Old accepted transfers keep the default. A historical failed row may
+    represent a lost response after Kraken accepted the request, so it must
+    hold all new withdrawals until its outcome is reconciled.
     """
     await add_column_if_missing(
         conn,
@@ -357,6 +358,6 @@ async def migrate_transfer_results_submission_state(conn: aiosqlite.Connection) 
         "('reserved', 'unknown', 'accepted', 'rejected'))",
     )
     await conn.execute(
-        "UPDATE transfer_results SET submission_state = 'rejected' "
+        "UPDATE transfer_results SET submission_state = 'unknown' "
         "WHERE status = 'failed' AND submission_state = 'accepted'"
     )

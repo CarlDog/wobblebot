@@ -137,13 +137,24 @@ async def test_legacy_results_gain_submission_state_without_losing_history(tmp_p
             ],
         )
         conn.commit()
+    reader = SQLiteStorageAdapter(db_path, read_only=True)
+    await reader.connect()
+    try:
+        legacy_rows = {r.proposal_id: r for r in await reader.get_transfer_results()}
+        assert legacy_rows["old-fail"].submission_state == "unknown"
+    finally:
+        await reader.close()
     storage = SQLiteStorageAdapter(db_path)
     await storage.connect()
     try:
         rows = {r.proposal_id: r for r in await storage.get_transfer_results()}
         assert rows["old-ok"].submission_state == "accepted"
-        assert rows["old-fail"].submission_state == "rejected"
+        assert rows["old-fail"].submission_state == "unknown"
         assert rows["old-ok"].transaction_id == "kraken-ref"
         assert rows["old-fail"].transaction_id == "failed-old"
+        assert (
+            await storage.reserve_withdrawal(_claim("new"), daily_cap=Decimal("1000"))
+            == "unresolved_claim"
+        )
     finally:
         await storage.close()
