@@ -5,8 +5,8 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
-**`v2.0.13` withdrawal submission safety — source released 2026-09-25 UTC;
-production deployment pending.** [PR #155](https://github.com/CarlDog/wobblebot/pull/155)
+**`v2.0.13` withdrawal submission safety — source released and deployed
+2026-09-25 UTC.** [PR #155](https://github.com/CarlDog/wobblebot/pull/155)
 merged as `90867b0`; the annotated `v2.0.13` tag peels to that commit. The
 [GitHub Release](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.13) and
 GHCR image `ghcr.io/carldog/wobblebot:2.0.13@sha256:82b209a627d44965a94b76010365bd22f2e0dd2cae4f840e564309f4692bd4d0`
@@ -18,22 +18,23 @@ is published with affected versions 1.0.0–2.0.12 and fixed version 2.0.13.
 [PR #156](https://github.com/CarlDog/wobblebot/pull/156) separately recorded the
 on-demand database review export proposal without implementing it.
 
-*Deployment gate (2026-09-25 UTC).* Portainer's file-based stack 158 remains at
-file version 89, `IMAGE_TAG=2.0.12` and digest `sha256:0536b0b6…`.
-`wobblebot-harvest` has been stopped since 01:11 UTC. The latest completed NAS
-backup available for this review was 00:40 UTC: disposable harvest and operator
+*Deployment receipt (2026-09-25 UTC).* The user confirmed no withdrawals since
+the 00:40 UTC NAS backup and no approved or queued `execute_proposal` commands.
+The 00:40 harvest and operator backups served as rollback copies; disposable
 copies passed integrity, additive migration, existing-row count and digest,
-idempotence and byte-for-byte rollback checks. At that cutoff the operator copy
-held zero approved or
-`execute_proposal` commands, and the harvest copy held zero transfer results.
-The 00:40 cutoff does not establish the later operator queue; the live operator
-database has an active WAL and cannot be safely inspected over SMB. Before
-stack recreation or Harvester restart, take a
-current consistent NAS-side SQLite backup and reconcile approved commands and
-withdrawal claims against Kraken Funding. Deployment must update both the
-digest pin and `IMAGE_TAG`, then verify the running revision label. Keep the
-Harvester stopped on any old-image rollback while claims remain unresolved.
-No `v2.0.13` production deployment or live-withdrawal acceptance is claimed here.
+idempotence and byte-for-byte rollback checks. No newer NAS-side backup was
+taken. Portainer's file-based stack 158 advanced from file version 89 to 90.
+The digest pin and `IMAGE_TAG=2.0.13` required two redeploys. At the final
+03:59:54–55 UTC restart, all eight containers were healthy at readback and ran
+`ghcr.io/carldog/wobblebot:2.0.13@sha256:82b209a627d44965a94b76010365bd22f2e0dd2cae4f840e564309f4692bd4d0`.
+The live and harvest image labels reported revision
+`90867b0a34f5411b2042333ab83484d68da46b0f` and version `2.0.13`.
+Read-only Kraken trade history confirmed that the two similar SOL/USD fill log
+lines across the restarts were distinct executions. Local `live.db` trade
+reconciliation was not performed.
+The 00:40 backup does not capture later writes; keep Harvester stopped on any
+old-image rollback while withdrawal claims remain unresolved. Live-withdrawal
+acceptance has not been performed.
 
 **Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
 2026-09-17/18 UTC (code on `fix/fill-trade-recovery`,

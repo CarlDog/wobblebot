@@ -6,6 +6,7 @@ fast and isolated. Each test gets a fresh adapter via the `storage` fixture.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -16,6 +17,7 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
+from wobblebot.adapters import sqlite_storage as storage_module
 from wobblebot.adapters.sqlite_migrations import add_column_if_missing
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.models import Balance, Order, Trade
@@ -175,6 +177,123 @@ class TestConnectionLifecycle:
             await adapter.connect()
         finally:
             await adapter.close()
+
+    @pytest.mark.parametrize("failure_kind", ["error", "cancellation"])
+    async def test_migration_failure_closes_open_connection(
+        self, monkeypatch: pytest.MonkeyPatch, failure_kind: str
+    ) -> None:
+        adapter = SQLiteStorageAdapter(":memory:")
+        opened: list[aiosqlite.Connection] = []
+        failure = (
+            RuntimeError("synthetic migration failure")
+            if failure_kind == "error"
+            else asyncio.CancelledError("synthetic cancellation")
+        )
+        real_migration = storage_module.migrate_advisor_suggestions_expert_opinions
+
+        async def fail_after_open(conn: aiosqlite.Connection) -> None:
+            opened.append(conn)
+            raise failure
+
+        try:
+            monkeypatch.setattr(
+                storage_module, "migrate_advisor_suggestions_expert_opinions", fail_after_open
+            )
+            if failure_kind == "error":
+                with pytest.raises(StorageError, match="synthetic migration failure") as raised:
+                    await adapter.connect()
+                assert raised.value.__cause__ is failure
+            else:
+                with pytest.raises(asyncio.CancelledError) as raised:
+                    await adapter.connect()
+                assert raised.value is failure
+            assert len(opened) == 1
+            assert adapter._conn is None
+            with pytest.raises(ValueError, match="no active connection"):
+                await opened[0].execute("SELECT 1")
+
+            monkeypatch.setattr(
+                storage_module, "migrate_advisor_suggestions_expert_opinions", real_migration
+            )
+            await adapter.connect()
+            assert adapter._conn is not None and adapter._conn is not opened[0]
+        finally:
+            await adapter.close()
+
+    async def test_pragma_failure_closes_open_connection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = SQLiteStorageAdapter(":memory:")
+        opened: list[aiosqlite.Connection] = []
+        failure = RuntimeError("synthetic PRAGMA failure")
+        real_open = storage_module.open_connection
+
+        async def fail_first_pragma(*args: object, **kwargs: object) -> aiosqlite.Connection:
+            conn = await real_open(*args, **kwargs)
+            opened.append(conn)
+            real_execute = conn.execute
+
+            def execute(sql: str, *params: object, **options: object) -> object:
+                if sql.startswith("PRAGMA busy_timeout"):
+                    raise failure
+                return real_execute(sql, *params, **options)
+
+            monkeypatch.setattr(conn, "execute", execute)
+            return conn
+
+        try:
+            monkeypatch.setattr(storage_module, "open_connection", fail_first_pragma)
+            with pytest.raises(StorageError, match="synthetic PRAGMA failure") as raised:
+                await adapter.connect()
+            assert raised.value.__cause__ is failure
+            assert len(opened) == 1
+            assert adapter._conn is None
+            with pytest.raises(ValueError, match="no active connection"):
+                await opened[0].execute("SELECT 1")
+
+            monkeypatch.setattr(storage_module, "open_connection", real_open)
+            await adapter.connect()
+        finally:
+            await adapter.close()
+
+    @pytest.mark.parametrize("failure_kind", ["error", "cancellation"])
+    async def test_read_only_post_open_failure_closes_connection(
+        self, monkeypatch: pytest.MonkeyPatch, failure_kind: str
+    ) -> None:
+        adapter = SQLiteStorageAdapter("unused", read_only=True)
+        closed: list[bool] = []
+        failure = (
+            RuntimeError("synthetic row factory failure")
+            if failure_kind == "error"
+            else asyncio.CancelledError("synthetic cancellation")
+        )
+
+        class Connection:
+            @property
+            def row_factory(self) -> None:
+                return None
+
+            @row_factory.setter
+            def row_factory(self, _value: object) -> None:
+                raise failure
+
+            async def close(self) -> None:
+                closed.append(True)
+
+        async def open_connection(*_args: object, **_kwargs: object) -> Connection:
+            return Connection()
+
+        monkeypatch.setattr(storage_module, "open_connection", open_connection)
+        if failure_kind == "error":
+            with pytest.raises(StorageError, match="synthetic row factory failure") as raised:
+                await adapter.connect()
+            assert raised.value.__cause__ is failure
+        else:
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await adapter.connect()
+            assert raised.value is failure
+        assert closed == [True]
+        assert adapter._conn is None
 
 
 class _ScriptedCursor:
