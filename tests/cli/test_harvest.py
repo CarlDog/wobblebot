@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -1144,7 +1145,9 @@ class TestExecuteIdempotency:
         finally:
             await storage.close()
 
-    async def test_prior_uncertain_failed_result_refuses_retry(self) -> None:
+    async def test_prior_uncertain_failed_result_refuses_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A legacy failed row may have reached Kraken and must block replay."""
         from wobblebot.ports.harvester import TransferResult as _TR
 
@@ -1166,6 +1169,8 @@ class TestExecuteIdempotency:
             )
             adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
             config = _full_config(harvester=_enabled_harvester())
+            reservation = AsyncMock(return_value="unresolved_claim")
+            monkeypatch.setattr(storage, "reserve_withdrawal", reservation)
             rc = await _execute_command(
                 adapter=adapter,
                 storage=storage,
@@ -1174,5 +1179,6 @@ class TestExecuteIdempotency:
             )
             assert rc == 1
             assert adapter.withdraw_calls == []
+            reservation.assert_not_awaited()
         finally:
             await storage.close()
