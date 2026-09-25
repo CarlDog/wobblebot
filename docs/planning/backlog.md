@@ -195,6 +195,7 @@ news/external = provider integrator; harvester = treasury integrator; trading sc
 | O15 | [Solo-operator incident runbook](../release/v1.1/observability.md) | Shipped: incident runbook; update when a new incident changes recovery practice. |
 | O16 | [Cost-honesty dashboard — bot's ROI against its own infrastructure](../release/v1.1/observability.md) | Shipped: P4.7 cost-honesty dashboard. |
 | O17 | [LLM health check on the /health page — ✅ SHIPPED 2026-08-09 (P3 slice 10)](../release/v1.1/observability.md) | Shipped: provider health surface; residual credential ownership is N1. |
+| O18 | [On-demand database review export](../release/v1.1/observability.md#on-demand-database-review-export--proposed-2026-09-24) | Proposed 2026-09-24: operator-requested review copies of externally persisted SQLite databases. Design the consistency, access, manifest, retention and sharing contract separately from restore-grade backup; do not implement as part of the active Harvester incident response. |
 
 ### operator-ux
 
