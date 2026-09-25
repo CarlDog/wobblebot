@@ -137,6 +137,54 @@ async def _read_usd_balance(
     return balance.total
 
 
+async def _record_unknown_withdrawal(
+    *,
+    storage: SQLiteStorageAdapter,
+    claim: TransferResult,
+    notifier: NotifierPort | None,
+    error: Exception,
+) -> ExecuteOutcome:
+    """Keep an uncertain submission blocked until an operator reconciles it."""
+    _LOGGER.critical(
+        "WITHDRAWAL OUTCOME UNKNOWN for proposal %s (claim %s): %s: %s; "
+        "do not retry before reconciling Kraken funding history",
+        claim.proposal_id,
+        claim.transaction_id,
+        type(error).__name__,
+        error,
+        extra={"proposal_id": claim.proposal_id, "claim_id": claim.transaction_id},
+    )
+    try:
+        await storage.finalize_withdrawal_claim(
+            claim.transaction_id,
+            transaction_id=claim.transaction_id,
+            submission_state="unknown",
+        )
+    except StorageError as persist_exc:
+        # The durable reserved claim still blocks replay even if this
+        # descriptive update fails.
+        _LOGGER.critical(
+            "could not mark withdrawal claim %s unknown: %s; reserved claim still blocks replay",
+            claim.transaction_id,
+            persist_exc,
+        )
+    await notify(
+        notifier,
+        level="critical",
+        title=f"Withdrawal outcome unknown: {claim.executed_amount} {claim.asset}",
+        message=(
+            f"Proposal {claim.proposal_id} may have reached Kraken. "
+            "Do not retry it. Reconcile Kraken withdrawal history and the local claim first."
+        ),
+        context={"proposal_id": claim.proposal_id, "claim_id": claim.transaction_id},
+    )
+    return ExecuteOutcome(
+        False,
+        f"Withdrawal outcome unknown for proposal {claim.proposal_id}. "
+        "Do not retry; reconcile Kraken withdrawal history first.",
+    )
+
+
 async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-many-locals,too-many-branches,too-many-arguments,too-many-statements
     # too-many-statements: the seven defense layers are a deliberately
     # LINEAR gate chain over a money path. Splitting it to satisfy the
@@ -191,9 +239,9 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     7. Day-cap must still have headroom — ``today_total_withdrawn_usd
        + proposal.amount ≤ max_withdrawal_per_day_usd``.
 
-    After all checks pass, calls ``adapter.withdraw()`` and persists
-    a TransferResult (``status="pending"`` on success; ``status="failed"``
-    if Kraken returns an error after we cleared all our gates).
+    After all checks pass, durably reserves a TransferResult before
+    calling ``adapter.withdraw()``. Only an explicit Kraken error can
+    release the claim for retry; uncertain outcomes remain blocked.
     """
     assert config.harvester is not None  # caller-enforced
 
@@ -246,7 +294,7 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
     # wire clears), so a duplicate ``--execute <id>`` would double-submit to
     # Kraken /Withdraw. A prior ``failed`` row does NOT block — Kraken rejected
     # it, no money moved, so a retry is legitimate; a ``pending``/``completed``
-    # row means funds are already in flight, so we refuse. Withdrawals are rare,
+    # row means funds may be in flight, so we refuse. Withdrawals are rare,
     # so scope by asset and filter in Python rather than widen the storage port.
     prior_results = await storage.get_transfer_results(asset=proposal.asset)
     already_submitted = next(
@@ -265,6 +313,13 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
                 "prior_status": already_submitted.status,
             },
         )
+        if already_submitted.submission_state in ("reserved", "unknown"):
+            return ExecuteOutcome(
+                False,
+                f"Refused: proposal {proposal_id} has an unverified withdrawal claim "
+                f"({already_submitted.transaction_id}). Reconcile Kraken funding history "
+                "before any retry.",
+            )
         return ExecuteOutcome(
             False,
             f"Refused: proposal {proposal_id} was already executed "
@@ -412,7 +467,40 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             "daily cap.",
         )
 
-    # 8. Execute via Kraken /Withdraw
+    # 8. The claim and cap charge must commit BEFORE the external side
+    # effect. This closes the concurrent CLI/web race and survives a
+    # process exit between Kraken acceptance and local readback.
+    claim = TransferResult(
+        proposal_id=proposal.proposal_id,
+        transaction_id=f"claim-{uuid4()}",
+        status="pending",
+        submission_state="reserved",
+        executed_amount=proposal.amount,
+        direction=proposal.direction,
+        asset=proposal.asset,
+        timestamp=Timestamp(dt=datetime.now(UTC)),
+    )
+    try:
+        reservation = await storage.reserve_withdrawal(
+            claim, daily_cap=config.harvester.max_withdrawal_per_day_usd
+        )
+    except StorageError as exc:
+        _LOGGER.error("withdrawal claim could not be persisted for %s: %s", proposal_id, exc)
+        return ExecuteOutcome(
+            False, "Refused: could not reserve the withdrawal in the audit database."
+        )
+    if reservation == "already_claimed":
+        return ExecuteOutcome(
+            False,
+            f"Refused: proposal {proposal_id} was claimed concurrently. "
+            "Inspect the withdrawal claim before any retry.",
+        )
+    if reservation == "cap_exceeded":
+        return ExecuteOutcome(
+            False, "Refused: the rolling withdrawal cap was reached concurrently."
+        )
+
+    # 9. Execute via Kraken /Withdraw
     _LOGGER.info(
         "executing withdrawal via Kraken /Withdraw (proposal_id=%s, asset=%s, amount=%s, "
         "destination=%s)",
@@ -434,6 +522,10 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             destination=destination,
         )
     except ExchangeError as exc:
+        if not exc.codes:
+            return await _record_unknown_withdrawal(
+                storage=storage, claim=claim, notifier=notifier, error=exc
+            )
         _LOGGER.error(
             "kraken /Withdraw REJECTED %s ($%s %s): %s: %s — no money moved",
             proposal.proposal_id,
@@ -447,24 +539,17 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
                 "error_type": type(exc).__name__,
             },
         )
-        # Persist a failed TransferResult so the audit trail records
-        # the attempt. transaction_id is synthetic (no Kraken refid
-        # was issued); prefix lets show_transfers distinguish.
+        # An explicit Kraken error array is a definitive rejection.
+        # Only this outcome may release the claim for a future retry.
         try:
-            await storage.save_transfer_result(
-                TransferResult(
-                    proposal_id=proposal.proposal_id,
-                    transaction_id=f"failed-{uuid4()}",
-                    status="failed",
-                    executed_amount=proposal.amount,
-                    direction=proposal.direction,
-                    asset=proposal.asset,
-                    timestamp=Timestamp(dt=datetime.now(UTC)),
-                ),
+            await storage.finalize_withdrawal_claim(
+                claim.transaction_id,
+                transaction_id=f"failed-{uuid4()}",
+                submission_state="rejected",
             )
         except StorageError as persist_exc:
             _LOGGER.error(
-                "failed to persist the failure audit row for %s: %s",
+                "failed to persist explicit rejection for %s: %s; claim remains blocked",
                 proposal.proposal_id,
                 persist_exc,
                 extra={"error": str(persist_exc)},
@@ -488,27 +573,22 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             ),
         )
         return ExecuteOutcome(False, f"Kraken rejected the withdrawal: {exc}. No money moved.")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return await _record_unknown_withdrawal(
+            storage=storage, claim=claim, notifier=notifier, error=exc
+        )
 
-    # 9. Persist success
-    result = TransferResult(
-        proposal_id=proposal.proposal_id,
-        transaction_id=refid,
-        status="pending",  # Kraken hasn't settled the wire/ACH yet
-        executed_amount=proposal.amount,
-        direction=proposal.direction,
-        asset=proposal.asset,
-        timestamp=Timestamp(dt=datetime.now(UTC)),
-    )
+    # 10. Attach Kraken's refid to the already durable claim.
     try:
-        await storage.save_transfer_result(result)
+        await storage.finalize_withdrawal_claim(
+            claim.transaction_id, transaction_id=refid, submission_state="accepted"
+        )
     except StorageError as exc:
-        # The withdrawal SUBMITTED at Kraken but our audit row didn't
-        # persist. This is a bad state — flag it loudly. The Kraken
-        # refid is in the log so the operator can reconcile manually
-        # from Kraken Pro.
+        # The reserved claim remains persisted and blocks replay, but
+        # the operator must attach the Kraken refid after reconciliation.
         _LOGGER.error(
-            "WITHDRAWAL SUBMITTED (refid %s, proposal %s) but the audit row failed to "
-            "persist: %s — reconcile manually from Kraken Pro",
+            "WITHDRAWAL SUBMITTED (refid %s, proposal %s) but claim finalization failed: "
+            "%s — reconcile manually from Kraken Pro",
             refid,
             proposal.proposal_id,
             exc,
@@ -518,14 +598,24 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
                 "error": str(exc),
             },
         )
+        await notify(
+            notifier,
+            level="critical",
+            title=f"Withdrawal submitted, audit update failed: {proposal.amount} {proposal.asset}",
+            message=(
+                f"Kraken accepted proposal {proposal.proposal_id} as refid {refid}, "
+                f"but local claim {claim.transaction_id} was not finalized. Reconcile manually."
+            ),
+            context={"proposal_id": proposal.proposal_id, "refid": refid},
+        )
         # success=False is deliberate even though money DID move: the
         # operator must be told to reconcile, and a green "executed" in
         # the modal would bury that. The refid is in the message so the
         # reconciliation can happen from Kraken Pro.
         return ExecuteOutcome(
             False,
-            f"WITHDRAWAL SUBMITTED (refid {refid}) but the audit row failed to "
-            f"persist: {exc}. Reconcile manually from Kraken Pro.",
+            f"WITHDRAWAL SUBMITTED (refid {refid}) but the audit claim update failed: "
+            f"{exc}. Reconcile manually from Kraken Pro.",
         )
 
     _LOGGER.info(

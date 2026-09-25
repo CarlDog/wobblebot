@@ -90,7 +90,7 @@
 
   <div class="card">
     <div class="card-header">
-      <div class="card-title">Executed Withdrawals ({{ snapshot.results|length }})</div>
+      <div class="card-title">Withdrawal Attempts ({{ snapshot.results|length }})</div>
     </div>
     {% if snapshot.results %}
       <table class="data compact">
@@ -100,7 +100,7 @@
             <th>status</th>
             <th>direction</th>
             <th>asset</th>
-            <th class="num">executed</th>
+            <th class="num">amount</th>
             <th>refid</th>
           </tr>
         </thead>
@@ -110,20 +110,32 @@
               <td>{{ r.timestamp.dt | tz_format(operator_tz) }}</td>
               <td>
                 <span class="tag
-                  {% if r.status == 'completed' %}ok
+                  {% if r.submission_state in ('reserved', 'unknown') %}warn
+                  {% elif r.status == 'completed' %}ok
                   {% elif r.status == 'pending' %}warn
-                  {% else %}fail{% endif %}">{{ r.status }}</span>
+                  {% else %}fail{% endif %}">
+                  {% if r.submission_state == 'reserved' %}unverified claim
+                  {% elif r.submission_state == 'unknown' %}outcome unknown
+                  {% else %}{{ r.status }}{% endif %}</span>
               </td>
               <td>{{ r.direction }}</td>
               <td>{{ r.asset }}</td>
               <td class="num">{{ r.executed_amount | usd }}</td>
-              <td><code>{{ r.transaction_id }}</code></td>
+              <td>
+                {% if r.submission_state in ('reserved', 'unknown') %}
+                  <span title="Local claim {{ r.transaction_id }}; reconcile Kraken funding history">unverified</span>
+                {% elif r.submission_state == 'rejected' %}
+                  —
+                {% else %}
+                  <code>{{ r.transaction_id }}</code>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     {% else %}
-      <p class="placeholder">No executed withdrawals on record.</p>
+      <p class="placeholder">No withdrawal attempts on record.</p>
     {% endif %}
   </div>
 {% endif %}

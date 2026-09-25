@@ -259,6 +259,11 @@ def row_to_transfer_result(row: aiosqlite.Row) -> TransferResult:
         proposal_id=row["proposal_id"],
         transaction_id=row["transaction_id"],
         status=row["status"],
+        submission_state=(
+            row["submission_state"]
+            if "submission_state" in row.keys()
+            else ("rejected" if row["status"] == "failed" else "accepted")
+        ),
         executed_amount=Decimal(row["executed_amount"]),
         direction=row["direction"],
         asset=row["asset"],

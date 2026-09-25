@@ -245,6 +245,9 @@ CREATE TABLE IF NOT EXISTS transfer_results (
     transaction_id              TEXT NOT NULL UNIQUE,
     status                      TEXT NOT NULL
                                     CHECK (status IN ('pending', 'completed', 'failed')),
+    submission_state            TEXT NOT NULL DEFAULT 'accepted'
+                                    CHECK (submission_state IN
+                                           ('reserved', 'unknown', 'accepted', 'rejected')),
     executed_amount             TEXT NOT NULL,
     direction                   TEXT NOT NULL
                                     CHECK (direction IN ('exchange_to_bank', 'bank_to_exchange')),
