@@ -303,8 +303,13 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_engine_state_offside_since(self._conn)
             await migrate_engine_state_starvation(self._conn)
             await self._conn.commit()
-        except Exception as exc:
-            raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
+        except BaseException as exc:  # pylint: disable=broad-exception-caught
+            # A successful open may still fail during PRAGMAs, schema setup,
+            # or a migration. Cancellation must also release an opened worker.
+            await self._close_after_failed_connect()
+            if isinstance(exc, Exception):
+                raise StorageError(f"Failed to open database at {self._db_path}: {exc}") from exc
+            raise
 
     async def _connect_read_only(self) -> None:
         """Open ``self._db_path`` genuinely read-only (2026-08-22).
@@ -331,10 +336,27 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             uri = f"file:{self._db_path}?mode=ro"
             self._conn = await open_connection(uri, uri=True)
             self._conn.row_factory = aiosqlite.Row
-        except Exception as exc:
-            raise StorageError(
-                f"Failed to open database read-only at {self._db_path}: {exc}"
-            ) from exc
+        except BaseException as exc:  # pylint: disable=broad-exception-caught
+            await self._close_after_failed_connect()
+            if isinstance(exc, Exception):
+                raise StorageError(
+                    f"Failed to open database read-only at {self._db_path}: {exc}"
+                ) from exc
+            raise
+
+    async def _close_after_failed_connect(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            await self.close()
+        except Exception as close_exc:  # pylint: disable=broad-exception-caught
+            # Keep the original startup failure as the caller-facing cause.
+            _LOGGER.error(
+                "failed to close database after startup error at %s: %s",
+                self._db_path,
+                close_exc,
+                extra={"path": self._db_path, "error": str(close_exc)},
+            )
 
     async def close(self) -> None:
         """Close the underlying connection."""

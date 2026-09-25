@@ -1494,6 +1494,47 @@ async def _supervise_background_tasks(
             stop_wait.cancel()
 
 
+def _operator_cleanup_phases(  # pylint: disable=too-many-arguments
+    operator_storage: SQLiteStorageAdapter,
+    *,
+    live_storage: SQLiteStorageAdapter | None,
+    observe_storage: SQLiteStorageAdapter | None,
+    advise_storage: SQLiteStorageAdapter | None,
+    news_storage: SQLiteStorageAdapter | None,
+    harvest_storage: SQLiteStorageAdapter | None,
+    assistant: AssistantPort | None = None,
+    background_tasks: Sequence[asyncio.Task[Any]] = (),
+) -> list[ShutdownPhase]:
+    """Close every resource that was opened before or during the daemon loop."""
+    phases: list[ShutdownPhase] = []
+    if background_tasks:
+
+        async def _cancel_tasks() -> None:
+            await _cancel_background_tasks(background_tasks)
+
+        phases.append(("cancel_background_tasks", _cancel_tasks))
+    if assistant is not None:
+
+        async def _close_assistant() -> None:
+            aclose = getattr(assistant, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+        phases.append(("close_assistant", _close_assistant))
+    phases.append(("close_operator_storage", operator_storage.close))
+    if live_storage is not None:
+        phases.append(("close_live_storage", live_storage.close))
+    if observe_storage is not None:
+        phases.append(("close_observe_storage", observe_storage.close))
+    if advise_storage is not None:
+        phases.append(("close_advise_storage", advise_storage.close))
+    if news_storage is not None:
+        phases.append(("close_news_storage", news_storage.close))
+    if harvest_storage is not None:
+        phases.append(("close_harvest_storage", harvest_storage.close))
+    return phases
+
+
 async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
     config: WobbleBotConfig,
 ) -> int:
@@ -1517,8 +1558,10 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     # Open the operator daemon's primary DB (pending_commands +
     # notifications + conversation_turns all live here).
     operator_storage = SQLiteStorageAdapter(operator_cfg.operator_db)
+    primary_connected = False
     try:
         await operator_storage.connect()
+        primary_connected = True
     except StorageError as exc:
         _LOGGER.error(
             "failed to open operator db (path=%s): %s",
@@ -1527,305 +1570,372 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             extra={"path": operator_cfg.operator_db, "error": str(exc)},
         )
         return 2
+    finally:
+        if not primary_connected:
+            await safe_shutdown(
+                [("close_operator_storage", operator_storage.close)], logger=_LOGGER
+            )
 
-    # Optional: open live.db (for queries that need order / balance data)
     live_storage: SQLiteStorageAdapter | None = None
-    if operator_cfg.live_db is not None:
-        live_storage = SQLiteStorageAdapter(operator_cfg.live_db)
-        try:
-            await live_storage.connect()
-        except StorageError as exc:
-            _LOGGER.warning(
-                "failed to open live db; queries needing it will return empty (path=%s): %s",
-                operator_cfg.live_db,
-                exc,
-                extra={"path": operator_cfg.live_db, "error": str(exc)},
-            )
-            live_storage = None
-
-    # Optional: open observe.db so the StatusQuery's USD-balance lookup
-    # can read balance_snapshots (which only live in observe.db, not
-    # live.db). Unwired → balance reports 0.0 in the Discord status
-    # reply; everything else (symbols, session_pnl, recent_fill_count)
-    # still works.
     observe_storage: SQLiteStorageAdapter | None = None
-    if operator_cfg.observe_db is not None:
-        observe_storage = SQLiteStorageAdapter(operator_cfg.observe_db)
-        try:
-            await observe_storage.connect()
-        except StorageError as exc:
-            _LOGGER.warning(
-                "failed to open observe db; status balance will report 0 (path=%s): %s",
-                operator_cfg.observe_db,
-                exc,
-                extra={"path": operator_cfg.observe_db, "error": str(exc)},
-            )
-            observe_storage = None
-
-    # Optional: cross-DB stores for the four "recent_X" queries. Each
-    # is independently optional — any one that fails to open just
-    # makes its corresponding query return an empty result via the
-    # graceful-degrade factories in OperatorService. Discord users
-    # see "No suggestions found" instead of a stack trace.
     advise_storage: SQLiteStorageAdapter | None = None
-    if operator_cfg.advise_db is not None:
-        advise_storage = SQLiteStorageAdapter(operator_cfg.advise_db)
-        try:
-            await advise_storage.connect()
-        except StorageError as exc:
-            _LOGGER.warning(
-                "failed to open advise db; recent_suggestions queries will be empty (path=%s): %s",
-                operator_cfg.advise_db,
-                exc,
-                extra={"path": operator_cfg.advise_db, "error": str(exc)},
-            )
-            advise_storage = None
-
     news_storage: SQLiteStorageAdapter | None = None
-    if operator_cfg.news_db is not None:
-        news_storage = SQLiteStorageAdapter(operator_cfg.news_db)
-        try:
-            await news_storage.connect()
-        except StorageError as exc:
-            _LOGGER.warning(
-                "failed to open news db; recent_news queries will be empty (path=%s): %s",
-                operator_cfg.news_db,
-                exc,
-                extra={"path": operator_cfg.news_db, "error": str(exc)},
-            )
-            news_storage = None
-
     harvest_storage: SQLiteStorageAdapter | None = None
-    if operator_cfg.harvest_db is not None:
-        harvest_storage = SQLiteStorageAdapter(operator_cfg.harvest_db)
-        try:
-            await harvest_storage.connect()
-        except StorageError as exc:
-            _LOGGER.warning(
-                "failed to open harvest db; harvester queries will be empty (path=%s): %s",
-                operator_cfg.harvest_db,
-                exc,
-                extra={"path": operator_cfg.harvest_db, "error": str(exc)},
-            )
-            harvest_storage = None
+    optional_ready = False
 
-    # Operator assistant LLM
     try:
-        prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
-    except (FileNotFoundError, ValueError) as exc:
-        _LOGGER.error(
-            "failed to load operator prompt (path=%s): %s",
-            operator_cfg.assistant.prompt_file,
-            exc,
-            extra={"path": operator_cfg.assistant.prompt_file, "error": str(exc)},
+        # Optional: open live.db (for queries that need order / balance data)
+        if operator_cfg.live_db is not None:
+            live_storage = SQLiteStorageAdapter(operator_cfg.live_db)
+            try:
+                await live_storage.connect()
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to open live db; queries needing it will return empty (path=%s): %s",
+                    operator_cfg.live_db,
+                    exc,
+                    extra={"path": operator_cfg.live_db, "error": str(exc)},
+                )
+                live_storage = None
+
+        # Optional: open observe.db so the StatusQuery's USD-balance lookup
+        # can read balance_snapshots (which only live in observe.db, not
+        # live.db). Unwired → balance reports 0.0 in the Discord status
+        # reply; everything else (symbols, session_pnl, recent_fill_count)
+        # still works.
+        if operator_cfg.observe_db is not None:
+            observe_storage = SQLiteStorageAdapter(operator_cfg.observe_db)
+            try:
+                await observe_storage.connect()
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to open observe db; status balance will report 0 (path=%s): %s",
+                    operator_cfg.observe_db,
+                    exc,
+                    extra={"path": operator_cfg.observe_db, "error": str(exc)},
+                )
+                observe_storage = None
+
+        # Optional: cross-DB stores for the four "recent_X" queries. Each
+        # is independently optional — any one that fails to open just
+        # makes its corresponding query return an empty result via the
+        # graceful-degrade factories in OperatorService. Discord users
+        # see "No suggestions found" instead of a stack trace.
+        if operator_cfg.advise_db is not None:
+            advise_storage = SQLiteStorageAdapter(operator_cfg.advise_db)
+            try:
+                await advise_storage.connect()
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to open advise db; recent_suggestions queries will be empty "
+                    "(path=%s): %s",
+                    operator_cfg.advise_db,
+                    exc,
+                    extra={"path": operator_cfg.advise_db, "error": str(exc)},
+                )
+                advise_storage = None
+
+        if operator_cfg.news_db is not None:
+            news_storage = SQLiteStorageAdapter(operator_cfg.news_db)
+            try:
+                await news_storage.connect()
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to open news db; recent_news queries will be empty (path=%s): %s",
+                    operator_cfg.news_db,
+                    exc,
+                    extra={"path": operator_cfg.news_db, "error": str(exc)},
+                )
+                news_storage = None
+
+        if operator_cfg.harvest_db is not None:
+            harvest_storage = SQLiteStorageAdapter(operator_cfg.harvest_db)
+            try:
+                await harvest_storage.connect()
+            except StorageError as exc:
+                _LOGGER.warning(
+                    "failed to open harvest db; harvester queries will be empty (path=%s): %s",
+                    operator_cfg.harvest_db,
+                    exc,
+                    extra={"path": operator_cfg.harvest_db, "error": str(exc)},
+                )
+                harvest_storage = None
+
+        optional_ready = True
+    finally:
+        if not optional_ready:
+            await safe_shutdown(
+                _operator_cleanup_phases(
+                    operator_storage,
+                    live_storage=live_storage,
+                    observe_storage=observe_storage,
+                    advise_storage=advise_storage,
+                    news_storage=news_storage,
+                    harvest_storage=harvest_storage,
+                ),
+                logger=_LOGGER,
+            )
+
+    # Operator assistant LLM. These early exits occur after the optional
+    # databases opened, before the daemon loop's shutdown handler exists.
+    assistant: AssistantPort | None = None
+    startup_ready = False
+    try:
+        try:
+            prompt = load_prompt(Path(operator_cfg.assistant.prompt_file))
+        except (FileNotFoundError, ValueError) as exc:
+            _LOGGER.error(
+                "failed to load operator prompt (path=%s): %s",
+                operator_cfg.assistant.prompt_file,
+                exc,
+                extra={"path": operator_cfg.assistant.prompt_file, "error": str(exc)},
+            )
+            return 2
+        assistant = _build_assistant(operator_cfg, config, operator_storage, prompt)
+        if assistant is None:
+            return 2
+        # Only Ollama-served models benefit from warming up; cloud APIs are
+        # stateless and their adapters do not expose a warmup method.
+        if hasattr(assistant, "warmup"):
+            await assistant.warmup()
+        startup_ready = True
+    finally:
+        if not startup_ready:
+            await safe_shutdown(
+                _operator_cleanup_phases(
+                    operator_storage,
+                    live_storage=live_storage,
+                    observe_storage=observe_storage,
+                    advise_storage=advise_storage,
+                    news_storage=news_storage,
+                    harvest_storage=harvest_storage,
+                    assistant=assistant,
+                ),
+                logger=_LOGGER,
+            )
+
+    daemon_ready = False
+    created_tasks: list[asyncio.Task[Any]] = []
+    stop_event: asyncio.Event | None = None
+    try:
+        # Operator service for query answering. cli/operator has no engine,
+        # so it constructs a stand-in via the existing OperatorService class
+        # against the live_storage; pause/dispatch commands route through
+        # pending_commands (cli/live handles them).
+        # v1 limitation: status queries report symbols as 'active' because
+        # pause state lives in cli/live's in-memory engine, not in storage.
+        # Active symbols come from config.live.symbols (the operator's
+        # configured trading set) — fixes the 2026-05-24 Discord-visibility
+        # bug where status used to return symbols: [] regardless of config.
+        stub_engine = GridEngine(
+            MockExchangeAdapter(starting_balances={}, starting_prices={}),
+            live_storage or operator_storage,
+            config.grid,
+            config.safety,
         )
-        await operator_storage.close()
-        return 2
-    assistant = _build_assistant(operator_cfg, config, operator_storage, prompt)
-    if assistant is None:
-        await operator_storage.close()
-        return 2
-    # Pre-warm the model so the operator's first message doesn't pay
-    # the cold-start cost. Only Ollama-served models benefit (cloud
-    # APIs are stateless); the cloud adapters don't expose a warmup
-    # method, so we hasattr-check.
-    if hasattr(assistant, "warmup"):
-        await assistant.warmup()
-
-    # Operator service for query answering. cli/operator has no engine,
-    # so it constructs a stand-in via the existing OperatorService class
-    # against the live_storage; pause/dispatch commands route through
-    # pending_commands (cli/live handles them).
-    # v1 limitation: status queries report symbols as 'active' because
-    # pause state lives in cli/live's in-memory engine, not in storage.
-    # Active symbols come from config.live.symbols (the operator's
-    # configured trading set) — fixes the 2026-05-24 Discord-visibility
-    # bug where status used to return symbols: [] regardless of config.
-    stub_engine = GridEngine(
-        MockExchangeAdapter(starting_balances={}, starting_prices={}),
-        live_storage or operator_storage,
-        config.grid,
-        config.safety,
-    )
-    active_symbols: tuple[Symbol, ...] = (
-        tuple(config.live.symbols) if config.live is not None else ()
-    )
-    operator_service = OperatorService(
-        engine=stub_engine,
-        storage=live_storage or operator_storage,
-        active_symbols=active_symbols,
-        observe_storage=observe_storage,
-        advise_storage=advise_storage,
-        news_storage=news_storage,
-        harvest_storage=harvest_storage,
-        operator_storage=operator_storage,
-        harvester_config=config.harvester,
-        assistant=assistant,
-        grid_config=config.grid,
-        session_started_at=Timestamp(dt=datetime.now(UTC)),
-    )
-
-    # Discord transport
-    transport = DiscordTransport(
-        DiscordTransportConfig(
-            bot_token_env_var=operator_cfg.auth.bot_token_env_var,
-            allowed_user_ids=operator_cfg.auth.allowed_user_ids,
-            allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
+        active_symbols: tuple[Symbol, ...] = (
+            tuple(config.live.symbols) if config.live is not None else ()
         )
-    )
-
-    # Approve/Reject button wiring (P3 buttons-over-reactions). The
-    # decision logic lives in services/confirm_decision so the button
-    # path and any future confirming surface share one implementation of
-    # the TTL / idempotency rules. Registering it here — not at
-    # transport construction — because it needs storage.
-    async def _on_confirm_decision(
-        *,
-        pending_id: UUID,
-        decision: ConfirmDecision,
-        user_id: str,
-    ) -> ConfirmOutcome:
-        outcome = await apply_confirm_decision(
-            storage=operator_storage,
-            pending_id=pending_id,
-            decision=decision,
-            user_id=user_id,
-        )
-        _LOGGER.info(
-            "operator %s command %s via button: %s",
-            decision,
-            pending_id,
-            outcome.result,
-            extra={
-                "pending_id": str(pending_id),
-                "decision": decision,
-                "result": outcome.result,
-                "confirming_user_id": user_id,
-            },
-        )
-        return outcome
-
-    transport.set_confirm_handler(_on_confirm_decision)
-
-    async def _on_message(msg: InboundMessage) -> None:
-        await _handle_inbound_message(
-            msg,
-            operator_storage=operator_storage,
-            live_storage=live_storage,
-            observe_storage=observe_storage,
+        operator_service = OperatorService(
+            engine=stub_engine,
+            storage=live_storage or operator_storage,
             active_symbols=active_symbols,
+            observe_storage=observe_storage,
+            advise_storage=advise_storage,
+            news_storage=news_storage,
+            harvest_storage=harvest_storage,
+            operator_storage=operator_storage,
+            harvester_config=config.harvester,
             assistant=assistant,
-            operator_service=operator_service,
-            transport=transport,
-            outbound_channel_id=operator_cfg.auth.outbound_channel_id,
-            context_window_turns=operator_cfg.context_window_turns,
-            confirm_ttl_seconds=operator_cfg.confirm_ttl_seconds,
-            assistant_model_name=operator_cfg.assistant.model,
+            grid_config=config.grid,
+            session_started_at=Timestamp(dt=datetime.now(UTC)),
         )
 
-    transport.on_message(_on_message)
+        # Discord transport
+        transport = DiscordTransport(
+            DiscordTransportConfig(
+                bot_token_env_var=operator_cfg.auth.bot_token_env_var,
+                allowed_user_ids=operator_cfg.auth.allowed_user_ids,
+                allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
+            )
+        )
 
-    stop_event = asyncio.Event()
-    install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
+        # Approve/Reject button wiring (P3 buttons-over-reactions). The
+        # decision logic lives in services/confirm_decision so the button
+        # path and any future confirming surface share one implementation of
+        # the TTL / idempotency rules. Registering it here — not at
+        # transport construction — because it needs storage.
+        async def _on_confirm_decision(
+            *,
+            pending_id: UUID,
+            decision: ConfirmDecision,
+            user_id: str,
+        ) -> ConfirmOutcome:
+            outcome = await apply_confirm_decision(
+                storage=operator_storage,
+                pending_id=pending_id,
+                decision=decision,
+                user_id=user_id,
+            )
+            _LOGGER.info(
+                "operator %s command %s via button: %s",
+                decision,
+                pending_id,
+                outcome.result,
+                extra={
+                    "pending_id": str(pending_id),
+                    "decision": decision,
+                    "result": outcome.result,
+                    "confirming_user_id": user_id,
+                },
+            )
+            return outcome
 
-    forwarder_task = asyncio.create_task(
-        _forwarder_loop(
-            storage=operator_storage,
-            transport=transport,
-            channel_id=operator_cfg.auth.outbound_channel_id,
-            poll_seconds=operator_cfg.forwarder_poll_seconds,
-            stop_event=stop_event,
-        ),
-        name="operator-forwarder",
-    )
-    ttl_expirer_task = asyncio.create_task(
-        _ttl_expirer_loop(
-            storage=operator_storage,
-            poll_seconds=operator_cfg.ttl_expirer_poll_seconds,
-            stop_event=stop_event,
-        ),
-        name="operator-ttl-expirer",
-    )
-    heartbeat_alert_task = asyncio.create_task(
-        _heartbeat_alert_loop(
-            notifier=SqliteNotifierAdapter(operator_storage),
-            observe_db=Path(operator_cfg.observe_db) if operator_cfg.observe_db else None,
-            advise_db=Path(operator_cfg.advise_db) if operator_cfg.advise_db else None,
-            operator_db=Path(operator_cfg.operator_db),
-            thresholds=derive_thresholds_from_config(config),
-            stop_event=stop_event,
-            muted=frozenset(operator_cfg.heartbeat_alert_mute),
-        ),
-        name="operator-heartbeat-alerts",
-    )
-    backfill_task = asyncio.create_task(
-        _backfill_history_task(
-            transport=transport,
-            storage=operator_storage,
-            allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
-            allowed_user_ids=operator_cfg.auth.allowed_user_ids,
-            limit=operator_cfg.history_backfill_messages,
-            stop_event=stop_event,
-        ),
-        name="operator-history-backfill",
-    )
+        transport.set_confirm_handler(_on_confirm_decision)
 
-    # Review follow-up 2: say out loud whether the deterministic fast path is
-    # armed. With no ``live:`` section active_symbols is empty and the fast
-    # path abstains on every message — behaviorally identical to not having
-    # it, and previously silent. An inert fast path is the failure it exists
-    # to prevent, so it announces itself either way.
-    if active_symbols:
+        async def _on_message(msg: InboundMessage) -> None:
+            await _handle_inbound_message(
+                msg,
+                operator_storage=operator_storage,
+                live_storage=live_storage,
+                observe_storage=observe_storage,
+                active_symbols=active_symbols,
+                assistant=assistant,
+                operator_service=operator_service,
+                transport=transport,
+                outbound_channel_id=operator_cfg.auth.outbound_channel_id,
+                context_window_turns=operator_cfg.context_window_turns,
+                confirm_ttl_seconds=operator_cfg.confirm_ttl_seconds,
+                assistant_model_name=operator_cfg.assistant.model,
+            )
+
+        transport.on_message(_on_message)
+
+        stop_event = asyncio.Event()
+        install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
+
+        forwarder_task = asyncio.create_task(
+            _forwarder_loop(
+                storage=operator_storage,
+                transport=transport,
+                channel_id=operator_cfg.auth.outbound_channel_id,
+                poll_seconds=operator_cfg.forwarder_poll_seconds,
+                stop_event=stop_event,
+            ),
+            name="operator-forwarder",
+        )
+        created_tasks.append(forwarder_task)
+        ttl_expirer_task = asyncio.create_task(
+            _ttl_expirer_loop(
+                storage=operator_storage,
+                poll_seconds=operator_cfg.ttl_expirer_poll_seconds,
+                stop_event=stop_event,
+            ),
+            name="operator-ttl-expirer",
+        )
+        created_tasks.append(ttl_expirer_task)
+        heartbeat_alert_task = asyncio.create_task(
+            _heartbeat_alert_loop(
+                notifier=SqliteNotifierAdapter(operator_storage),
+                observe_db=Path(operator_cfg.observe_db) if operator_cfg.observe_db else None,
+                advise_db=Path(operator_cfg.advise_db) if operator_cfg.advise_db else None,
+                operator_db=Path(operator_cfg.operator_db),
+                thresholds=derive_thresholds_from_config(config),
+                stop_event=stop_event,
+                muted=frozenset(operator_cfg.heartbeat_alert_mute),
+            ),
+            name="operator-heartbeat-alerts",
+        )
+        created_tasks.append(heartbeat_alert_task)
+        backfill_task = asyncio.create_task(
+            _backfill_history_task(
+                transport=transport,
+                storage=operator_storage,
+                allowed_channel_ids=operator_cfg.auth.allowed_channel_ids,
+                allowed_user_ids=operator_cfg.auth.allowed_user_ids,
+                limit=operator_cfg.history_backfill_messages,
+                stop_event=stop_event,
+            ),
+            name="operator-history-backfill",
+        )
+        created_tasks.append(backfill_task)
+
+        # Review follow-up 2: say out loud whether the deterministic fast path is
+        # armed. With no ``live:`` section active_symbols is empty and the fast
+        # path abstains on every message — behaviorally identical to not having
+        # it, and previously silent. An inert fast path is the failure it exists
+        # to prevent, so it announces itself either way.
+        if active_symbols:
+            _LOGGER.info(
+                "deterministic fast path armed for %d symbol(s): %s",
+                len(active_symbols),
+                ", ".join(str(s) for s in active_symbols),
+                extra={
+                    "fast_path_armed": True,
+                    "fast_path_symbol_count": len(active_symbols),
+                },
+            )
+        else:
+            _LOGGER.warning(
+                "deterministic fast path INERT: armed for %d symbols, so every operator "
+                "message goes to the model (check config.live.symbols)",
+                len(active_symbols),
+                extra={"fast_path_armed": False, "fast_path_symbol_count": len(active_symbols)},
+            )
+
         _LOGGER.info(
-            "deterministic fast path armed for %d symbol(s): %s",
-            len(active_symbols),
-            ", ".join(str(s) for s in active_symbols),
+            "operator daemon starting (outbound_channel_id=%s, allowed_user_ids=%s, "
+            "allowed_channel_ids=%s, context_window_turns=%s)",
+            operator_cfg.auth.outbound_channel_id,
+            sorted(operator_cfg.auth.allowed_user_ids),
+            sorted(operator_cfg.auth.allowed_channel_ids),
+            operator_cfg.context_window_turns,
             extra={
-                "fast_path_armed": True,
-                "fast_path_symbol_count": len(active_symbols),
+                "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
+                "allowed_user_ids": sorted(operator_cfg.auth.allowed_user_ids),
+                "allowed_channel_ids": sorted(operator_cfg.auth.allowed_channel_ids),
+                "context_window_turns": operator_cfg.context_window_turns,
+                "confirm_ttl_seconds": operator_cfg.confirm_ttl_seconds,
             },
         )
-    else:
-        _LOGGER.warning(
-            "deterministic fast path INERT: armed for %d symbols, so every operator "
-            "message goes to the model (check config.live.symbols)",
-            len(active_symbols),
-            extra={"fast_path_armed": False, "fast_path_symbol_count": len(active_symbols)},
+
+        exit_code = 0
+        # discord.py's Client.start blocks until the connection terminates.
+        # SIGINT triggers transport.close() via the signal handler. Created
+        # OUTSIDE the try so the finally can always reach it — the shutdown
+        # phase below cancels all five background tasks, not just the four
+        # poll tasks (2026-09-05: the gateway was the worst zombie of the
+        # set, since the ``except DiscordTransportError`` below guarded
+        # ``stop_event.wait()``, a position from which it could never observe
+        # an exception stored on the gateway task).
+        gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
+        created_tasks.append(gateway_task)
+        background_tasks: tuple[asyncio.Task[Any], ...] = (
+            forwarder_task,
+            ttl_expirer_task,
+            heartbeat_alert_task,
+            backfill_task,
+            gateway_task,
         )
+        daemon_ready = True
+    finally:
+        if not daemon_ready:
+            if stop_event is not None:
+                stop_event.set()
+            await safe_shutdown(
+                _operator_cleanup_phases(
+                    operator_storage,
+                    live_storage=live_storage,
+                    observe_storage=observe_storage,
+                    advise_storage=advise_storage,
+                    news_storage=news_storage,
+                    harvest_storage=harvest_storage,
+                    assistant=assistant,
+                    background_tasks=created_tasks,
+                ),
+                logger=_LOGGER,
+            )
 
-    _LOGGER.info(
-        "operator daemon starting (outbound_channel_id=%s, allowed_user_ids=%s, "
-        "allowed_channel_ids=%s, context_window_turns=%s)",
-        operator_cfg.auth.outbound_channel_id,
-        sorted(operator_cfg.auth.allowed_user_ids),
-        sorted(operator_cfg.auth.allowed_channel_ids),
-        operator_cfg.context_window_turns,
-        extra={
-            "outbound_channel_id": operator_cfg.auth.outbound_channel_id,
-            "allowed_user_ids": sorted(operator_cfg.auth.allowed_user_ids),
-            "allowed_channel_ids": sorted(operator_cfg.auth.allowed_channel_ids),
-            "context_window_turns": operator_cfg.context_window_turns,
-            "confirm_ttl_seconds": operator_cfg.confirm_ttl_seconds,
-        },
-    )
-
-    exit_code = 0
-    # discord.py's Client.start blocks until the connection terminates.
-    # SIGINT triggers transport.close() via the signal handler. Created
-    # OUTSIDE the try so the finally can always reach it — the shutdown
-    # phase below cancels all five background tasks, not just the four
-    # poll tasks (2026-09-05: the gateway was the worst zombie of the
-    # set, since the ``except DiscordTransportError`` below guarded
-    # ``stop_event.wait()``, a position from which it could never observe
-    # an exception stored on the gateway task).
-    gateway_task = asyncio.create_task(transport.start(), name="operator-gateway")
-    background_tasks: tuple[asyncio.Task[Any], ...] = (
-        forwarder_task,
-        ttl_expirer_task,
-        heartbeat_alert_task,
-        backfill_task,
-        gateway_task,
-    )
     try:
         failed_task = await _supervise_background_tasks(
             must_run=(forwarder_task, ttl_expirer_task, heartbeat_alert_task, gateway_task),
@@ -1855,31 +1965,19 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         exit_code = 1
     finally:
         stop_event.set()
-
-        async def _cancel_tasks() -> None:
-            await _cancel_background_tasks(background_tasks)
-
-        async def _close_assistant() -> None:
-            aclose = getattr(assistant, "aclose", None)
-            if aclose is not None:
-                await aclose()
-
-        phases: list[ShutdownPhase] = [
-            ("cancel_background_tasks", _cancel_tasks),
-            ("close_assistant", _close_assistant),
-            ("close_operator_storage", operator_storage.close),
-        ]
-        if live_storage is not None:
-            phases.append(("close_live_storage", live_storage.close))
-        if observe_storage is not None:
-            phases.append(("close_observe_storage", observe_storage.close))
-        if advise_storage is not None:
-            phases.append(("close_advise_storage", advise_storage.close))
-        if news_storage is not None:
-            phases.append(("close_news_storage", news_storage.close))
-        if harvest_storage is not None:
-            phases.append(("close_harvest_storage", harvest_storage.close))
-        await safe_shutdown(phases, logger=_LOGGER)
+        await safe_shutdown(
+            _operator_cleanup_phases(
+                operator_storage,
+                live_storage=live_storage,
+                observe_storage=observe_storage,
+                advise_storage=advise_storage,
+                news_storage=news_storage,
+                harvest_storage=harvest_storage,
+                assistant=assistant,
+                background_tasks=background_tasks,
+            ),
+            logger=_LOGGER,
+        )
     return exit_code
 
 
