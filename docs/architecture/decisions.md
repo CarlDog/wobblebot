@@ -1809,7 +1809,9 @@ audit row but could not prevent a concurrent duplicate withdrawal. A transport f
 could also mean Kraken accepted the request but its response was lost; treating every
 `ExchangeError` as a rejection made a retry unsafe. The guard now commits a pending
 claim, with the rolling cap checked in the same SQLite write transaction, **before**
-`withdraw()`. A Kraken error array can mark the claim rejected and allow a retry.
+`withdraw()`. The Harvester's proposal and command loops serialize access to their
+shared SQLite connection during this transaction. A Kraken error array can mark the
+claim rejected and allow a retry.
 Transport, response, or interrupted outcomes keep a blocking, unverified claim until
 the operator reconciles Kraken funding history; any such claim halts all new bot
 withdrawals, including proposals created later. The partial UNIQUE index continues to

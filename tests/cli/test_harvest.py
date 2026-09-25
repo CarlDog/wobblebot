@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -17,6 +18,7 @@ from wobblebot.cli.harvest import (
     _TRADE_KEY_ENV_VAR,
     _classify_band,
     _run_cycle,
+    _run_loop,
     _verify_harvester_key,
 )
 from wobblebot.cli.harvest_execute import _execute_command, _read_usd_balance
@@ -34,6 +36,58 @@ from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferProposal as _TransferProposal
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_daemon_cycles_do_not_share_a_connection_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proposal save cannot commit the command loop's withdrawal claim."""
+    active = 0
+    maximum_active = 0
+    calls = 0
+
+    async def work() -> None:
+        nonlocal active, maximum_active, calls
+        active += 1
+        calls += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    async def fake_cycle(*args, **kwargs):  # type: ignore[no-untyped-def]
+        await work()
+        return True
+
+    async def fake_commands(*args, **kwargs):  # type: ignore[no-untyped-def]
+        await work()
+        return 0
+
+    async def fake_heartbeat(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+
+    async def one_poll(callback, **kwargs):  # type: ignore[no-untyped-def]
+        await callback()
+
+    monkeypatch.setattr("wobblebot.cli.harvest._run_cycle", fake_cycle)
+    monkeypatch.setattr("wobblebot.cli.harvest._process_pending_commands", fake_commands)
+    monkeypatch.setattr("wobblebot.cli.harvest.emit_heartbeat", fake_heartbeat)
+    monkeypatch.setattr("wobblebot.cli.harvest.run_poll_loop", one_poll)
+
+    storage = SQLiteStorageAdapter(":memory:")
+    await storage.connect()
+    try:
+        await _run_loop(
+            adapter=_WithdrawingExchange(),
+            config=_full_config(harvester=_enabled_harvester()),
+            storage=storage,
+            interval_seconds=1,
+            stop_event=asyncio.Event(),
+        )
+        assert calls == 2
+        assert maximum_active == 1
+    finally:
+        await storage.close()
 
 
 # ----- Test doubles -----
