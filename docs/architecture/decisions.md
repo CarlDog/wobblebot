@@ -1803,6 +1803,18 @@ money-mover. Withdraw scope stays on the Harvester key only.
   web-Execute judge corrections (E/F).
 - ADR-003 / ADR-004 (Harvester authority + withdrawal API).
 
+**Implementation correction (2026-09-24):** The original implementation inserted the
+UNIQUE-guarded result *after* calling Kraken. That constraint could reject a duplicate
+audit row but could not prevent a concurrent duplicate withdrawal. A transport failure
+could also mean Kraken accepted the request but its response was lost; treating every
+`ExchangeError` as a rejection made a retry unsafe. The guard now commits a pending
+claim, with the rolling cap checked in the same SQLite write transaction, **before**
+`withdraw()`. A Kraken error array can mark the claim rejected and allow a retry.
+Transport, response, or interrupted outcomes keep a blocking, unverified claim until
+the operator reconciles Kraken funding history; any such claim halts all new bot
+withdrawals, including proposals created later. The partial UNIQUE index continues to
+allow a new attempt only after a confirmed rejection.
+
 ## ADR-027 — Kraken Rate-Limit Backoff
 
 **Status:** Accepted (P1, v1.1; reuses the ADR-015 retry shape)

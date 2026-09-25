@@ -51,8 +51,10 @@ class TestVacuumDatabase:
         db_path = tmp_path / "test.db"
         storage = SQLiteStorageAdapter(str(db_path))
         await storage.connect()
-        # Insert some data so VACUUM has something to compact.
-        await _save(storage, _snapshot(hours_ago=1))
+        # Leave enough free pages that a schema-layout page added by a
+        # migration cannot outweigh the space VACUUM reclaims.
+        for minutes_ago in range(1, 201):
+            await _save(storage, _snapshot(hours_ago=minutes_ago / 60))
         await storage.delete_price_snapshots(before=datetime.now(UTC))
         await storage.close()
         # File must exist + be closed before VACUUM.

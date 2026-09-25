@@ -1471,7 +1471,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
 
     async def reserve_withdrawal(
         self, result: TransferResult, *, daily_cap: Decimal
-    ) -> Literal["reserved", "already_claimed", "cap_exceeded"]:
+    ) -> Literal["reserved", "already_claimed", "unresolved_claim", "cap_exceeded"]:
         """Commit a withdrawal claim and cap charge before any Kraken request.
 
         ``BEGIN IMMEDIATE`` serializes separate processes. The UNIQUE
@@ -1494,6 +1494,13 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
                     if await cursor.fetchone() is not None:
                         await conn.rollback()
                         return "already_claimed"
+                async with conn.execute(
+                    "SELECT 1 FROM transfer_results WHERE submission_state "
+                    "IN ('reserved', 'unknown') LIMIT 1"
+                ) as cursor:
+                    if await cursor.fetchone() is not None:
+                        await conn.rollback()
+                        return "unresolved_claim"
                 cutoff = (result.timestamp.dt - timedelta(hours=24)).isoformat()
                 async with conn.execute(
                     "SELECT executed_amount FROM transfer_results "

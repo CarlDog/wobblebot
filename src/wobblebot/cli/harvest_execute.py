@@ -495,6 +495,12 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             f"Refused: proposal {proposal_id} was claimed concurrently. "
             "Inspect the withdrawal claim before any retry.",
         )
+    if reservation == "unresolved_claim":
+        return ExecuteOutcome(
+            False,
+            "Refused: another withdrawal has an unverified outcome. "
+            "Reconcile Kraken funding history before approving any new withdrawal.",
+        )
     if reservation == "cap_exceeded":
         return ExecuteOutcome(
             False, "Refused: the rolling withdrawal cap was reached concurrently."

@@ -851,6 +851,32 @@ class TestExecuteGuardrails:
 
 @pytest.mark.asyncio
 class TestExecuteHappyPath:
+    async def test_claim_is_committed_before_withdraw_call(self) -> None:
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+
+            class InspectingExchange(_WithdrawingExchange):
+                async def withdraw(self, asset, amount, destination):  # type: ignore[no-untyped-def]
+                    rows = await storage.get_transfer_results()
+                    assert len(rows) == 1
+                    assert rows[0].submission_state == "reserved"
+                    assert rows[0].transaction_id.startswith("claim-")
+                    return await super().withdraw(asset, amount, destination)
+
+            adapter = InspectingExchange()
+            rc = await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=_full_config(harvester=_enabled_harvester()),
+                proposal_id="p-test",
+            )
+            assert rc == 0
+            assert (await storage.get_transfer_results())[0].submission_state == "accepted"
+        finally:
+            await storage.close()
+
     async def test_clean_apply_persists_pending_result(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -883,6 +909,7 @@ class TestExecuteHappyPath:
             assert len(results) == 1
             assert results[0].transaction_id == "AGBSO6T-UFMTTQ-I7KGS6"
             assert results[0].status == "pending"
+            assert results[0].submission_state == "accepted"
             # The "money moved" log line is the operator's go-look-at-
             # Kraken-Pro signal.
             assert any("WITHDRAWAL SUBMITTED" in r.message for r in caplog.records)
@@ -903,7 +930,9 @@ class TestExecuteFailureModes:
             await _seed_proposal(storage, _proposal(amount="100"))
             adapter = _WithdrawingExchange(
                 usd_balance=Decimal("1000"),
-                withdraw_error=ExchangeError("EFunding:Below minimum"),
+                withdraw_error=ExchangeError(
+                    "EFunding:Below minimum", codes=["EFunding:Below minimum"]
+                ),
             )
             config = _full_config(harvester=_enabled_harvester())
             with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
@@ -920,9 +949,66 @@ class TestExecuteFailureModes:
             results = await storage.get_transfer_results()
             assert len(results) == 1
             assert results[0].status == "failed"
+            assert results[0].submission_state == "rejected"
             assert results[0].transaction_id.startswith("failed-")
             assert any("REJECTED" in r.message for r in caplog.records)
             assert any("no money moved" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
+    async def test_transport_error_keeps_claim_and_blocks_retry(self) -> None:
+        """A response can be lost after Kraken accepted the request."""
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            adapter = _WithdrawingExchange(
+                withdraw_error=ExchangeError("request timed out"),
+            )
+            config = _full_config(harvester=_enabled_harvester())
+            first = await _execute_command(
+                adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+            )
+            assert first == 1
+            results = await storage.get_transfer_results()
+            assert len(results) == 1
+            assert results[0].status == "pending"
+            assert results[0].submission_state == "unknown"
+            assert results[0].transaction_id.startswith("claim-")
+            adapter._withdraw_error = None
+            second = await _execute_command(
+                adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+            )
+            assert second == 1
+            assert len(adapter.withdraw_calls) == 1
+        finally:
+            await storage.close()
+
+    async def test_explicit_rejection_releases_claim_for_retry(self) -> None:
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            adapter = _WithdrawingExchange(
+                withdraw_error=ExchangeError("rejected", codes=["EFunding:Below minimum"])
+            )
+            config = _full_config(harvester=_enabled_harvester())
+            assert (
+                await _execute_command(
+                    adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+                )
+                == 1
+            )
+            adapter._withdraw_error = None
+            assert (
+                await _execute_command(
+                    adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+                )
+                == 0
+            )
+            assert len(adapter.withdraw_calls) == 2
+            results = await storage.get_transfer_results()
+            assert {r.submission_state for r in results} == {"rejected", "accepted"}
         finally:
             await storage.close()
 

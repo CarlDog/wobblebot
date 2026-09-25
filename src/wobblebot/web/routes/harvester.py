@@ -72,6 +72,8 @@ def _executable_proposal_ids(
     destinations: Mapping[str, str],
 ) -> frozenset[str]:
     """Which proposals are worth offering an Execute button for."""
+    if any(r.submission_state in ("reserved", "unknown") for r in results):
+        return frozenset()
     spent = {r.proposal_id for r in results if r.status != "failed"}
     return frozenset(
         p.proposal_id
@@ -109,7 +111,10 @@ async def _load_snapshot(
         return HarvesterSnapshot(wired=False, proposals=(), results=())
     try:
         proposals = await harvest_storage.get_transfer_proposals(limit=50)
-        results = await harvest_storage.get_transfer_results(limit=50)
+        # Withdrawal history is small; scan it all for unresolved claims
+        # so an older claim outside the 50 displayed rows cannot make a
+        # new proposal look executable.
+        all_results = await harvest_storage.get_transfer_results()
     except StorageError as exc:
         return HarvesterSnapshot(
             wired=True,
@@ -120,8 +125,8 @@ async def _load_snapshot(
     return HarvesterSnapshot(
         wired=True,
         proposals=tuple(proposals),
-        results=tuple(results),
-        executable_ids=_executable_proposal_ids(proposals, results, destinations),
+        results=tuple(all_results[:50]),
+        executable_ids=_executable_proposal_ids(proposals, all_results, destinations),
         daemon_awake=await _harvest_daemon_awake(operator_storage),
         destinations=dict(destinations),
     )
