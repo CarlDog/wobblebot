@@ -28,6 +28,29 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.0.13] - 2026-09-25
+
+### Fixed
+
+- **Reserve withdrawal claims before submission.** The Harvester reserves a proposal
+  and its rolling-cap charge in one SQLite transaction before calling Kraken.
+  Concurrent execution attempts cannot submit the same proposal twice; an
+  interrupted attempt leaves a blocking claim.
+- **Keep uncertain withdrawal outcomes blocked.** Only an explicit Kraken
+  rejection permits retry. Timeouts and interrupted audit updates leave an
+  unverified claim that blocks new bot withdrawals until reconciled. Historical
+  `failed` rows migrate to `unknown` because the old path could not distinguish
+  rejection from a lost response. The dashboard identifies unverified attempts
+  and hides Execute while a claim is unresolved.
+
+### Upgrade note
+
+- Keep the Harvester stopped until withdrawal claims and approved execute
+  commands are reconciled against Kraken Funding. Verify database backups before
+  migration. Local `claim-...` and historical `failed-...` IDs are not Kraken
+  reference IDs. Reconcile unresolved claims before restart or retry, including
+  after rollback. See `docs/release/v1.0-incident-runbook.md`.
+
 ## [2.0.12] - 2026-09-18
 
 ### Fixed

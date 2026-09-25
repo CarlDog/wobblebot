@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -17,6 +19,7 @@ from wobblebot.cli.harvest import (
     _TRADE_KEY_ENV_VAR,
     _classify_band,
     _run_cycle,
+    _run_loop,
     _verify_harvester_key,
 )
 from wobblebot.cli.harvest_execute import _execute_command, _read_usd_balance
@@ -34,6 +37,58 @@ from wobblebot.ports.exchange import ExchangePort
 from wobblebot.ports.harvester import TransferProposal as _TransferProposal
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_daemon_cycles_do_not_share_a_connection_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proposal save cannot commit the command loop's withdrawal claim."""
+    active = 0
+    maximum_active = 0
+    calls = 0
+
+    async def work() -> None:
+        nonlocal active, maximum_active, calls
+        active += 1
+        calls += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    async def fake_cycle(*args, **kwargs):  # type: ignore[no-untyped-def]
+        await work()
+        return True
+
+    async def fake_commands(*args, **kwargs):  # type: ignore[no-untyped-def]
+        await work()
+        return 0
+
+    async def fake_heartbeat(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+
+    async def one_poll(callback, **kwargs):  # type: ignore[no-untyped-def]
+        await callback()
+
+    monkeypatch.setattr("wobblebot.cli.harvest._run_cycle", fake_cycle)
+    monkeypatch.setattr("wobblebot.cli.harvest._process_pending_commands", fake_commands)
+    monkeypatch.setattr("wobblebot.cli.harvest.emit_heartbeat", fake_heartbeat)
+    monkeypatch.setattr("wobblebot.cli.harvest.run_poll_loop", one_poll)
+
+    storage = SQLiteStorageAdapter(":memory:")
+    await storage.connect()
+    try:
+        await _run_loop(
+            adapter=_WithdrawingExchange(),
+            config=_full_config(harvester=_enabled_harvester()),
+            storage=storage,
+            interval_seconds=1,
+            stop_event=asyncio.Event(),
+        )
+        assert calls == 2
+        assert maximum_active == 1
+    finally:
+        await storage.close()
 
 
 # ----- Test doubles -----
@@ -851,6 +906,32 @@ class TestExecuteGuardrails:
 
 @pytest.mark.asyncio
 class TestExecuteHappyPath:
+    async def test_claim_is_committed_before_withdraw_call(self) -> None:
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+
+            class InspectingExchange(_WithdrawingExchange):
+                async def withdraw(self, asset, amount, destination):  # type: ignore[no-untyped-def]
+                    rows = await storage.get_transfer_results()
+                    assert len(rows) == 1
+                    assert rows[0].submission_state == "reserved"
+                    assert rows[0].transaction_id.startswith("claim-")
+                    return await super().withdraw(asset, amount, destination)
+
+            adapter = InspectingExchange()
+            rc = await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=_full_config(harvester=_enabled_harvester()),
+                proposal_id="p-test",
+            )
+            assert rc == 0
+            assert (await storage.get_transfer_results())[0].submission_state == "accepted"
+        finally:
+            await storage.close()
+
     async def test_clean_apply_persists_pending_result(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -883,6 +964,7 @@ class TestExecuteHappyPath:
             assert len(results) == 1
             assert results[0].transaction_id == "AGBSO6T-UFMTTQ-I7KGS6"
             assert results[0].status == "pending"
+            assert results[0].submission_state == "accepted"
             # The "money moved" log line is the operator's go-look-at-
             # Kraken-Pro signal.
             assert any("WITHDRAWAL SUBMITTED" in r.message for r in caplog.records)
@@ -903,7 +985,9 @@ class TestExecuteFailureModes:
             await _seed_proposal(storage, _proposal(amount="100"))
             adapter = _WithdrawingExchange(
                 usd_balance=Decimal("1000"),
-                withdraw_error=ExchangeError("EFunding:Below minimum"),
+                withdraw_error=ExchangeError(
+                    "EFunding:Below minimum", codes=["EFunding:Below minimum"]
+                ),
             )
             config = _full_config(harvester=_enabled_harvester())
             with caplog.at_level(logging.ERROR, logger="wobblebot.cli.harvest"):
@@ -920,9 +1004,66 @@ class TestExecuteFailureModes:
             results = await storage.get_transfer_results()
             assert len(results) == 1
             assert results[0].status == "failed"
+            assert results[0].submission_state == "rejected"
             assert results[0].transaction_id.startswith("failed-")
             assert any("REJECTED" in r.message for r in caplog.records)
             assert any("no money moved" in r.message for r in caplog.records)
+        finally:
+            await storage.close()
+
+    async def test_transport_error_keeps_claim_and_blocks_retry(self) -> None:
+        """A response can be lost after Kraken accepted the request."""
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            adapter = _WithdrawingExchange(
+                withdraw_error=ExchangeError("request timed out"),
+            )
+            config = _full_config(harvester=_enabled_harvester())
+            first = await _execute_command(
+                adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+            )
+            assert first == 1
+            results = await storage.get_transfer_results()
+            assert len(results) == 1
+            assert results[0].status == "pending"
+            assert results[0].submission_state == "unknown"
+            assert results[0].transaction_id.startswith("claim-")
+            adapter._withdraw_error = None
+            second = await _execute_command(
+                adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+            )
+            assert second == 1
+            assert len(adapter.withdraw_calls) == 1
+        finally:
+            await storage.close()
+
+    async def test_explicit_rejection_releases_claim_for_retry(self) -> None:
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            adapter = _WithdrawingExchange(
+                withdraw_error=ExchangeError("rejected", codes=["EFunding:Below minimum"])
+            )
+            config = _full_config(harvester=_enabled_harvester())
+            assert (
+                await _execute_command(
+                    adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+                )
+                == 1
+            )
+            adapter._withdraw_error = None
+            assert (
+                await _execute_command(
+                    adapter=adapter, storage=storage, config=config, proposal_id="p-test"
+                )
+                == 0
+            )
+            assert len(adapter.withdraw_calls) == 2
+            results = await storage.get_transfer_results()
+            assert {r.submission_state for r in results} == {"rejected", "accepted"}
         finally:
             await storage.close()
 
@@ -930,8 +1071,8 @@ class TestExecuteFailureModes:
 @pytest.mark.asyncio
 class TestExecuteIdempotency:
     """Issue #12: a proposal already submitted must not be withdrawn a
-    second time (every gate re-passes after the first wire clears). A prior
-    *failed* attempt — Kraken rejected it, no money moved — may be retried."""
+    second time (every gate re-passes after the first wire clears). Only a
+    confirmed Kraken rejection permits retry."""
 
     async def test_already_submitted_refuses_without_withdraw(
         self, caplog: pytest.LogCaptureFixture
@@ -972,8 +1113,7 @@ class TestExecuteIdempotency:
             await storage.close()
 
     async def test_prior_failed_result_allows_retry(self) -> None:
-        """A failed attempt left no money in flight, so a fresh --execute of
-        the same proposal proceeds and submits."""
+        """A confirmed Kraken rejection permits a fresh --execute."""
         from wobblebot.ports.harvester import TransferResult as _TR
 
         storage = SQLiteStorageAdapter(":memory:")
@@ -985,6 +1125,7 @@ class TestExecuteIdempotency:
                     proposal_id="p-test",
                     transaction_id=f"failed-{uuid4()}",
                     status="failed",
+                    submission_state="rejected",
                     executed_amount=Decimal("100"),
                     direction="exchange_to_bank",
                     asset="USD",
@@ -1001,5 +1142,43 @@ class TestExecuteIdempotency:
             )
             assert rc == 0
             assert len(adapter.withdraw_calls) == 1  # retry proceeds
+        finally:
+            await storage.close()
+
+    async def test_prior_uncertain_failed_result_refuses_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A legacy failed row may have reached Kraken and must block replay."""
+        from wobblebot.ports.harvester import TransferResult as _TR
+
+        storage = SQLiteStorageAdapter(":memory:")
+        await storage.connect()
+        try:
+            await _seed_proposal(storage, _proposal(amount="100"))
+            await storage.save_transfer_result(
+                _TR(
+                    proposal_id="p-test",
+                    transaction_id=f"failed-{uuid4()}",
+                    status="failed",
+                    submission_state="unknown",
+                    executed_amount=Decimal("100"),
+                    direction="exchange_to_bank",
+                    asset="USD",
+                    timestamp=_Timestamp(dt=datetime.now(UTC) - timedelta(minutes=2)),
+                ),
+            )
+            adapter = _WithdrawingExchange(usd_balance=Decimal("1000"))
+            config = _full_config(harvester=_enabled_harvester())
+            reservation = AsyncMock(return_value="unresolved_claim")
+            monkeypatch.setattr(storage, "reserve_withdrawal", reservation)
+            rc = await _execute_command(
+                adapter=adapter,
+                storage=storage,
+                config=config,
+                proposal_id="p-test",
+            )
+            assert rc == 1
+            assert adapter.withdraw_calls == []
+            reservation.assert_not_awaited()
         finally:
             await storage.close()

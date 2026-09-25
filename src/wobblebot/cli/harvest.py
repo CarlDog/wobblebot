@@ -257,30 +257,36 @@ async def _run_loop(  # pylint: disable=too-many-arguments
 
     # ADR-037 decision 1: 3-strike halt for the hourly credentialed read.
     balance_halt = PermanentAuthHalt("harvest.balance_read")
+    # Both loops use the same aiosqlite connection. A proposal write must
+    # never commit halfway through the withdrawal claim's BEGIN IMMEDIATE
+    # transaction, so serialize their complete storage-using cycles.
+    storage_cycle_lock = asyncio.Lock()
 
     async def _one_cycle() -> None:
         nonlocal ticks_run, ticks_succeeded
-        # Stage 8.4.E follow-up — heartbeat at the top of each poll
-        # so the /health page can prove cli/harvest is alive even
-        # when no proposal is generated (the common case at hold-band
-        # balances).
-        await emit_heartbeat(operator_storage, "cli/harvest")
-        ticks_run += 1
-        ok = await _run_cycle(
-            adapter, config=config, storage=storage, notifier=notifier, halt=balance_halt
-        )
-        if ok:
-            ticks_succeeded += 1
+        async with storage_cycle_lock:
+            # Stage 8.4.E follow-up — heartbeat at the top of each poll
+            # so the /health page can prove cli/harvest is alive even
+            # when no proposal is generated (the common case at hold-band
+            # balances).
+            await emit_heartbeat(operator_storage, "cli/harvest")
+            ticks_run += 1
+            ok = await _run_cycle(
+                adapter, config=config, storage=storage, notifier=notifier, halt=balance_halt
+            )
+            if ok:
+                ticks_succeeded += 1
 
     async def _one_command_cycle() -> None:
         nonlocal commands_run
-        commands_run += await _process_pending_commands(
-            adapter=adapter,
-            storage=storage,
-            operator_storage=operator_storage,
-            config=config,
-            notifier=notifier,
-        )
+        async with storage_cycle_lock:
+            commands_run += await _process_pending_commands(
+                adapter=adapter,
+                storage=storage,
+                operator_storage=operator_storage,
+                config=config,
+                notifier=notifier,
+            )
 
     try:
         # Two independent cadences (ADR-034): the proposal cycle runs on

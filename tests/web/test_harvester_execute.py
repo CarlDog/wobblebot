@@ -14,7 +14,7 @@ asserted repeatedly below:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -154,6 +154,32 @@ class TestExecuteButtonVisibility:
             login_as(client)
             resp = client.get("/harvester")
             assert "/commands/execute-proposal" in resp.text
+
+    async def test_unknown_attempt_hides_all_execute_buttons(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        harvest_storage: SQLiteStorageAdapter,
+    ) -> None:
+        await harvest_storage.save_transfer_proposal(_proposal(proposal_id="prop-new"))
+        await harvest_storage.save_transfer_result(
+            _result(proposal_id="prop-old").model_copy(
+                update={
+                    "transaction_id": "claim-old",
+                    "submission_state": "unknown",
+                    "timestamp": Timestamp(dt=datetime.now(UTC) - timedelta(days=2)),
+                }
+            )
+        )
+        for index in range(51):
+            await harvest_storage.save_transfer_result(
+                _result(proposal_id=f"done-{index}", status="completed").model_copy(
+                    update={"transaction_id": f"ref-{index}"}
+                )
+            )
+        with _client(operator_storage, harvest_storage) as client:
+            login_as(client)
+            resp = client.get("/harvester")
+            assert "/commands/execute-proposal" not in resp.text
 
     async def test_no_destination_configured_has_no_button(
         self,

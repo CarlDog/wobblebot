@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import json
 import logging
+from asyncio import Lock
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 import aiosqlite
@@ -43,6 +45,7 @@ from wobblebot.adapters.sqlite_migrations import (
     migrate_news_items_publisher_url,
     migrate_notifications_read_at,
     migrate_price_snapshots_unique,
+    migrate_transfer_results_submission_state,
     migrate_transfer_results_unique_proposal_id,
 )
 from wobblebot.adapters.sqlite_storage_rowmap import (
@@ -210,6 +213,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         self._db_path = str(db_path)
         self._read_only = read_only
         self._conn: aiosqlite.Connection | None = None
+        self._withdrawal_claim_lock = Lock()
 
     async def connect(self) -> None:
         """Open the database and ensure schema exists.
@@ -294,6 +298,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await migrate_llm_calls_ollama_cloud(self._conn)
             await migrate_price_snapshots_unique(self._conn)
             await migrate_transfer_results_unique_proposal_id(self._conn)
+            await migrate_transfer_results_submission_state(self._conn)
             await migrate_notifications_read_at(self._conn)
             await migrate_engine_state_offside_since(self._conn)
             await migrate_engine_state_starvation(self._conn)
@@ -1427,14 +1432,15 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await conn.execute(
                 """
                 INSERT INTO transfer_results (
-                    proposal_id, transaction_id, status, executed_amount,
-                    direction, asset, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    proposal_id, transaction_id, status, submission_state,
+                    executed_amount, direction, asset, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result.proposal_id,
                     result.transaction_id,
                     result.status,
+                    result.submission_state,
                     str(result.executed_amount),
                     result.direction,
                     result.asset,
@@ -1462,6 +1468,110 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             raise StorageError(
                 f"Failed to save transfer result {result.transaction_id}: {exc}"
             ) from exc
+
+    async def reserve_withdrawal(
+        self, result: TransferResult, *, daily_cap: Decimal
+    ) -> Literal["reserved", "already_claimed", "unresolved_claim", "cap_exceeded"]:
+        """Commit a withdrawal claim and cap charge before any Kraken request.
+
+        ``BEGIN IMMEDIATE`` serializes separate processes. The UNIQUE
+        proposal index and the cap check then share one transaction. Use
+        FULL sync for this commit: losing a claim after sending a request
+        could make the next execution submit the same withdrawal again.
+        """
+        if result.status != "pending" or result.submission_state != "reserved":
+            raise ValueError("withdrawal reservation requires a pending, reserved result")
+        conn = self._require_conn()
+        async with self._withdrawal_claim_lock:
+            try:
+                await conn.execute("PRAGMA synchronous = FULL")
+                await conn.execute("BEGIN IMMEDIATE")
+                async with conn.execute(
+                    "SELECT 1 FROM transfer_results WHERE proposal_id = ? "
+                    "AND status != 'failed' LIMIT 1",
+                    (result.proposal_id,),
+                ) as cursor:
+                    if await cursor.fetchone() is not None:
+                        await conn.rollback()
+                        return "already_claimed"
+                async with conn.execute(
+                    "SELECT 1 FROM transfer_results WHERE submission_state "
+                    "IN ('reserved', 'unknown') LIMIT 1"
+                ) as cursor:
+                    if await cursor.fetchone() is not None:
+                        await conn.rollback()
+                        return "unresolved_claim"
+                cutoff = (result.timestamp.dt - timedelta(hours=24)).isoformat()
+                async with conn.execute(
+                    "SELECT executed_amount FROM transfer_results "
+                    "WHERE asset = ? AND direction = 'exchange_to_bank' "
+                    "AND status IN ('pending', 'completed') AND timestamp >= ?",
+                    (result.asset, cutoff),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                if (
+                    sum((Decimal(row[0]) for row in rows), Decimal("0")) + result.executed_amount
+                    > daily_cap
+                ):
+                    await conn.rollback()
+                    return "cap_exceeded"
+                await conn.execute(
+                    "INSERT INTO transfer_results "
+                    "(proposal_id, transaction_id, status, submission_state, "
+                    "executed_amount, direction, asset, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        result.proposal_id,
+                        result.transaction_id,
+                        result.status,
+                        result.submission_state,
+                        str(result.executed_amount),
+                        result.direction,
+                        result.asset,
+                        result.timestamp.dt.isoformat(),
+                    ),
+                )
+                await conn.commit()
+                return "reserved"
+            except (aiosqlite.Error, OSError) as exc:
+                await conn.rollback()
+                raise StorageError(
+                    f"Failed to reserve withdrawal {result.proposal_id}: {exc}"
+                ) from exc
+            finally:
+                await conn.execute("PRAGMA synchronous = NORMAL")
+
+    async def finalize_withdrawal_claim(
+        self,
+        claim_id: str,
+        *,
+        transaction_id: str,
+        submission_state: Literal["accepted", "rejected", "unknown"],
+    ) -> None:
+        """Record the observed result of a previously committed claim.
+
+        A failed update leaves the pending claim in place, blocking replay.
+        Only an explicit Kraken error may make a claim retryable.
+        """
+        conn = self._require_conn()
+        status = "failed" if submission_state == "rejected" else "pending"
+        async with self._withdrawal_claim_lock:
+            try:
+                cursor = await conn.execute(
+                    "UPDATE transfer_results SET transaction_id = ?, status = ?, "
+                    "submission_state = ? WHERE transaction_id = ? "
+                    "AND submission_state = 'reserved'",
+                    (transaction_id, status, submission_state, claim_id),
+                )
+                if cursor.rowcount != 1:
+                    await conn.rollback()
+                    raise StorageError(f"Withdrawal claim {claim_id} was not reserved")
+                await conn.commit()
+            except (aiosqlite.Error, OSError) as exc:
+                await conn.rollback()
+                raise StorageError(
+                    f"Failed to finalize withdrawal claim {claim_id}: {exc}"
+                ) from exc
 
     async def get_transfer_results(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,

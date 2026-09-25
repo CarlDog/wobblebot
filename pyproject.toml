@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wobblebot"
-version = "2.0.12"
+version = "2.0.13"
 description = "Deterministic, safety-first micro-trading system using hexagonal architecture"
 authors = [
     {name = "WobbleBot Team"}
@@ -130,7 +130,7 @@ dev = [
     # to 1.6.0 — it contradicted its own neighbour. Corrected 2026-09-04 by
     # the release-close audit. Runtime `httpx` stays in
     # [project.dependencies]; the Anthropic adapter uses it directly.
-    "httpx2==2.13.0",
+    "httpx2==2.12.0",
 ]
 
 [project.urls]
