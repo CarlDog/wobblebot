@@ -714,6 +714,160 @@ class TestPerTickBalanceResilience:
         assert result is False
 
 
+class TestValuationPlacementGate:
+    """A missed cap check cannot allow unbounded later grid placements."""
+
+    async def test_sustained_failure_blocks_later_steps_then_recovers(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick, _ValuationGate
+        from wobblebot.config.cli import LiveConfig
+        from wobblebot.services.grid_engine import StepResult
+
+        symbol = Symbol(base="BTC", quote="USD")
+        live_cfg = LiveConfig(symbols=[symbol], max_session_loss_usd=Decimal("5"))
+        engine = MagicMock()
+        engine.step = AsyncMock(return_value=StepResult(symbol=symbol, action="stepped"))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=True)
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_trade_history = AsyncMock(return_value=[])
+        adapter.get_ticker = AsyncMock(
+            return_value=Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
+        values = AsyncMock(
+            side_effect=[
+                ExchangeError("first BalanceEx failure"),
+                ExchangeError("second BalanceEx failure"),
+                Decimal("100"),
+                Decimal("100"),
+                Decimal("100"),
+            ]
+        )
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", values)
+        gate = _ValuationGate()
+        notifier = SqliteNotifierAdapter(storage)
+
+        for tick, expected_steps, expected_stale in ((1, 1, True), (2, 1, True), (3, 2, False)):
+            tripped = await _run_one_tick(
+                adapter,
+                engine,
+                live_cfg,
+                tick,
+                Decimal("100"),
+                notifier,
+                valuation_gate=gate,
+            )
+            assert tripped is False
+            assert engine.step.await_count == expected_steps
+            assert adapter.get_trade_history.await_count == expected_steps
+            assert gate.stale is expected_stale
+
+        rows = await storage.get_notifications()
+        titles = [row.notification.title for row in rows]
+        assert titles.count("New placements blocked — valuation unavailable") == 1
+        assert titles.count("Portfolio valuation recovered") == 1
+
+    async def test_recovery_trips_cap_before_another_step(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.adapters.sqlite_notifier import SqliteNotifierAdapter
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick, _ValuationGate
+        from wobblebot.config.cli import LiveConfig
+        from wobblebot.services.grid_engine import StepResult
+
+        symbol = Symbol(base="BTC", quote="USD")
+        live_cfg = LiveConfig(symbols=[symbol], max_session_loss_usd=Decimal("5"))
+        engine = MagicMock()
+        engine.step = AsyncMock(return_value=StepResult(symbol=symbol, action="stepped"))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_ticker = AsyncMock(
+            return_value=Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
+        values = AsyncMock(return_value=Decimal("94"))
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", values)
+        gate = _ValuationGate()
+        gate.note_failure()
+        notifier = SqliteNotifierAdapter(storage)
+
+        tripped = await _run_one_tick(
+            adapter,
+            engine,
+            live_cfg,
+            2,
+            Decimal("100"),
+            notifier,
+            valuation_gate=gate,
+        )
+        assert tripped is True
+        engine.step.assert_not_awaited()
+        assert values.await_count == 1
+        rows = await storage.get_notifications()
+        assert any(row.notification.title == "Loss cap tripped — session ending" for row in rows)
+
+    async def test_trade_prefetch_cannot_age_recovery_valuation_past_loss_cap(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick, _ValuationGate
+        from wobblebot.config.cli import LiveConfig
+
+        symbol = Symbol(base="BTC", quote="USD")
+        live_cfg = LiveConfig(symbols=[symbol], max_session_loss_usd=Decimal("5"))
+        engine = MagicMock()
+        engine.step = AsyncMock(side_effect=AssertionError("cap must block the grid"))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=True)
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
+        events: list[str] = []
+
+        async def _history(*_args: object, **_kwargs: object) -> list[object]:
+            events.append("history")
+            return []
+
+        adapter.get_trade_history = AsyncMock(side_effect=_history)
+        adapter.get_ticker = AsyncMock(
+            return_value=Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
+
+        async def _value(*_args: object, **_kwargs: object) -> Decimal:
+            events.append("value")
+            return Decimal("94") if "history" in events else Decimal("100")
+
+        values = AsyncMock(side_effect=_value)
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", values)
+        gate = _ValuationGate()
+        gate.note_failure()
+
+        tripped = await _run_one_tick(
+            adapter, engine, live_cfg, 2, Decimal("100"), valuation_gate=gate
+        )
+
+        assert tripped is True
+        assert events == ["value", "history", "value"]
+        assert values.await_count == 2
+        adapter.get_trade_history.assert_awaited_once()
+        assert adapter.get_ticker.await_count == 2
+        engine.step.assert_not_awaited()
+
+
 # --------------------------------------------------------------------- #
 # Stage 8.4 hotfix #3 (2026-05-22): session-loss cap is mark-to-market  #
 # --------------------------------------------------------------------- #
