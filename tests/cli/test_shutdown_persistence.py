@@ -732,9 +732,10 @@ class TestValuationPlacementGate:
         live_cfg = LiveConfig(symbols=[symbol], max_session_loss_usd=Decimal("5"))
         engine = MagicMock()
         engine.step = AsyncMock(return_value=StepResult(symbol=symbol, action="stepped"))
-        engine.has_pending_fill_candidates = AsyncMock(return_value=False)
+        engine.has_pending_fill_candidates = AsyncMock(return_value=True)
         adapter = MagicMock()
         adapter.get_open_orders = AsyncMock(return_value=[])
+        adapter.get_trade_history = AsyncMock(return_value=[])
         adapter.get_ticker = AsyncMock(
             return_value=Ticker(
                 symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
@@ -744,6 +745,7 @@ class TestValuationPlacementGate:
             side_effect=[
                 ExchangeError("first BalanceEx failure"),
                 ExchangeError("second BalanceEx failure"),
+                Decimal("100"),
                 Decimal("100"),
                 Decimal("100"),
             ]
@@ -764,6 +766,7 @@ class TestValuationPlacementGate:
             )
             assert tripped is False
             assert engine.step.await_count == expected_steps
+            assert adapter.get_trade_history.await_count == expected_steps
             assert gate.stale is expected_stale
 
         rows = await storage.get_notifications()
@@ -814,6 +817,55 @@ class TestValuationPlacementGate:
         assert values.await_count == 1
         rows = await storage.get_notifications()
         assert any(row.notification.title == "Loss cap tripped — session ending" for row in rows)
+
+    async def test_trade_prefetch_cannot_age_recovery_valuation_past_loss_cap(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from wobblebot.cli import live as live_module
+        from wobblebot.cli.live import _run_one_tick, _ValuationGate
+        from wobblebot.config.cli import LiveConfig
+
+        symbol = Symbol(base="BTC", quote="USD")
+        live_cfg = LiveConfig(symbols=[symbol], max_session_loss_usd=Decimal("5"))
+        engine = MagicMock()
+        engine.step = AsyncMock(side_effect=AssertionError("cap must block the grid"))
+        engine.has_pending_fill_candidates = AsyncMock(return_value=True)
+        adapter = MagicMock()
+        adapter.get_open_orders = AsyncMock(return_value=[])
+        events: list[str] = []
+
+        async def _history(*_args: object, **_kwargs: object) -> list[object]:
+            events.append("history")
+            return []
+
+        adapter.get_trade_history = AsyncMock(side_effect=_history)
+        adapter.get_ticker = AsyncMock(
+            return_value=Ticker(
+                symbol=symbol, last=Decimal("100"), bid=Decimal("99"), ask=Decimal("101")
+            )
+        )
+
+        async def _value(*_args: object, **_kwargs: object) -> Decimal:
+            events.append("value")
+            return Decimal("94") if "history" in events else Decimal("100")
+
+        values = AsyncMock(side_effect=_value)
+        monkeypatch.setattr(live_module, "_session_portfolio_value_usd", values)
+        gate = _ValuationGate()
+        gate.note_failure()
+
+        tripped = await _run_one_tick(
+            adapter, engine, live_cfg, 2, Decimal("100"), valuation_gate=gate
+        )
+
+        assert tripped is True
+        assert events == ["value", "history", "value"]
+        assert values.await_count == 2
+        adapter.get_trade_history.assert_awaited_once()
+        assert adapter.get_ticker.await_count == 2
+        engine.step.assert_not_awaited()
 
 
 # --------------------------------------------------------------------- #

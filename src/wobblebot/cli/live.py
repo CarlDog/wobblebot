@@ -899,6 +899,9 @@ class _ValuationGate:
         self.stale = False
         self.failure_streak = 0
         self.alerted = False
+        # An approval from before this session (or before the most recent
+        # recovery) cannot be replayed as a fresh re-anchor decision.
+        self.reanchor_approval_after = datetime.now(UTC)
 
     def note_failure(self) -> bool:
         """Return True once when a second consecutive failure needs a page."""
@@ -915,6 +918,7 @@ class _ValuationGate:
         self.stale = False
         self.failure_streak = 0
         self.alerted = False
+        self.reanchor_approval_after = datetime.now(UTC)
         return failures, alerted
 
 
@@ -957,7 +961,7 @@ async def _session_loss_cap_tripped(
     return False
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements,too-many-return-statements
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -1025,42 +1029,58 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
             await _note_private_call_failure(exc, escalation, engine, live, notifier)
         tick_open_orders = None
 
-    tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
     tick_tickers = await _prefetch_tickers(adapter, live, tick)
 
-    # The previous tick could not verify the loss cap. Revalue BEFORE any
-    # further engine step; delaying fill detection preserves the ordinary
-    # counter-order path when the API recovers.
+    # A failed valuation pauses later grid steps. Probe the cap before
+    # fetching account-wide trade history (which can take 20 pages), then
+    # revalue with fresh tickers immediately before allowing a step.
     if valuation_gate is not None and valuation_gate.stale:
-        try:
-            recovered_value_usd = await _session_portfolio_value_usd(
-                adapter, tuple(live.symbols), tick_tickers
-            )
-        except WobbleBotPortError as exc:
-            _LOGGER.warning(
-                "pre-tick portfolio-value fetch failed; new placements blocked "
-                "(tick=%s): %s: %s",
-                tick,
-                type(exc).__name__,
-                exc,
-                extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
-            )
-            if escalation is not None:
-                await _note_private_call_failure(exc, escalation, engine, live, notifier)
-            if valuation_gate.note_failure():
-                await notify(
-                    notifier,
-                    level="warning",
-                    title="New placements blocked — valuation unavailable",
-                    message=(
-                        "The session loss cap cannot be checked. Automatic grid steps "
-                        "are paused and re-anchor requests are refused until a fresh "
-                        "portfolio valuation succeeds. The daemon continues its "
-                        "dead-man's-switch policy."
-                    ),
-                    context={"tick": tick, "failure_streak": valuation_gate.failure_streak},
+
+        async def _fresh_recovery_value(prices: dict[Symbol, Ticker]) -> Decimal | None:
+            try:
+                return await _session_portfolio_value_usd(adapter, tuple(live.symbols), prices)
+            except WobbleBotPortError as exc:
+                _LOGGER.warning(
+                    "pre-tick portfolio-value fetch failed; new placements blocked "
+                    "(tick=%s): %s: %s",
+                    tick,
+                    type(exc).__name__,
+                    exc,
+                    extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
                 )
+                if escalation is not None:
+                    await _note_private_call_failure(exc, escalation, engine, live, notifier)
+                if valuation_gate.note_failure():
+                    await notify(
+                        notifier,
+                        level="warning",
+                        title="New placements blocked — valuation unavailable",
+                        message=(
+                            "The session loss cap cannot be checked. Automatic grid steps "
+                            "are paused and re-anchor requests are refused until a fresh "
+                            "portfolio valuation succeeds. The daemon continues its "
+                            "dead-man's-switch policy."
+                        ),
+                        context={"tick": tick, "failure_streak": valuation_gate.failure_streak},
+                    )
+                return None
+
+        probe_value_usd = await _fresh_recovery_value(tick_tickers)
+        if probe_value_usd is None:
             return False
+        if await _session_loss_cap_tripped(
+            probe_value_usd, started_value_usd, live, tick, notifier
+        ):
+            return True
+        tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
+        tick_tickers = await _prefetch_tickers(adapter, live, tick)
+        recovered_value_usd = await _fresh_recovery_value(tick_tickers)
+        if recovered_value_usd is None:
+            return False
+        if await _session_loss_cap_tripped(
+            recovered_value_usd, started_value_usd, live, tick, notifier
+        ):
+            return True
         failures, alerted = valuation_gate.note_success()
         _LOGGER.info(
             "portfolio valuation recovered after %d failed check(s); "
@@ -1073,14 +1093,11 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
                 notifier,
                 level="info",
                 title="Portfolio valuation recovered",
-                message="A fresh portfolio valuation succeeded; the loss cap is being checked.",
+                message="A fresh portfolio valuation succeeded and the loss cap was checked.",
                 context={"tick": tick, "failure_count": failures},
             )
-        if await _session_loss_cap_tripped(
-            recovered_value_usd, started_value_usd, live, tick, notifier
-        ):
-            return True
-
+    else:
+        tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
     for symbol in sweep if sweep is not None else live.symbols:
         if tick_open_orders is None:
             break
@@ -1299,6 +1316,7 @@ async def _process_pending_commands(
     notifier: NotifierPort | None,
     *,
     valuation_stale: bool = False,
+    reanchor_approval_after: datetime | None = None,
 ) -> int:
     """Drain approved ``pending_commands`` rows; dispatch + mark each.
 
@@ -1310,9 +1328,10 @@ async def _process_pending_commands(
     error message in the result; the loop continues so one bad command
     doesn't starve the others. Returns the number of rows processed.
 
-    When the session-loss valuation is stale, an approved re-anchor is
-    marked failed before dispatch so it cannot place a new grid or run
-    later without a fresh operator approval. Other commands still run.
+    A re-anchor approved before the current session or the last recovery
+    is marked failed before dispatch. That prevents a refused approval
+    from replaying if recording its refusal temporarily fails. Other
+    commands still run.
 
     Each dispatch also echoes its ``CommandResult`` back through
     ``notify()`` (P3 renderers slice, from the 2026-08-09 re-anchor e2e
@@ -1352,14 +1371,23 @@ async def _process_pending_commands(
             )
             continue
         try:
-            if valuation_stale and isinstance(command, ReanchorCommand):
+            if isinstance(command, ReanchorCommand):
                 # A re-anchor places a fresh grid inside dispatch_command.
-                # Fail this approval so it cannot execute on a later session
-                # without a fresh operator decision after valuation recovers.
-                raise OperatorError(
-                    "portfolio valuation unavailable; re-anchor refused; "
-                    "request it again after recovery"
-                )
+                # The approval floor survives a failed refusal write because
+                # it is recomputed at every session start and recovery.
+                if valuation_stale:
+                    raise OperatorError(
+                        "portfolio valuation unavailable; re-anchor refused; "
+                        "request it again after recovery"
+                    )
+                if reanchor_approval_after is not None and (
+                    pending.confirmed_at is None
+                    or pending.confirmed_at.dt <= reanchor_approval_after
+                ):
+                    raise OperatorError(
+                        "re-anchor approval predates this live session or the last "
+                        "valuation recovery; request it again"
+                    )
             cmd_result = await operator_service.dispatch_command(command)
             updated = pending.model_copy(
                 update={
@@ -1396,17 +1424,21 @@ async def _process_pending_commands(
             await operator_storage.save_pending_command(updated)
         except WobbleBotPortError as exc:
             # Persistence failure here is bad — the operator's confirm
-            # already happened, the engine action already ran, but we
-            # can't record the outcome. Log and continue; the row stays
-            # in 'approved' status and will be re-dispatched next tick.
-            # That's an idempotency hazard for non-idempotent commands;
-            # acceptable v1 trade-off given how rare DB failures are.
+            # already happened, but we cannot record the outcome. A row
+            # that remains approved may be retried next tick; the approval
+            # floor prevents a refused stale re-anchor from executing on
+            # that retry. Other commands retain the v1 idempotency limit.
             _LOGGER.warning(
                 "failed to persist dispatched pending_command (pending_id=%s): %s",
                 pending.id,
                 exc,
                 extra={"pending_id": str(pending.id), "error": str(exc)},
             )
+            # No receipt is truthful until the terminal status is durable.
+            # The approval floor above keeps an old re-anchor refused on
+            # the next poll, even if the valuation has recovered meanwhile.
+            processed += 1
+            continue
         processed += 1
         # The ✅'s receipt: echo the result to Discord via the forwarder.
         result = updated.result
@@ -1828,6 +1860,43 @@ async def _emit_engine_states(
         )
 
 
+async def _record_dms_failure(
+    escalation: _AuthEscalation,
+    live: LiveConfig,
+    notifier: NotifierPort | None,
+) -> None:
+    """Track a failed or unconfirmed reset against the last proven deadline."""
+    alert_now = escalation.note_dms_failure()
+    if escalation.dms_failure_streak == 1:
+        deadline_note = escalation.dms_deadline_note(datetime.now(UTC))
+        _LOGGER.warning(
+            "dead man's switch failure streak started; %s",
+            deadline_note,
+            extra={"dms_deadline_note": deadline_note},
+        )
+    if alert_now:
+        await notify(
+            notifier,
+            level="critical",
+            title="Dead-man's-switch resets failing",
+            message=(
+                f"{_DMS_FAILURE_STREAK_ALERT} consecutive DMS resets failed or lacked "
+                "a confirmed future trigger. If no reset is accepted before the "
+                f"{live.dead_mans_switch_seconds}s timer expires, Kraken may cancel "
+                "ALL open orders server-side. Check account lockout and network health."
+            ),
+            context={
+                "streak": escalation.dms_failure_streak,
+                "dms_seconds": live.dead_mans_switch_seconds,
+                "last_confirmed_trigger_at": (
+                    escalation.dms_trigger_at.isoformat()
+                    if escalation.dms_trigger_at is not None
+                    else None
+                ),
+            },
+        )
+
+
 async def _record_confirmed_dms_reset(
     escalation: _AuthEscalation,
     trigger_at: datetime,
@@ -2016,6 +2085,19 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     # later reset returns a real future trigger.
                     if trigger_at is not None:
                         await _record_confirmed_dms_reset(escalation, trigger_at, notifier, tick)
+                    elif escalation.note_success():
+                        await notify(
+                            notifier,
+                            level="info",
+                            title="Kraken API reachable",
+                            message=(
+                                "The DMS endpoint responded after an authentication failure; "
+                                "its new timer remains unconfirmed."
+                            ),
+                            context={"tick": tick},
+                        )
+                    if trigger_at is None:
+                        await _record_dms_failure(escalation, live, notifier)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "dead man's switch reset failed; continuing (timer retains prior value): "
@@ -2025,39 +2107,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                         extra={"error": str(exc), "error_type": type(exc).__name__},
                     )
                     await _note_private_call_failure(exc, escalation, engine, live, notifier)
-                    alert_now = escalation.note_dms_failure()
-                    if escalation.dms_failure_streak == 1:
-                        # 2026-09-03 follow-up: name the deadline once per
-                        # episode so a post-mortem can compare it against
-                        # the moment the book vanished.
-                        deadline_note = escalation.dms_deadline_note(datetime.now(UTC))
-                        _LOGGER.warning(
-                            "dead man's switch failure streak started; %s",
-                            deadline_note,
-                            extra={"dms_deadline_note": deadline_note},
-                        )
-                    if alert_now:
-                        await notify(
-                            notifier,
-                            level="critical",
-                            title="Dead-man's-switch resets failing",
-                            message=(
-                                f"{_DMS_FAILURE_STREAK_ALERT} consecutive DMS reset failures. "
-                                f"If this persists past {live.dead_mans_switch_seconds}s, Kraken "
-                                "cancels ALL open orders server-side. Likely causes: account "
-                                "lockout (check for another daemon retrying a bad key) or "
-                                "network partition."
-                            ),
-                            context={
-                                "streak": escalation.dms_failure_streak,
-                                "dms_seconds": live.dead_mans_switch_seconds,
-                                "last_confirmed_trigger_at": (
-                                    escalation.dms_trigger_at.isoformat()
-                                    if escalation.dms_trigger_at is not None
-                                    else None
-                                ),
-                            },
-                        )
+                    await _record_dms_failure(escalation, live, notifier)
 
             elapsed = time.monotonic() - started_at
             if max_runtime_seconds is not None and elapsed >= max_runtime_seconds:
@@ -2078,6 +2128,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                         operator_storage,
                         notifier,
                         valuation_stale=valuation_gate.stale,
+                        reanchor_approval_after=valuation_gate.reanchor_approval_after,
                     )
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(

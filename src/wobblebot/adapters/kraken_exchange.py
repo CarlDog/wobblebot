@@ -1455,25 +1455,27 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
 
 def _parse_dms_trigger_time(result: dict[str, Any]) -> datetime | None:
-    """Parse ``CancelAllOrdersAfter``'s ``currentTime``/``triggerTime``
-    into a confirmed-armed signal.
+    """Parse a confirmed future ``CancelAllOrdersAfter`` trigger.
 
-    Kraken returns ``triggerTime="0"`` when the switch is disabled
-    (``timeout=0``) and otherwise an RFC3339 timestamp
-    (``"2026-06-01T00:01:00Z"``) strictly after ``currentTime``. Treat
-    anything else — missing, malformed, or equal to ``currentTime`` —
-    as "not confirmed armed" rather than raising, so a single odd
-    response doesn't crash the per-tick ping loop; the caller decides
-    what to do with ``None``.
+    Kraken returns ``triggerTime="0"`` when the switch is disabled. Only
+    accept a timezone-aware trigger strictly after both Kraken's
+    timezone-aware ``currentTime`` and the local receipt time; an
+    incomplete, expired, or odd response does not confirm the timer.
     """
-    trigger = result.get("triggerTime")
-    current = result.get("currentTime")
-    if not trigger or trigger == "0" or trigger == current:
+    trigger_text = result.get("triggerTime")
+    current_text = result.get("currentTime")
+    if not isinstance(trigger_text, str) or not isinstance(current_text, str):
         return None
     try:
-        return datetime.fromisoformat(str(trigger).replace("Z", "+00:00"))
+        trigger = datetime.fromisoformat(trigger_text.replace("Z", "+00:00"))
+        current = datetime.fromisoformat(current_text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if trigger.utcoffset() is None or current.utcoffset() is None:
+        return None
+    if trigger <= current or trigger <= datetime.now(UTC):
+        return None
+    return trigger.astimezone(UTC)
 
 
 def _quantize_decimal(value: Decimal, decimals: int) -> Decimal:
