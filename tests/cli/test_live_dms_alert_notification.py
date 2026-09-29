@@ -173,6 +173,89 @@ async def test_streak_start_logs_the_last_confirmed_deadline(
     assert datetime.fromisoformat(stamped).tzinfo is not None, "must be tz-aware"
 
 
+class _DmsFailsOnceThenRecoversExchange(MockExchangeAdapter):
+    """One failed reset followed by a confirmed recovery."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.dms_call_count = 0
+        self.engine: GridEngine | None = None
+
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
+        if timeout_seconds == 0:
+            return await super().set_dead_mans_switch(timeout_seconds)
+        self.dms_call_count += 1
+        if self.dms_call_count == 1:
+            raise ExchangeError("simulated transient DNS failure")
+        if self.engine is not None:
+            self.engine.request_stop()
+        return await super().set_dead_mans_switch(timeout_seconds)
+
+
+async def test_single_dms_failure_logs_confirmed_recovery(
+    storage: SQLiteStorageAdapter,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exch = _DmsFailsOnceThenRecoversExchange(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exch, storage, grid_config(), safety_config())
+    exch.engine = engine
+    notifier = SqliteNotifierAdapter(storage)
+
+    with caplog.at_level(logging.INFO, logger="wobblebot.cli.live"):
+        await _run_loop(exch, engine, _live(), storage, asyncio.Event(), notifier=notifier)
+
+    assert exch.dms_call_count == 2
+    recovery = [r for r in caplog.records if "switch reset recovered" in r.getMessage()]
+    assert len(recovery) == 1
+    assert "after 1 failure(s)" in recovery[0].getMessage()
+    assert recovery[0].trigger_at != "unconfirmed"
+    assert datetime.fromisoformat(recovery[0].trigger_at).tzinfo is not None
+    rows = await storage.get_notifications()
+    assert not any(r.notification.title == "Dead-man's-switch resets failing" for r in rows)
+
+
+class _DmsFailsThenUnconfirmedExchange(MockExchangeAdapter):
+    """A non-raising reset response without a future trigger is not recovery."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.dms_call_count = 0
+        self.engine: GridEngine | None = None
+
+    async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
+        if timeout_seconds == 0:
+            return await super().set_dead_mans_switch(timeout_seconds)
+        self.dms_call_count += 1
+        if self.dms_call_count == 1:
+            raise ExchangeError("simulated transient DNS failure")
+        if self.engine is not None:
+            self.engine.request_stop()
+        return None
+
+
+async def test_unconfirmed_dms_response_does_not_log_recovery(
+    storage: SQLiteStorageAdapter,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exch = _DmsFailsThenUnconfirmedExchange(
+        starting_balances={"USD": Decimal("100000"), "BTC": Decimal("10")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exch, storage, grid_config(), safety_config())
+    exch.engine = engine
+
+    with caplog.at_level(logging.INFO, logger="wobblebot.cli.live"):
+        await _run_loop(exch, engine, _live(), storage, asyncio.Event())
+
+    assert exch.dms_call_count == 2
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("arm not confirmed" in message for message in messages)
+    assert not any("switch reset recovered" in message for message in messages)
+
+
 class _DmsFailsThenVanishesExchange(MockExchangeAdapter):
     """DMS reset fails from the first call; after ``vanish_after`` pings the
     book is cancelled on the EXCHANGE ONLY, so the next tick sees it gone.

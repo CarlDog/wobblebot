@@ -120,7 +120,12 @@ from wobblebot.ports.notification_events import (
     SessionStartEvent,
 )
 from wobblebot.ports.notifier import NotifierPort
-from wobblebot.ports.operator import CommandResult, ExecuteProposalCommand, OperatorCommand
+from wobblebot.ports.operator import (
+    CommandResult,
+    ExecuteProposalCommand,
+    OperatorCommand,
+    ReanchorCommand,
+)
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.cool_down import check_cool_down
 from wobblebot.services.grid_engine import GridEngine
@@ -880,7 +885,79 @@ async def _prefetch_tickers(
     return tickers
 
 
-async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
+class _ValuationGate:
+    """Keep later grid steps from placing orders after a missed loss-cap check.
+
+    A failed post-tick valuation cannot undo that tick's placements. The
+    following tick must establish a fresh portfolio value before stepping
+    any symbol. A prolonged failure leaves the daemon and DMS loop running,
+    while fill detection waits for the first verified recovery tick so its
+    counter-order work is not discarded.
+    """
+
+    def __init__(self) -> None:
+        self.stale = False
+        self.failure_streak = 0
+        self.alerted = False
+
+    def note_failure(self) -> bool:
+        """Return True once when a second consecutive failure needs a page."""
+        self.stale = True
+        self.failure_streak += 1
+        if self.failure_streak >= 2 and not self.alerted:
+            self.alerted = True
+            return True
+        return False
+
+    def note_success(self) -> tuple[int, bool]:
+        """Clear the gate after a fresh valuation; return prior episode state."""
+        failures, alerted = self.failure_streak, self.alerted
+        self.stale = False
+        self.failure_streak = 0
+        self.alerted = False
+        return failures, alerted
+
+
+async def _session_loss_cap_tripped(
+    current_value_usd: Decimal,
+    started_value_usd: Decimal,
+    live: LiveConfig,
+    tick: int,
+    notifier: NotifierPort | None,
+) -> bool:
+    """Evaluate the same cap before recovery steps and after ordinary steps."""
+    session_pnl = current_value_usd - started_value_usd
+    if session_pnl < -live.max_session_loss_usd:
+        _LOGGER.error(
+            "session loss cap exceeded; stopping (session_pnl_usd=%s, limit=%s, tick=%s)",
+            fmt_decimal(session_pnl),
+            fmt_decimal(live.max_session_loss_usd),
+            tick,
+            extra={
+                "session_pnl_usd": str(session_pnl),
+                "limit": str(live.max_session_loss_usd),
+                "tick": tick,
+            },
+        )
+        await notify(
+            notifier,
+            level="error",
+            title="Loss cap tripped — session ending",
+            message=(
+                f"Session PnL {session_pnl} exceeded cap "
+                f"-{live.max_session_loss_usd} USD; cli/live stopping."
+            ),
+            event=LossCapEvent(
+                session_pnl_usd=session_pnl,
+                limit_usd=live.max_session_loss_usd,
+                tick=tick,
+            ),
+        )
+        return True
+    return False
+
+
+async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
     adapter: KrakenAdapter,
     engine: GridEngine,
     live: LiveConfig,
@@ -890,9 +967,10 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     sweep: list[Symbol] | None = None,
     escalation: _AuthEscalation | None = None,
     fee_alerted: set[Symbol] | None = None,
+    valuation_gate: _ValuationGate | None = None,
 ) -> bool:
-    """One tick across every configured symbol + post-tick loss cap
-    check. Returns True when the loss cap tripped (caller stops).
+    """One tick across every configured symbol + session loss-cap checks.
+    Returns True when the loss cap tripped (caller stops).
 
     ``sweep`` is the ORDER to step symbols in (live.symbol_priority).
     ``None`` means config order, which is both the default strategy and
@@ -902,6 +980,8 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
 
     ``escalation`` (ADR-037) carries the session's auth-failure state;
     ``None`` (tests / callers that don't care) disables escalation.
+    ``valuation_gate`` requires a fresh cap valuation before another
+    placement after a failed post-tick check.
     """
     # ADR-037 decisions 3 + 6: inside a lockout backoff window, or with
     # the trader key declared dead, skip this tick's private-call work
@@ -947,6 +1027,59 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
 
     tick_trades = await _prefetch_trades(adapter, engine, live, tick, tick_open_orders)
     tick_tickers = await _prefetch_tickers(adapter, live, tick)
+
+    # The previous tick could not verify the loss cap. Revalue BEFORE any
+    # further engine step; delaying fill detection preserves the ordinary
+    # counter-order path when the API recovers.
+    if valuation_gate is not None and valuation_gate.stale:
+        try:
+            recovered_value_usd = await _session_portfolio_value_usd(
+                adapter, tuple(live.symbols), tick_tickers
+            )
+        except WobbleBotPortError as exc:
+            _LOGGER.warning(
+                "pre-tick portfolio-value fetch failed; new placements blocked "
+                "(tick=%s): %s: %s",
+                tick,
+                type(exc).__name__,
+                exc,
+                extra={"tick": tick, "error": str(exc), "error_type": type(exc).__name__},
+            )
+            if escalation is not None:
+                await _note_private_call_failure(exc, escalation, engine, live, notifier)
+            if valuation_gate.note_failure():
+                await notify(
+                    notifier,
+                    level="warning",
+                    title="New placements blocked — valuation unavailable",
+                    message=(
+                        "The session loss cap cannot be checked. Automatic grid steps "
+                        "are paused and re-anchor requests are refused until a fresh "
+                        "portfolio valuation succeeds. The daemon continues its "
+                        "dead-man's-switch policy."
+                    ),
+                    context={"tick": tick, "failure_streak": valuation_gate.failure_streak},
+                )
+            return False
+        failures, alerted = valuation_gate.note_success()
+        _LOGGER.info(
+            "portfolio valuation recovered after %d failed check(s); "
+            "new placements may resume after the loss-cap check",
+            failures,
+            extra={"tick": tick, "failure_count": failures},
+        )
+        if alerted:
+            await notify(
+                notifier,
+                level="info",
+                title="Portfolio valuation recovered",
+                message="A fresh portfolio valuation succeeded; the loss cap is being checked.",
+                context={"tick": tick, "failure_count": failures},
+            )
+        if await _session_loss_cap_tripped(
+            recovered_value_usd, started_value_usd, live, tick, notifier
+        ):
+            return True
 
     for symbol in sweep if sweep is not None else live.symbols:
         if tick_open_orders is None:
@@ -1133,16 +1266,17 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
     # fetch in try/except. e2b6cfc's earlier fix protected the
     # finally-block call site only; this is the OTHER call site —
     # the post-tick loss-cap evaluator. A transient httpx.ReadTimeout
-    # to /0/private/BalanceEx should NOT kill the daemon. Skip the
-    # cap check for this tick (next tick will retry), log a warning,
-    # and treat as "no cap trip" so the loop continues.
+    # to /0/private/BalanceEx should NOT kill the daemon. Log the
+    # failure and keep the loop alive; the next tick must obtain a fresh
+    # valuation before any further automatic grid step.
     try:
         current_value_usd = await _session_portfolio_value_usd(
             adapter, tuple(live.symbols), tick_tickers
         )
     except WobbleBotPortError as exc:
         _LOGGER.warning(
-            "post-tick portfolio-value fetch failed; skipping loss-cap check this tick (tick=%s): "
+            "post-tick portfolio-value fetch failed; next grid step requires fresh valuation "
+            "(tick=%s): "
             "%s: %s",
             tick,
             type(exc).__name__,
@@ -1151,42 +1285,20 @@ async def _run_one_tick(  # pylint: disable=too-many-arguments,too-many-position
         )
         if escalation is not None:
             await _note_private_call_failure(exc, escalation, engine, live, notifier)
-        return False  # No cap trip; loop continues.
-    session_pnl = current_value_usd - started_value_usd
-    if session_pnl < -live.max_session_loss_usd:
-        _LOGGER.error(
-            "session loss cap exceeded; stopping (session_pnl_usd=%s, limit=%s, tick=%s)",
-            fmt_decimal(session_pnl),
-            fmt_decimal(live.max_session_loss_usd),
-            tick,
-            extra={
-                "session_pnl_usd": str(session_pnl),
-                "limit": str(live.max_session_loss_usd),
-                "tick": tick,
-            },
-        )
-        await notify(
-            notifier,
-            level="error",
-            title="Loss cap tripped — session ending",
-            message=(
-                f"Session PnL {session_pnl} exceeded cap "
-                f"-{live.max_session_loss_usd} USD; cli/live stopping."
-            ),
-            event=LossCapEvent(
-                session_pnl_usd=session_pnl,
-                limit_usd=live.max_session_loss_usd,
-                tick=tick,
-            ),
-        )
-        return True
-    return False
+        if valuation_gate is not None:
+            valuation_gate.note_failure()
+        return False  # No cap trip; the next tick checks before stepping.
+    return await _session_loss_cap_tripped(
+        current_value_usd, started_value_usd, live, tick, notifier
+    )
 
 
 async def _process_pending_commands(
     operator_service: OperatorService,
     operator_storage: StoragePort,
     notifier: NotifierPort | None,
+    *,
+    valuation_stale: bool = False,
 ) -> int:
     """Drain approved ``pending_commands`` rows; dispatch + mark each.
 
@@ -1197,6 +1309,10 @@ async def _process_pending_commands(
     refusal, ``OperatorError``) mark the row ``failed`` and record the
     error message in the result; the loop continues so one bad command
     doesn't starve the others. Returns the number of rows processed.
+
+    When the session-loss valuation is stale, an approved re-anchor is
+    marked failed before dispatch so it cannot place a new grid or run
+    later without a fresh operator approval. Other commands still run.
 
     Each dispatch also echoes its ``CommandResult`` back through
     ``notify()`` (P3 renderers slice, from the 2026-08-09 re-anchor e2e
@@ -1236,6 +1352,14 @@ async def _process_pending_commands(
             )
             continue
         try:
+            if valuation_stale and isinstance(command, ReanchorCommand):
+                # A re-anchor places a fresh grid inside dispatch_command.
+                # Fail this approval so it cannot execute on a later session
+                # without a fresh operator decision after valuation recovers.
+                raise OperatorError(
+                    "portfolio valuation unavailable; re-anchor refused; "
+                    "request it again after recovery"
+                )
             cmd_result = await operator_service.dispatch_command(command)
             updated = pending.model_copy(
                 update={
@@ -1704,6 +1828,36 @@ async def _emit_engine_states(
         )
 
 
+async def _record_confirmed_dms_reset(
+    escalation: _AuthEscalation,
+    trigger_at: datetime,
+    notifier: NotifierPort | None,
+    tick: int,
+) -> None:
+    """Close a DMS failure episode only after Kraken confirms a future trigger."""
+    escalation.dms_trigger_at = trigger_at
+    prior_failures = escalation.dms_failure_streak
+    alerted = escalation.note_dms_success()
+    if prior_failures:
+        _LOGGER.info(
+            "dead man's switch reset recovered after %d failure(s); trigger_at=%s",
+            prior_failures,
+            trigger_at.isoformat(),
+            extra={
+                "dms_failure_count": prior_failures,
+                "trigger_at": trigger_at.isoformat(),
+            },
+        )
+    if alerted:
+        await notify(
+            notifier,
+            level="info",
+            title="Kraken API recovered",
+            message="Dead-man's-switch resets are succeeding again after a failure episode.",
+            context={"tick": tick},
+        )
+
+
 async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements,too-many-branches
     adapter: KrakenAdapter,
     engine: GridEngine,
@@ -1783,6 +1937,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
     # ADR-037: per-session auth-failure escalation state (lockout
     # backoff, permanent-auth strikes, DMS-failure streak).
     escalation = _AuthEscalation()
+    valuation_gate = _ValuationGate()
     # ADR-038: symbols already paged for fee drift this session.
     fee_alerted: set[Symbol] = set()
     # Terminal-visible periodic heartbeat (separate from the operator.db
@@ -1856,19 +2011,11 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                     dms_unconfirmed_ticks = _log_dms_confirmation(
                         trigger_at, live.dead_mans_switch_seconds, dms_unconfirmed_ticks
                     )
+                    # An unconfirmed response does not prove the server-side
+                    # timer was renewed; keep the failure episode until a
+                    # later reset returns a real future trigger.
                     if trigger_at is not None:
-                        escalation.dms_trigger_at = trigger_at
-                    if escalation.note_dms_success():
-                        await notify(
-                            notifier,
-                            level="info",
-                            title="Kraken API recovered",
-                            message=(
-                                "Dead-man's-switch resets are succeeding again after a "
-                                "failure episode."
-                            ),
-                            context={"tick": tick},
-                        )
+                        await _record_confirmed_dms_reset(escalation, trigger_at, notifier, tick)
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "dead man's switch reset failed; continuing (timer retains prior value): "
@@ -1926,7 +2073,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
             # PauseCommand takes effect on the current tick.
             if operator_service is not None and operator_storage is not None:
                 try:
-                    await _process_pending_commands(operator_service, operator_storage, notifier)
+                    await _process_pending_commands(
+                        operator_service,
+                        operator_storage,
+                        notifier,
+                        valuation_stale=valuation_gate.stale,
+                    )
                 except WobbleBotPortError as exc:
                     _LOGGER.warning(
                         "pending_commands poll failed; continuing: %s",
@@ -1961,6 +2113,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 sweep=sweep,
                 escalation=escalation,
                 fee_alerted=fee_alerted,
+                valuation_gate=valuation_gate,
             ):
                 exit_code = 1
                 break
