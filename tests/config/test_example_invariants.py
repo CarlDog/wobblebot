@@ -2,10 +2,10 @@
 
 The key-only schema-drift test compares *keys*, never *values* — so a stale
 example value that contradicts a code constant (the kind of drift that bit us
-2026-06-04) slips through. This test pins the handful of example values that
-encode genuine code invariants (not free operator tuning) to the constants they
-mirror. It does NOT enforce value-equality generally: most example values are
-template choices an operator is expected to change.
+2026-06-04) slips through. These tests guard code invariants and the documented
+starting response budget for the example's thinking advisor. They do NOT enforce
+value-equality generally: most example values are template choices an operator
+is expected to change.
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from wobblebot.adapters.ollama import is_thinking_model
 from wobblebot.config.grid import KRAKEN_MAKER_FEE_RATE, KRAKEN_TAKER_FEE_RATE
+from wobblebot.config.loader import load_config
 
 pytestmark = pytest.mark.unit
 
@@ -53,3 +55,24 @@ def test_shadow_fee_rates_match_code_constants() -> None:
     shadow = _load()["shadow"]
     assert Decimal(str(shadow["maker_fee_rate"])) == KRAKEN_MAKER_FEE_RATE
     assert Decimal(str(shadow["taker_fee_rate"])) == KRAKEN_TAKER_FEE_RATE
+
+
+@pytest.mark.parametrize(("field", "minimum"), [("max_tokens", 2048), ("timeout_seconds", 180)])
+def test_copied_thinking_advisor_has_starting_response_budget(
+    tmp_path: Path, field: str, minimum: int
+) -> None:
+    """A fresh copy must allow the documented reasoning + final JSON budget.
+
+    This is the InferenceParams starting floor, not a model-completion or host
+    latency guarantee; operators still need complete-response measurements.
+    """
+    copied_config = tmp_path / "settings.yml"
+    copied_config.write_bytes(_EXAMPLE.read_bytes())
+    advisor = load_config(copied_config).advisor
+    assert advisor is not None
+    if advisor.provider == "ollama" and is_thinking_model(advisor.model):
+        actual = getattr(advisor.inference_params, field)
+        assert actual >= minimum, (
+            f"copied example thinking advisor {advisor.model}: {field}={actual} "
+            f"is below the documented starting floor {minimum}"
+        )

@@ -5,6 +5,27 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Post-v2 maintenance audit remediation — locally verified 2026-09-30.**
+The user authorized the findings in [audit #164](https://github.com/CarlDog/wobblebot/issues/164).
+Review branch `codex/audit-164-remediation` corrects the Harvester README,
+historical fee/ADR pointers, Unreleased history, and documented architecture
+exceptions. The generic DeepSeek R1 example now starts at 2,048 tokens / 180s;
+these are documented floors, not measured completion guarantees. A copied-config
+guard rejects the old 512-token / 60s values. A focused AST guard enforces exact
+existing exception pairs without a production-source refactor; disabling its
+detector made all 19 negative controls fail. Independent review found no
+remaining blocker after narrowing one changelog claim to re-anchor approvals.
+
+The existing local editable/dev environment was refreshed to the manifest
+(wobblebot 2.0.13, pylint 4.0.8; all 11 dev requirements matched; `pip check`
+clean). Default pytest with `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1` passed 4,400 tests,
+with 30 integration tests deselected and no skips; coverage was 88.46%.
+Black checked 429 files, isort passed, mypy passed on 158 source files, and
+pylint scored 10.00/10. The focused copied-example/config checks passed 76 tests;
+the AST guard passed 52. This receipt records local remediation verification;
+merge and production deployment are separate. No live trade, withdrawal, or
+paid inference probe ran. Formal 2.0.x acceptance remains pending.
+
 **Warning remediation deployed from merged `main` SHA `29827be` — 2026-09-29
 UTC.** [PR #162](https://github.com/CarlDog/wobblebot/pull/162) merged at
 04:32 UTC after independent review, mutation checks, and green PR CI. The
