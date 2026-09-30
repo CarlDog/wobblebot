@@ -152,8 +152,37 @@ tests/         # Mirrors src/ structure
 - `domain/` must not import from `adapters/`, `services/`, or `cli/`. Run `grep -r "from wobblebot.adapters" src/wobblebot/domain/` — output should be empty.
 - Dependencies flow inward only: adapters depend on ports, services depend on ports + domain, nothing depends on adapters.
 - All cross-module wiring happens via constructor dependency injection of port interfaces.
-- **Documented exception — LLM plumbing.** The cloud-LLM adapters (`adapters/openai.py`, `anthropic.py`, `google.py`, their `*_assistant.py` variants) and `adapters/moe_advisor.py` import shared *leaf* helpers from `services/` (`llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry`, `aggregators`). This bends "nothing flows out of adapters" and centralizes one cost-gate / retry / pricing implementation instead of copying it per provider. This is the one sanctioned outward edge; new LLM adapters may reuse these helpers, but don't introduce fresh adapter→service dependencies outside this plumbing.
-  **Corrected 2026-09-04 (release-close audit):** this bullet used to justify itself with "creates **no import cycle** — those helpers never import the adapters back." That reason was false. `services/llm_cloud_call.py` imports `OllamaJsonExtractError` / `extract_last_json_object` from `adapters/ollama.py`, and `services/simulator.py` imports `adapters/mock_exchange`, so the seam is **bidirectional**. There is still no cycle — `adapters/ollama.py` imports only `config/`, `domain/` and `ports/`, verified by grep — but it is cycle-free by accident rather than by the stated rule, and a future import in `adapters/ollama.py` would close the loop with nothing to catch it. **Fixed the same day:** `extract_last_json_object` — a pure text function whose own docstring called it "port-agnostic" — moved into `services/llm_cloud_call.py`, so the LLM plumbing is one-directional again and this bullet's original claim holds. Verified by grep: `services/` now imports exactly one adapter. `simulator.py`→`mock_exchange` is a separate, deliberate edge (a simulator needs a fake exchange) and is not covered by the LLM exception at all.
+- **Documented exception — LLM plumbing.** The exact existing adapter-to-service
+  module pairs below share parsing, cost gates, pricing, retries, aggregation,
+  failure labels, and trace context. Duplicating these behaviors per provider
+  would duplicate correctness and spend controls. These helpers depend on no
+  adapters; the JSON extractor moved from `adapters/ollama.py` to
+  `services/llm_cloud_call.py` on 2026-09-04. This exception grants no directory-wide
+  permission and no automatic permission for a new provider.
+
+  | Adapter modules under `adapters/` | Allowed modules under `services/` |
+  |---|---|
+  | `anthropic`, `anthropic_assistant`, `google`, `openai`, `ollama_cloud` | `llm_cloud_call`, `llm_cost_gate`, `llm_pricing`, `llm_retry` |
+  | `ollama`, `ollama_assistant` | `llm_cloud_call` |
+  | `moe_advisor` | `aggregators` |
+  | `fallback_advisor` | `aggregators`, `llm_failures`, `llm_trace` |
+
+- **Documented exception — Phase 1 simulator.** Only
+  `services/simulator.py` may import `adapters/mock_exchange.py`.
+  Its scripted price walk needs the mock's simulation controls, which are not
+  part of the production `ExchangePort`; moving that helper into the production
+  port would expose test controls to real exchanges. The mock imports only domain
+  and port modules, so it cannot close a service-to-adapter cycle or introduce a
+  remote client into the simulator. Reconsider this edge if the simulator becomes
+  a production use case or needs a second concrete adapter.
+
+`tests/test_architecture_boundaries.py` parses all Python imports, including
+relative imports, function-local imports and type-checking blocks. It enforces
+domain/port inward dependencies, rejects service/adapter imports of CLI or web
+drivers and core imports of delivery frameworks, and permits only the exact
+exception pairs above. It also fails on unused exceptions. Reconsider the LLM
+exception before widening that inventory or exposing provider/driver types
+through a port; adapter imports from the helpers remain forbidden.
 
 ### Financial Power Fragmentation (Safety Design)
 

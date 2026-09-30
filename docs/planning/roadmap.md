@@ -5,6 +5,123 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Post-v2 audit remediation merged and deployed — 2026-09-30 UTC.**
+[PR #165](https://github.com/CarlDog/wobblebot/pull/165) merged at 21:09:33 UTC
+as `d6a1d298383525214d2126dde621913e4f08b66f`. Merged-main
+[CI run 36777592678](https://github.com/CarlDog/wobblebot/actions/runs/36777592678)
+passed `test` and `build-and-push`; main CodeQL and gitleaks also passed.
+The published and deployed immutable image is
+`ghcr.io/carldog/wobblebot:sha-d6a1d29@sha256:5e5be31c0de68aee6b9ceb61e720164e101066e999a2455dd6de70242c9514e1`.
+This SHA deployment retains version 2.0.13; no new SemVer tag or GitHub Release.
+
+*Logs before merge.* The all-eight-service export covers retained NAS files
+overlapping 2026-09-23 21:06:28 through 2026-09-30 21:06:28 UTC, plus current
+Docker stdout/stderr available since the September 29 restart (about 40 hours).
+The 42 source files comprise 34 persistent files and eight Docker logs;
+persistent files retain their day-boundary overlap. Every local file hash and
+the ZIP integrity check passed. The ignored local archive is
+`logs/nas-predeploy-2026-09-30T210628Z.zip`, SHA-256
+`6d6e92844125bfb6a701dd22d62c97ce12c491f2d43d34d65a1083f874f3d272`.
+Independent review of the current Docker logs found 28 WARNING lines and no
+ERROR/CRITICAL or deployment blocker. During the September 30 19:47 private-API
+interruption, valuation failure blocked new placements; valuation and DMS
+recovered before the last confirmed DMS deadline. SOL dust, four offside parked
+grids, and the September 29 CoinGape 403 remain existing operational findings;
+the export does not establish the feed's recovery.
+
+*Deployment receipt.* Independent review confirmed no change to runtime source,
+tools, manifest, Docker/Compose/entrypoint, schema, or mounted operator settings
+relative to the prior deployed revision. The generic example, tests, and docs
+had their independent review and mutation checks; no additional runtime code
+review was required for this deployment. Validation-only `cli.preflight` ran
+inside the production live container for BTC, ETH, XRP, SOL, DOGE, and ADA:
+all 36 layout orders validated, with no order placement by preflight. Kraken
+confirmed the production trader key has no withdrawal permission. SOL, DOGE,
+and ADA used the CLI-only diagnostic cap override described in the prior receipt;
+their effective per-coin settings were unchanged.
+
+At 21:17 UTC, one atomic Portainer stack-file update changed the image digest
+and `IMAGE_TAG`; endpoint 2 file stack 158 advanced **91 -> 92 in one redeploy**.
+Other environment values were preserved and the mounted settings hash matched
+before and after. All eight new containers started at 21:17:05–08 UTC. At
+21:19 UTC all were healthy, with zero restarts, the exact revision and digest
+above, and no startup ERROR/CRITICAL. The four startup warnings were SOL/DOGE
+stale-anchor re-layout notices, the web bind advisory, and the existing SOL dust
+finding. DOGE re-layout placed 6/6 orders; SOL placed 3/6 with three refused.
+BTC/ETH/XRP/ADA remained offside parked.
+
+Read-only checks at 21:16:31 and 21:17:56 UTC found `quick_check=ok` in all six
+databases and no pending fill markers, approved commands, execute-proposal
+commands, or transfer results. A normal post-restart DOGE BUY fill increased
+live trades from 249 to 250. Startup maintenance verified all six September 30
+04:44 backups and completed daily reconciliation cleanly across six symbols;
+ledger sync fetched and wrote 569 entries. No new backup was written at startup
+because the existing set was younger than the configured threshold. Any image
+rollback must preserve current databases and withdrawal claims; those older
+backups must not overwrite later trades. GET-only loopback web checks passed
+anonymous health/login and authenticated dashboard, status cards, and advisor
+routes. This verifies startup health and these specific checks; extended soak,
+live-withdrawal, paid-inference, and formal 2.0.x acceptance remain unestablished.
+
+**Post-v2 maintenance audit remediation — locally verified 2026-09-30.**
+The user authorized the findings in [audit #164](https://github.com/CarlDog/wobblebot/issues/164).
+Review branch `codex/audit-164-remediation` corrects the Harvester README,
+historical fee/ADR pointers, Unreleased history, and documented architecture
+exceptions. The generic DeepSeek R1 example now starts at 2,048 tokens / 180s;
+these are documented floors, not measured completion guarantees. A copied-config
+guard rejects the old 512-token / 60s values. A focused AST guard enforces exact
+existing exception pairs without a production-source refactor; disabling its
+detector made all 19 negative controls fail. Independent review found no
+remaining blocker after narrowing one changelog claim to re-anchor approvals.
+
+The existing local editable/dev environment was refreshed to the manifest
+(wobblebot 2.0.13, pylint 4.0.8; all 11 dev requirements matched; `pip check`
+clean). Default pytest with `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1` passed 4,400 tests,
+with 30 integration tests deselected and no skips; coverage was 88.46%.
+Black checked 429 files, isort passed, mypy passed on 158 source files, and
+pylint scored 10.00/10. The focused copied-example/config checks passed 76 tests;
+the AST guard passed 52. This receipt records local remediation verification;
+merge and production deployment are separate. No live trade, withdrawal, or
+paid inference probe ran. Formal 2.0.x acceptance remains pending.
+
+**Warning remediation deployed from merged `main` SHA `29827be` — 2026-09-29
+UTC.** [PR #162](https://github.com/CarlDog/wobblebot/pull/162) merged at
+04:32 UTC after independent review, mutation checks, and green PR CI. The
+production delta also included the previously merged, reviewed startup cleanup
+in PR #158. Main run 36522088840 passed both `test` and `build-and-push`.
+The immutable image is `ghcr.io/carldog/wobblebot:sha-29827be@sha256:74f8696454cc0aef2585602095489fe387cbb8f39a56cbd75c81628405478358`;
+this SHA deployment has no new SemVer tag or GitHub Release.
+
+*Deployment receipt (2026-09-29 UTC).* The six 04:00 NAS database backups
+matched their off-NAS SHA-256 copies and passed integrity and disposable restore
+checks. At 04:41 UTC, read-only NAS checks found `quick_check=ok` in live,
+operator, and harvest; the 247 live trade rows matched the backup, with no
+pending fills, approved commands, execute-proposal commands, or transfer
+results. Validation-only `cli.preflight` passed for all six live symbols using
+the NAS `cpu-only` settings and a local trader key that Kraken accepted and
+confirmed could not withdraw. SOL, DOGE, and ADA needed a CLI-only override to
+raise preflight's default-derived diagnostic cap; their effective per-coin
+grid settings were verified unchanged. Portainer's redacted credentials could
+not be compared with the local key, so that check does not establish the
+production key's current scope. The code delta had no database schema or
+configuration change.
+
+Portainer file stack 158 changed `IMAGE_TAG` to `sha-29827be` and its compose
+digest pin to the image above; file version advanced 90 -> 91. The two edits
+caused two redeploys. At final readback, all eight containers were healthy on
+revision `29827be59c3534d70ae806226211efec3467d897`, the exact digest
+above, with zero restarts and no startup ERROR/CRITICAL lines. The live
+container's stale-anchor DOGE re-layout placed 6/6 orders and then recorded a
+fill; SOL's re-layout placed 3/6, with the other three refused by caps. At
+04:48 UTC, read-only live, operator, and harvest checks again passed integrity
+with no pending fills, approved commands, execute-proposal commands, or transfer
+results. Two new DOGE trades brought live.db to 249 rows; a fresh read-only
+Kraken reconciliation matched all 249 across the six symbols, with zero
+missing or deferred trades and matching quantities. The 04:00 backup therefore
+must not overwrite later live trades. This readback proves deployment health
+and reconciliation at that time; the private-API outage and DMS escalation
+paths have not been exercised in production on this revision.
+
 **`v2.0.13` withdrawal submission safety — source released and deployed
 2026-09-25 UTC.** [PR #155](https://github.com/CarlDog/wobblebot/pull/155)
 merged as `90867b0`; the annotated `v2.0.13` tag peels to that commit. The
