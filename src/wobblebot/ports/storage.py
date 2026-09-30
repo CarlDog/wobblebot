@@ -25,6 +25,7 @@ from wobblebot.domain.models import (
     LedgerEntry,
     NewsItem,
     Order,
+    PendingFillTrades,
     PriceSnapshot,
     Trade,
 )
@@ -166,15 +167,103 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         retries it. Implementations must roll back the order update if
         any trade write fails, so the order is left in its prior state
         and gets re-resolved on the next pass instead of silently losing
-        the trade. ``trades`` may be empty (a clean cancel/expire with no
-        fill) — equivalent to a plain ``save_order``.
+        the trade. ``trades`` may be empty ONLY for a clean cancel/expire
+        (``order.filled_amount == 0``) — then this is a plain
+        ``save_order``. A ``filled_amount > 0`` with no trades is
+        refused (ADR-046): that shape is a confirmed fill whose trade
+        rows the exchange has not surfaced yet, not a completed fill,
+        and committing it is exactly how the 2026-09-10 DOGE/USD trade
+        was lost — the order closed, nothing ever re-examined it. Use
+        :meth:`save_fill_pending_trades` for that case.
 
         Args:
             order: The order's refreshed terminal (or updated) state.
             trades: Trades matched to this resolution, if any.
 
         Raises:
-            StorageError: If the save fails; no partial write is left.
+            StorageError: If the save fails (no partial write is left),
+                or if ``order.filled_amount > 0`` and ``trades`` is empty.
+        """
+        pass
+
+    @abstractmethod
+    async def save_fill_pending_trades(self, order: Order, trades: Sequence[Trade] = ()) -> None:
+        """Persist a CONFIRMED fill whose trade rows are not all available yet.
+
+        ADR-046. One transaction: the order's terminal state, whatever
+        trades did arrive (possibly none), and a ``pending_fill_trades``
+        marker keyed by ``order.id``. The marker is what keeps the fill
+        from being silently final: the engine sweeps it every tick until
+        the recovered trades cover ``order.filled_amount``. Rollback on
+        any failure leaves the order in its prior state, so it is
+        re-resolved on the next pass — the same guarantee ``save_fill``
+        gives.
+
+        Args:
+            order: The refreshed terminal order; ``filled_amount`` must
+                be > 0 and ``exchange_id`` set.
+            trades: Trade rows already recovered for it, if any.
+
+        Raises:
+            StorageError: If ``filled_amount <= 0`` (that is a clean
+                cancel — use ``save_fill``), if ``exchange_id`` is
+                missing, or if the write fails; no partial write is left.
+        """
+        pass
+
+    @abstractmethod
+    async def record_pending_fill_trades(
+        self, order_id: UUID, trades: Sequence[Trade], *, complete: bool
+    ) -> None:
+        """Persist trade rows recovered for a pending fill (ADR-046).
+
+        One transaction. Inserts ``trades`` (idempotent, keyed by trade
+        id) and, when ``complete`` is true, deletes the pending marker.
+        With ``complete=False`` the marker stays: a limit order can fill
+        across several trades seconds apart, and the caller only declares
+        completeness once the recovered volume covers the fill.
+
+        Raises:
+            StorageError: If the write fails; no partial write is left.
+        """
+        pass
+
+    @abstractmethod
+    async def note_pending_fill_trades_attempt(
+        self, order_id: UUID, *, at: Timestamp, given_up: bool, counted: bool = True
+    ) -> None:
+        """Record one sweep pass over a pending fill.
+
+        Sets ``last_attempt_at``; increments ``attempts`` only when
+        ``counted`` (a lookup that ran and left the fill uncovered — a
+        transport error or an off-cadence pass is not an attempt, so the
+        engine passes ``counted=False`` and the row's count stays honest).
+        With ``given_up=True`` also sets ``given_up_at``, after which the
+        row is excluded from :meth:`get_pending_fill_trades` by default
+        but kept as the forensic record: the live daemon re-raises it at
+        ERROR on every boot until the rows are backfilled (and clears it
+        once they are), and the daily reconcile (live.symbols only; it does
+        not read this table) reports the gap once the exchange's own trade
+        history lists the trade.
+
+        Raises:
+            StorageError: If the update fails.
+        """
+        pass
+
+    @abstractmethod
+    async def get_pending_fill_trades(
+        self, symbol: Symbol | None = None, *, include_given_up: bool = False
+    ) -> list[PendingFillTrades]:
+        """Fills still owed their trade rows, oldest first (ADR-046).
+
+        Args:
+            symbol: Optional symbol filter.
+            include_given_up: Also return rows the sweep stopped
+                retrying (``given_up_at`` set). Default excludes them.
+
+        Raises:
+            StorageError: If the read fails.
         """
         pass
 

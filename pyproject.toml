@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wobblebot"
-version = "2.0.11"
+version = "2.0.13"
 description = "Deterministic, safety-first micro-trading system using hexagonal architecture"
 authors = [
     {name = "WobbleBot Team"}
@@ -110,9 +110,9 @@ dev = [
     "black==26.5.1",
     "isort==9.0.1",
     "mypy==2.3.1",
-    "pylint==4.0.8",
+    "pylint==4.0.9",
     "pylint-pydantic==0.4.1",
-    "types-pyyaml==6.0.12.20260724",
+    "types-pyyaml==6.0.12.20260906",
     "python-dotenv==1.2.3",
     # Test-only HTTP client for `starlette.testclient`, which does
     # `import httpx2 as httpx` and falls back to plain `httpx` with a
@@ -130,7 +130,7 @@ dev = [
     # to 1.6.0 — it contradicted its own neighbour. Corrected 2026-09-04 by
     # the release-close audit. Runtime `httpx` stays in
     # [project.dependencies]; the Anthropic adapter uses it directly.
-    "httpx2==2.12.0",
+    "httpx2==2.13.1",
 ]
 
 [project.urls]

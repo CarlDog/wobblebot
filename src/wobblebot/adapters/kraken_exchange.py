@@ -83,6 +83,10 @@ from wobblebot.ports.exchange import ExchangePort
 # precedent). 20 pages (~1000 raw trades) comfortably covers the current
 # grid_engine.py caller's limit=200 across the account's traded symbols.
 _TRADES_HISTORY_MAX_PAGES = 20
+# Kraken's QueryTrades accepts "Comma delimited list of transaction IDs to
+# query info about (20 maximum)" (docs.kraken.com, Get Trades Info, read
+# 2026-09-18). get_order_trades chunks an order's trade-id list at this.
+_QUERY_TRADES_MAX_IDS = 20
 
 # Same safety bound for the Ledgers walk (ADR-040 follow-up). Ledgers
 # pages at 50 like TradesHistory, so 20 pages is 1000 entries per asset
@@ -763,6 +767,69 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
         trades.sort(key=lambda t: t.executed_at.dt, reverse=True)
         return trades[:limit]
 
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        """Trades Kraken attributes to ``order`` via the order's own trade-id list.
+
+        Two one-point calls here; on a lagging fill the resolver has
+        already spent one ``QueryOrders`` in ``get_order_status``, so the
+        whole path is three one-point calls. Kraken puts these in its
+        cheap bucket and ``TradesHistory`` in the expensive one (its
+        rate-limit guide says 2 per page, its support article says 4),
+        and ``get_trade_history`` walks up to ``_TRADES_HISTORY_MAX_PAGES``
+        of them — which is why the ADR-046 recovery sweep uses THIS path
+        every tick and not that one:
+
+        1. ``QueryOrders`` with ``trades=true``; the order entry then
+           carries ``trades``, "List of trade IDs related to order (if
+           trades info requested and data available)" (docs.kraken.com,
+           Get Orders Info, read 2026-09-18). "Data available" is the
+           same lag ``TradesHistory`` shows, so an absent or empty list
+           is a legitimate "not yet", returned as ``[]``.
+        2. ``QueryTrades`` for those ids in chunks of
+           ``_QUERY_TRADES_MAX_IDS``; entries have the ``TradesHistory``
+           shape, so ``_build_trade_from_kraken`` is shared. Only trades
+           whose ``ordertxid`` is this order are kept.
+
+        Field names come from the docs, not a captured response; the
+        pre-deploy live check (a read-only ``QueryOrders``/``QueryTrades``
+        against a known filled order, with the TRADER key cli/live runs
+        under) is what verifies them.
+        """
+        if not order.exchange_id:
+            raise ExchangeError("Cannot query trades for an order with no exchange_id")
+        if order.exchange_id.startswith("DRYRUN-"):
+            # Dry-run orders never reached Kraken, so nothing ever filled.
+            return []
+        await self._ensure_pair_metadata()
+        result = await self._private_post(
+            "/0/private/QueryOrders", {"txid": order.exchange_id, "trades": "true"}
+        )
+        entry = result.get(order.exchange_id)
+        if not isinstance(entry, dict):
+            raise ExchangeError(f"Kraken QueryOrders missing entry for {order.exchange_id!r}")
+        raw_ids = entry.get("trades", [])
+        if raw_ids is None:
+            raw_ids = []
+        if not isinstance(raw_ids, list):
+            raise ExchangeError(
+                f"Kraken QueryOrders 'trades' for {order.exchange_id!r} is not a list"
+            )
+        trade_ids = [tid for tid in raw_ids if isinstance(tid, str) and tid]
+        if not trade_ids:
+            return []
+        trades: list[Trade] = []
+        for start in range(0, len(trade_ids), _QUERY_TRADES_MAX_IDS):
+            chunk = trade_ids[start : start + _QUERY_TRADES_MAX_IDS]
+            page = await self._private_post("/0/private/QueryTrades", {"txid": ",".join(chunk)})
+            for txid, trade_entry in page.items():
+                trade = self._build_trade_from_kraken(txid, trade_entry)
+                if trade.order_id == order.exchange_id:
+                    trades.append(trade)
+        # Oldest first: callers sum these against filled_amount and log
+        # them in execution order; no "most-recent first" convention here.
+        trades.sort(key=lambda t: t.executed_at.dt)
+        return trades
+
     # ------------------------------------------------ ExchangePort: write paths
 
     async def place_order(self, order: Order) -> Order:
@@ -1388,25 +1455,27 @@ class KrakenAdapter(ExchangePort):  # pylint: disable=too-many-instance-attribut
 
 
 def _parse_dms_trigger_time(result: dict[str, Any]) -> datetime | None:
-    """Parse ``CancelAllOrdersAfter``'s ``currentTime``/``triggerTime``
-    into a confirmed-armed signal.
+    """Parse a confirmed future ``CancelAllOrdersAfter`` trigger.
 
-    Kraken returns ``triggerTime="0"`` when the switch is disabled
-    (``timeout=0``) and otherwise an RFC3339 timestamp
-    (``"2026-06-01T00:01:00Z"``) strictly after ``currentTime``. Treat
-    anything else — missing, malformed, or equal to ``currentTime`` —
-    as "not confirmed armed" rather than raising, so a single odd
-    response doesn't crash the per-tick ping loop; the caller decides
-    what to do with ``None``.
+    Kraken returns ``triggerTime="0"`` when the switch is disabled. Only
+    accept a timezone-aware trigger strictly after both Kraken's
+    timezone-aware ``currentTime`` and the local receipt time; an
+    incomplete, expired, or odd response does not confirm the timer.
     """
-    trigger = result.get("triggerTime")
-    current = result.get("currentTime")
-    if not trigger or trigger == "0" or trigger == current:
+    trigger_text = result.get("triggerTime")
+    current_text = result.get("currentTime")
+    if not isinstance(trigger_text, str) or not isinstance(current_text, str):
         return None
     try:
-        return datetime.fromisoformat(str(trigger).replace("Z", "+00:00"))
+        trigger = datetime.fromisoformat(trigger_text.replace("Z", "+00:00"))
+        current = datetime.fromisoformat(current_text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if trigger.utcoffset() is None or current.utcoffset() is None:
+        return None
+    if trigger <= current or trigger <= datetime.now(UTC):
+        return None
+    return trigger.astimezone(UTC)
 
 
 def _quantize_decimal(value: Decimal, decimals: int) -> Decimal:

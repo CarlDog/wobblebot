@@ -53,14 +53,16 @@ storage open + engine first tick. See ``cli/live`` and
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
 from wobblebot.domain.models import Order, Trade
 from wobblebot.domain.value_objects import Symbol, Timestamp, fmt_decimal
-from wobblebot.ports.exceptions import StorageError
+from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.storage import StoragePort
 
 _LOGGER = logging.getLogger("wobblebot.services.reconciler")
@@ -137,11 +139,105 @@ class TerminalOrderResolution:
     before the cancel/expiry — the F1 case). ``needs_counter`` mirrors
     "there was a real fill here": the caller must place a counter sized
     to ``order.filled_amount``.
+
+    ``trades_pending`` (ADR-046) is set when ``filled_amount > 0`` but
+    ``trades`` does not cover it — the exchange confirmed the fill and
+    has not surfaced (all of) its trade rows yet. The caller must persist
+    the order through ``StoragePort.save_fill_pending_trades`` so the
+    engine's sweep recovers the rest, never through ``save_fill`` (which
+    refuses the shape). ``needs_counter`` is still true: the counter is
+    sized from ``filled_amount``, not from the trade rows.
     """
 
     order: Order
     trades: tuple[Trade, ...] = ()
     needs_counter: bool = False
+    trades_pending: bool = False
+
+
+# ADR-046: a fill is covered when the recovered trade volume reaches the
+# exchange-reported filled_amount. Kraken reports both as decimal strings
+# at the pair's lot precision, so equality already holds for a complete
+# set; the tolerance only absorbs a rounding difference between vol_exec
+# and a multi-trade sum.
+_FILL_VOLUME_TOLERANCE = Decimal("1e-8")
+
+
+def volume_covers(filled_amount: Decimal, trades: Sequence[Trade]) -> bool:
+    """True when ``trades`` account for all of ``filled_amount``.
+
+    The marker-level form of :func:`trades_cover_fill`: the boot re-check
+    of a given-up ``pending_fill_trades`` marker judges coverage from the
+    marker's own recorded fill, so an operator backfill clears it even
+    when the ``orders`` row is gone (2026-09-18 fix-round review).
+    """
+    if filled_amount <= 0:
+        return True
+    if not trades:
+        # An empty set never covers a positive fill, however small: the
+        # tolerance below is for rounding between vol_exec and a multi-trade
+        # sum, not for a one-lot-unit fill with no rows (2026-09-18 review).
+        return False
+    recovered = sum((trade.amount.value for trade in trades), Decimal(0))
+    return recovered + _FILL_VOLUME_TOLERANCE >= filled_amount
+
+
+def trades_cover_fill(order: Order, trades: Sequence[Trade]) -> bool:
+    """True when ``trades`` account for all of ``order.filled_amount``.
+
+    A zero fill is trivially covered. A limit order can fill across
+    several trades seconds apart, so "some trades arrived" is not
+    "the fill is recorded" — this is the test every completeness
+    decision (resolution, cancel path, recovery sweep) goes through.
+    """
+    return volume_covers(order.filled_amount, trades)
+
+
+async def resolve_fill_trades(
+    adapter: _AdapterLike, order: Order, trades: Sequence[Trade]
+) -> tuple[tuple[Trade, ...], bool]:
+    """Complete the trade rows for a filled ``order`` (ADR-046 fast path).
+
+    ``trades`` is what the caller's trade-history snapshot attributed to
+    the order. When that does not cover ``order.filled_amount``, ask the
+    exchange for the order's OWN trade list once (Kraken: QueryOrders
+    ``trades=true`` + QueryTrades — the order-engine view that already
+    reported the fill, which is consistent when the account-wide history
+    is not). Returns ``(trades, pending)``: ``pending`` is true when the
+    merged rows still fall short and the caller must persist a pending
+    marker instead of finalizing.
+
+    Fails soft: a lookup error is logged and treated as "still pending".
+    This sits on the per-tick hot path, and propagating would turn every
+    fill into a per-tick step failure with the order stuck open.
+    """
+    known = tuple(trades)
+    if trades_cover_fill(order, known):
+        return known, False
+    try:
+        direct = await adapter.get_order_trades(order)
+    except ExchangeError as exc:
+        _LOGGER.warning(
+            "fill %s %s (%s): order-trade lookup failed, trade rows pending: %s: %s",
+            order.symbol,
+            order.side.value.upper(),
+            order.exchange_id,
+            type(exc).__name__,
+            exc,
+            extra={
+                "symbol": str(order.symbol),
+                "exchange_id": order.exchange_id,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            },
+        )
+        return known, True
+    if direct:
+        merged = {trade.id: trade for trade in known}
+        for trade in direct:
+            merged[trade.id] = trade
+        known = tuple(sorted(merged.values(), key=lambda trade: trade.executed_at.dt))
+    return known, not trades_cover_fill(order, known)
 
 
 # --------------------------------------------------------------------- #
@@ -239,6 +335,8 @@ class _AdapterLike(Protocol):
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]: ...
 
+    async def get_order_trades(self, order: Order) -> list[Trade]: ...
+
 
 async def _resolve_terminal_order(
     adapter: _AdapterLike,
@@ -265,8 +363,11 @@ async def _resolve_terminal_order(
     """
     refreshed = await adapter.get_order_status(order)
     if refreshed.filled_amount > 0 and refreshed.exchange_id:
-        trades = tuple(trades_by_order.get(refreshed.exchange_id, []))
-        return TerminalOrderResolution(order=refreshed, trades=trades, needs_counter=True)
+        snapshot = trades_by_order.get(refreshed.exchange_id, [])
+        trades, pending = await resolve_fill_trades(adapter, refreshed, snapshot)
+        return TerminalOrderResolution(
+            order=refreshed, trades=trades, needs_counter=True, trades_pending=pending
+        )
     return TerminalOrderResolution(order=refreshed)
 
 
@@ -368,9 +469,32 @@ async def apply_reconciliation(  # pylint: disable=too-many-locals
                 # closed order with no matching trade if a write fails
                 # partway through, and a closed order never gets
                 # re-resolved.
-                await storage.save_fill(
-                    resolution.order.model_copy(update={"updated_at": now}), resolution.trades
-                )
+                terminal = resolution.order.model_copy(update={"updated_at": now})
+                if resolution.trades_pending:
+                    # ADR-046: the exchange confirmed this fill but has not
+                    # surfaced (all of) its trade rows. Close the order and
+                    # write the pending marker in one transaction; the
+                    # engine's per-tick sweep collects the rows once
+                    # cli/live has loaded the markers after this call.
+                    await storage.save_fill_pending_trades(terminal, resolution.trades)
+                    _LOGGER.warning(
+                        "reconciler: %s %s (%s) filled %s while the daemon was down but only "
+                        "%d of its trade row(s) are visible yet; pending-trades marker saved",
+                        stale.symbol,
+                        stale.side.value.upper(),
+                        stale.exchange_id,
+                        fmt_decimal(resolution.order.filled_amount),
+                        len(resolution.trades),
+                        extra={
+                            "exchange_id": stale.exchange_id,
+                            "symbol": str(stale.symbol),
+                            "filled_amount": str(resolution.order.filled_amount),
+                            "trades_visible": len(resolution.trades),
+                            "trades_pending": True,
+                        },
+                    )
+                else:
+                    await storage.save_fill(terminal, resolution.trades)
                 recovered_fill_count += 1
                 needs_counter_order_ids.append(stale.id)
                 _LOGGER.warning(

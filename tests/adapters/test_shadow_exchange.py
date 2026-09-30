@@ -103,6 +103,9 @@ class _StubLiveExchange(ExchangePort):
     ) -> list[Trade]:
         raise NotImplementedError
 
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        raise NotImplementedError
+
     async def get_ohlc(
         self,
         symbol: Symbol,

@@ -8,6 +8,7 @@ Each document in this folder is the single source of truth for one aspect of pro
 | --- | --- |
 | `roadmap.md` | Authoritative sequential phase/stage roadmap, current status, gates, and completion receipts. |
 | `2.0-closeout-and-2.1-entry-plan.md` | Authorized local 2.0.x closeout sequence, later decision gates, and proposed 2.1 scope. |
+| `2026-09-25-post-v2.0.13-handoff.md` | Dated operations, maintenance and Dependabot handoff after the v2.0.13 deployment. |
 | `backlog.md` | Complete historical-candidate crosswalk, owners, triggers and dispositions; completion receipts remain in the roadmap. |
 | `2.0-closeout-audit.md` | Audit evidence, unresolved exceptions and the concrete release decision packet. |
 | `milestones.md` | Concrete phase/stage outcomes and release checkpoints. |

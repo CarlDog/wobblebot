@@ -55,8 +55,9 @@ class TransferResult(BaseModel):
     """
 
     proposal_id: str
-    transaction_id: str = Field(..., description="Exchange refid")
+    transaction_id: str = Field(..., description="Exchange refid or local claim id")
     status: Literal["pending", "completed", "failed"]
+    submission_state: Literal["reserved", "unknown", "accepted", "rejected"] = "accepted"
     executed_amount: Decimal = Field(..., ge=0)
     direction: Literal["exchange_to_bank", "bank_to_exchange"]
     asset: str = Field(..., min_length=1, max_length=10)

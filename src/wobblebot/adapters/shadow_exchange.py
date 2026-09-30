@@ -187,6 +187,9 @@ class ShadowExchangeAdapter(ExchangePort):
     ) -> list[Trade]:
         return await self._mock.get_trade_history(symbol, limit)
 
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        return await self._mock.get_order_trades(order)
+
     # ------------------------------------------------ ExchangePort: write paths
 
     async def place_order(self, order: Order) -> Order:

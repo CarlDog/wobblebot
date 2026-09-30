@@ -58,6 +58,16 @@ x-wobblebot-defaults: &wobblebot-defaults
   # (it skips the pull when a local cache exists, even when explicitly
   # asked). Bumping IMAGE_TAG is the canonical "deploy new code"
   # action: change the env in Portainer → save → redeploy → fresh pull.
+  # SINCE 2.0.11 THE DEPLOYED STACK FILE ALSO PINS A DIGEST on this line
+  # (`:${IMAGE_TAG}@sha256:<digest>`), so a code deploy there moves BOTH
+  # the pin and IMAGE_TAG. With the pin left alone Docker resolves by
+  # digest and a tag bump recreates the OLD image under the new tag —
+  # the 2026-09-19 first attempt at 2.0.12 did exactly that. Verify a
+  # deploy from the container's org.opencontainers.image.revision
+  # label, never from the tag in the container list. The deployed stack
+  # file also carries Watchtower labels and a `tools` healthcheck this
+  # file does not: the stack file is the deployment truth, this file
+  # the template.
   #
   # NOTE: this stack has NO auto-update (`AutoUpdate: null`) — no git
   # poll, no webhook. Pushing to `main` deploys nothing. Compose

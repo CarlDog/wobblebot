@@ -3,7 +3,7 @@
 This file records design decisions that have been **ratified — do not relitigate
 without an ADR** — but that are operational/implementation-level rather than
 cross-cutting architectural commitments. The formal architectural decisions live
-in [`decisions.md`](decisions.md) (ADR-001 … ADR-031; ADR-020 deferred); the always-loaded summary
+in [`decisions.md`](decisions.md); the always-loaded summary
 of layer rules and conventions lives in the repo-root `CLAUDE.md`.
 
 These were previously inlined in `CLAUDE.md`'s Project Status section; they were
@@ -61,12 +61,11 @@ Conventions" because they apply to nearly every code change.
 - **Two separate Kraken keys, not one.** The read-only key (`cli/status`) and the trade
   key (`cli/preflight` / `cli/live`) live side-by-side in `.env`.
   `KrakenConfig.from_env(key_var=..., secret_var=...)` parameterizes which env vars to read.
-- **Live taker fee is 0.40%, not the mock's 0.26%.** Discovered during the 2026-05-15
-  first-trade test: $0.04 fee on each $9.99 leg of a marketable round-trip = 0.40%. The
-  mock uses 0.26% (Kraken maker rate, conservative). The grid engine in normal operation
-  places limit orders that sit on the book — those collect MAKER fees, so the mock's
-  assumption is right *for the engine's normal mode*; the gap only shows up on marketable
-  orders (which the engine doesn't normally place).
+- **Historical fee observation (superseded by ADR-038).** The 2026-05-15 first-trade
+  test measured a 0.40% taker fee ($0.04 on each $9.99 leg); the mock then used 0.26%.
+  These are historical rates, not current fee assumptions. Since ADR-038 (2026-08-17),
+  the account's per-pair `TradeVolume` response supplies live rates, with documented
+  fallback constants and a per-fill drift check. See [`decisions.md`](decisions.md).
 - **Cleanup discipline in the loop.** `cli/live`'s shutdown path cancels every open order
   for the symbol in a `finally` block, regardless of why the loop ended (signal, runtime
   cap, loss cap, exception). The session-end log records before/after USD balance, session

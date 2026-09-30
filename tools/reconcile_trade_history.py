@@ -50,6 +50,13 @@ stdout/stderr contract); the JSON file is the machine artifact.
 4. Restart ``wobblebot-live`` afterward: the SellGuard caches each
    symbol's replayed basis in memory and only invalidates on a NEW
    fill, so it keeps using the stale average cost until restarted.
+   For a fill the engine gave up on (ADR-046: the critical page
+   "Fill recorded without its trade rows" or the boot ERROR
+   "unrecovered fill on record"), that restart is also what clears the
+   ``pending_fill_trades`` marker -- and only if the backfilled rows
+   carry ``order_id`` = Kraken's ``ordertxid`` (the ``missing_locally``
+   records do). Rows without it leave the boot ERROR repeating while
+   this tool reports clean.
 5. Re-run this tool and confirm the symbol reports clean.
 
 Usage::

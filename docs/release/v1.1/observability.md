@@ -639,3 +639,32 @@ checker can reuse.
 **Trigger:** any operator-visible LLM outage during soak, OR an
 operator request to "tell me when my Ollama dies before I notice
 it through Discord silence".
+
+### On-demand database review export — PROPOSED 2026-09-24
+
+**Objective:** let an operator export selected or all SQLite databases from the
+external persistent data folder as safe, portable copies for offline read-only
+review. This complements the existing backup/restore workflow. The current
+Harvester incident demonstrates the need to inspect production history without
+opening live databases through a writable application connection.
+
+**Design direction for later review:** favor an operator-initiated maintenance
+CLI with named database selection, an explicit destination, and a clear receipt.
+Reuse SQLite's [online Backup API](https://www.sqlite.org/backup.html) for each
+live database; [VACUUM INTO](https://www.sqlite.org/lang_vacuum.html#vacuuminto)
+is an alternative to evaluate if compact output matters. Do not copy a live
+`.db` file alone because committed transactions may still be in its
+[WAL](https://www.sqlite.org/wal.html). Validate each copy before publishing it,
+then write a manifest with UTC capture interval, source/schema and application
+revision, file size, SHA-256, and validation result. Each database snapshot is
+consistent on its own; a multi-database bundle is not automatically one atomic
+point in time. If an incident needs cross-database consistency, design a bounded
+pause of all relevant writers; otherwise label the individual capture times.
+
+Keep review exports separate from restore-grade backups and their retention
+policy. Restrict access and destination paths; encrypt copies that leave the
+trusted host; create a redacted derivative for sharing while preserving the
+original evidence. Make expiry/deletion and the successful artifact location
+obvious to the operator. First decide the trusted execution location, bundle
+consistency requirement, sensitive-data policy, and retention with an operator
+review; no implementation or architecture decision is ratified here.
