@@ -28,6 +28,24 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release resources after interrupted startup.** SQLite closes an opened connection
+  if schema setup, migration, or cancellation interrupts startup. The operator daemon
+  closes acquired databases, its assistant, and created tasks when partial startup fails.
+  ([PR #158](https://github.com/CarlDog/wobblebot/pull/158))
+- **Require a fresh loss-cap check after a valuation failure.** Later automatic grid
+  steps wait until a fresh portfolio valuation passes the session loss-cap check.
+  Re-anchor requests are refused while valuation is unavailable; re-anchor approvals from
+  before the live session or its latest valuation recovery cannot execute later.
+- **Send command receipts only after their terminal status is saved.** A failed
+  persistence write no longer sends a misleading success or refusal receipt.
+- **Confirm the dead-man's-switch timer before reporting recovery.** Its response must
+  contain timezone-aware current and trigger times, with the trigger later than both
+  Kraken's current time and local receipt time. Unconfirmed responses count toward the
+  failure streak and preserve its escalation until a confirmed reset arrives.
+  ([PR #162](https://github.com/CarlDog/wobblebot/pull/162))
+
 ## [2.0.13] - 2026-09-25
 
 ### Fixed
