@@ -37,6 +37,7 @@ on:
       - 'config/**'
       - 'tools/**'
       - 'docker/Dockerfile'
+      - 'docker/entrypoint.sh'
       - 'pyproject.toml'
       - '.dockerignore'
       - '.github/workflows/docker-publish.yml'

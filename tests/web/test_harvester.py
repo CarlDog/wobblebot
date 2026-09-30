@@ -61,11 +61,13 @@ def _make_result(
     proposal_id: str = "prop-1",
     transaction_id: str = "txn-1",
     status: str = "completed",
+    submission_state: str = "accepted",
 ) -> TransferResult:
     return TransferResult(
         proposal_id=proposal_id,
         transaction_id=transaction_id,
         status=status,  # type: ignore[arg-type]
+        submission_state=submission_state,  # type: ignore[arg-type]
         executed_amount=Decimal("300.00"),
         direction="exchange_to_bank",
         asset="USD",
@@ -109,7 +111,7 @@ class TestHarvesterRoute:
             resp = client.get("/harvester")
             assert resp.status_code == 200
             assert "No transfer proposals" in resp.text
-            assert "No executed withdrawals" in resp.text
+            assert "No withdrawal attempts" in resp.text
 
     @pytest.mark.asyncio
     async def test_renders_proposals(
@@ -153,3 +155,24 @@ class TestHarvesterRoute:
             assert "REF-PENDING" in resp.text
             assert "completed" in resp.text
             assert "pending" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_unverified_claim_is_not_shown_as_kraken_refid(
+        self,
+        operator_storage: SQLiteStorageAdapter,
+        harvest_storage: SQLiteStorageAdapter,
+    ) -> None:
+        await harvest_storage.save_transfer_result(
+            _make_result(
+                transaction_id="claim-local-only",
+                status="pending",
+                submission_state="unknown",
+            )
+        )
+        with _build_client(operator_storage, harvest_storage) as client:
+            login_as(client)
+            resp = client.get("/harvester")
+            assert resp.status_code == 200
+            assert "outcome unknown" in resp.text
+            assert "unverified" in resp.text
+            assert "<code>claim-local-only</code>" not in resp.text

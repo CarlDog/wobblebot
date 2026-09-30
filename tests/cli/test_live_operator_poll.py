@@ -150,7 +150,14 @@ async def test_approved_reanchor_dispatches_through_firewall(
     pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
     await storage.save_pending_command(pending)
 
-    processed = await _process_pending_commands(svc, storage, None)
+    from datetime import UTC, datetime, timedelta
+
+    processed = await _process_pending_commands(
+        svc,
+        storage,
+        None,
+        reanchor_approval_after=datetime.now(UTC) - timedelta(seconds=1),
+    )
     assert processed == 1
 
     fetched = await storage.get_pending_command(pending.id)
@@ -164,6 +171,233 @@ async def test_approved_reanchor_dispatches_through_firewall(
     assert state is not None  # anchor saved at the mock price
     opens = await storage.get_open_orders(symbol=BTC_USD)
     assert len(opens) > 0  # layout placed in-process
+
+
+async def test_stale_valuation_refuses_reanchor_but_still_dispatches_stop(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """A stale loss-cap valuation must block the command path that places a grid."""
+    svc, engine = _operator_service(storage)
+    reanchor = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    stop = _pending(status="approved", command=StopCommand(), created_offset_seconds=1)
+    await storage.save_pending_command(reanchor)
+    await storage.save_pending_command(stop)
+
+    processed = await _process_pending_commands(svc, storage, None, valuation_stale=True)
+    assert processed == 2
+
+    refused = await storage.get_pending_command(reanchor.id)
+    assert refused is not None
+    assert refused.status == "failed"
+    assert refused.result is not None
+    assert refused.result.success is False
+    assert "valuation unavailable" in refused.result.message
+    assert await storage.get_grid_state(BTC_USD) is None
+    assert await storage.get_open_orders(symbol=BTC_USD) == []
+    assert engine.is_stop_requested is True
+
+
+async def test_failed_refusal_write_cannot_replay_reanchor_after_recovery(
+    storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient operator DB failure must not turn a refused approval into a grid."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    from wobblebot.ports.exceptions import StorageError
+
+    svc, _engine = _operator_service(storage)
+    pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    await storage.save_pending_command(pending)
+    save = storage.save_pending_command
+    attempts = 0
+
+    async def _fail_once(row: PendingCommand) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise StorageError("simulated operator DB write failure")
+        await save(row)
+
+    monkeypatch.setattr(storage, "save_pending_command", _fail_once)
+    dispatch = AsyncMock(side_effect=AssertionError("old approval must not dispatch"))
+    monkeypatch.setattr(svc, "dispatch_command", dispatch)
+
+    await _process_pending_commands(
+        svc,
+        storage,
+        None,
+        valuation_stale=True,
+        reanchor_approval_after=datetime.now(UTC),
+    )
+    still_approved = await storage.get_pending_command(pending.id)
+    assert still_approved is not None and still_approved.status == "approved"
+
+    await _process_pending_commands(
+        svc,
+        storage,
+        None,
+        valuation_stale=False,
+        reanchor_approval_after=datetime.now(UTC),
+    )
+    refused = await storage.get_pending_command(pending.id)
+    assert refused is not None and refused.status == "failed"
+    assert refused.result is not None and "predates" in refused.result.message
+    dispatch.assert_not_awaited()
+
+
+async def test_pre_session_reanchor_approval_needs_new_confirmation(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """A fresh session must not replay an approval left by a prior outage."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    svc, _engine = _operator_service(storage)
+    pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    await storage.save_pending_command(pending)
+    floor = datetime.now(UTC)
+    dispatch = AsyncMock(side_effect=AssertionError("pre-session approval must not dispatch"))
+    svc.dispatch_command = dispatch  # type: ignore[method-assign]
+
+    await _process_pending_commands(svc, storage, None, reanchor_approval_after=floor)
+    refused = await storage.get_pending_command(pending.id)
+    assert refused is not None and refused.status == "failed"
+    dispatch.assert_not_awaited()
+
+
+async def test_loop_refuses_reanchor_queued_after_failed_valuation(
+    storage: SQLiteStorageAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loop must pass its stale gate to the operator-command poll."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from wobblebot.cli import live as live_module
+    from wobblebot.cli.live import _run_loop
+    from wobblebot.ports.exceptions import ExchangeError
+
+    exchange = MockExchangeAdapter(
+        starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    service = OperatorService(
+        engine=engine,
+        storage=storage,
+        active_symbols=(BTC_USD,),
+        grid_config=grid_config(),
+    )
+    pending = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+    valuation_calls = 0
+
+    async def _value(*_args: object, **_kwargs: object) -> Decimal:
+        nonlocal valuation_calls
+        valuation_calls += 1
+        if valuation_calls == 2:  # tick 1, after an ordinary engine step
+            await storage.save_pending_command(pending)
+            raise ExchangeError("simulated BalanceEx outage")
+        if valuation_calls == 4:  # tick 2 post-check; exit after the gate was exercised
+            engine.request_stop()
+        return Decimal("100")
+
+    monkeypatch.setattr(live_module, "_session_portfolio_value_usd", _value)
+    monkeypatch.setattr(
+        service,
+        "dispatch_command",
+        AsyncMock(side_effect=AssertionError("stale re-anchor must not dispatch")),
+    )
+
+    await _run_loop(
+        exchange,
+        engine,
+        LiveConfig(symbols=[BTC_USD], tick_seconds=0.001),
+        storage,
+        asyncio.Event(),
+        operator_service=service,
+        operator_storage=storage,
+    )
+
+    assert valuation_calls >= 4
+    refused = await storage.get_pending_command(pending.id)
+    assert refused is not None
+    assert refused.status == "failed"
+    assert refused.result is not None
+    assert "valuation unavailable" in refused.result.message
+    service.dispatch_command.assert_not_awaited()
+
+
+async def test_loop_does_not_replay_reanchor_after_refusal_write_fails(
+    storage: SQLiteStorageAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loop must advance and pass the approval floor on valuation recovery."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from wobblebot.cli import live as live_module
+    from wobblebot.cli.live import _run_loop
+    from wobblebot.ports.exceptions import ExchangeError, StorageError
+
+    exchange = MockExchangeAdapter(
+        starting_balances={"USD": Decimal("1000"), "BTC": Decimal("1")},
+        starting_prices={BTC_USD: Decimal("50000")},
+    )
+    engine = GridEngine(exchange, storage, grid_config(), safety_config())
+    service = OperatorService(
+        engine=engine,
+        storage=storage,
+        active_symbols=(BTC_USD,),
+        grid_config=grid_config(),
+    )
+    dispatch = AsyncMock(side_effect=AssertionError("refused approval must never dispatch"))
+    monkeypatch.setattr(service, "dispatch_command", dispatch)
+    save = storage.save_pending_command
+    refused_writes = 0
+    pending_ids = []
+
+    async def _fail_first_refusal(row: PendingCommand) -> None:
+        nonlocal refused_writes
+        if row.status == "failed" and refused_writes == 0:
+            refused_writes += 1
+            raise StorageError("simulated refusal write failure")
+        await save(row)
+
+    monkeypatch.setattr(storage, "save_pending_command", _fail_first_refusal)
+    valuation_calls = 0
+
+    async def _value(*_args: object, **_kwargs: object) -> Decimal:
+        nonlocal valuation_calls
+        valuation_calls += 1
+        if valuation_calls == 2:
+            row = _pending(status="approved", command=ReanchorCommand(symbol=BTC_USD))
+            pending_ids.append(row.id)
+            await storage.save_pending_command(row)
+            raise ExchangeError("simulated BalanceEx outage")
+        if valuation_calls == 5:
+            engine.request_stop()
+        return Decimal("100")
+
+    monkeypatch.setattr(live_module, "_session_portfolio_value_usd", _value)
+
+    await _run_loop(
+        exchange,
+        engine,
+        LiveConfig(symbols=[BTC_USD], tick_seconds=0.001),
+        storage,
+        asyncio.Event(),
+        operator_service=service,
+        operator_storage=storage,
+    )
+
+    assert refused_writes == 1
+    assert valuation_calls >= 5
+    assert len(pending_ids) == 1
+    refused = await storage.get_pending_command(pending_ids[0])
+    assert refused is not None and refused.status == "failed"
+    assert refused.result is not None and "predates" in refused.result.message
+    dispatch.assert_not_awaited()
 
 
 async def test_approved_stop_command_marks_engine(storage: SQLiteStorageAdapter) -> None:

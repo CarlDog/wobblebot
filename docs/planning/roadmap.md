@@ -5,6 +5,346 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Post-v2 audit remediation merged and deployed — 2026-09-30 UTC.**
+[PR #165](https://github.com/CarlDog/wobblebot/pull/165) merged at 21:09:33 UTC
+as `d6a1d298383525214d2126dde621913e4f08b66f`. Merged-main
+[CI run 36777592678](https://github.com/CarlDog/wobblebot/actions/runs/36777592678)
+passed `test` and `build-and-push`; main CodeQL and gitleaks also passed.
+The published and deployed immutable image is
+`ghcr.io/carldog/wobblebot:sha-d6a1d29@sha256:5e5be31c0de68aee6b9ceb61e720164e101066e999a2455dd6de70242c9514e1`.
+This SHA deployment retains version 2.0.13; no new SemVer tag or GitHub Release.
+
+*Logs before merge.* The all-eight-service export covers retained NAS files
+overlapping 2026-09-23 21:06:28 through 2026-09-30 21:06:28 UTC, plus current
+Docker stdout/stderr available since the September 29 restart (about 40 hours).
+The 42 source files comprise 34 persistent files and eight Docker logs;
+persistent files retain their day-boundary overlap. Every local file hash and
+the ZIP integrity check passed. The ignored local archive is
+`logs/nas-predeploy-2026-09-30T210628Z.zip`, SHA-256
+`6d6e92844125bfb6a701dd22d62c97ce12c491f2d43d34d65a1083f874f3d272`.
+Independent review of the current Docker logs found 28 WARNING lines and no
+ERROR/CRITICAL or deployment blocker. During the September 30 19:47 private-API
+interruption, valuation failure blocked new placements; valuation and DMS
+recovered before the last confirmed DMS deadline. SOL dust, four offside parked
+grids, and the September 29 CoinGape 403 remain existing operational findings;
+the export does not establish the feed's recovery.
+
+*Deployment receipt.* Independent review confirmed no change to runtime source,
+tools, manifest, Docker/Compose/entrypoint, schema, or mounted operator settings
+relative to the prior deployed revision. The generic example, tests, and docs
+had their independent review and mutation checks; no additional runtime code
+review was required for this deployment. Validation-only `cli.preflight` ran
+inside the production live container for BTC, ETH, XRP, SOL, DOGE, and ADA:
+all 36 layout orders validated, with no order placement by preflight. Kraken
+confirmed the production trader key has no withdrawal permission. SOL, DOGE,
+and ADA used the CLI-only diagnostic cap override described in the prior receipt;
+their effective per-coin settings were unchanged.
+
+At 21:17 UTC, one atomic Portainer stack-file update changed the image digest
+and `IMAGE_TAG`; endpoint 2 file stack 158 advanced **91 -> 92 in one redeploy**.
+Other environment values were preserved and the mounted settings hash matched
+before and after. All eight new containers started at 21:17:05–08 UTC. At
+21:19 UTC all were healthy, with zero restarts, the exact revision and digest
+above, and no startup ERROR/CRITICAL. The four startup warnings were SOL/DOGE
+stale-anchor re-layout notices, the web bind advisory, and the existing SOL dust
+finding. DOGE re-layout placed 6/6 orders; SOL placed 3/6 with three refused.
+BTC/ETH/XRP/ADA remained offside parked.
+
+Read-only checks at 21:16:31 and 21:17:56 UTC found `quick_check=ok` in all six
+databases and no pending fill markers, approved commands, execute-proposal
+commands, or transfer results. A normal post-restart DOGE BUY fill increased
+live trades from 249 to 250. Startup maintenance verified all six September 30
+04:44 backups and completed daily reconciliation cleanly across six symbols;
+ledger sync fetched and wrote 569 entries. No new backup was written at startup
+because the existing set was younger than the configured threshold. Any image
+rollback must preserve current databases and withdrawal claims; those older
+backups must not overwrite later trades. GET-only loopback web checks passed
+anonymous health/login and authenticated dashboard, status cards, and advisor
+routes. This verifies startup health and these specific checks; extended soak,
+live-withdrawal, paid-inference, and formal 2.0.x acceptance remain unestablished.
+
+**Post-v2 maintenance audit remediation — locally verified 2026-09-30.**
+The user authorized the findings in [audit #164](https://github.com/CarlDog/wobblebot/issues/164).
+Review branch `codex/audit-164-remediation` corrects the Harvester README,
+historical fee/ADR pointers, Unreleased history, and documented architecture
+exceptions. The generic DeepSeek R1 example now starts at 2,048 tokens / 180s;
+these are documented floors, not measured completion guarantees. A copied-config
+guard rejects the old 512-token / 60s values. A focused AST guard enforces exact
+existing exception pairs without a production-source refactor; disabling its
+detector made all 19 negative controls fail. Independent review found no
+remaining blocker after narrowing one changelog claim to re-anchor approvals.
+
+The existing local editable/dev environment was refreshed to the manifest
+(wobblebot 2.0.13, pylint 4.0.8; all 11 dev requirements matched; `pip check`
+clean). Default pytest with `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1` passed 4,400 tests,
+with 30 integration tests deselected and no skips; coverage was 88.46%.
+Black checked 429 files, isort passed, mypy passed on 158 source files, and
+pylint scored 10.00/10. The focused copied-example/config checks passed 76 tests;
+the AST guard passed 52. This receipt records local remediation verification;
+merge and production deployment are separate. No live trade, withdrawal, or
+paid inference probe ran. Formal 2.0.x acceptance remains pending.
+
+**Warning remediation deployed from merged `main` SHA `29827be` — 2026-09-29
+UTC.** [PR #162](https://github.com/CarlDog/wobblebot/pull/162) merged at
+04:32 UTC after independent review, mutation checks, and green PR CI. The
+production delta also included the previously merged, reviewed startup cleanup
+in PR #158. Main run 36522088840 passed both `test` and `build-and-push`.
+The immutable image is `ghcr.io/carldog/wobblebot:sha-29827be@sha256:74f8696454cc0aef2585602095489fe387cbb8f39a56cbd75c81628405478358`;
+this SHA deployment has no new SemVer tag or GitHub Release.
+
+*Deployment receipt (2026-09-29 UTC).* The six 04:00 NAS database backups
+matched their off-NAS SHA-256 copies and passed integrity and disposable restore
+checks. At 04:41 UTC, read-only NAS checks found `quick_check=ok` in live,
+operator, and harvest; the 247 live trade rows matched the backup, with no
+pending fills, approved commands, execute-proposal commands, or transfer
+results. Validation-only `cli.preflight` passed for all six live symbols using
+the NAS `cpu-only` settings and a local trader key that Kraken accepted and
+confirmed could not withdraw. SOL, DOGE, and ADA needed a CLI-only override to
+raise preflight's default-derived diagnostic cap; their effective per-coin
+grid settings were verified unchanged. Portainer's redacted credentials could
+not be compared with the local key, so that check does not establish the
+production key's current scope. The code delta had no database schema or
+configuration change.
+
+Portainer file stack 158 changed `IMAGE_TAG` to `sha-29827be` and its compose
+digest pin to the image above; file version advanced 90 -> 91. The two edits
+caused two redeploys. At final readback, all eight containers were healthy on
+revision `29827be59c3534d70ae806226211efec3467d897`, the exact digest
+above, with zero restarts and no startup ERROR/CRITICAL lines. The live
+container's stale-anchor DOGE re-layout placed 6/6 orders and then recorded a
+fill; SOL's re-layout placed 3/6, with the other three refused by caps. At
+04:48 UTC, read-only live, operator, and harvest checks again passed integrity
+with no pending fills, approved commands, execute-proposal commands, or transfer
+results. Two new DOGE trades brought live.db to 249 rows; a fresh read-only
+Kraken reconciliation matched all 249 across the six symbols, with zero
+missing or deferred trades and matching quantities. The 04:00 backup therefore
+must not overwrite later live trades. This readback proves deployment health
+and reconciliation at that time; the private-API outage and DMS escalation
+paths have not been exercised in production on this revision.
+
+**`v2.0.13` withdrawal submission safety — source released and deployed
+2026-09-25 UTC.** [PR #155](https://github.com/CarlDog/wobblebot/pull/155)
+merged as `90867b0`; the annotated `v2.0.13` tag peels to that commit. The
+[GitHub Release](https://github.com/CarlDog/wobblebot/releases/tag/v2.0.13) and
+GHCR image `ghcr.io/carldog/wobblebot:2.0.13@sha256:82b209a627d44965a94b76010365bd22f2e0dd2cae4f840e564309f4692bd4d0`
+are published; the image labels report revision `90867b0` and version `2.0.13`.
+Independent adversarial review and a 3/3 withdrawal mutation gate passed. PR,
+main and tag CI passed; the tag run had 4,307 tests passed, 6 skipped and 30
+deselected. The [security advisory](https://github.com/CarlDog/wobblebot/security/advisories/GHSA-rhpx-hp3v-rw5c)
+is published with affected versions 1.0.0–2.0.12 and fixed version 2.0.13.
+[PR #156](https://github.com/CarlDog/wobblebot/pull/156) separately recorded the
+on-demand database review export proposal without implementing it.
+
+*Deployment receipt (2026-09-25 UTC).* The user confirmed no withdrawals since
+the 00:40 UTC NAS backup and no approved or queued `execute_proposal` commands.
+The 00:40 harvest and operator backups served as rollback copies; disposable
+copies passed integrity, additive migration, existing-row count and digest,
+idempotence and byte-for-byte rollback checks. No newer NAS-side backup was
+taken. Portainer's file-based stack 158 advanced from file version 89 to 90.
+The digest pin and `IMAGE_TAG=2.0.13` required two redeploys. At the final
+03:59:54–55 UTC restart, all eight containers were healthy at readback and ran
+`ghcr.io/carldog/wobblebot:2.0.13@sha256:82b209a627d44965a94b76010365bd22f2e0dd2cae4f840e564309f4692bd4d0`.
+The live and harvest image labels reported revision
+`90867b0a34f5411b2042333ab83484d68da46b0f` and version `2.0.13`.
+Read-only Kraken trade history confirmed that the two similar SOL/USD fill log
+lines across the restarts were distinct executions. Local `live.db` trade
+reconciliation was not performed.
+The 00:40 backup does not capture later writes; keep Harvester stopped on any
+old-image rollback while withdrawal claims remain unresolved. Live-withdrawal
+acceptance has not been performed.
+
+**Third DMS purge, 36 idle hours, a proven fill-loss root cause, and ADR-046 —
+2026-09-17/18 UTC (code on `fix/fill-trade-recovery`,
+[PR #152](https://github.com/CarlDog/wobblebot/pull/152); review gate passed
+2026-09-18; merged as 5188ae7, tagged `v2.0.12` 2026-09-19 00:04 UTC, and deployed
+to stack 158 at 00:24 UTC as stack file v89, all eight daemons healthy on revision
+5188ae7; deployment receipt below):**
+
+*Incident.* On 2026-09-17 eight consecutive `CancelAllOrdersAfter` resets failed
+between 07:01:18 and 07:03:17 UTC (~17 s apart, every error text empty:
+`transport failure: `); Kraken's timer purged the book at 07:02:43 (DOGE/USD, 1 order)
+and 07:02:44 (SOL/USD, 3 orders), at least 19 s before the client-side deadline of
+07:03:03Z, so the ADR-037 calmer framing did not trigger and both symbols HELD.
+BTC/ETH were offside-parked and XRP/ADA starved, so the account carried **zero open
+orders from 07:02 UTC 09-17 until 19:01 UTC 09-18**. Same shape as the 09-03 purge:
+both Thursdays, both 07:01 UTC (02:01 NAS local), both private-endpoint-only, both
+landing before the deadline. Kraken had returned `EGeneral:Internal error` on
+`OpenOrders` (06:08) and `BalanceEx` (06:17) that morning; observe's public polls
+were clean. Cause not established; the Thursday 02:01 local pattern is a lead
+(DSM Task Scheduler, Pi-hole, router logs; Kraken status history 06:00–07:05 UTC).
+Whether the three-strike critical and the four-hourly held reminders reached
+Discord could not be read from the NAS (operator.db exceeds the read tool's cap).
+
+*Recovery (operator, 2026-09-18).* `resume DOGE` at 19:01:19 re-laid 3/6; the second
+command executed as a resume rather than a re-anchor and SOL parked offside at 112.29
+against its 97.18 band; `re-anchor SOL` at 19:04:59 moved 97.18 → 112.50 and placed
+3/6 (three sells above the 101.20 average cost). DOGE filled a SELL of 68.58657639 @
+0.087480675 at 19:04:20 and parked offside above its band. cli/live was restarted
+19:27:27 UTC for the backfill below: clean shutdown (6 orders cancelled, session end
+at tick 143,122 after 842,616 s, portfolio 104.47 → 92.67 mark-to-market), clean boot
+(fee rates 0.4%/0.8% live, SOL re-laid 4/6, XRP/ADA 0/6, DOGE/BTC/ETH parked).
+
+*Fill-loss root cause, proven.* Kraken trade `TEGXTG-FHHBB-375Q4L` (order
+`OLG4OV-BXTHW-T6IS2H`, DOGE/USD BUY 72.18596201 @ 0.0831186, executed 2026-09-10
+12:47:13.997 UTC) was missing from `live.db` and reported by the daily reconcile on
+eight consecutive days (09-11 → 09-18). Evidence recovered from the Docker log via
+SSH and a read-only dump of `live.db`/`operator.db`: the order row closed at
+12:47:19.286 with `filled_amount` 72.18596201; the log shows `grid fill: DOGE/USD BUY
+72.18596201 @ 0.083118654` at 12:47:19.310 and the counter deferred by the sell
+guard at 12:47:19.312; no WARNING, ERROR, storage error or trade-history fallback
+line between 11:30 and 14:14; no operator command or notification that day.
+Mechanism: `_detect_fills` resolved the fill from `QueryOrders`, the same tick's
+`TradesHistory` snapshot (fetched right after `OpenOrders`, ≤5.3 s after execution)
+did not yet list the trade, and `save_fill(order_closed, [])` committed — the port
+contract permitted an empty list and nothing distinguished it from a clean cancel.
+Excluded: prefetch failure (no fallback warning), pagination truncation (the walk
+runs to Kraken's `count`), id mapping (the 09-15 DOGE fill through the same path was
+recorded). The 08-22 fix (atomic `save_fill`, PR #102) addressed an inferred failed
+insert; the XRP 08-21 loss had this identical signature and no cited log evidence,
+so it is probably the same class. 1 of 8 engine fills in the fully evidenced window
+(09-09 → 09-18) was lost. Effect: DOGE's sell-guard basis read 0.0860098 instead of
+0.0855219 for eight days; no sell level fell in that band, so realized cost was zero.
+
+*Backfill (runbook steps 1–5, 2026-09-18).* `tools/reconcile_trade_history.py --symbols
+DOGE` at 19:09 UTC confirmed exactly one missing, non-deferred trade, 0 non-trade
+ledger entries, and a quantity gap equal to it (Kraken 310.00190300 vs local
+237.81594099). `data/backfill_doge_20260918.py` (the reviewed 08-22 pattern:
+pre-state 49 trades / 237.81594099 asserted, dry run projected 50 / 310.00190300,
+commit, post-state PASS) ran from `wobblebot-maintenance`; the script was first
+exercised locally against a synthetic 49-trade fixture including its abort path.
+Post-restart reconcile at 19:44 UTC: Kraken 50 / local 50, quantities equal.
+
+*Fix (ADR-046, this branch).* A confirmed fill whose trade rows do not cover its
+`filled_amount` is pending, never final: `save_fill` refuses the shape;
+`ExchangePort.get_order_trades` (Kraken `QueryOrders trades=true` + `QueryTrades`)
+is the fast path; `save_fill_pending_trades` closes the order and writes a
+`pending_fill_trades` marker in one transaction so the counter fires once;
+`GridEngine.step` sweeps markers every tick outside the pause/offside gates,
+bounded at 120 empty lookups or 30 minutes, then keeps the marker, logs ERROR and
+pages "Fill recorded without its trade rows"; the cancel path and boot reconciler
+share the resolution; a restart resumes the sweep. 71 test functions added and none
+removed (counted as `def test_` lines in `git diff main...HEAD -- tests/`) replay
+the 09-10 shape (mock exchange withholding trades while status reports the fill),
+the fast path, a paused symbol, abandonment, transport errors not counting, the
+wall-clock ceiling, partial arrival, boot resume, the cancel path, the boot
+reconciler, the storage contract, and the adapter's wire shape. Full suite at the
+branch tip: 4,300 passed, 30 deselected, coverage 88.07%; black/isort/mypy clean,
+pylint 10.00. Live verification of the two new Kraken calls (2026-09-18, trader
+key, read-only, from `wobblebot-live` on the 2.0.11 image): `QueryOrders
+trades=true` returned a one-id `trades` list for both the 2026-09-10 buy and the
+2026-09-18 sell, `QueryTrades` entries parsed through the existing trade builder,
+and volumes matched `vol_exec` exactly (capture:
+`data/verify_order_trades_20260918.json`).
+
+*Review gate (2026-09-18, per `~/.claude/rules/pre-deploy-review.md`).* Five
+reviewers, each in its own worktree reset to `bdebe9b` (engine seam, storage
+atomicity, Kraken adapter, boot/reconciler/live wiring, test honesty), raised 16
+findings; 71029ac fixes every confirmed one and pins each with a test. Engine: fee
+drift, sell-guard invalidation and the recovery log lines re-ran every sweep tick
+over rows already recorded (the reviewer's probe counted one anomalous trade as six
+after six sweeps; now keyed off rows new to storage, found by order id, never by
+the order's local creation time); the direct lookup ran every tick per marker
+against Kraken's shared private counter (now every third sweep tick, the snapshot
+still every tick); the logged attempt count and the storage row disagreed by one at
+an aged-out give-up (now a `counted` flag). Live wiring: the give-up page rode the
+`StepResult`, so a trading step that raised after the sweep lost it for good (now
+buffered in the engine and drained on both paths); the page asserted three things
+the code did not know, including a "daily reconcile" backstop that does not read
+the marker (now says only what the code knows); the boot marker read was the one
+unguarded storage call between two guarded ones (now refuses to boot, exit 1);
+markers on symbols outside `live.symbols` were indexed, never swept, never paged
+(now ERROR at boot); a reconciler test fake lacked the new Protocol method. Storage:
+the atomicity test injected its fault into the trade insert, so a commit placed
+before the marker INSERT escaped (now the marker statement alone fails and the
+order close is shown to roll back); an empty trade set covered a one-lot-unit fill
+under the 1e-8 tolerance, so `save_fill` refused every tick (now `[]` never covers
+a positive fill). Adapter: the cost is three one-point calls per lagging fill, not
+two, and Kraken's guide and support article price `TradesHistory` at 2 and 4 per
+page (reference corrected); whether `QueryTrades` answers a not-yet-indexed id with
+an empty result or an error envelope is unverified — accepted because the 30-minute
+ceiling bounds either shape, with a live probe
+(`data/verify_query_trades_unknown_20260918.py`) queued to decide whether the
+adapter maps that code to "not yet". Test honesty: the reviewer's nine mutants
+escaped five on the pre-review branch (marker atomicity; boot-resume wiring, the one
+line whose deletion left 124 live tests green; the shared-snapshot path; sell-guard
+invalidation; fee drift); a structural guard now asserts `_main_async` awaits the
+boot resume after reconciliation, and the replay test pins one counter placed with
+nothing refused or deferred. Scripted mutation verification (restore-from-git in a
+`finally`): 14 of 14 mutants caught, baseline and post-restore green — the original
+five plus the drain on the failure path, the empty-set edge, fee drift on all rows,
+the pacing, commit-before-marker, boot ignoring given-up markers, the snapshot path,
+sell-guard invalidation, and the unswept-symbol ERROR. One test of the round was
+committed red because the gate's exit code was piped through `tail` (its scripted
+exchange never fell through to the real trade); 76c489c fixes the stub and the
+harness reports baseline green again.
+
+*Second round (2026-09-18).* The fix round had no reader who did not write it, and
+the rule's completeness critic had not run; both then did, each in its own worktree
+at `81814db`. The reviewer: five LOW, no HIGH or MEDIUM -- the existing-rows read
+leans on the storage query's newest-first order (stated in a comment; a by-order
+query filed); the page pointed at a log line the missing-order give-up path never
+writes, and boot never judged coverage for a marker whose `orders` row was gone (now
+judged from the marker's own `filled_amount`); the boot WARNING printed the
+all-symbols count beside the swept list (now swept only); a marker past the ceiling
+inherited across a restart was given up on one transient failure (now anchored to
+the boot); the AST boot-wiring guard passed with the await wrapped in `if False:`
+(now requires a direct statement of a top-level try body). Its 15 mutants caught 13;
+the two escapes -- that wrapper, and an aged-out give-up on an off-cadence tick --
+each have a test. The critic: four LOW -- the same inherited-marker give-up,
+reproduced by probe; the ADR-038 fee-drift page gated on same-tick fills, so a drift
+on a recovered row paged only at the next fill (reproduced; now keys off recovered
+rows too); paced lookups phase-aligned across k markers (documented; tier
+unmeasured); the runbook silent on the `ordertxid` a backfilled row must carry for
+the marker to clear (added). It read the dissent (R4's declined option, a reconcile
+that reads the marker, is filed) and ruled: deploy, nothing blocks; the interim
+control for 2.0.11 is the post-session reconcile. It also ran the schema upgrade: a
+2.0.11-shape database opened by the branch's writable `connect()` gains exactly
+`pending_fill_trades`, integrity ok before and after, second open idempotent. Code
+fixes in 9c10177 and 81e8080, each pinned by the probe that found it; the harness runs 22
+mutants, 22 caught, baseline and post-restore green; full suite at the tip 4,298
+passed, 30 deselected, coverage 88.07%; 71 test functions added on the branch, none
+removed. The reviewer then read 9c10177 itself: three LOW, no HIGH or MEDIUM -- the ADR still stated the old ceiling rule (amended here); the boot re-check's order scoping was correct but unpinned, so under mutation a foreign same-symbol row cleared the marker (pinned in 81e8080); and the fee-drift page keyed off completed recoveries, so a drift on a partially recovered row still waited (the page now keys off the anomaly counter alone, 81e8080). Its ten mutants caught eight; the escapes were that scoping and a dead statement after a return, noted. Flagged outside the diff, pre-existing and not fixed here: the
+reconciliation-failure `return 1` in `_main_async` closes neither adapter nor
+storage (its new sibling path closes both), and the boot re-raise is log-only
+because the notifier is constructed later.
+
+*Deployment (2026-09-19; `docs/release/2.0.12-deployment-evidence.json`).* Two
+attempts, and the first is the lesson. 00:18 UTC: `IMAGE_TAG` 2.0.11 → 2.0.12 with a
+pull recreated all eight containers, but stack file v88 pins the image to a digest
+(`…:${IMAGE_TAG}@sha256:f07af7ec…`, the 2.0.11 artifact, added at the 2.0.11 deploy),
+so Docker resolved by digest and every container came up as `:2.0.12@f07af7ec` with
+revision label `ddf3e8c` and version label 2.0.11 — old code under a new tag,
+invisible in the container list's tag and in Portainer's "recreated" report, visible
+only in the inspect labels. 00:24 UTC: stack file v89 (v88 with the pin moved to
+GHCR's resolution of `:2.0.12`, `sha256:0536b0b6…`, plus a comment saying a code
+deploy moves both the pin and the tag; derived from v88, not the repo file, so the
+Watchtower labels and the `tools` healthcheck the stack carries and the repo does not
+were kept) redeployed with a pull: all eight on `:2.0.12@sha256:0536b0b6…`, revision
+`5188ae7`, version 2.0.12, image created 00:07:19 UTC, healthy within the start
+period. cli/live booted through the marker read (a failure there exits 1), fee rates
+0.4%/0.8% live, SOL re-laid 4/6, XRP starved, BTC/ETH/DOGE/ADA parked offside as
+before; cli/harvest booted; the maintenance reconcile ran at boot, 6 of 6 clean; the
+advisor's first cycle routed `news` and `arbitrator` to `anthropic/claude-haiku-4-5`
+directly, so the credit refill is verified (the 18:05 UTC cycle on 2.0.11 had still
+fallen back). The deploy sequence on this stack is therefore: tag → publish → move
+the digest pin in the stack file AND bump `IMAGE_TAG` → verify
+`org.opencontainers.image.revision` at the container, never the tag. The repo
+compose's comment, which still called the tag bump the canonical deploy, is corrected
+in the same commit; the label and healthcheck drift between the deployed stack file
+and the repo compose is recorded, not reconciled.
+
+*Follow-ups filed, not built here:* reconcile auto-heal (persist what it finds,
+notify instead of paging for a hand script); sell-guard invalidation on an external
+heal; the Thursday 07:01 UTC lead; include the exception class in the adapter's
+transport-failure text (`kraken_exchange.py:1205`/`:1249`, empty on both purge
+days); add margin to the client-side DMS deadline so a purge landing ≥18 s early is
+framed as DMS; the starved-symbol re-layout INFO pair (490–986 lines/day) to DEBUG
+while starved; `kraken_blog` RSS returning 403 since 09-14 15:04 UTC; the
+`wobblebot-shadow.db` maintenance target that does not exist (both closed 2026-09-19
+00:40 UTC by operator config on the NAS: the feed disabled, the target removed; the news
+and maintenance daemons restarted and their session-start lines confirm seven sources
+and six databases).
+
 **2.0.11 observation completed — ✅ 2026-09-09 UTC; formal acceptance pending:**
 The authorized window ended at **09:25:18 UTC**, exactly eight hours after its
 01:25:18 start. The final checkpoint collected at 09:26:51 capped event queries

@@ -1,0 +1,63 @@
+{
+  "recorded_at": "2026-09-19T00:32:00+00:00",
+  "release": {
+    "version": "2.0.12",
+    "source_commit": "5188ae7d50af497960f818e406b79d4796c162c1",
+    "pull_request": "https://github.com/CarlDog/wobblebot/pull/152",
+    "url": "https://github.com/CarlDog/wobblebot/releases/tag/v2.0.12",
+    "pull_request_ci_result": "test passed on head a657a08; build-and-push skipped as expected for a PR",
+    "main_ci_result": "CI & Publish to GHCR and gitleaks succeeded on 5188ae7",
+    "tag_ci": "https://github.com/CarlDog/wobblebot/actions/runs/35408069245",
+    "tag_ci_result": "CI & Publish to GHCR succeeded; image created 2026-09-19T00:07:19Z",
+    "image": "ghcr.io/carldog/wobblebot:2.0.12",
+    "image_digest": "sha256:0536b0b695cf4a211809c6f7b3b4104e1127e6f39cd728b469659aad3f77e11d",
+    "image_digest_source": "GHCR package version carrying tags 2.0.12, sha-5188ae7, 2.0",
+    "review_gate": "five dimension reviewers, a sixth on the fix round, the completeness critic, and a read of that fix; 16 + 12 findings, every code finding fixed and pinned; 22 of 22 mutants; 4,300 passed at the tip"
+  },
+  "scope": "ADR-046 fill-trade recovery patch deployed to Portainer stack 158 (file-based, detached from git). Formal acceptance of the recovery path waits for the first live lagging fill.",
+  "deployment": {
+    "stack_id": 158,
+    "attempts": [
+      {
+        "at": "2026-09-19T00:18:15Z",
+        "action": "portainer_set_stack_env IMAGE_TAG 2.0.11 -> 2.0.12, pull_image true",
+        "stack_file_version": 88,
+        "result": "all eight containers recreated, but stack file v88 pins the image to @sha256:f07af7ec8ae2de5b00a9aacdeb0336c7bc81c4d294a2a66db70faae4d223b0ae (the 2.0.11 artifact); Docker resolved by digest and every container came up as :2.0.12@f07af7ec with org.opencontainers.image.revision ddf3e8c1a2d8bf369c4b4aeeeafd27032814ba05 and version label 2.0.11",
+        "verdict": "deployed nothing new; caught only by inspecting the container labels, not by the container list's tag or Portainer's recreated report"
+      },
+      {
+        "at": "2026-09-19T00:24:47Z",
+        "action": "portainer_update_stack_file: v88 with the digest pin moved to sha256:0536b0b695cf4a211809c6f7b3b4104e1127e6f39cd728b469659aad3f77e11d and a comment stating a code deploy moves both the pin and IMAGE_TAG; env round-tripped; pull_image true",
+        "stack_file_version": 89,
+        "result": "all eight containers recreated on ghcr.io/carldog/wobblebot:2.0.12@sha256:0536b0b6...; revision label 5188ae7d50af497960f818e406b79d4796c162c1; version label 2.0.12; image created 2026-09-19T00:07:19Z; all eight healthy within the start period",
+        "verdict": "deployed"
+      }
+    ],
+    "containers": {
+      "wobblebot-live": "6f9dda9985b4",
+      "wobblebot-harvest": "0706cbfee207",
+      "wobblebot-advise": "c8a8acdebb4f",
+      "wobblebot-operator": "9c5bdeaa7c44",
+      "wobblebot-web": "3e33a1edc4dd",
+      "wobblebot-maintenance": "52abea72c74d",
+      "wobblebot-news": "7dc4d56b0b3d",
+      "wobblebot-observe": "9dd89ece2fd4"
+    },
+    "stack_file_drift_from_repo": "the deployed stack file carries a com.centurylinklabs.watchtower.enable label on every service and a healthcheck on the tools service that docker/docker-compose.yml in the repo does not, plus the digest pin; v89 was derived from v88, not from the repo file, so none of that was dropped"
+  },
+  "verification": {
+    "live_boot": "session fee rates 0.4% maker / 0.8% taker from live TradeVolume for six symbols; operator interaction enabled; four offside episodes restored; the ADR-046 marker read succeeded (a failure exits 1 and stays down); session start 00:24:54Z; SOL re-laid 4/6 (2 refused by max_per_coin_inventory_usd); XRP starved 0/6; BTC, ETH, DOGE, ADA parked offside as before the deploy",
+    "pending_fill_trades_table": "existence inferred from the successful boot-time marker read, which queries the table; no direct SQL access from this session",
+    "harvest_boot": "harvest session start 00:24:50Z, interval 3600 s, command poll 15 s",
+    "maintenance_boot": "capital report clean (6 symbols, cap consumed 7%); reconcile cycle complete, 6 of 6 clean; ledger sync 519 rows; prune 143 rows archived",
+    "advise_first_cycle": "00:25:26Z BTC/USD: actual routes quant=atlas/xai/grok-4.5, risk=openai/gpt-5-mini, news=anthropic/claude-haiku-4-5, arbitrator=anthropic/claude-haiku-4-5 (no fallback; the 18:05Z cycle on 2.0.11 had fallen back with insufficient_credit before the operator refilled Anthropic)",
+    "operator_boot": "Discord transport connected; forwarder, TTL expirer and heartbeat monitor started; history backfill 0 inserted",
+    "web_boot": "listening on 0.0.0.0:8000 behind the loopback publish 127.0.0.1:28080",
+    "still_to_observe": [
+      "the first live lagging fill: WARNING 'recovery scheduled' followed by 'fill fully recorded' with a low lookup count",
+      "the QueryTrades unknown-id probe on the NAS volume (data/verify_query_trades_unknown_20260918.py)",
+      "Discord delivery of a critical page through the live notifier path"
+    ]
+  },
+  "limitations": "docs/release/v2.0-known-limitations.md; the deploy-procedure correction (move the digest pin AND bump IMAGE_TAG; verify the revision label) is recorded in the roadmap receipt, docs/release/v2.0.12-upgrade.md and the repo compose comment."
+}

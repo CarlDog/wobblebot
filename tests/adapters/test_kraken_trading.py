@@ -24,7 +24,7 @@ Coverage:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 from urllib.parse import parse_qs
@@ -351,6 +351,8 @@ class TestCancelOrder:
 class TestDeadMansSwitch:
     async def test_arm_posts_timeout_to_cancel_all_orders_after(self) -> None:
         captured: dict[str, Any] = {}
+        current = datetime.now(UTC)
+        trigger = current + timedelta(seconds=60)
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/0/private/CancelAllOrdersAfter"
@@ -360,15 +362,15 @@ class TestDeadMansSwitch:
                 json={
                     "error": [],
                     "result": {
-                        "currentTime": "2026-06-01T00:00:00Z",
-                        "triggerTime": "2026-06-01T00:01:00Z",
+                        "currentTime": current.isoformat(),
+                        "triggerTime": trigger.isoformat(),
                     },
                 },
             )
 
         adapter = _make_adapter(handler)
         result = await adapter.set_dead_mans_switch(60)
-        assert result == datetime(2026, 6, 1, 0, 1, 0, tzinfo=UTC)
+        assert result == trigger
         assert captured["body"]["timeout"] == "60"
 
     async def test_disable_posts_zero(self) -> None:
@@ -436,10 +438,24 @@ class TestParseDmsTriggerTime:
     """Unit tests for the pure CancelAllOrdersAfter response parser."""
 
     def test_confirmed_future_trigger(self) -> None:
+        current = datetime.now(UTC)
+        trigger = current + timedelta(minutes=1)
         result = _parse_dms_trigger_time(
-            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "2026-06-01T00:01:00Z"}
+            {"currentTime": current.isoformat(), "triggerTime": trigger.isoformat()}
         )
-        assert result == datetime(2026, 6, 1, 0, 1, 0, tzinfo=UTC)
+        assert result == trigger
+
+    def test_confirmed_future_trigger_with_different_offset(self) -> None:
+        current = datetime.now(UTC)
+        trigger = current + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {
+                "currentTime": current.isoformat(),
+                "triggerTime": trigger.astimezone(timezone(timedelta(hours=1))).isoformat(),
+            }
+        )
+        assert result == trigger
+        assert result.tzinfo is UTC
 
     def test_trigger_zero_is_unconfirmed(self) -> None:
         result = _parse_dms_trigger_time(
@@ -448,8 +464,38 @@ class TestParseDmsTriggerTime:
         assert result is None
 
     def test_trigger_equal_to_current_is_unconfirmed(self) -> None:
+        current = datetime.now(UTC) + timedelta(minutes=1)
         result = _parse_dms_trigger_time(
-            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "2026-06-01T00:00:00Z"}
+            {"currentTime": current.isoformat(), "triggerTime": current.isoformat()}
+        )
+        assert result is None
+
+    def test_trigger_equal_to_current_with_different_offset_is_unconfirmed(self) -> None:
+        current = datetime.now(UTC) + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {
+                "currentTime": current.isoformat(),
+                "triggerTime": current.astimezone(timezone(timedelta(hours=1))).isoformat(),
+            }
+        )
+        assert result is None
+
+    def test_trigger_before_current_with_different_offset_is_unconfirmed(self) -> None:
+        trigger = datetime.now(UTC) + timedelta(minutes=1)
+        current = trigger + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {
+                "currentTime": current.isoformat(),
+                "triggerTime": trigger.astimezone(timezone(timedelta(hours=1))).isoformat(),
+            }
+        )
+        assert result is None
+
+    def test_expired_trigger_after_old_kraken_current_is_unconfirmed(self) -> None:
+        current = datetime.now(UTC) - timedelta(minutes=2)
+        trigger = current + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {"currentTime": current.isoformat(), "triggerTime": trigger.isoformat()}
         )
         assert result is None
 
@@ -457,8 +503,45 @@ class TestParseDmsTriggerTime:
         assert _parse_dms_trigger_time({"currentTime": "2026-06-01T00:00:00Z"}) is None
 
     def test_malformed_trigger_is_unconfirmed_not_raising(self) -> None:
+        current = datetime.now(UTC)
         result = _parse_dms_trigger_time(
-            {"currentTime": "2026-06-01T00:00:00Z", "triggerTime": "not-a-timestamp"}
+            {"currentTime": current.isoformat(), "triggerTime": "not-a-timestamp"}
+        )
+        assert result is None
+
+    @pytest.mark.parametrize("current_time", [None, "not-a-timestamp", 0])
+    def test_invalid_current_time_is_unconfirmed(self, current_time: Any) -> None:
+        trigger = datetime.now(UTC) + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {"currentTime": current_time, "triggerTime": trigger.isoformat()}
+        )
+        assert result is None
+
+    def test_naive_current_time_is_unconfirmed(self) -> None:
+        current = datetime.now(UTC)
+        trigger = current + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {
+                "currentTime": current.replace(tzinfo=None).isoformat(),
+                "triggerTime": trigger.isoformat(),
+            }
+        )
+        assert result is None
+
+    def test_naive_trigger_time_is_unconfirmed(self) -> None:
+        current = datetime.now(UTC)
+        trigger = current + timedelta(minutes=1)
+        result = _parse_dms_trigger_time(
+            {
+                "currentTime": current.isoformat(),
+                "triggerTime": trigger.replace(tzinfo=None).isoformat(),
+            }
+        )
+        assert result is None
+
+    def test_non_string_trigger_is_unconfirmed(self) -> None:
+        result = _parse_dms_trigger_time(
+            {"currentTime": datetime.now(UTC).isoformat(), "triggerTime": 0}
         )
         assert result is None
 

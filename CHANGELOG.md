@@ -28,6 +28,113 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release resources after interrupted startup.** SQLite closes an opened connection
+  if schema setup, migration, or cancellation interrupts startup. The operator daemon
+  closes acquired databases, its assistant, and created tasks when partial startup fails.
+  ([PR #158](https://github.com/CarlDog/wobblebot/pull/158))
+- **Require a fresh loss-cap check after a valuation failure.** Later automatic grid
+  steps wait until a fresh portfolio valuation passes the session loss-cap check.
+  Re-anchor requests are refused while valuation is unavailable; re-anchor approvals from
+  before the live session or its latest valuation recovery cannot execute later.
+- **Send command receipts only after their terminal status is saved.** A failed
+  persistence write no longer sends a misleading success or refusal receipt.
+- **Confirm the dead-man's-switch timer before reporting recovery.** Its response must
+  contain timezone-aware current and trigger times, with the trigger later than both
+  Kraken's current time and local receipt time. Unconfirmed responses count toward the
+  failure streak and preserve its escalation until a confirmed reset arrives.
+  ([PR #162](https://github.com/CarlDog/wobblebot/pull/162))
+
+## [2.0.13] - 2026-09-25
+
+### Fixed
+
+- **Reserve withdrawal claims before submission.** The Harvester reserves a proposal
+  and its rolling-cap charge in one SQLite transaction before calling Kraken.
+  Concurrent execution attempts cannot submit the same proposal twice; an
+  interrupted attempt leaves a blocking claim.
+- **Keep uncertain withdrawal outcomes blocked.** Only an explicit Kraken
+  rejection permits retry. Timeouts and interrupted audit updates leave an
+  unverified claim that blocks new bot withdrawals until reconciled. Historical
+  `failed` rows migrate to `unknown` because the old path could not distinguish
+  rejection from a lost response. The dashboard identifies unverified attempts
+  and hides Execute while a claim is unresolved.
+
+### Upgrade note
+
+- Keep the Harvester stopped until withdrawal claims and approved execute
+  commands are reconciled against Kraken Funding. Verify database backups before
+  migration. Local `claim-...` and historical `failed-...` IDs are not Kraken
+  reference IDs. Reconcile unresolved claims before restart or retry, including
+  after rollback. See `docs/release/v1.0-incident-runbook.md`.
+
+## [2.0.12] - 2026-09-18
+
+### Fixed
+
+- **Silent fill loss when Kraken's trade history lags a fill (ADR-046).** The
+  engine confirmed a DOGE/USD buy on 2026-09-10 12:47 UTC via `QueryOrders`,
+  found no trade row in that tick's `TradesHistory` snapshot, and committed the
+  order as closed with zero trades; nothing re-examined it and the daily
+  reconcile paged for eight days until a hand backfill. A confirmed fill whose
+  trade rows do not cover its `filled_amount` is now pending, never final: the
+  order is closed and a `pending_fill_trades` marker is written in one
+  transaction (so the counter still fires exactly once), the engine sweeps the
+  marker every tick using the order's own trade list (`QueryOrders trades=true`
+  then `QueryTrades`), records rows as they arrive, and deletes the marker only
+  once the fill is covered. An empty lookup counts toward a bound of 120
+  attempts; a transport error does not, and a 30-minute wall clock ends the
+  sweep either way. Giving up keeps the marker, logs ERROR, and sends a
+  critical "Fill recorded without its trade rows" notification naming the
+  order and the backfill runbook. The `grid fill` log line is WARNING while
+  rows are owed and INFO once recorded. `StoragePort.save_fill` now refuses a
+  positive fill with an empty trade list, so no code path can recreate the
+  shape quietly. The cancel path and the boot reconciler use the same
+  resolution, and a restart resumes any sweep the previous process left.
+  Review round (five reviewers, 16 findings, every confirmed one fixed and
+  pinned): the direct exchange lookup runs every third sweep tick per symbol so
+  a long lag cannot starve the `OpenOrders` fetch on Kraken's shared private
+  counter; an attempt is a lookup that ran and left the fill uncovered, and the
+  storage row and the log count the same thing; fee-drift checks, sell-guard
+  invalidation and the recovery log lines run only on rows new to storage,
+  found by order id; the give-up page is buffered in the engine and drained on
+  both the success and the per-symbol failure path, so a trading step that
+  raises right after the give-up cannot lose it; boot re-raises every given-up
+  marker at ERROR until its rows land and clears it once they do, logs ERROR
+  for markers on symbols outside `live.symbols`, and refuses to boot (exit 1)
+  if the marker read fails; an empty trade set never covers a positive fill,
+  however small (the 1e-8 tolerance had let a one-lot-unit fill count as
+  covered, which `save_fill` then refused every tick). The page and log lines
+  claim only what the code knows: the daily reconcile reports the gap once
+  Kraken's history lists the trade; nothing else reads the marker yet.
+  Second round (a sixth reviewer on the fix round plus the completeness
+  critic): the 30-minute ceiling is measured from the later of first sighting
+  and this process's boot for a marker inherited across a restart, so a long
+  restart cannot turn one transient lookup failure into a give-up; the ADR-038
+  fee-drift page fires on a recovery tick too, not only at the symbol's next
+  fill; a given-up marker is cleared at boot from its own `filled_amount` even
+  when the `orders` row is gone; the boot WARNING counts only the markers this
+  session will sweep; the backfill runbook states that backfilled rows must
+  carry Kraken's `ordertxid` for the marker to clear.
+
+### Added
+
+- `ExchangePort.get_order_trades(order)`: the exchange's own order-to-trade
+  linkage, distinct from a scan of account-wide history. Kraken implements it
+  as `QueryOrders` with `trades=true` followed by `QueryTrades` in chunks of 20
+  (field names from docs.kraken.com, 2026-09-18; verified against a live
+  response before deploy). `MockExchangeAdapter.withhold_trades` /
+  `release_trades` let tests reproduce the lagging-history shape.
+- Storage: `pending_fill_trades` table (live.db, additive) and the port methods
+  `save_fill_pending_trades`, `record_pending_fill_trades`,
+  `note_pending_fill_trades_attempt`, `get_pending_fill_trades`.
+- `GridEngine.load_pending_fill_trades`, `pending_fill_trade_symbols`,
+  `drain_unpaged_abandonments`, and `StepResult.trades_recovered` /
+  `trade_recovery_abandoned` for the sweep's boot resume and paging;
+  `MockExchangeAdapter.withhold_trades(history_only=True)` reproduces a
+  `TradesHistory` lag while the order's own trade list is current.
+
 ## [2.0.11] - 2026-09-09
 
 ### Fixed

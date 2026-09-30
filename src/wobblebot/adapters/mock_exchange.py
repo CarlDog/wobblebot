@@ -61,6 +61,11 @@ _DEFAULT_SPREAD_PERCENTAGE = Decimal("0.02")
 
 
 class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-many-public-methods
+    # R0904: the port itself is 19 methods; the three past the cap are the
+    # ADR-023/046 test controls (inject_partial_cancel, withhold_trades,
+    # release_trades) that let engine tests reproduce exchange shapes the
+    # mock's price-cross matcher cannot produce on its own.
     """Deterministic in-memory ``ExchangePort`` for simulations and tests.
 
     Construct with starting balances and (optionally) starting prices,
@@ -88,6 +93,13 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
         self._prices: dict[Symbol, Decimal] = dict(starting_prices or {})
         self._open_orders: dict[str, Order] = {}
         self._trade_history: list[Trade] = []
+        # ADR-046 test control: exchange_ids whose trades are hidden from
+        # get_trade_history / get_order_trades while get_order_status
+        # still reports the fill -- the 2026-09-10 Kraken shape (order
+        # gone from OpenOrders, QueryOrders says filled, TradesHistory
+        # not yet listing the trade). Populated by withhold_trades.
+        self._withheld_trade_orders: set[str] = set()
+        self._history_only_withholds: set[str] = set()
         self._order_counter = 0
         self._trade_counter = 0
         # ADR-023 test control: exchange_id -> the order get_order_status
@@ -316,11 +328,45 @@ class MockExchangeAdapter(ExchangePort):  # pylint: disable=too-many-instance-at
     async def get_trade_history(
         self, symbol: Symbol | None = None, limit: int = 100
     ) -> list[Trade]:
-        results = self._trade_history
+        results = [t for t in self._trade_history if t.order_id not in self._withheld_trade_orders]
         if symbol is not None:
             results = [t for t in results if t.symbol == symbol]
         # Most-recent first, matching ExchangePort convention.
         return list(reversed(results))[:limit]
+
+    async def get_order_trades(self, order: Order) -> list[Trade]:
+        if not order.exchange_id:
+            raise ExchangeError("Cannot query trades for an order with no exchange_id")
+        if (
+            order.exchange_id in self._withheld_trade_orders
+            and order.exchange_id not in self._history_only_withholds
+        ):
+            return []
+        return [t for t in self._trade_history if t.order_id == order.exchange_id]
+
+    def withhold_trades(self, exchange_id: str, *, history_only: bool = False) -> None:
+        """Test control (ADR-046): hide ``exchange_id``'s trades from
+        ``get_trade_history`` (and, unless ``history_only``, from
+        ``get_order_trades`` too) until ``release_trades``.
+        ``get_order_status`` is deliberately NOT affected — it keeps
+        reporting the fill, exactly as Kraken's QueryOrders did on
+        2026-09-10 while TradesHistory lagged. ``history_only=True``
+        models the order's own trade list being ahead of the account-wide
+        history, which is the ADR-046 fast path."""
+        self._withheld_trade_orders.add(exchange_id)
+        if history_only:
+            self._history_only_withholds.add(exchange_id)
+        else:
+            self._history_only_withholds.discard(exchange_id)
+
+    def release_trades(self, exchange_id: str | None = None) -> None:
+        """Undo ``withhold_trades`` for one order, or for all when ``None``."""
+        if exchange_id is None:
+            self._withheld_trade_orders.clear()
+            self._history_only_withholds.clear()
+        else:
+            self._withheld_trade_orders.discard(exchange_id)
+            self._history_only_withholds.discard(exchange_id)
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         if amount <= 0:

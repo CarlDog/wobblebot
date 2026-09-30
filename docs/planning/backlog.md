@@ -172,6 +172,7 @@ news/external = provider integrator; harvester = treasury integrator; trading sc
 | NW01 | [Auto-pause on news-role HIGH risk](../release/v1.1/news-pipeline.md) | G7: calibrated outcomes and explicit ADR-002 exception before auto-pause. |
 | NW02 | [Kraken status news adapter — first-party exchange-impact feed](../release/v1.1/news-pipeline.md) | Shipped: first-party Kraken status news adapter. |
 | NW03 | [News pipeline gap audit vs Kraken Pro's 16 sources](../release/v1.1/news-pipeline.md) | Partly shipped: attribution substrate. G10: degraded news signal or requested source-quality metrics; preserve retired CryptoCompare posture. |
+| NW04 | [Per-source failure backoff for the news pipeline](../release/v1.1/news-pipeline.md) | Ready for the next version's scope decision; not G10-gated, the demand trigger already fired twice in one week (`rss:kraken_blog` 403 since 2026-09-14, hand-disabled 2026-09-19; `rss:coingape` 403 the same morning). Back off retry cadence per `source_id` after sustained failures instead of an operator hand-editing `settings.yml`; mirrors `GridEngine`'s starved-layout back-off; no new `settings.yml` writer (single-writer invariant, ADR-044); same skepticism as ADR-015 decision 8's declined LLM circuit-breaker, but this candidate already has the observed cadence that decision asked for. |
 
 ### observability
 
@@ -194,6 +195,7 @@ news/external = provider integrator; harvester = treasury integrator; trading sc
 | O15 | [Solo-operator incident runbook](../release/v1.1/observability.md) | Shipped: incident runbook; update when a new incident changes recovery practice. |
 | O16 | [Cost-honesty dashboard — bot's ROI against its own infrastructure](../release/v1.1/observability.md) | Shipped: P4.7 cost-honesty dashboard. |
 | O17 | [LLM health check on the /health page — ✅ SHIPPED 2026-08-09 (P3 slice 10)](../release/v1.1/observability.md) | Shipped: provider health surface; residual credential ownership is N1. |
+| O18 | [On-demand database review export](../release/v1.1/observability.md#on-demand-database-review-export--proposed-2026-09-24) | Proposed 2026-09-24: operator-requested review copies of externally persisted SQLite databases. Design the consistency, access, manifest, retention and sharing contract separately from restore-grade backup; do not implement as part of the active Harvester incident response. |
 
 ### operator-ux
 
