@@ -5,6 +5,58 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Dependency merges and repository cleanup — completed 2026-10-01 UTC
+(September 30 local).** The operator authorized the dependency merges and
+subsequent necessary cleanup. All five dependency PRs merged on September 30 UTC:
+
+| PR | Dependency change | Merge SHA |
+| --- | --- | --- |
+| [#151](https://github.com/CarlDog/wobblebot/pull/151) | types-PyYAML 6.0.12.20260724 → 6.0.12.20260906 | `af9f91efaea6ededae14ba106cb06ffcbda6c1e1` |
+| [#159](https://github.com/CarlDog/wobblebot/pull/159) | pylint 4.0.8 → 4.0.9; httpx2 2.12.0 → 2.13.1 | `a293c48e7557d7bae651be89c539b19fae8eeed1` |
+| [#140](https://github.com/CarlDog/wobblebot/pull/140) | isort 8.0.1 → 9.0.1 | `3a64e4aa95a004a155d089a89e1dd18c4334d33f` |
+| [#160](https://github.com/CarlDog/wobblebot/pull/160) | uvicorn 0.52.4 → 0.54.0 | `ea581e4db55a3cf47e3bf18a13ba6cba56bc7301` |
+| [#161](https://github.com/CarlDog/wobblebot/pull/161) | Starlette 1.6.0 → 1.7.0 | `c9c64041f6dce7f43065db2118388acd75f0aea9` |
+
+Each PR passed fresh CI after incorporating the preceding merges. The final
+merged-main [run 36782935721](https://github.com/CarlDog/wobblebot/actions/runs/36782935721)
+passed `test` and `build-and-push`: 4,394 tests passed, six private operator
+configuration checks skipped, and 30 integration tests deselected. The upgrade
+gate was enabled. Black checked 429 files, isort passed, mypy checked 158 source
+files, and pylint scored 10.00/10. Main CodeQL, gitleaks and dependency submission
+also passed. The verified published image is
+`ghcr.io/carldog/wobblebot:sha-c9c6404@sha256:e1288bfe1674b940b91b186df92169d03fe6d83e2dfa471b63a87bf57a69747d`.
+This is source publication; the last verified production deployment remains
+`d6a1d29`, stack 158 version 92, in the receipt below. No production update,
+new SemVer tag, or formal 2.0.x acceptance occurred in this cleanup.
+
+The local environment was refreshed with `pip install -e ".[dev]"`; all 11 dev
+requirements match the manifest and `pip check` passed. The focused command
+`pytest tests/web tests/config/test_schema_drift.py --no-cov` passed 421 tests.
+Local Black, isort, mypy and pylint checks passed with explicit UTF-8. An optional
+blanket warnings-as-errors lint run stopped on `pylint-pydantic` importing deprecated
+Astroid names; lint then passed with the existing pytest-style DeprecationWarning
+exception. No new dependency or source change was made to suppress that warning.
+
+Five obsolete worktrees were preserved with full history bundles, working-file
+snapshots and required ignored artifacts under the private, Git-ignored
+`tmp/cleanup-2026-09-30/`. All snapshot hashes and ZIP checks passed; the restored
+withdrawal test fixture passed SQLite `quick_check`. One managed worktree was
+archived, three manual checkouts removed, and the withdrawal mutation checkout
+quarantined intact after its fixture directory denied access. Stale worktree
+metadata was separately preserved before removal; Git now lists only the primary
+checkout. A verified reference bundle and tip inventory precede removal of 65
+merged local branches and five stale remote tracking refs. `main`, historical
+`v1.1`, and the two branches not merged by ancestry were retained. Production
+logs, database backups and mutation evidence were preserved.
+
+[Issue #23](https://github.com/CarlDog/wobblebot/issues/23) is closed as superseded:
+the August 10 quant review explicitly disposes of the old Haiku no-verdict
+finding, and later seat evidence supersedes the July roster. This does not claim
+every originally planned July probe completed; methodological caveats and new
+campaign prerequisites remain G4. [#97](https://github.com/CarlDog/wobblebot/issues/97)
+was reconciled and remains open for N5 funding compatibility and provider-watch
+ownership. #18 and #22 remain intentional open records. No PRs remain open.
+
 **Post-v2 audit remediation merged and deployed — 2026-09-30 UTC.**
 [PR #165](https://github.com/CarlDog/wobblebot/pull/165) merged at 21:09:33 UTC
 as `d6a1d298383525214d2126dde621913e4f08b66f`. Merged-main

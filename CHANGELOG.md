@@ -28,6 +28,17 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Changed
+
+- **Refresh existing web and development dependencies.** Starlette 1.6.0 → 1.7.0
+  ([PR #161](https://github.com/CarlDog/wobblebot/pull/161)) and uvicorn 0.52.4 → 0.54.0
+  ([PR #160](https://github.com/CarlDog/wobblebot/pull/160)); isort 8.0.1 → 9.0.1
+  ([PR #140](https://github.com/CarlDog/wobblebot/pull/140)); pylint 4.0.8 → 4.0.9
+  and httpx2 2.12.0 → 2.13.1
+  ([PR #159](https://github.com/CarlDog/wobblebot/pull/159)); types-PyYAML
+  6.0.12.20260724 → 6.0.12.20260906
+  ([PR #151](https://github.com/CarlDog/wobblebot/pull/151)).
+
 ### Fixed
 
 - **Release resources after interrupted startup.** SQLite closes an opened connection
