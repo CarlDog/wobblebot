@@ -5,6 +5,80 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Dependency image deployed and verified — 2026-10-01 UTC (September 30 local).**
+The operator authorized the production update after the dependency merges below.
+The deployed immutable image is
+`ghcr.io/carldog/wobblebot:sha-c9c6404@sha256:e1288bfe1674b940b91b186df92169d03fe6d83e2dfa471b63a87bf57a69747d`,
+revision `c9c64041f6dce7f43065db2118388acd75f0aea9`. The exact-source
+[CI run 36782935721](https://github.com/CarlDog/wobblebot/actions/runs/36782935721)
+was rechecked: `test` and `build-and-push` passed. The source delta from the prior
+deployed revision contains dependency pins and a historical roadmap receipt;
+runtime repository code, schema, Docker/Compose/entrypoint and tools are unchanged.
+The standing pre-deploy rule's dependency-bump exemption from multi-agent review
+was applied and disclosed. Compatibility review covered the existing middleware
+and official [Starlette 1.7 release notes](https://starlette.dev/release-notes/#170-september-23-2026)
+and [uvicorn 0.54.0 release](https://github.com/Kludex/uvicorn/releases/tag/0.54.0).
+Existing AnyIO 4.15.1 meets Starlette's AnyIO 4 requirement; the experimental
+OpenTelemetry and HTTP/2 paths are not enabled. The focused 421-test web/config
+verification is recorded in the cleanup receipt below.
+
+*Logs before deployment.* A fresh all-eight-service export covers
+2026-09-24 01:45:09 through 2026-10-01 01:45:09 UTC. Its 46 source files comprise
+eight Docker logs and 38 persistent files. Current Docker stdout covers roughly
+4.5 hours since the previous restart; retained persistent files supply the week
+with day-boundary overlap. Local file hashes and the ZIP integrity check passed.
+The private ignored archive is `logs/nas-predeploy-2026-10-01T014509Z.zip`, SHA-256
+`ed095724749a3b2e4fa7734cfa03a899c70a0d11b08d0f2dbf4a1957c972e4f5`.
+Timestamp-filtered, deduplicated review found 100 WARNING events, zero
+ERROR/CRITICAL events, and no unparsed severity lines. The current Docker logs
+contained four startup warnings. Historical API/DMS/valuation interruptions,
+offside parking, dust, safety-cap refusals, the web bind advisory and CoinGape 403
+remain operational findings; this review found no new deployment blocker.
+
+*Recovery and validation.* A fresh six-file online backup set was created on the
+NAS at 01:47:34–40 UTC. All six passed integrity and disposable restoration checks.
+Copies in the previously approved private
+`scratchpad/recovery-backup/deploy-dependencies-20261001T014734Z/` matched NAS hashes
+and passed all six local restoration checks; database files remain Git-ignored.
+Validation-only `cli.preflight` inside the production live container passed all
+36 layout orders across BTC, ETH, SOL, XRP, DOGE and ADA. Preflight placed no
+orders. SOL/DOGE/ADA used CLI-only default order sizes of 8/6/7 USD to fit the
+diagnostic caps to their existing per-coin settings; mounted settings were
+unchanged. Kraken confirmed the trader key has withdrawal permission off; a
+separate read-only scope probe confirmed the Harvester key has Withdraw scope.
+
+*Deployment and readback.* At 01:51:29 UTC, one atomic update on endpoint 2,
+file stack 158 changed the image digest and `IMAGE_TAG` together: **92 -> 93 in
+one redeploy**. Other environment values, mounts and the mounted settings hash
+were preserved. All eight new containers started at 01:51:39–43 UTC; at 01:53:28
+all were running and healthy, with zero restarts and the exact revision/digest
+above. Runtime readback confirmed Starlette 1.7.0 and uvicorn 0.54.0, with
+`pip check` clean. Application version remains 2.0.13; no new SemVer tag or release.
+
+The five startup warnings were SOL/DOGE stale-anchor re-layout notices, a DOGE
+buy refused by the per-coin inventory cap, existing SOL dust and the web bind
+advisory. There were no startup ERROR/CRITICAL entries. SOL placed 3/6 re-layout
+orders and DOGE 5/6, with the remainder refused by existing guards;
+BTC/ETH/XRP/ADA stayed offside parked. No cap or guard was relaxed.
+
+Read-only snapshots at 01:51:24 and 01:52:27 UTC found `quick_check=ok` in all six
+databases. Live trades remained 250, and pending fill markers, approved commands,
+execute-proposal commands and transfer results remained zero. Startup maintenance
+reconciled all six symbols cleanly, wrote 569 ledger entries, and created and
+verified six new backups. A separate read-only
+`tools/reconcile_trade_history.py --symbols BTC,ETH,SOL,XRP,DOGE,ADA` run exited 0
+at 01:53:14 UTC with `6/6 symbols reconciled`. GET-only loopback web checks passed
+anonymous health/login, the anonymous dashboard redirect, and signed-session
+dashboard, status-card and advisor routes; they do not test login submission or
+mutating approval forms.
+
+The prior `sha-d6a1d29` immutable image and rollback compose are retained. Any
+image rollback must preserve current databases and withdrawal claims; the
+pre-deploy backups must not overwrite later trades. Private evidence is retained
+under ignored `logs/dependency-*` files. This receipt establishes deployment and
+bounded startup verification. Extended soak, live withdrawal, paid inference and
+formal 2.0.x acceptance remain unestablished for this image.
+
 **Dependency merges and repository cleanup — completed 2026-10-01 UTC
 (September 30 local).** The operator authorized the dependency merges and
 subsequent necessary cleanup. All five dependency PRs merged on September 30 UTC:
@@ -25,9 +99,10 @@ gate was enabled. Black checked 429 files, isort passed, mypy checked 158 source
 files, and pylint scored 10.00/10. Main CodeQL, gitleaks and dependency submission
 also passed. The verified published image is
 `ghcr.io/carldog/wobblebot:sha-c9c6404@sha256:e1288bfe1674b940b91b186df92169d03fe6d83e2dfa471b63a87bf57a69747d`.
-This is source publication; the last verified production deployment remains
-`d6a1d29`, stack 158 version 92, in the receipt below. No production update,
-new SemVer tag, or formal 2.0.x acceptance occurred in this cleanup.
+At the end of this cleanup, production was still `d6a1d29`, stack 158 version 92,
+in the earlier deployment receipt below. No production update, new SemVer tag,
+or formal 2.0.x acceptance occurred in the cleanup; the subsequent dependency
+image deployment is recorded above.
 
 The local environment was refreshed with `pip install -e ".[dev]"`; all 11 dev
 requirements match the manifest and `pip check` passed. The focused command
