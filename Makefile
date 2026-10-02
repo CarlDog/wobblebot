@@ -1,10 +1,16 @@
 # Makefile for WobbleBot development tasks
 # Use `make help` to see available commands
 
-.PHONY: help install test test-unit test-cov lint format check check-config-drift clean
+.PHONY: help install test test-unit test-cov lint format format-check check check-config-drift clean
 
+# Prefer the checkout's virtual environment on either supported platform.
+# Command-line overrides (make PYTHON=/path/to/python check) remain supported.
+ifneq ($(wildcard .venv/Scripts/python.exe),)
 PYTHON := .venv/Scripts/python.exe
-PIP := .venv/Scripts/pip.exe
+else
+PYTHON := .venv/bin/python
+endif
+PIP = $(PYTHON) -m pip
 
 # Schema-drift strict mode (2026-08-22). Makes the drift guard a
 # property of the REPO rather than of one machine's untracked .env.
@@ -65,7 +71,7 @@ format-check: ## Check if code is formatted correctly
 check-config-drift: ## Fail if settings.yml/.env drift from their example files
 	$(PYTHON) -m pytest tests/config/test_schema_drift.py -q --no-cov
 
-check: format lint test ## Run all checks (format, lint, test)
+check: format-check lint test ## Run all checks without rewriting source (format, lint, test)
 
 clean: ## Remove build artifacts and cache files
 	rm -rf build/

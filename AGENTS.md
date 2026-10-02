@@ -66,7 +66,9 @@ module's `--help` and the roadmap stage that shipped it.
 
 ## Commands
 
-The Windows-friendly Makefile uses `.venv/Scripts/python.exe` — if your shell can't run `make`, invoke the same commands directly through the venv interpreter or activate it first.
+The Makefile selects `.venv/Scripts/python.exe` on Windows or `.venv/bin/python`
+on Linux/macOS. Override with `make PYTHON=/path/to/python check` if needed.
+If your shell cannot run `make`, invoke the same commands through the venv interpreter.
 
 **First-time setup on a fresh clone** — once, before your first commit:
 

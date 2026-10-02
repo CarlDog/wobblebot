@@ -211,7 +211,7 @@ black src/ tests/            # format
 isort src/ tests/            # imports
 mypy src/                    # type check (strict)
 pylint src/                  # lint
-make check                   # all of the above + tests
+make check                   # non-mutating format checks + type/lint checks + tests
 ```
 
 `pyproject.toml` config gotchas: `addopts` always runs with coverage; `filterwarnings = ["error", ...]` makes warnings other than `DeprecationWarning` fail the suite; only `unit`, `integration`, `slow` markers are valid.

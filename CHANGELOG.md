@@ -30,6 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Changed
 
+- **Portable, non-mutating local verification.** Make targets select the Windows
+  or POSIX virtual environment and invoke pip through that interpreter.
+  `make check` checks formatting without rewriting the source under review.
+  The development guide now uses the repository's current clone URL, module
+  names and branch workflow.
+
 - **Refresh existing web and development dependencies.** Starlette 1.6.0 → 1.7.0
   ([PR #161](https://github.com/CarlDog/wobblebot/pull/161)) and uvicorn 0.52.4 → 0.54.0
   ([PR #160](https://github.com/CarlDog/wobblebot/pull/160)); isort 8.0.1 → 9.0.1
