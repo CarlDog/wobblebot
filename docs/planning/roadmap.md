@@ -5,6 +5,109 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+## Cloud product completion verification
+
+**2026-10-02 UTC — local verification and setup repair; product incomplete.**
+Work item `CarlDog/wobblebot:product-completion`; the
+[finite acceptance baseline](product-completion-baseline.md) retains FR/NFR,
+Phases 1-9, P0-P4, C0-C5, N0-N5 and every backlog candidate's adoption/gate.
+Initial checkout: clean branch `work`, commit
+`9a42a790f670eb74df0cc381c6a484c7324e6b90`, origin
+`https://github.com/CarlDog/wobblebot.git`. The authorized cloud checkout does
+not contain unpushed laptop work. Local branch: `codex/product-completion`.
+
+**Implemented D1:** `e7ab18a` fixes the demonstrated Linux `make format-check`
+failure (hard-coded `.venv/Scripts/python.exe`, exit 127). Make now selects
+Windows/POSIX venv paths, retains command-line `PYTHON`/`PIP` overrides and uses
+`python -m pip`. `make check` is non-mutating. Contributor docs now identify the
+correct remote, module names and current branch workflow. No trading/runtime
+Python, tests, manifest, schema, operational settings or Compose grants changed.
+The commit passed the installed author/committer identity, gitleaks and PII hooks.
+
+**Environment:** Linux, CPython 3.13.5, editable installation of the exact current
+manifest. Setup used `UV_CACHE_DIR=/tmp/wobblebot-uv-cache
+UV_PYTHON_INSTALL_DIR=/tmp/wobblebot-python uv venv --python 3.13 .venv`, then
+`UV_CACHE_DIR=/tmp/wobblebot-uv-cache uv pip install --python .venv/bin/python
+-e '.[dev]'`. The default cache directory was read-only; relocating tool caches
+resolved it. Pip was subsequently installed into this uv-created venv to exercise
+the documented wheel workflow. `uv pip check --python .venv/bin/python` passed.
+Gitleaks v8.24.3 was extracted from the official tool image
+`ghcr.io/gitleaks/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055`
+into `/tmp/wobblebot-bin`; no repository hook was bypassed.
+
+### Local verification commands and outcomes
+
+All commands ran from the repository root unless stated. Each had a finite
+`timeout` (at most 600 seconds). Raw logs and reproduction scripts are retained
+in ignored `tmp/product-completion-verification/`; no private operator data was
+copied into tracked evidence.
+
+| Command | Outcome / evidence limit |
+| --- | --- |
+| `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 make check` | Exit 0. Black: 429 unchanged files; isort: pass; mypy: 158 source files clean; pylint: 10.00/10, exit 0; pytest: 4,394 passed, six private-config skips, 30 integration deselections; coverage 88.46%. `make` stops on a failing recipe. |
+| `.venv/bin/python -m pytest -m integration tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py --no-cov -q` | Exit 0, eight passed. Real engine/SQLite/operator composition with synthetic exchange/transport; not live integration. Includes 1,000-tick oscillation and restart/resume. |
+| `.venv/bin/python -m pytest tests/config/test_schema_drift.py -q --no-cov -rs` | Exit 0, 26 passed, six skipped because `config/settings.yml` and `.env` are absent. This does not validate deployed/operator configuration. |
+| `.venv/bin/python /tmp/wobblebot-verification/cli_walkthrough.py` | Exit 0, 64 subprocess cases: every one of 16 CLIs returned 2 without traceback for absent config directory, bad explicit config, unknown profile and missing own section. Script/results archived; existing credential tests also ran in the full suite. |
+| `.venv/bin/python -m wobblebot.cli.sandbox --config config/settings.example.yml --db /tmp/wobblebot-verification/sandbox.db` | Exit 0; two mock orders, two trades, round trip persisted. No network or real money. |
+| `.venv/bin/python tools/profile_storage.py --iterations 100` | Exit 0, all six operations profiled on disposable synthetic data. p99 ranged from 0.129 to 40.442 ms. Cloud-host evidence only, not NAS performance acceptance. |
+| `make -n PYTHON=/tmp/custom-python format-check`; `make -n install`; `make -n check` | Exit 0; custom interpreter preserved, pip uses selected interpreter, check runs `--check`/`--check-only` rather than source formatters. A disposable malformed Python file made `make check` fail without rewriting it; a simulated Windows venv selected `Scripts/python.exe`. No Windows host execution claimed. |
+| `DOCKER_CONFIG=/tmp/wobblebot-docker docker compose --env-file /dev/null -f docker/docker-compose.yml config --quiet` | Exit 0 with expected missing-credential warnings. Syntax validation only; no service started and no resolved credentials printed. |
+| `.venv/bin/python -m pip wheel --no-deps --wheel-dir /tmp/wobblebot-verification/wheels .` | Exit 0, wheel built; SHA-256 `3e7776cd5b0a7f29585ca710eb7b2de56f6ab4fe5d028290247ec7087b77e04e`. |
+| `.venv/bin/python -m pip download --only-binary=:all: --python-version 3.14 --dest /tmp/wobblebot-verification/runtime-wheels /tmp/wobblebot-verification/wheels/wobblebot-2.0.13-py3-none-any.whl` | Exit 0; compatible runtime wheels downloaded. This is not a dependency lock or N2 completion. |
+| `DOCKER_CONFIG=/tmp/wobblebot-docker docker run --rm --network none -v /tmp/wobblebot-verification/runtime-wheels:/wheels:ro -v /workspace/wobblebot/config:/config:ro python:3.14-slim sh -c 'pip install --no-index --find-links /wheels wobblebot && pip check && python -m wobblebot.cli.sandbox --config /config/settings.example.yml --db /tmp/sandbox.db'` | Exit 0, installed wheel and dependencies valid; sandbox persisted its two-trade cycle on Python 3.14. This is a separate base-image smoke, not the product Dockerfile/non-root/entrypoint or full Python 3.14 suite. |
+| `git diff --check` | Exit 0; no whitespace errors. |
+
+The first full suite failed because the fresh checkout lacked `v2.0.7` and
+`v2.0.9`; `v1.0.0` had already been fetched. The failures were not suppressed.
+`git fetch origin tag v2.0.7 tag v2.0.9` restored the trusted historical fixtures,
+then the complete `make check` above passed with the upgrade gate enabled.
+No relevant test was weakened. The six private-config skips remain visible.
+
+### Blockers and exact next actions
+
+- **B1 — phase entry:** the latest pre-existing receipt and accepted closeout plan
+  explicitly leave formal 2.0.x acceptance outstanding. N0/N1-N5 and ultimately
+  Phase 9 depend on it. The initial question conflated production-risk acceptance with local sequencing.
+  The parent was given the exact gate and limitation list and asked to resolve
+  local sequencing under the user's explicit override of routine checkpoints.
+  Local N1 work need not imply acceptance of missing production evidence. No
+  acceptance or phase closure has been inferred. The [N1 capability inventory](n1-capability-inventory.md)
+  prepares the actual source seams, shared-store residual and required rehearsal.
+- **B2 — external evidence:** `gh api repos/CarlDog/wobblebot` and a direct GitHub
+  API HTTPS attempt failed with proxy 403. Read-only Git tag fetches work, but do
+  not establish issue/PR/hosted-CI state. The five public Kraken contract tests
+  (`pytest -m integration tests/integration/test_kraken_api_health.py --no-cov -q`)
+  all failed on `httpx.ProxyError: 403 Forbidden`; a direct connection attempt
+  timed out resolving the host. No application API assertion was reached. Restore
+  allowed external connectivity before repeating these checks. NAS, current
+  operator config/keys, Q2 history and canonical outcome data are absent; G1/G3/G6
+  evidence cannot be manufactured. Provide approved read-only access or sanitized
+  evidence through the established workflow. No live or paid tests ran.
+- **B3 — product image:** normal `docker build` first encountered a read-only
+  Docker cache location; setting `DOCKER_CONFIG` fixed that. Both the normal build
+  and a materially different `--network=host` build then failed at Debian DNS / gcc
+  installation. Logs retain exit 100 from apt and exit 1 from the build. Restore
+  build-network DNS/approved package access and rerun the unchanged Dockerfile,
+  then perform the isolated full-image/Compose rehearsal. The separate wheel smoke
+  above is explicitly insufficient to clear this gate.
+- **B4 — audit tooling:** no repository `.agents/skills` directory, and the
+  referenced Fleet Kit phase-end skill/standards script was not found in available
+  workspace or installed skill locations/catalog. Explicit repository checks were
+  executed; no Fleet conformance or independent phase-close review is claimed.
+  Supply that installed skill/tooling when conducting the formal close audit.
+
+E01-E03 remain the historical scoped exceptions from September 8; this work
+accepts no new exceptions. 2.1, Historian, writable POLICY, equity-risk decisions
+and later live acceptance remain unfinished, not excluded. No source publication,
+PR, merge, release, deployment, access change, production database edit, trade,
+withdrawal, paid model call or external schedule was performed. Local commits
+and disposable test data are the only delivery actions.
+
+**Continuation:** start from `codex/product-completion`, inspect Git state, read
+this receipt and the baseline, then resolve B1 while restoring B2-B4 as applicable.
+The setup repair is isolated in `e7ab18a`; the following documentation commit
+preserves this inventory and evidence. Checkpoints are not product completion.
+
 **Dependency image deployed and verified — 2026-10-01 UTC (September 30 local).**
 The operator authorized the production update after the dependency merges below.
 The deployed immutable image is
