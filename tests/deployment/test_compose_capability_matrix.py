@@ -97,17 +97,8 @@ EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
     # observe.db's balance_snapshots (operator.py:530-535) and a
     # MockExchangeAdapter is injected at operator.py:1399.
     "operator": _CLOUD_LLM | {"DISCORD_BOT_TOKEN"},
-    # cli/web.py:245-247 — the cloud keys drive the /health LLM card's
-    # ok/unauthorized/not-configured badge (non-billable GET /v1/models
-    # probes). NO Kraken credential: web.py:229 builds a bare httpx client for
-    # public probes only, which is ADR-016/017's credential-free web tier.
-    #
-    # ACCEPTED RESIDUAL (ADR-041): web is the reverse-proxied service and it
-    # holds three billable keys to render a badge. Dropping them would make
-    # the card report "not configured" for providers that ARE configured,
-    # which is worse than no card. Sourcing that status from a daemon that
-    # already holds the keys is a named 2.1 follow-up, not a silent change here.
-    "web": _CLOUD_LLM | {"WOBBLEBOT_WEB_SESSION_SECRET"},
+    # N1: web reads persisted daemon observations and holds only its session secret.
+    "web": {"WOBBLEBOT_WEB_SESSION_SECRET"},
     # cli/maintenance.py:116-118 imports the capital / ledger / reconcile
     # cycles, each of which calls KrakenConfig.from_env(key_var=
     # "KRAKEN_READER_API_KEY", …).

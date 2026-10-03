@@ -38,7 +38,7 @@ from wobblebot.domain.value_objects import Symbol, fmt_decimal, fmt_qty, fmt_usd
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
 from wobblebot.services.kraken_health import KrakenHealthProbe
-from wobblebot.services.llm_health import LLMHealthChecker
+from wobblebot.services.llm_health import ProviderHealthReader
 from wobblebot.services.release_checker import ReleaseCheckResult
 from wobblebot.web.auth import AuthRedirectRequired
 from wobblebot.web.middleware import (
@@ -219,7 +219,7 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals,too-many-s
     news_storage: StoragePort | None = None,
     live_storage: StoragePort | None = None,
     kraken_health_probe: KrakenHealthProbe | None = None,
-    llm_health_checker: LLMHealthChecker | None = None,
+    llm_health_checker: ProviderHealthReader | None = None,
     daemon_health_thresholds: DaemonHealthThresholds | None = None,
     cool_down_minutes: float | None = None,
     live_tick_seconds: float | None = None,

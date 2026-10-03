@@ -2335,7 +2335,7 @@ async def _open_observe_storage(observe_db: str | None) -> SQLiteStorageAdapter 
     """
     if observe_db is None:
         return None
-    storage = SQLiteStorageAdapter(observe_db)
+    storage = SQLiteStorageAdapter(observe_db, read_only=True)
     try:
         await storage.connect()
     except (StorageError, OSError) as exc:

@@ -3720,3 +3720,37 @@ lost is log-only until the next tick's drain).
 
 <!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
+
+## ADR-047: Staged directory isolation and persisted provider observations
+
+**Status:** adopted for local implementation, 2026-10-03. Extends ADR-041;
+production migration and full phase acceptance remain separate.
+
+**Decision.** Provide an opt-in generator of a resolved settings file, explicit
+per-service directory mounts and a migration map. Never move existing data or
+start services. Owners write their database directories; foreign consumers open
+SQLite with `mode=ro`, without migrations or creation. Mount directories, not
+individual database files, so concurrent WAL/SHM reads remain possible. Logs,
+backups, archive and settings have independent grants. Only the existing tools
+settings writer has writable configuration. Generated readers disable entrypoint
+bootstrap and use pre-staged prompt/config assets. Reject unclassified/shared
+owner paths and unsupported asset paths rather than inventing authority.
+
+The operator produces sanitized, timestamped non-billable provider observations
+using only its existing credentials. Web consumes persisted observations and
+needs no provider credentials or probe client. Coverage is explicitly the
+operator's Ollama/Anthropic/OpenAI/Google model-list endpoints; this does not
+establish advisor-only Atlas/Ollama-cloud inference or model quality. An absent,
+failed or stale producer yields unknown/stale evidence. Provider names include
+the producer. Errors contain types/statuses, never headers, URLs or raw bodies.
+
+**Residuals.** Multiple daemons legitimately write operator.db heartbeat, cost,
+notification or command tables. Directory grants do not constrain table-level
+command authority; N3 owns immutable approval and claim semantics. Offline
+SQLite/WAL/container tests are not deployed NAS acceptance. Old readers can open
+the additive schema; a new reader of an old schema reports unknown provider
+health. Existing data layout stays valid until explicitly migrated.
+
+**Rejected.** A root writable data mount defeats isolation; `immutable=1` can
+hide concurrent writes; giving web another cloud key restores excess authority;
+automatic migration/rollback can discard post-backup financial effects.

@@ -363,7 +363,7 @@ class TestLLMHealthSection:
             login_as(client)
             resp = client.get("/health")
             assert resp.status_code == 200
-            assert "LLM Endpoints" in resp.text
+            assert "LLM Provider Observations" in resp.text
             assert "Ollama" in resp.text
             assert "ConnectError" in resp.text
             assert "OpenAI" in resp.text

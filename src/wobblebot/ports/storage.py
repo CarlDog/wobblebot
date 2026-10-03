@@ -29,6 +29,7 @@ from wobblebot.domain.models import (
     PriceSnapshot,
     Trade,
 )
+from wobblebot.domain.provider_health import ProviderHealthSnapshot
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -1539,3 +1540,11 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: On retrieval failure.
         """
+
+    @abstractmethod
+    async def save_provider_health(self, snapshot: ProviderHealthSnapshot) -> None:
+        """Replace a producer's complete sanitized health observation."""
+
+    @abstractmethod
+    async def get_provider_health(self) -> list[ProviderHealthSnapshot]:
+        """Read observations; missing legacy tables must raise StorageError."""

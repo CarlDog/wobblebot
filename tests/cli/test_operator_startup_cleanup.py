@@ -9,6 +9,7 @@ import pytest
 
 from tests.fixtures import grid_config, safety_config
 from wobblebot.cli import operator
+from wobblebot.config.schedules import SchedulesConfig
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -35,7 +36,8 @@ async def test_early_startup_failure_closes_all_open_resources(
     assistant_closed: list[str] = []
 
     class Storage:
-        def __init__(self, path: str) -> None:
+        def __init__(self, path: str, *, read_only: bool = False) -> None:
+            assert read_only == (path != "operator")
             self.path = path
 
         async def connect(self) -> None:
@@ -83,6 +85,7 @@ async def test_early_startup_failure_closes_all_open_resources(
     monkeypatch.setattr(operator, "DiscordTransport", Transport)
     monkeypatch.setattr(operator, "install_signal_handlers", lambda *_, **__: None)
     monkeypatch.setattr(operator, "_forwarder_loop", idle_loop)
+    monkeypatch.setattr(operator, "run_provider_health", idle_loop)
     monkeypatch.setattr(operator, "_ttl_expirer_loop", idle_loop)
     if failure_point == "task_setup":
         monkeypatch.setattr(operator, "derive_thresholds_from_config", fail_task_setup)
@@ -93,6 +96,7 @@ async def test_early_startup_failure_closes_all_open_resources(
     )
     config = SimpleNamespace(
         grid=grid_config(),
+        schedules=SchedulesConfig({}),
         safety=safety_config(),
         live=None,
         harvester=None,
@@ -103,7 +107,9 @@ async def test_early_startup_failure_closes_all_open_resources(
             advise_db="advise",
             news_db="news",
             harvest_db="harvest",
-            assistant=SimpleNamespace(prompt_file="unused", model="stub"),
+            assistant=SimpleNamespace(
+                prompt_file="unused", model="stub", base_url="http://127.0.0.1:11434"
+            ),
             auth=SimpleNamespace(
                 outbound_channel_id="100",
                 allowed_channel_ids=frozenset({"100"}),

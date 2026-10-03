@@ -7,6 +7,46 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 local continuation and N1 implementation
+
+The parent confirmed that the user's full-product authorization supersedes the
+routine local phase-entry checkpoint. **B1 is resolved for local implementation**;
+formal 2.0 acceptance and all external/production evidence remain outstanding.
+Continue independently buildable N1-N5 and retained requirements. **B4 tooling
+availability is resolved** by read-only Fleet Kit source at commit
+`990747556e73d874d76d4ab6d2212460eabe7652` (plugin 0.21.0, standards 3.1).
+The [audit punch list](product-completion-audit.md) records findings before fixes.
+No plugin installation, remote issue or OpenChronicle mutation occurred.
+
+N1 implements read-only foreign consumers, additive persisted provider health,
+removal of web cloud keys and an opt-in deployment-plan generator. ADR-047 and
+[the migration guide](../implementation/isolated-deployment.md) document coverage,
+permissions, rollback and the shared operator-table residual. No existing data
+was moved; no services with financial credentials were started.
+
+- `python3 -B /workspace/fleet-kit-audit-source/fleet/scripts/standards_audit.py
+  /workspace/wobblebot --type python-service --json`: exit 1; 17 PASS, one FAIL
+  (PY-01 Ruff), six NA, two UNKNOWN (remote branch/visibility), one stale stamp.
+  NA includes unassessed items, not passes. PY-03/05/06/07 and UNI-21 need manual
+  evidence. JSON retained in the ignored verification directory.
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: N1 second run exit 0, 4,405 passed, six absent-private-config skips,
+  30 integration deselections, coverage 88.44%; Black/isort/mypy/pylint passed.
+  The first run exposed a fixture that created a missing foreign database; it
+  now initializes through the owner, and a separate test asserts no reader creation.
+- `timeout 150 .venv/bin/python /tmp/wobblebot-verification/n1_wal.py`: exit 0,
+  real Docker Python 3.14, UID 1001, network disabled, directory mounted `:ro`.
+  A concurrent host writer committed two changes; readers saw each, rejected
+  writes, and survived restart. Initial failure exposed host file permissions;
+  the fixture grants read access explicitly. This is not the final product image.
+- Final N1 `make check` (same command) exit 0: 4,406 passed, six private-config
+  skips, 30 deselections, coverage 88.44%; all quality gates passed.
+- Generated Compose `config --quiet`: passed. Full final-image/maintenance/settings
+  rehearsal remains required. Forwarded-proxy Docker build still failed Debian
+  DNS; N2's hashed binary-wheel design removes the unnecessary floating compiler
+  installation as part of reproducible builds, not as a waived check.
+
+
 **2026-10-02 UTC — local verification and setup repair; product incomplete.**
 Work item `CarlDog/wobblebot:product-completion`; the
 [finite acceptance baseline](product-completion-baseline.md) retains FR/NFR,

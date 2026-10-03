@@ -30,6 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Changed
 
+- Foreign database consumers open read-only without creating or migrating their
+  owners' databases. Web reads sanitized persisted provider observations rather
+  than holding cloud keys. A local isolation-plan generator stages per-service
+  mounts and resolved configuration without migrating data or starting services.
+
+
 - **Portable, non-mutating local verification.** Make targets select the Windows
   or POSIX virtual environment and invoke pip through that interpreter.
   `make check` checks formatting without rewriting the source under review.

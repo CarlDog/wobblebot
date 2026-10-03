@@ -132,9 +132,11 @@ from wobblebot.services.daemon_health import (
 from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
+from wobblebot.services.llm_health import build_llm_endpoints
 from wobblebot.services.notification_embed_render import render_notification_embed
 from wobblebot.services.operator_intent_fastpath import classify_fast
 from wobblebot.services.operator_service import OperatorService
+from wobblebot.services.provider_health import run_provider_health
 
 _LOGGER = logging.getLogger("wobblebot.cli.operator")
 
@@ -1586,7 +1588,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
     try:
         # Optional: open live.db (for queries that need order / balance data)
         if operator_cfg.live_db is not None:
-            live_storage = SQLiteStorageAdapter(operator_cfg.live_db)
+            live_storage = SQLiteStorageAdapter(operator_cfg.live_db, read_only=True)
             try:
                 await live_storage.connect()
             except StorageError as exc:
@@ -1604,7 +1606,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         # reply; everything else (symbols, session_pnl, recent_fill_count)
         # still works.
         if operator_cfg.observe_db is not None:
-            observe_storage = SQLiteStorageAdapter(operator_cfg.observe_db)
+            observe_storage = SQLiteStorageAdapter(operator_cfg.observe_db, read_only=True)
             try:
                 await observe_storage.connect()
             except StorageError as exc:
@@ -1622,7 +1624,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         # graceful-degrade factories in OperatorService. Discord users
         # see "No suggestions found" instead of a stack trace.
         if operator_cfg.advise_db is not None:
-            advise_storage = SQLiteStorageAdapter(operator_cfg.advise_db)
+            advise_storage = SQLiteStorageAdapter(operator_cfg.advise_db, read_only=True)
             try:
                 await advise_storage.connect()
             except StorageError as exc:
@@ -1636,7 +1638,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
                 advise_storage = None
 
         if operator_cfg.news_db is not None:
-            news_storage = SQLiteStorageAdapter(operator_cfg.news_db)
+            news_storage = SQLiteStorageAdapter(operator_cfg.news_db, read_only=True)
             try:
                 await news_storage.connect()
             except StorageError as exc:
@@ -1649,7 +1651,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
                 news_storage = None
 
         if operator_cfg.harvest_db is not None:
-            harvest_storage = SQLiteStorageAdapter(operator_cfg.harvest_db)
+            harvest_storage = SQLiteStorageAdapter(operator_cfg.harvest_db, read_only=True)
             try:
                 await harvest_storage.connect()
             except StorageError as exc:
@@ -1814,6 +1816,24 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
         stop_event = asyncio.Event()
         install_signal_handlers(asyncio.get_running_loop(), stop_event, logger=_LOGGER)
 
+        provider_health_task = asyncio.create_task(
+            run_provider_health(
+                storage=operator_storage,
+                endpoints=build_llm_endpoints(
+                    ollama_base_url=os.environ.get("OLLAMA_BASE_URL")
+                    or operator_cfg.assistant.base_url,
+                    anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
+                    openai_key=os.environ.get("OPENAI_API_KEY"),
+                    google_key=os.environ.get("GOOGLE_API_KEY"),
+                ),
+                stop_event=stop_event,
+                interval_seconds=config.schedules.get_or_default(
+                    "provider_health", timedelta(seconds=60)
+                ).total_seconds(),
+            ),
+            name="operator-provider-health",
+        )
+        created_tasks.append(provider_health_task)
         forwarder_task = asyncio.create_task(
             _forwarder_loop(
                 storage=operator_storage,
@@ -1916,6 +1936,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
             heartbeat_alert_task,
             backfill_task,
             gateway_task,
+            provider_health_task,
         )
         daemon_ready = True
     finally:
@@ -1938,7 +1959,13 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
 
     try:
         failed_task = await _supervise_background_tasks(
-            must_run=(forwarder_task, ttl_expirer_task, heartbeat_alert_task, gateway_task),
+            must_run=(
+                forwarder_task,
+                ttl_expirer_task,
+                heartbeat_alert_task,
+                gateway_task,
+                provider_health_task,
+            ),
             one_shot=(backfill_task,),
             stop_event=stop_event,
         )

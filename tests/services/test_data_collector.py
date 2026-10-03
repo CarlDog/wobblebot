@@ -119,6 +119,12 @@ class _FailingStorage(StoragePort):
     Used to verify the metric methods wrap upstream storage failures.
     """
 
+    async def save_provider_health(self, snapshot):
+        raise NotImplementedError
+
+    async def get_provider_health(self):
+        raise NotImplementedError
+
     def __init__(self, message: str = "simulated storage failure") -> None:
         self._message = message
 

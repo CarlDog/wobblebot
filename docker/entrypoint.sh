@@ -21,7 +21,9 @@ set -e
 DEFAULTS=/opt/wobblebot/defaults/config
 TARGET=/app/config
 
-if [ -d "$DEFAULTS" ]; then
+# Generated isolated deployments stage their complete configuration explicitly.
+# Readers cannot populate a read-only mount; only the bootstrap/tools path may.
+if [ "${WOBBLEBOT_BOOTSTRAP_CONFIG:-1}" = 1 ] && [ -d "$DEFAULTS" ]; then
     # Walk every file in defaults. For each, compute its path
     # relative to the defaults root and copy it to the same relative
     # path under /app/config — but only when the target doesn't

@@ -54,7 +54,7 @@ from wobblebot.services.kraken_health import (
     KrakenSystemStatus,
 )
 from wobblebot.services.llm_call_streak import LLMCallStreak, fetch_llm_call_streaks
-from wobblebot.services.llm_health import LLMEndpointHealth, LLMHealthChecker
+from wobblebot.services.llm_health import LLMEndpointHealth, ProviderHealthReader
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
     get_config,
@@ -158,7 +158,9 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
     """
     probe: KrakenHealthProbe | None = getattr(request.app.state, "kraken_health_probe", None)
     kraken_result = await probe.get() if probe is not None else None
-    llm_checker: LLMHealthChecker | None = getattr(request.app.state, "llm_health_checker", None)
+    llm_checker: ProviderHealthReader | None = getattr(
+        request.app.state, "llm_health_checker", None
+    )
     llm = await llm_checker.get() if llm_checker is not None else ()
     thresholds: DaemonHealthThresholds | None = getattr(
         request.app.state, "daemon_health_thresholds", None

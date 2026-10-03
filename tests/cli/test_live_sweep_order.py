@@ -592,6 +592,15 @@ class TestOpenObserveStorage:
         assert await _open_observe_storage(str(tmp_path)) is None
 
     async def test_a_real_path_opens(self, tmp_path: Any) -> None:
-        opened = await _open_observe_storage(str(tmp_path / "observe.db"))
+        path = tmp_path / "observe #1?.db"
+        owner = SQLiteStorageAdapter(path)
+        await owner.connect()
+        await owner.close()
+        opened = await _open_observe_storage(str(path))
         assert opened is not None
         await opened.close()
+
+    async def test_missing_database_is_not_created(self, tmp_path: Any) -> None:
+        path = tmp_path / "observe.db"
+        assert await _open_observe_storage(str(path)) is None
+        assert not path.exists()

@@ -131,19 +131,18 @@ No exclusion is based merely on cost, difficulty or a later-phase label.
 
 ## Blocker keys and continuation contract
 
-- B1: formal phase-entry acceptance is explicitly outstanding in the latest roadmap.
-  The initial question combined production-risk acceptance with permission for local
-  phase entry. Those decisions must be separated: local N1 work need not imply
-  production acceptance. The parent was asked to resolve this against the user's
-  express override of routine development checkpoints. No reply is not acceptance. The prior E01-E03 exceptions
-  remain accepted only for their original stabilization scope.
+- B1: resolved for local implementation by the user's broad task authorization,
+  confirmed by the parent. Continue all independently buildable adopted work.
+  Formal 2.0 acceptance, production evidence and old exceptions remain separate;
+  no missing criterion is waived by the local sequencing decision.
 - B2: fresh external evidence/access: GitHub API and public Kraken connectivity,
   private configs/keys, canonical OHLC/outcome data, NAS and production observations.
   Do not copy historical counts as current facts or run paid/money operations.
 - B3: actual container build/runtime validation. Preserve failed command evidence;
   source-level Compose tests do not substitute for an executed container rehearsal.
-- B4: Fleet Kit phase-end skill/standards tooling unavailable in this environment.
-  `.agents/skills` is absent; explicit repository audit checks remain executable.
+- B4: tooling availability resolved by read-only Fleet Kit source at verified
+  commit `990747556e73d874d76d4ab6d2212460eabe7652`; see the
+  [audit work item](product-completion-audit.md). Remote/OC unknowns remain.
 - D1: demonstrated local setup defect: Linux Make targets select a Windows-only
   interpreter. Repair must preserve Windows/override selection and make verification
   non-mutating; synchronize the contributor workflow with current process guidance.

@@ -32,6 +32,7 @@ from typing import Literal
 from uuid import UUID
 
 import aiosqlite
+from pydantic import ValidationError
 
 from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
@@ -80,6 +81,7 @@ from wobblebot.domain.models import (
     PriceSnapshot,
     Trade,
 )
+from wobblebot.domain.provider_health import ProviderHealthSnapshot
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -333,7 +335,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         catch elsewhere.
         """
         try:
-            uri = f"file:{self._db_path}?mode=ro"
+            uri = f"{Path(self._db_path).resolve().as_uri()}?mode=ro"
             self._conn = await open_connection(uri, uri=True)
             self._conn.row_factory = aiosqlite.Row
         except BaseException as exc:  # pylint: disable=broad-exception-caught
@@ -2220,6 +2222,29 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             raise StorageError(
                 f"Failed to update preferences for user {preferences.user_id}: {exc}"
             ) from exc
+
+    async def save_provider_health(self, snapshot: ProviderHealthSnapshot) -> None:
+        """Persist one complete snapshot without credentials or endpoint headers."""
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                "INSERT INTO provider_health (producer, snapshot_json) VALUES (?, ?) "
+                "ON CONFLICT(producer) DO UPDATE SET snapshot_json=excluded.snapshot_json",
+                (snapshot.producer, snapshot.model_dump_json()),
+            )
+            await conn.commit()
+        except aiosqlite.Error as exc:
+            raise StorageError("Failed to save provider health") from exc
+
+    async def get_provider_health(self) -> list[ProviderHealthSnapshot]:
+        """Malformed snapshots fail closed without echoing their contents."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute("SELECT snapshot_json FROM provider_health") as cursor:
+                rows = await cursor.fetchall()
+            return [ProviderHealthSnapshot.model_validate_json(row[0]) for row in rows]
+        except (aiosqlite.Error, ValidationError, ValueError):
+            raise StorageError("Failed to read provider health") from None
 
     async def upsert_daemon_heartbeat(self, name: str, beat_at: datetime) -> None:
         """Persist (or refresh) the heartbeat row for ``name``.

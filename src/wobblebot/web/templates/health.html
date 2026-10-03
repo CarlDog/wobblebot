@@ -165,7 +165,7 @@
 {% if snapshot.llm %}
 <div class="card">
   <div class="card-header">
-    <div class="card-title">LLM Endpoints</div>
+    <div class="card-title">LLM Provider Observations</div>
   </div>
   <table class="data">
     <colgroup>
@@ -189,7 +189,7 @@
             <span class="health-dot health-dot-{{ "green" if e.ok else "yellow" }}" aria-hidden="true"></span>
           </td>
           <td><strong>{{ e.name }}</strong></td>
-          <td>{{ e.checked_at | tz_format(operator_tz, "%H:%M:%S %Z") }}</td>
+          <td>{{ e.checked_at | tz_format(operator_tz, "%H:%M:%S %Z") if e.checked_at else "never" }}</td>
           <td>{{ e.detail }}</td>
         </tr>
       {% endfor %}

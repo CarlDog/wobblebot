@@ -672,4 +672,9 @@ CREATE TABLE IF NOT EXISTS pending_fill_trades (
     last_attempt_at TEXT,
     given_up_at     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS provider_health (
+    producer TEXT PRIMARY KEY CHECK (producer IN ('operator', 'advise')),
+    snapshot_json TEXT NOT NULL
+);
 """

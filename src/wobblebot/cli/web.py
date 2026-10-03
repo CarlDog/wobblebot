@@ -36,6 +36,7 @@ import getpass
 import logging
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +64,7 @@ from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.daemon_health import derive_thresholds_from_config
 from wobblebot.services.kraken_health import KrakenHealthProbe
-from wobblebot.services.llm_health import LLMHealthChecker, build_llm_endpoints
+from wobblebot.services.provider_health import PersistedProviderHealth
 from wobblebot.services.release_checker import check_for_update
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
@@ -120,14 +121,14 @@ def _resolve_session_secret(web_config: WebConfig) -> str | None:
     return secret
 
 
-async def _open_storage(path: str) -> SQLiteStorageAdapter | None:
+async def _open_storage(path: str, *, read_only: bool = False) -> SQLiteStorageAdapter | None:
     """Open a SQLite adapter at ``path``; return ``None`` on failure.
 
     Parent directory is created if missing — matches the
     ``SQLiteStorageAdapter.connect`` posture used by other CLIs.
     """
     parent = Path(path).parent
-    if parent and not parent.exists():
+    if not read_only and parent and not parent.exists():
         try:
             parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -139,7 +140,7 @@ async def _open_storage(path: str) -> SQLiteStorageAdapter | None:
                 extra={"path": path, "parent": str(parent), "error": str(exc)},
             )
             return None
-    adapter = SQLiteStorageAdapter(path)
+    adapter = SQLiteStorageAdapter(path, read_only=read_only)
     try:
         await adapter.connect()
     except StorageError as exc:
@@ -180,7 +181,7 @@ async def _open_optional_dbs(
     for name, p in paths.items():
         if p is None:
             continue
-        adapter = await _open_storage(p)
+        adapter = await _open_storage(p, read_only=True)
         if adapter is None:
             _LOGGER.warning(
                 "optional db failed to open; the dashboard will gracefully degrade cards that "
@@ -230,22 +231,16 @@ async def _bootstrap_app(
     kraken_http = httpx.AsyncClient(timeout=10.0)
     kraken_probe = KrakenHealthProbe(kraken_http)
 
-    # P3: LLM endpoint health for /health. Probes only what's actually
-    # configured — Ollama's base URL (env wins, matching how the advise/
-    # operator adapters resolve it; falls back to the assistant config)
-    # plus each cloud provider whose key is present. Empty-string env
-    # values count as unset. Shares the kraken_http client + the same
-    # TTL-cache posture.
-    llm_checker = LLMHealthChecker(
-        kraken_http,
-        build_llm_endpoints(
-            ollama_base_url=(
-                os.environ.get("OLLAMA_BASE_URL")
-                or (config.operator.assistant.base_url if config.operator else None)
-            ),
-            anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
-            openai_key=os.environ.get("OPENAI_API_KEY"),
-            google_key=os.environ.get("GOOGLE_API_KEY"),
+    # N1: read sanitized observations produced by the credential-owning daemon.
+    # Web never receives provider keys merely to render the health card.
+    llm_checker = PersistedProviderHealth(
+        operator_storage,
+        stale_after_seconds=max(
+            180.0,
+            3
+            * config.schedules.get_or_default(
+                "provider_health", timedelta(seconds=60)
+            ).total_seconds(),
         ),
     )
 

@@ -278,3 +278,5 @@ Found a vulnerability? See [`SECURITY.md`](SECURITY.md). Please report privately
 ## License
 
 MIT — see [`LICENSE`](LICENSE) for details.
+
+For opt-in per-service directory isolation, see the [staging and migration guide](docs/implementation/isolated-deployment.md).

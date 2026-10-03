@@ -118,6 +118,8 @@ grid:
 # Shared task cadences. Duration suffixes: s/m/h/d; bare number = seconds.
 # 0s disables a scheduled task. Daemons load configuration at startup.
 schedules:
+  # Credential-owning operator publishes sanitized health; 0 disables.
+  provider_health: 60s
   observe_prices: 30s                 # cli/observe: public Ticker poll cadence
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
   news: 30m                           # cli/news: poll every enabled source
