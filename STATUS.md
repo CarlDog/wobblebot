@@ -2,7 +2,7 @@
 
 **Single source of truth:** [the roadmap](docs/planning/roadmap.md).
 
-**Last updated:** 2026-10-03
+**Last updated:** 2026-09-08
 
 This compatibility entry point deliberately contains no duplicate status ledger.
 The project's documentation rule retains the roadmap as authoritative; this is

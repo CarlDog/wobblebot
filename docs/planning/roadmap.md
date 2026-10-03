@@ -10,11 +10,11 @@ The [acceptance record](2.0-close-acceptance-record.md) maps the closeout plan's
 five formal-close requirements to their receipts and lists 24 limitations for
 acceptance (the existing 2.0.x set plus post-2.0.11 items such as the unexercised
 live withdrawal and the untagged deployed image still labelled 2.0.13). The
-[2.1 entry record](2.1-entry-n0.md) reconciles N1–N5 and selects N1 with its
-documented and inferred acceptance criteria. Both are drafts prepared from
+[2.1 entry record](2.1-entry-n0.md) reconciles N1–N5 and proposes N1 first,
+with its acceptance criteria. Both are drafts prepared from
 existing receipts; no production check, trade, withdrawal, paid inference, tag or
 deployment ran. The OpenChronicle mirror was not checked. **The 2.0.x milestone
-remains open until the operator decides D1–D4.**
+remains open until the operator decides D1–D5.**
 
 **Dependency image deployed and verified — 2026-10-01 UTC (September 30 local).**
 The operator authorized the production update after the dependency merges below.
