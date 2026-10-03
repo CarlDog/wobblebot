@@ -117,3 +117,39 @@ Source: three isolated adversarial reviews (harness audit, methodology
 audit, per-fixture forensics) run 2026-08-17 against the Phase B tier
 logs and tool source; synthesis in `advisor-seats.md` § "Full-field
 matrix (Phase B)".
+
+## Offline repair contract
+
+The original findings and historical campaign results above remain unchanged.
+Current implementation and verification receipts live in the roadmap's cloud
+completion follow-up. New reports separate `correct/answered` judgment from
+`answered/total` availability. `max_score` in news now means answered fixtures;
+consumers needing the attempted fixture count must use `total`. No-answer runs
+have null judgment accuracy. Risk non-unsafe and severity denominators exclude
+unavailable rows. Both reports retain raw errors and requested/effective sampling
+parameters; null effective temperature means the adapter omitted the parameter,
+not a measured deterministic temperature. Provider-controlled runs must not be
+pooled with temperature-controlled runs for variance conclusions.
+
+Session caps are per model/run; the shared daily ledger is the runaway backstop.
+Its denials remain visible availability events. Plan the sweep budget explicitly;
+no harness silently raises caps, resets history or retries denied paid calls.
+Per-model `--max-tokens` already provides the output-budget override. Explicit
+provider truncation is rejected after usage accounting, even when a partial
+response happens to contain valid JSON. No extra paid retry is introduced.
+
+Malformed numeric values are availability failures. Direction and small-move
+magnitude are distinct in risk grading. Echoed HOLD and omitted HOLD share the
+news empty-window confidence rule. Prompt examples are inert and request one
+object; the broader last-object parser contract remains unchanged. Risk cloud
+calls use the risk ledger role; the shared builder defaults remain compatible.
+
+PB10 uses separately versioned repairs: news `gen3` (default) makes the quiet
+current window and absence of forward disruption explicit; risk `gen2` (default)
+makes the drawdown-only case a sustained, sharply losing window. Labels remain
+unchanged, no model outcomes were consulted, and constant-strategy floor tests
+remain enforced. Historical news `v1`/`gen2` and risk `v1` stay selectable and
+reports explicitly flag their contested fixtures. New fixture scores are not
+comparable to historical campaign scores without naming that version change.
+No campaign or model selection is performed by these repairs, and no historical
+score is retroactively corrected.

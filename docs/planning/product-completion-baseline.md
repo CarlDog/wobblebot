@@ -113,7 +113,7 @@ The following gates preserve adopted residuals without treating every idea as ad
 | G1 | Per-signal baseline coverage/gaps/retention; anomaly and disk consumer/design | Private usable history and consumer decision B2; calendar age insufficient |
 | G2 | Advisor actions with settings-writer ownership; cloud summary consumer | ADR-034 ownership and concrete consumer still unratified |
 | G3 | Q2 imports, canonical NAS outcome scoring, fidelity/bias tallies, Historian design | No corpus or NAS database access B2; local synthetic scoring is not equivalent |
-| G4 | Each PB1-PB13 prerequisite before a paid seat campaign | No new campaign authorized; availability/judgment, caps/order, truncation, temperature, numerics, contested fixtures, provenance remain distinct |
+| G4 | Each PB1-PB13 prerequisite before a paid seat campaign | Offline repairs are independent work; see roadmap follow-up for item-by-item receipts. Historical scores retain caveats; no new campaign authorized |
 | G5 | Proposed ADR-042 sell extension | Reconciled trade-and-ledger history, retirement policy, net-margin decision and ADR ratification; no speculative sell behavior |
 | G6 | Accepted ADR-040 writable POLICY/capital work | Second qualifying edit evidence, refreshed fixture and ownership/failure design unavailable; ADR-044 remains proposed |
 | G7 | Auto-tune/news-pause/confidence/learning candidates | Item-specific adoption/ADRs and credible outcomes; not automatically adopted by catalog membership |
@@ -161,3 +161,10 @@ ADR-047 and the [migration guide](../implementation/isolated-deployment.md).
 N2 implementation: ADR-048 and the [build guide](../implementation/reproducible-builds.md).
 Local verification receipts and external limitations remain in the roadmap;
 these implementation references do not mark formal phase acceptance.
+
+
+Follow-up correction: the no-paid-campaign gate does not block offline repair of
+G4's demonstrated battery defects. NW04's repeated source-failure trigger also
+supports a bounded reliability correction under the original defect-repair
+instruction. Both retain original acceptance and production limits; current
+implementation and verification evidence belong in the roadmap follow-up.

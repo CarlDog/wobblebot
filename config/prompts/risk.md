@@ -80,11 +80,13 @@ short sentences. Omit any field you don't want to change.
 
 Respond with JSON in EXACTLY this field order (rationale first):
 
+This is an inert shape example, not an answer to copy. Produce exactly one object.
+
 ```json
 {
+  "rationale": "...reason from this window before selecting a posture...",
   "role": "risk",
-  "rationale": "...exposure read and why the posture follows from it...",
-  "recommendations": { "spacing_percentage": 3.4, "order_size_usd": 8 },
-  "confidence": "high"
+  "confidence": "low",
+  "recommendations": {}
 }
 ```

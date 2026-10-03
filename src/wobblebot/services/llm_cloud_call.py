@@ -107,6 +107,22 @@ class CloudCallContext:
     model: str
 
 
+def ensure_complete_response(
+    envelope: dict[str, Any], error_type: type[AdvisorError] | type[AssistantError]
+) -> None:
+    """Reject an explicitly truncated cloud result after its usage was accounted.
+
+    Never retry a paid, completed request merely to repair the token budget.
+    Missing stop metadata remains compatible with older supported endpoints.
+    """
+    reason = envelope.get("stop_reason")
+    choices = envelope.get("choices") or envelope.get("candidates") or []
+    if choices and isinstance(choices[0], dict):
+        reason = choices[0].get("finish_reason", choices[0].get("finishReason", reason))
+    if reason in ("length", "max_tokens", "MAX_TOKENS", "model_length"):
+        raise error_type("truncated_response: provider output token limit reached")
+
+
 def _make_failure_record(ctx: CloudCallContext, exc: Exception) -> LLMCallRecord:
     """Build the ``success=False`` record for a failed call."""
     return LLMCallRecord(
@@ -620,6 +636,7 @@ async def execute_assistant_call(  # pylint: disable=too-many-arguments,too-many
             call_fn=call_fn,
             extract_tokens=extract_tokens,
         )
+    ensure_complete_response(envelope, AssistantError)
     raw_text = parse_text_fn(envelope)
     inner = parse_intent_dict(raw_text, provider_name=provider_name)
     try:

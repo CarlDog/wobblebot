@@ -62,6 +62,7 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenUsage,
+    ensure_complete_response,
     execute_cloud_call,
     parse_advisor_recommendation,
     wrap_provider_errors,
@@ -246,6 +247,11 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
+    @property
+    def effective_temperature(self) -> float | None:
+        """Requested sampling value actually sent; None means provider-controlled."""
+        return self._temperature if supports_temperature(self._model) else None
+
     async def aclose(self) -> None:
         """Release the underlying httpx client if the adapter owns it."""
         if self._owns_client:
@@ -325,6 +331,7 @@ class AnthropicAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance
                 extract_tokens=extract_anthropic_tokens,
             )
 
+        ensure_complete_response(envelope, AdvisorError)
         raw_text = parse_text_blocks(envelope.get("content", []) or [])
         return parse_advisor_recommendation(
             raw_text,

@@ -618,6 +618,7 @@ def _build_cloud_advisor(  # pylint: disable=too-many-arguments,too-many-positio
     storage: SQLiteStorageAdapter,
     session_cap: float,
     daily_cap: float,
+    role: str = "quant",
 ) -> AdvisorPort:
     """Construct a cloud AdvisorPort under ADR-014 cost-gate enforcement.
 
@@ -640,7 +641,7 @@ def _build_cloud_advisor(  # pylint: disable=too-many-arguments,too-many-positio
     common: dict[str, object] = {
         "model": model,
         "prompt": prompt,
-        "role": "quant",
+        "role": role,
         "api_key": api_key,
         "storage": storage,
         "session_tracker": SessionCostTracker(),

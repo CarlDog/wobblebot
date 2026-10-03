@@ -448,6 +448,7 @@ class TestWireShape:
         body = captured["body"]
         assert isinstance(body, dict)
         assert "temperature" not in body  # o-series rejects it
+        assert adapter.effective_temperature is None
         assert "max_completion_tokens" in body
 
     async def test_temperature_present_for_chat_models(self, storage: SQLiteStorageAdapter) -> None:
@@ -465,6 +466,7 @@ class TestWireShape:
         body = captured["body"]
         assert isinstance(body, dict)
         assert "temperature" in body
+        assert adapter.effective_temperature == body["temperature"]
 
 
 # --------------------------------------------------------------------- #
@@ -757,3 +759,28 @@ def test_advisor_empty_api_key_rejected() -> None:
             cost_config=LLMCostConfig(),
             retry_config=LLMRetryConfig(),
         )
+
+
+@pytest.mark.asyncio
+async def test_truncated_valid_json_is_rejected_after_cost_is_recorded(
+    storage: SQLiteStorageAdapter,
+) -> None:
+    """A syntactically complete prefix is not a completed model response."""
+    envelope = _envelope(content=json.dumps(_valid_recommendation()))
+    envelope["choices"][0]["finish_reason"] = "length"
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=envelope)
+
+    tracker = SessionCostTracker()
+    adapter = _build_advisor(httpx.MockTransport(handler), storage, tracker=tracker)
+    try:
+        with pytest.raises(AdvisorError, match="truncated_response"):
+            await adapter.get_recommendation(_summary())
+        records = await storage.get_llm_calls()
+        assert len(calls) == len(records) == 1
+        assert tracker.total == records[0].cost_usd > 0
+    finally:
+        await adapter.aclose()

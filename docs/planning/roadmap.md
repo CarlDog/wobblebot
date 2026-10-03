@@ -7,6 +7,89 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 follow-up: offline defects repaired; Ruff decision remains open
+
+This supersedes the previous claim that independent work was exhausted. Rechecking
+G4 found offline repairs incorrectly parked behind the paid-campaign gate. NW04's
+recorded repeated RSS failures also support a bounded reliability repair under
+the original user instruction. ADR-053 records the implementation decisions.
+The existing `v2.1.0-alpha.1` tag remains immutable; this follow-up is untagged.
+
+**G4/PB1-PB13 reconciliation:** PB1 separates judgment from availability, including
+risk severity totals and null accuracy when nothing answers; PB2 catches news
+cost-cap denials and preserves its report; PB3 documents/enforces the existing
+per-model session budget and shared daily backstop without cap resets or silent
+increases; PB4 rejects explicit cloud truncation after usage accounting with no
+paid repair retry (native Ollama truncation already covered by N5); PB5 reports
+requested and actually-sent temperature, with null for provider-controlled models;
+PB6 separates small de-risk direction from magnitude; PB7 treats malformed and
+nonfinite numerics as availability; PB8 checks confidence on echoed HOLD too;
+PB9 makes examples inert and consistent with the requested field order; PB10 adds
+separately versioned explicit-evidence fixtures, preserving old labels and sets;
+PB11 leaves error direction unknown; PB12 retains emitted values, confidence,
+safe full error detail, fixture/version and sampling settings; PB13 wires cloud
+risk calls to the risk ledger role while preserving the shared builder default.
+New versions are news `gen3` and risk `gen2`; no historical campaign is regraded.
+No model, price, seat, cap or live configuration was changed.
+
+**NW04:** per-source in-memory exponential backoff after consecutive failures,
+first retry at normal cadence, capped at six hours or a longer normal interval.
+Healthy feeds and heartbeats continue; empty success resets; storage failure
+is not upstream failure. Initial degradation warns, repeated failures use INFO,
+and recovery is logged. No settings writer, persistent disable or real feed call.
+
+**Ruff finding:** Fleet standards 3.1 PY-01 requires replacement of Black/isort/
+pylint with Ruff (`E,W,F,I,UP,B,C4,PIE,SIM,RET`), and PY-06 requires Ruff in CI.
+Closeout plan §3 disallows a duplicate stack solely to flip the check. A bounded
+Ruff 0.16.10 dry run found 429 findings in 134 files and 46 format changes. More
+importantly, the disposable used-import cycle in `ruff-cycle-parity.log` fails
+pylint with R0401 (exit 8) and passes the prescribed Ruff rules (exit 0). Current
+AST tests check layer boundaries, not all cycles; Ruff's official FAQ explicitly
+rejects a pure drop-in-equivalence claim. Removing that gate would weaken checks;
+retaining it needs a deliberate disposition of PY-01's literal replacement rule.
+An explicit choice has been requested; no exception, duplicate gate, broad source
+rewrite or configuration-only machine-pass claim was made. The exploratory Ruff
+installation is local only; dependency locks and existing gates remain intact.
+
+Verification for this follow-up (all offline, no credentials):
+
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: exit 0; Black/isort/mypy/pylint pass, **4,486 passed, 6 private-config
+  skips, 30 integration deselected**, 88.53% coverage, 116.59 seconds.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  /tmp/wobblebot-venv314/bin/python -m pytest --no-cov`: exit 0; **4,486 passed,
+  6 private-config skips, 30 deselected**, 87.20 seconds.
+- Targeted news/backoff/probe negative controls: 35 passed; expanded probe/adapter
+  controls: 86 passed before the final versioned-fixture and role checks, which
+  are included in the full-suite receipts above. A real in-memory SQLite cost
+  ledger test rejects a valid-JSON truncated result after charging exactly once.
+- Initial targeted fixtures missed the required recommendation ID/type; corrected
+  using the actual Pydantic contract. A boundary test exposed floating-point
+  classification at exactly 5%, repaired with the direction epsilon. The news
+  backoff initially needed an explicit float return for mypy. No check was waived.
+
+**Individual gated-work disposition:**
+
+| Gate | Source/evidence and remaining boundary | Independent work disposition |
+| --- | --- | --- |
+| G1 | Closeout §4 and backlog G1 require usable per-signal coverage/gaps/retention plus an accepted anomaly/disk consumer. No private history is present; oldest timestamp/elapsed days do not satisfy it. N4 doctor supplies current disk diagnostics, not an anomaly baseline. | Current closeout readiness receipt is complete. Detector/calibration work requires the actual data and consumer contract; no invented history. |
+| G2 | Backlog G2 and ADR-034 retain the settings-writer ownership decision for Apply/Approve-Reject and a concrete cloud-summary consumer. N3 approval/outbox substrate is implemented, but does not adopt a writer or grant LLM execution. | No further adopted consumer implementation can be derived from the existing contract. Resolve ownership/use case before wiring it. |
+| G3 | Backlog G3/P4.6 requires Q2 imports, canonical NAS scoring, fidelity/missing-bar/pending tallies and accepted Historian design. No Q2/NAS corpus available; local replay/evaluator substrate and tests exist. | Readiness disposition complete. Actual scoring/selection-bias analysis needs data; a placeholder Historian is not acceptance. |
+| G4 | PB1-PB13 are now addressed offline as described above, with negative controls and preserved historical versions. | Local defect repairs performed without a paid campaign. Real model qualification and selection remain separate, unauthorized operations. |
+| G5 | Proposed ADR-042 explicitly requires six-symbol trade-and-ledger reconciliation, retirement/lifecycle policy and net-margin choice; a daily clean=6 is not the receipt. None is supplied here. | Default-off speculative sell-extension code would precede its ratification; no independent adopted implementation remains before those inputs. |
+| G6 | Accepted ADR-040 Stage 2 requires a second qualifying manual POLICY edit plus refreshed fixture and ownership/failure design. Proposed ADR-044 does not open the gate. | Current capital reports and Stage 1 remain implemented; no qualifying edit evidence was fabricated. |
+| G7 | Each auto-tune/news-pause/confidence/learning candidate retains its own ADR, evidence/trust/cost trigger; auto-pause specifically requires an ADR-002 exception. | Not activated by catalog membership. Existing opt-in apply workflow remains tested; no new autonomous financial authority. |
+| G8 | Regime/Oracle/adaptive/buy-guard/MoE candidates require comparative evidence and the stated shadow period. No qualifying outcome corpus or shadow receipt is available. | Existing fixed modes remain tested. Synthetic baseline tests cannot certify research superiority or the elapsed shadow gate. |
+| G9 | Committed Phase 9 remains open. Roadmap reconciliation makes the May API/PDT sketch non-authoritative; stage-9.0-design.md now distinguishes actual contract inputs from private/live validation. | Public research and precise input matrix completed. No securities wire contract or account-policy facts exist to implement 9.1/9.2 correctly. Balances/credentials are not demanded to start code. |
+| G10 | Backlog's per-row catalog remains the exhaustive crosswalk: demand/consumer/profile/architecture and separate-repo gates are retained individually. NW04 is explicitly not G10-gated and its observed failure repair is now implemented. | No blanket activation of optional candidates. E12 awaits Phase 9 write-volume expansion or contention; hosting/SQLCipher/MFA/multi-user/multi-arch/new integrations lack their source triggers. No known triggered adopted local defect is left hidden behind this grouping. |
+
+The exact first Phase 9 reply is account type (cash/margin), residence country/state
+and US-taxpayer status, plus official securities API documentation or redacted
+broker support confirmation of the product/API entitlement. Earnings source and
+broker lot-selection/export schema can follow during 9.0. Public rules and
+schemas can support offline code; actual credentials/history and real trading
+belong to later acceptance. See the linked design's per-slice blocker matrix.
+
 ### 2026-10-03 final local candidate: completion gate remains open
 
 Verified candidate commit: `b8a2d0fb704081d0e2d347ba2137e1bb8b9b8ab5`.

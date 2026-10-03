@@ -17,7 +17,9 @@ enforced at the storage layer via ``UNIQUE(source, external_id)``
 
 **Fault isolation.** One bad source (DNS failure, 500, malformed
 feed) cannot stop the others. Per-source errors are logged and the
-loop continues with the remaining sources both this tick and next.
+loop continues with the remaining sources. After consecutive failures, only the
+failing source backs off exponentially (at most six hours, or the configured
+normal interval if longer). Successful empty feeds recover; no config is rewritten.
 
 **Config layering** (per ADR-009):
 1. Base config — ``config/settings.yml``.
@@ -64,6 +66,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import NewsError, StorageError
 from wobblebot.ports.news import NewsPort
+from wobblebot.services.news_backoff import SourceBackoff
 from wobblebot.services.news_dedup import is_duplicate
 
 _LOGGER = logging.getLogger("wobblebot.cli.news")
@@ -98,6 +101,8 @@ async def _poll_source(
     source: NewsPort,
     storage: SQLiteStorageAdapter,
     dedup: NewsDedupConfig,
+    *,
+    backoff: SourceBackoff | None = None,
 ) -> tuple[int, int, int]:
     """Fetch + persist one source. Returns (fetched, saved, deduped).
 
@@ -109,18 +114,33 @@ async def _poll_source(
     try:
         items = await source.fetch()
     except NewsError as exc:
-        _LOGGER.warning(
-            "news fetch failed (source_id=%s): %s: %s",
+        delay = backoff.failed(time.monotonic()) if backoff is not None else None
+        report_failure = (
+            _LOGGER.warning if backoff is None or backoff.failures <= 2 else _LOGGER.info
+        )
+        report_failure(
+            "news fetch failed (source_id=%s, retry_delay_seconds=%s): %s: %s",
             source.source_id,
+            delay,
             type(exc).__name__,
             exc,
             extra={
                 "source_id": source.source_id,
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                "retry_delay_seconds": delay,
             },
         )
         return (0, 0, 0)
+
+    if backoff is not None:
+        if backoff.failures:
+            _LOGGER.info(
+                "news source recovered (source_id=%s, previous_failures=%s)",
+                source.source_id,
+                backoff.failures,
+            )
+        backoff.succeeded()
 
     # Pre-fetch recent items once per poll so we compare each candidate
     # against the same window snapshot. The recent set could grow over
@@ -210,6 +230,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
     total_saved = 0
     total_deduped = 0
     interval_seconds = interval.total_seconds()
+    source_backoff = {source.source_id: SourceBackoff(interval_seconds) for source in sources}
     _LOGGER.info(
         "news session start (sources=%s, interval_seconds=%s, db_path=%s, dedup_window_hours=%s)",
         [s.source_id for s in sources],
@@ -234,7 +255,12 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-positional-a
         for source in sources:
             if stop_event.is_set():
                 break
-            fetched, saved, deduped = await _poll_source(source, storage, news.dedup)
+            backoff = source_backoff[source.source_id]
+            if not backoff.due(time.monotonic()):
+                continue
+            fetched, saved, deduped = await _poll_source(
+                source, storage, news.dedup, backoff=backoff
+            )
             total_fetched += fetched
             total_saved += saved
             total_deduped += deduped

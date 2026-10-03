@@ -62,6 +62,7 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenUsage,
+    ensure_complete_response,
     execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
@@ -317,6 +318,7 @@ class GoogleAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
                 extract_tokens=extract_google_tokens,
             )
 
+        ensure_complete_response(envelope, AdvisorError)
         raw_text = parse_candidate_text(envelope)
         return parse_advisor_recommendation(
             raw_text,

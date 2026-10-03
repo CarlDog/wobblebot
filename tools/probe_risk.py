@@ -60,9 +60,10 @@ import argparse
 import asyncio
 import importlib.util
 import json
+import math
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -81,8 +82,9 @@ from wobblebot.ports.exceptions import AdvisorError
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# A proposed value within +/-5% of current is "no meaningful change".
-_DEADBAND = 0.05
+# Direction uses numerical tolerance; magnitude is reported separately.
+_DIRECTION_EPSILON = 1e-9
+_SMALL_MOVE = 0.05
 
 Severity = Literal["comfortable", "moderate", "severe"]
 Direction = Literal["de_risk", "hold", "loosen", "tighten"]
@@ -104,7 +106,7 @@ class RiskFixture:
 class Graded:
     name: str
     verdict: Verdict
-    direction: Direction
+    direction: Direction | None
     why: str
 
 
@@ -166,14 +168,16 @@ def classify(rec: AdvisorRecommendation, current: CurrentGridParams) -> Directio
 
     if spacing is not None and cur_spacing:
         delta = (spacing - cur_spacing) / cur_spacing
-        if delta < -_DEADBAND:
+        if delta < -_DIRECTION_EPSILON:
             return "tighten"
 
     wider = (
-        spacing is not None and cur_spacing and (spacing - cur_spacing) / cur_spacing > _DEADBAND
+        spacing is not None
+        and cur_spacing
+        and (spacing - cur_spacing) / cur_spacing > _DIRECTION_EPSILON
     )
-    smaller = size is not None and cur_size and (size - cur_size) / cur_size < -_DEADBAND
-    larger = size is not None and cur_size and (size - cur_size) / cur_size > _DEADBAND
+    smaller = size is not None and cur_size and (size - cur_size) / cur_size < -_DIRECTION_EPSILON
+    larger = size is not None and cur_size and (size - cur_size) / cur_size > _DIRECTION_EPSILON
 
     if wider or smaller:
         return "de_risk"
@@ -190,6 +194,9 @@ def grade(  # pylint: disable=too-many-return-statements
     risk.md rule each verdict comes from, which is the whole point.
 
     Rules: See the module docstring for the rules."""
+    for key in ("spacing_percentage", "order_size_usd"):
+        if key in rec.recommendations and _as_float(rec.recommendations[key]) is None:
+            return Graded(fx.name, "ERROR", None, f"invalid numeric field: {key}")
     direction = classify(rec, fx.summary.current_grid)
 
     if direction == "tighten":
@@ -197,7 +204,21 @@ def grade(  # pylint: disable=too-many-return-statements
 
     if fx.expect == "de_risk":
         if direction == "de_risk":
-            return Graded(fx.name, "OK", direction, "de-risked under pressure")
+            grid = fx.summary.current_grid
+            changes = [
+                abs(float(rec.recommendations[key]) / current - 1)
+                for key, current in (
+                    ("spacing_percentage", grid.spacing_percentage),
+                    ("order_size_usd", grid.order_size_usd),
+                )
+                if key in rec.recommendations and current
+            ]
+            detail = (
+                "small de-risk move"
+                if max(changes, default=0) <= _SMALL_MOVE + _DIRECTION_EPSILON
+                else "de-risked under pressure"
+            )
+            return Graded(fx.name, "OK", direction, detail)
         if direction == "loosen":
             return Graded(fx.name, "UNSAFE", direction, "loosened INTO cap/drawdown pressure")
         # held
@@ -219,8 +240,9 @@ def _as_float(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        result = float(value)  # type: ignore[arg-type]
+        return result if math.isfinite(result) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -599,6 +621,33 @@ FIXTURES: tuple[RiskFixture, ...] = (
 )
 
 
+# v1 is immutable campaign provenance. gen2 makes the disputed drawdown-only
+# case dispositive with a sustained, sharply losing window, without relabelling.
+FIXTURE_SETS = {
+    "v1": FIXTURES,
+    "gen2": [
+        (
+            replace(
+                fx,
+                name="fresh_drawdown_light_exposure_explicit",
+                summary=fx.summary.model_copy(
+                    update={
+                        "max_drawdown": -0.18,
+                        "cycle_count": 30,
+                        "win_rate": 0.1,
+                        "total_pnl": -9.5,
+                    }
+                ),
+                note="An 18% drawdown and 30 mostly losing cycles establish material drawdown pressure despite light exposure.",
+            )
+            if fx.name == "fresh_drawdown_light_exposure"
+            else fx
+        )
+        for fx in FIXTURES
+    ],
+}
+
+
 def _load_cloud_builder() -> object:
     """Reuse ``probe_advisor._build_cloud_advisor`` by path-load (the repo's
     tool/test interop pattern) — no duplication of the cost-gated wiring."""
@@ -628,13 +677,18 @@ def _severity_breakdown(rows: list[dict[str, object]]) -> str:
             continue
         unsafe = sum(1 for r in sub if r.get("verdict") == "UNSAFE")
         ok = sum(1 for r in sub if r.get("verdict") == "OK")
-        parts.append(f"{sev}: {ok}/{len(sub)} OK, {unsafe} unsafe")
+        answered = sum(r.get("verdict") != "ERROR" for r in sub)
+        parts.append(
+            f"{sev}: {ok}/{answered} answered OK, {unsafe} unsafe; available {answered}/{len(sub)}"
+        )
     return "  |  ".join(parts)
 
 
 async def main_async(  # pylint: disable=too-many-locals
     args: argparse.Namespace,
 ) -> int:
+    fixture_set = getattr(args, "fixture_set", "gen2")
+    fixtures = FIXTURE_SETS[fixture_set]
     prompt = load_prompt(Path(args.prompt_file))
     storage: SQLiteStorageAdapter | None = None
     adapter: AdvisorPort
@@ -671,27 +725,26 @@ async def main_async(  # pylint: disable=too-many-locals
             storage=storage,
             session_cap=args.session_cap,
             daily_cap=args.daily_cap,
+            role="risk",
         )
-        # NOTE: _build_cloud_advisor has no `role` parameter, so cost rows in
-        # the isolated probe db are tagged with its default. Harmless here
-        # (the probe ledger is never the operator ledger) and not worth
-        # changing a builder four other tools depend on.
 
-    print(f"# risk battery: {len(FIXTURES)} fixtures (9 comfortable / 4 moderate / 5 severe)")
+    print(f"# risk battery: {len(fixtures)} fixtures (9 comfortable / 4 moderate / 5 severe)")
     print(f"# model: {args.provider}/{args.model}  prompt: {args.prompt_file}")
     counts = {"OK": 0, "SUBOPTIMAL": 0, "UNSAFE": 0, "ERROR": 0}
     rows: list[dict[str, object]] = []
     try:
-        for fx in FIXTURES:
+        for fx in fixtures:
             t0 = time.monotonic()
             try:
                 rec = await adapter.get_recommendation(fx.summary)
                 result = grade(fx, rec)
                 verdict, direction, why = result.verdict, result.direction, result.why
                 confidence: str | None = rec.confidence
+                emitted = rec.recommendations
             except (AdvisorError, LLMCostCapExceeded) as exc:
-                verdict, direction, why = "ERROR", "hold", str(exc)[:60]
+                verdict, direction, why = "ERROR", None, str(exc)
                 confidence = None
+                emitted = None
             elapsed = time.monotonic() - t0
             counts[verdict] = counts.get(verdict, 0) + 1
             rows.append(
@@ -703,11 +756,12 @@ async def main_async(  # pylint: disable=too-many-locals
                     "direction": direction,
                     "why": why,
                     "confidence": confidence,
+                    "emitted": emitted,
                     "elapsed_s": round(elapsed, 1),
                 }
             )
             print(
-                f"  {fx.name:36} {verdict:11} dir={direction:8} "
+                f"  {fx.name:36} {verdict:11} dir={direction or "unknown":8} "
                 f"[{fx.severity}] ({elapsed:.1f}s)  {why}"
             )
     finally:
@@ -718,10 +772,11 @@ async def main_async(  # pylint: disable=too-many-locals
             await storage.close()
 
     safe = counts["OK"] + counts["SUBOPTIMAL"]
+    answered = len(fixtures) - counts["ERROR"]
     print(
         f"\nSUMMARY  OK={counts['OK']}  SUBOPTIMAL={counts['SUBOPTIMAL']}  "
         f"UNSAFE={counts['UNSAFE']}  ERROR={counts['ERROR']}  "
-        f"(non-unsafe {safe}/{len(FIXTURES)})"
+        f"(non-unsafe {safe}/{answered} answered; available {answered}/{len(fixtures)})"
     )
     print(f"BY SEVERITY  {_severity_breakdown(rows)}")
     if args.json:
@@ -732,6 +787,21 @@ async def main_async(  # pylint: disable=too-many-locals
                     "model": args.model,
                     "provider": args.provider,
                     "counts": counts,
+                    "answered": answered,
+                    "correct": counts["OK"],
+                    "errored": counts["ERROR"],
+                    "total": len(fixtures),
+                    "judgment_accuracy": counts["OK"] / answered if answered else None,
+                    "availability": answered / len(fixtures),
+                    "requested_temperature": args.temperature,
+                    "effective_temperature": getattr(
+                        adapter, "effective_temperature", args.temperature
+                    ),
+                    "max_tokens": args.max_tokens,
+                    "fixture_set": fixture_set,
+                    "contested_fixtures": (
+                        ["fresh_drawdown_light_exposure"] if fixture_set == "v1" else []
+                    ),
                     "rows": rows,
                 }
             )
@@ -759,11 +829,27 @@ def main() -> int:
         "CPU-only box, so point here to measure REAL deployment latency "
         "(e.g. http://carldog-nas:11434); ignored for cloud providers.",
     )
+    parser.add_argument(
+        "--fixture-set",
+        choices=tuple(FIXTURE_SETS),
+        default="gen2",
+        help="v1 preserves historical evidence; gen2 makes drawdown pressure explicit (default).",
+    )
     parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
-    parser.add_argument("--session-cap", type=float, default=2.0)
-    parser.add_argument("--daily-cap", type=float, default=5.0)
+    parser.add_argument(
+        "--session-cap",
+        type=float,
+        default=2.0,
+        help="Per-model run budget; budget denial is availability, not judgment.",
+    )
+    parser.add_argument(
+        "--daily-cap",
+        type=float,
+        default=5.0,
+        help="Shared-ledger runaway backstop; earlier runs consume it. Plan an explicit sweep budget; never silently raise this cap.",
+    )
     parser.add_argument("--log-format", choices=("plain", "json"), default="plain")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()

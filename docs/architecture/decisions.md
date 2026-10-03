@@ -3886,3 +3886,24 @@ to another withdrawal endpoint after an ambiguous result.
 [watch/funding guide](../implementation/provider-watch.md), official sources linked
 there, and synthetic/local verification in the roadmap. Real NAS digest qualification,
 private funding compatibility and ongoing unattended coverage remain external gates.
+
+
+## ADR-053: Bounded news failure cadence and honest probe measurements
+
+**Status:** adopted for local implementation under the full-product defect-repair
+instruction, 2026-10-03. Sources: backlog NW04 and G4/PB1-PB13.
+
+Repeated news source failures back off independently, in memory, without blocking
+healthy sources or daemon heartbeats. First retry keeps normal cadence, then
+exponential delays cap at six hours or the longer normal interval. Empty success
+resets failure state; local storage failures do not indict the upstream source.
+Log initial degradation and recovery, lower repeated failures to INFO. Restart
+resets this transient state; no config writes, persistent disables or new daemon.
+
+Probe grading separates availability from judgment; budget/parse/truncation errors
+are not wrong decisions. Preserve paid usage accounting on truncated responses
+and never add a paid repair retry. Report effective sampling controls, emitted
+values and safe untruncated error detail. Interpret numeric direction separately
+from small magnitude. Preserve old fixture sets and use named new sets whose
+input evidence, not expected labels, resolves contested cases. No historical
+campaign is regraded and no new paid campaign or seat change is authorized.

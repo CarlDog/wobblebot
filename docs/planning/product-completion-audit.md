@@ -79,3 +79,26 @@ behavior, local quality, upgrade gates and offline integration are exercised.
 Large cohesive SQLite/engine/operator modules are retained, with future extraction
 only on a concrete ownership/change need. No speculative rewrite was performed.
 No remote issue/PR, access change, publish, deployment or real money action occurred.
+
+## Ruff follow-up: demonstrated coverage conflict
+
+The previous blanket statement that migration was unrelated work was too broad.
+The operator explicitly requested assessment and routine remediation. Read Fleet
+`standards/python-service.md` PY-01 and PY-06 at the pinned audit source: PY-01
+requires replacing Black, isort **and pylint** with Ruff, explicit rules
+`E,W,F,I,UP,B,C4,PIE,SIM,RET`; PY-06 requires Ruff lint/format and mypy in CI.
+The accepted closeout plan §3 says not to add a second lint stack merely to flip
+the machine check. ADR-048 retained the old stack during its build change; that
+temporary local decision does not by itself prohibit a later migration.
+
+A disposable two-module negative control imports each module from the other and
+uses the imported value. Pylint's existing `R0401/cyclic-import` check rejects it;
+Ruff's prescribed rule set accepts it. The project's AST test verifies forbidden
+layer edges, not all same-layer cycles. This is a concrete coverage difference,
+consistent with [Ruff's official FAQ](https://docs.astral.sh/ruff/faq/#how-does-ruffs-linter-compare-to-pylint).
+Thus blindly deleting pylint would conflict with the user's instruction not to
+weaken checks; adding a duplicate stack would conflict with the accepted patch
+rule and would not satisfy PY-01's literal replacement requirement. No exception
+is accepted by recording this conflict. The operator has been asked whether to
+retain semantic pylint checks during a migration or adopt the Fleet replacement
+coverage intentionally. Current disposition/commands belong in the roadmap.

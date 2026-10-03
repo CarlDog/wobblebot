@@ -49,11 +49,13 @@ MUST follow from (1)–(2). A **HOLD is a first-class, often-correct answer**. K
 
 Respond with JSON in EXACTLY this field order (rationale first):
 
+This is an inert shape example, not an answer to copy. Produce exactly one object.
+
 ```json
 {
+  "rationale": "...reason from this window before selecting a posture...",
   "role": "news",
-  "rationale": "...what the headlines say and why the posture follows from it...",
-  "recommendations": { "spacing_percentage": 3.6 },
-  "confidence": "medium"
+  "confidence": "low",
+  "recommendations": {}
 }
 ```

@@ -70,3 +70,47 @@ source. 9.5 requires broker lot/corporate-action/tax scope. 9.4 and 9.6 retain r
 capital/event/account verification. No placeholder adapter, guessed PDT counter,
 or synthetic tax export is presented as completion. Allocate the next unused
 ADR number when the material inputs can be ratified; ADR-019 is not reused.
+
+## Contract inputs versus acceptance access (follow-up review)
+
+Authority: roadmap Phase 9's 2026-09-08 reconciliation explicitly labels the May
+sketch assumptions, and the accepted closeout plan §4/G9 requires a fresh risk
+ADR before implementation. The committed outcomes are 9.1 securities execution,
+9.2 account/settlement-aware safety, 9.3 earnings pauses, 9.5 tax export and web
+summaries, and the separately authorized live acceptance in 9.4/9.6. The old
+`asset_class` spelling and unconditional PDT counter are not adopted contracts.
+
+| Input | Publicly researchable facts | Only operator/broker can establish | Why this blocks code, or only acceptance |
+| --- | --- | --- | --- |
+| Securities API | Official endpoint/version, authentication, entitlement documentation; stock identifiers, precision, fractional/whole-share minima; order types/TIF, sessions, errors, fill/cancel/reconciliation schema | Whether the intended Kraken Securities account can use that API, and an official link/support confirmation if the API is private | No documented wire contract means 9.1 cannot map stock orders or persist authoritative fills without inventing an API. Credentials are **not** needed to implement against an official contract; authenticated response samples and real fills are later validation. |
+| Account policy | Cash-versus-margin settlement rules, broker agreement and house/day-trading rules, exchange holiday/session calendars | Cash or margin account; country/state of residence; actual broker entity/product eligibility; applicable house/transition policy | Chooses the safety invariant in 9.2: settled cash/reservations versus the applicable margin/day-trading policy. Borrowing stays excluded. Implementing an assumed policy can allow a prohibited counter-order. Actual account balance, starting positions and transaction history are validation/configuration inputs, not prerequisites for policy code. |
+| Earnings source | Candidate feed's official future-calendar API, coverage, revision/cancellation semantics, time zones, timestamps, license and rate limits | Any existing entitlement/source the operator wants used; permission only if new paid access is necessary | 9.3 needs an authoritative future-event contract. It does not need a real upcoming event to implement pause-window logic. A free documented source within existing permissions could be selected autonomously; one has not been established here. Do not require a paid choice by default. Once 9.0's safety contract is settled, implement deterministic pause/override/stale-data tests before live feed access. |
+| Tax scope and lots | IRS lot-identification, basis/holding-period and wash-sale rules; current export field definitions; broker's documented lot and corporate-action format | US-taxpayer/tax jurisdiction; broker lot-selection method (e.g. FIFO or specific identification); import/export format available; presence of opening/transferred lots and outside-account replacement acquisitions | Jurisdiction and lot-selection semantics affect 9.5 calculations, not just test data. A documented broker format permits offline implementation without private history. Actual lots, corporate actions and external transactions are completeness/reconciliation inputs for final acceptance. Do not claim these private data are needed merely to write an importer or deterministic calculator. Unknown external activity must remain explicit in exports, never treated as absent. |
+| Activation | Documented operational runbook and minimum supported order size | Later capital allocation and explicit real-order authorization | Blocks only 9.4/9.6 financial acceptance and deployment. It does not block contract-backed local development. |
+
+The official [AssetPairs reference](https://docs.kraken.com/api-reference/market-data/get-tradable-asset-pairs)
+was re-read: its `aclass_base` values distinguish `currency` from `tokenized_asset`
+(xStocks). That is positive evidence for the inspected Spot surface; it does not
+supply a Kraken Securities stock/ETF contract. xStocks are not a substitute for
+this product's committed equities track. The failed support-page retrieval is
+an access failure, not proof that no securities API exists.
+
+[IRS Publication 550](https://www.irs.gov/publications/p550) establishes that
+identified shares use their particular basis, and wash-sale analysis includes
+substantially identical acquisitions around a loss sale, including certain
+outside-account/related-party acquisitions. These rules support a future local
+calculator; they cannot reveal the operator's broker election or opening lots.
+No tax result is inferred from the crypto trade table.
+
+Smallest first reply (no secrets or account documents required):
+
+1. Intended Kraken Securities account: **cash or margin**, country/state of
+   residence, and US-taxpayer status.
+2. **Official securities API documentation link**, or redacted Kraken support
+   confirmation identifying the endpoint/product and whether API access is enabled.
+
+If already known, add the authorized earnings source and broker lot-selection /
+export format. Those can be resolved later during 9.0; do not burden the first
+reply with balances, credentials or full transaction history. With the first two
+facts, resume the risk ADR and all contract-supported offline work. Keep equity
+activation disabled and retain later private/live acceptance gates separately.
