@@ -3754,3 +3754,23 @@ health. Existing data layout stays valid until explicitly migrated.
 **Rejected.** A root writable data mount defeats isolation; `immutable=1` can
 hide concurrent writes; giving web another cloud key restores excess authority;
 automatic migration/rollback can discard post-backup financial effects.
+
+## ADR-048: Hashed pip inputs and bounded declared runtime identity
+
+**Status:** adopted for local implementation, 2026-10-03.
+
+Resolve runtime, build and dev dependencies with hashes while preserving pip
+installation and the existing architecture. Docker consumes the runtime/build
+locks and a pinned Python base; CI consumes the matching dev resolution. Fail
+when a target lacks an approved binary runtime wheel. Use optional ephemeral
+build CA secrets for enterprise TLS, never insecure transport or baked credentials.
+
+Emit only allowlisted startup identity and config/asset hashes. Image digest is
+explicitly declared, not attested inside an unprivileged process. Actual image
+inspection stays an external verification step. Digest-pinned generated deployment
+files and retained CI identity evidence make that comparison possible. No manifest
+database, Docker socket, paid service or automatic deployment is introduced.
+
+Retain the current quality tools during this functional build change. A broad
+Ruff migration is a separate standards gap, not a duplicate lint stack or implicit
+exception. Hosted platform/CodeQL facts cannot be inferred from local configuration.

@@ -116,7 +116,7 @@ gitleaks — missing the PII/identity checks required for this repo.
 
 | Task | Command |
 |------|---------|
-| Install (editable + dev extras) | `pip install -e ".[dev]"` |
+| Install (editable + dev extras) | `make install` (hashed dependencies, then editable application) |
 | Run all tests | `pytest` |
 | Run unit tests only | `pytest -m unit` |
 | Run integration tests only | `pytest -m integration` |

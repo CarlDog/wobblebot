@@ -45,7 +45,8 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install the package in editable mode with dev dependencies
-	$(PIP) install -e ".[dev]"
+	$(PIP) install --require-hashes -r requirements-dev.lock
+	$(PIP) install --no-deps --no-build-isolation -e .
 
 test: ## Run all tests
 	$(PYTHON) -m pytest tests/ -v

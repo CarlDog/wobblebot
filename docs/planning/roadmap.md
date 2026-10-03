@@ -7,6 +7,59 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 N2 local build and platform verification
+
+Local N1 commit: `062d9a7`. N2 adds hashed runtime/build/dev resolutions, consumes
+them in pip/Docker/CI, pins the Python base, separates quality/platform gates,
+retains image identity artifacts, and emits bounded config/asset fingerprints.
+ADR-048 and the [build guide](../implementation/reproducible-builds.md) describe
+identity limits and the retained Ruff gap. No image or commit was published.
+
+- `UV_CACHE_DIR=/tmp/wobblebot-uv-cache uv pip compile ... --universal
+  --generate-hashes --python-version 3.13` generated all three reviewed locks;
+  exact reproducible invocations are in the build guide. Hashed runtime and dev
+  binary-wheel downloads for Python 3.14 passed. Hashed installs on 3.13 and 3.14
+  passed; runtime resolution matches the dev lock's runtime versions.
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: exit 0, 4,409 passed, six private-config skips, 30 integration
+  deselections; coverage 88.47%; Black/isort/mypy/pylint all passed.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 /tmp/wobblebot-venv314/bin/python
+  -m pytest --no-cov -q`: exit 0, 4,409 passed, six private-config skips,
+  30 deselections on CPython 3.14.7. The separate offline integration command
+  for grid-engine/operator flows passed all eight tests on 3.14.
+- Normal image build exposed proxy DNS; explicit build hostname mapping advanced
+  it to the expected TLS trust failure. An ephemeral approved host CA secret
+  resolved that without disabling TLS. Reproduction script `build_local.py`
+  invokes `docker build --add-host <proxy-host>:<resolved-address> --secret
+  id=build_ca,src=/etc/ssl/certs/ca-certificates.crt --build-arg HTTP_PROXY
+  --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg VCS_REF=unknown
+  -f docker/Dockerfile -t wobblebot:local-verification .` with a 600-second limit.
+  Final build passed. Local image ID (not a registry manifest digest):
+  `sha256:a6531082a6d55b62394dfe766bff6f9beffd6ddac63fc0365559617ab7b03958`.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 90 docker run --rm --network none
+  wobblebot:local-verification python -m wobblebot.cli.sandbox --config
+  config/settings.example.yml --db /app/data/sandbox.db`: exit 0, real entrypoint
+  and installed wheel under non-root user, two synthetic trades persisted.
+  The first smoke revealed restrictive copied file modes; Docker now explicitly
+  sets readable defaults/tools/lock and an executable/readable entrypoint.
+- `PYTHONPATH=/workspace/wobblebot timeout 480 .venv/bin/python
+  /tmp/wobblebot-verification/compose_rehearsal.py`: exit 0 against the final
+  image. All nine generated service definitions ran with empty credentials and
+  network disabled; real mounted owner/log/settings writes and denied foreign/
+  config writes matched the matrix, mounted DB quick checks passed, UID=1001.
+  This exercised capability grants, not real daemon/provider connections or NAS
+  maintenance scheduling. Existing maintenance/backup/settings tests passed in
+  both complete suites; actual deployed data/config remain unavailable.
+
+B3's image-build blocker is resolved locally. Windows/hosted CI, remote CodeQL
+setup/results and operator/NAS acceptance remain unverified. UNI-21 has no
+callable OpenChronicle MCP in this environment. PY-01 and the Ruff portion of
+PY-06 remain disclosed gaps; no new standards exception has been accepted.
+All commands completed within their finite checkpoints. Continue N3 independent
+lifecycle work; G1's real historical-data readiness and new anomaly-daemon scope
+remain blocked separately and are not invented by synthetic fixtures.
+
+
 ### 2026-10-03 local continuation and N1 implementation
 
 The parent confirmed that the user's full-product authorization supersedes the

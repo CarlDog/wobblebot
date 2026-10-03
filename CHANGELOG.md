@@ -30,6 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Changed
 
+- Runtime/build/dev dependency resolutions now carry hashes; Docker pins its base
+  digest and installs verified binary wheels. CI separates quality from the
+  Python/platform test matrix. Startup records sanitized configuration/asset
+  fingerprints, and generated deployment plans accept verified image digests.
+
+
 - Foreign database consumers open read-only without creating or migrating their
   owners' databases. Web reads sanitized persisted provider observations rather
   than holding cloud keys. A local isolation-plan generator stages per-service

@@ -1,5 +1,6 @@
 """N1 generator preserves policy, refuses unsafe guesses and narrows grants."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -65,8 +66,8 @@ def test_unknown_or_shared_database_owner_is_rejected_before_output(tmp_path):
         prepare(config, None, tmp_path / "out", None)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX container entrypoint; exercised on Linux")
 def test_reader_bootstrap_does_not_write_staged_config(tmp_path):
-    import os
     import subprocess
 
     defaults = tmp_path / "defaults"
@@ -86,3 +87,17 @@ def test_reader_bootstrap_does_not_write_staged_config(tmp_path):
         timeout=10,
     )
     assert list(target.iterdir()) == []
+
+
+def test_deployment_image_must_be_digest_pinned(tmp_path):
+    with pytest.raises(ValueError, match="digest"):
+        prepare(EXAMPLE, "cpu-only", tmp_path / "bad", None, "example.invalid/app:latest")
+    assert not (tmp_path / "bad").exists()
+    image = "example.invalid/app@sha256:" + "a" * 64
+    prepare(EXAMPLE, "cpu-only", tmp_path / "good", None, image)
+    services = yaml.safe_load((tmp_path / "good/compose.yml").read_text())["services"]
+    assert all(service["image"] == image for service in services.values())
+    assert all(
+        service["environment"]["WOBBLEBOT_IMAGE_DIGEST"] == "sha256:" + "a" * 64
+        for service in services.values()
+    )

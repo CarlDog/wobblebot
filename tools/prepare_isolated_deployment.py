@@ -12,6 +12,7 @@ import argparse
 import copy
 import json
 import logging
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -56,8 +57,18 @@ def _referenced_roles(value: Any, paths: dict[str, str]) -> set[str]:
     return {paths[value]} if isinstance(value, str) and value in paths else set()
 
 
-def prepare(config_path: Path, profile: str | None, output: Path, host_root: Path | None) -> None:
+def prepare(
+    config_path: Path,
+    profile: str | None,
+    output: Path,
+    host_root: Path | None,
+    image_ref: str | None = None,
+) -> None:
     """Create reviewable files exclusively in a new output directory."""
+    if image_ref is not None and not re.fullmatch(
+        r"[A-Za-z0-9._/:-]+@sha256:[0-9a-f]{64}", image_ref
+    ):
+        raise ValueError("Deployment image must use a sha256 digest, not a mutable tag")
     raw = resolve_config(yaml.safe_load(config_path.read_text(encoding="utf-8")), profile)
     WobbleBotConfig.model_validate(raw)
     paths: dict[str, str] = {}
@@ -135,6 +146,9 @@ def prepare(config_path: Path, profile: str | None, output: Path, host_root: Pat
     host = (host_root or output).absolute()
     for name, service in compose["services"].items():
         service["environment"]["WOBBLEBOT_BOOTSTRAP_CONFIG"] = "0"
+        if image_ref is not None:
+            service["image"] = image_ref
+            service["environment"]["WOBBLEBOT_IMAGE_DIGEST"] = image_ref.split("@", 1)[1]
         required = set(roles.values()) if name == "tools" else _referenced_roles(raw[name], roles)
         # Advisor's cost ledger is configured in operator, not advise.
         if name == "advise" and raw.get("llm") is not None:
@@ -214,10 +228,11 @@ def main() -> int:
     parser.add_argument("--profile")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--host-root", type=Path, help="Final host path; no writes are made there")
+    parser.add_argument("--image", help="Verified image reference pinned by @sha256 digest")
     args = parser.parse_args()
     configure_logging()
     try:
-        prepare(args.config, args.profile, args.output, args.host_root)
+        prepare(args.config, args.profile, args.output, args.host_root, args.image)
     except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
         _LOGGER.error("Cannot prepare isolated deployment: %s", exc)
         return 2

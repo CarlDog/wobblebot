@@ -152,4 +152,8 @@ and address the named blockers before phase-dependent work. Keep existing code,
 financial invariants and all unresolved criteria intact. Never mark a handoff as
 product completion.
 
-N1 preparation: [source-derived capability inventory](n1-capability-inventory.md).
+N1 implementation: [source-derived capability inventory](n1-capability-inventory.md),
+ADR-047 and the [migration guide](../implementation/isolated-deployment.md).
+N2 implementation: ADR-048 and the [build guide](../implementation/reproducible-builds.md).
+Local verification receipts and external limitations remain in the roadmap;
+these implementation references do not mark formal phase acceptance.
