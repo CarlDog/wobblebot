@@ -68,6 +68,21 @@ Verification for this follow-up (all offline, no credentials):
   classification at exactly 5%, repaired with the direction epsilon. The news
   backoff initially needed an explicit float return for mypy. No check was waived.
 
+Follow-up implementation commit: `d3abf4fd25a7e6d13660e67ae2bbb53cd3a48809`.
+`timeout 120 .venv/bin/python -m pytest -m integration
+ tests/integration/test_grid_engine_e2e.py
+ tests/integration/test_phase5_operator_e2e.py --no-cov -q` passed all eight
+checks (17.41 seconds). `timeout 600 python3
+/tmp/wobblebot-verification/build_followup.py` built the actual Dockerfile from
+that clean commit; image `wobblebot:followup-verification` has matching revision,
+non-root user `wobblebot`, ID
+`sha256:cfe7dc87bb30805e03003ab8a2aa64b0ad2e4a35ce5d7fb52f037424debccc72`.
+Network-disabled image runs of `python -m wobblebot.cli.sandbox --config
+config/settings.example.yml` and `python -m wobblebot.cli.news --help` passed.
+This is an untagged local image, not a registry digest or published candidate;
+`v2.1.0-alpha.1` still targets `b8a2d0f`. The commit hook's real gitleaks and PII
+checks passed. Full-product completion is still not declared.
+
 **Individual gated-work disposition:**
 
 | Gate | Source/evidence and remaining boundary | Independent work disposition |
