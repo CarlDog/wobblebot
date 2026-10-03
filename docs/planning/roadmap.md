@@ -7,6 +7,19 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 bounded evidence addendum; decisions pending
+
+The parent supplied additional official public API, equities-eligibility and
+xStocks sources, recorded with their limits in
+[Stage 9.0](stage-9.0-design.md#supplemental-official-source-evidence-supplied-by-the-parent).
+The conclusion remains **absent verified Securities stock/ETF API contract**, not
+proof that no such API exists. App/Pro eligibility and tokenized-asset API support
+do not establish personal Securities API access; conflicting EEA availability
+statements do not resolve personal eligibility. The parent has asked Carl about
+account type, API entitlement, residence/tax status and retaining pylint semantic
+checks. No answer or exception has been accepted. This is documentation-only;
+implementation, tests, local image and immutable tag receipts below are unchanged.
+
 ### 2026-10-03 follow-up: offline defects repaired; Ruff decision remains open
 
 This supersedes the previous claim that independent work was exhausted. Rechecking

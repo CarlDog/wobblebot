@@ -30,6 +30,30 @@ were inaccessible through the research tool. Search attempts returned unrelated
 results even with domain filters; these are not evidence. No repeated search is
 needed until an official account/API source is available.
 
+## Supplemental official-source evidence supplied by the parent
+
+The parent supplied this bounded read-only research on 2026-10-03. It adds to the
+local review above; it is not an authenticated API test or account confirmation.
+
+| Official source | Supported conclusion and limit |
+| --- | --- |
+| [REST AssetPairs](https://docs.kraken.com/api-reference/market-data/get-tradable-asset-pairs) | Documents `aclass_base` values `currency` and `tokenized_asset` (xStocks); does not establish the committed Securities stock/ETF contract. |
+| [Spot WebSocket v2 instrument](https://docs.kraken.com/exchange/api-reference/spot-websocket-v2/instrument) | Documents crypto instruments and `include_tokenized_assets` for xStocks; tokenized assets are not evidence of Securities API entitlement. |
+| [API Partner Program announcement, July 29, 2026](https://blog.kraken.com/product/api/kraken-api-partner-program-infrastructure) | Lists crypto spot/futures (excluding US CME) and xStocks, without a Securities stock/ETF API contract. An omitted product is not proof of universal API unavailability. |
+| [Developer index](https://docs.kraken.com/llms.txt) | Lists Exchange, Institutional and Embed surfaces; it does not establish this user's Securities entitlement. |
+| [Getting started with equities](https://support.kraken.com/articles/getting-started-with-equities) | Describes real stock ownership, Kraken Securities LLC and account eligibility. App/Pro access does not imply API access. |
+| [xStocks availability](https://support.kraken.com/gb/articles/xstocks-availability) | Excludes US xStocks access; it does not resolve eligibility for the distinct Securities product. |
+
+No verified Kraken Securities stock/ETF API contract was found, and no blanket
+explicit statement that such an API is unavailable was found either. Preserve
+that distinction. Public sources conflict on EEA stock availability; do not infer
+Carl's eligibility, residence, account type or tax status from those pages.
+The research used no credentials, private-data transmission or external writes.
+The parent has asked Carl for the account/API/jurisdiction facts and the pylint
+semantic-check decision. Answers remain pending; no acceptance is inferred.
+No further broad research or dependent implementation is needed before those
+answers arrive. Existing implemented work and verification receipts are preserved.
+
 ## Smallest required input
 
 Confirm the intended Kraken Securities account type, jurisdiction and official
