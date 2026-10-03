@@ -42,6 +42,34 @@ tag is preserved. A new local annotated checkpoint is conditional on the final
 clean-revision Python 3.13/3.14 suites, offline integrations and image rehearsal.
 No remote action is authorized by that checkpoint. Final receipts follow here.
 
+Implementation commit `8ec9647796bd4b4feb518ce85d7c3ff5c8ea7861` passed the full
+Python 3.14 suite (**4,514 passed, 6 private skips, 30 deselected**, 91.64s) and
+offline grid/operator integration (**8 passed**, 19.56s). Actual non-root image
+`sha256:cc818e74fe1e4040eac8ad5136feaa0b0f417fba741412864794478aef53b109`
+matches that exact revision and package version `2.1.0a2`. All 174 packaged Python
+files, the healthcheck and runtime lock match checkout bytes. Network-disabled
+rehearsal confirms false equities runs two mock trades; true refuses activation;
+Docker delivery health moves healthy-to-unhealthy after a real SQLite fixture's
+heartbeat becomes stale; the actual web CLI `/healthz` is healthy; an unconfigured
+role is unhealthy after startup grace. The heartbeat producer is synthetic, not
+real Discord delivery. Docker interprets a zero start-period override as inherited
+grace in this environment, so the bounded rehearsal uses an explicit 1s grace.
+
+`PYTHONPATH=. timeout 600 .venv/bin/python
+/tmp/wobblebot-verification/alpha2_compose_rehearsal.py` passes all ten generated
+service grants, readonly DB integrity, owner/log writes and denied foreign/config
+writes. Actual maintenance backup/restore/vacuum and atomic settings rewrite with
+a fresh readonly consumer pass on disposable fixtures. No real daemon deployment
+or real-money action occurred.
+
+Final checkpoint procedure repeats quality and the full suite on both supported
+Python versions at this receipt revision, offline integration on both versions,
+the image build/health/package/Compose rehearsals, diff/security checks and Fleet
+audit. The immutable local annotated `v2.1.0-alpha.2` tag is created only after
+those pass; its annotation and ignored `tmp/product-completion-verification/alpha2-*`
+receipts record the final revision/image/results. `alpha.1` stays unchanged.
+Current external requirements remain in the baseline; no tag waives them.
+
 ### 2026-10-03 SQLite membership regression evidence
 
 The operator requested a durable negative control for the migration finding.
