@@ -335,6 +335,12 @@ class _FailingStorage(StoragePort):
     async def get_notifications(self, forwarded=None, limit=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def record_health_transition(self, daemon, status, notification):
+        raise StorageError("fixture")
+
+    async def get_unresolved_deliveries(self, limit=100):
+        raise StorageError("fixture")
+
     async def get_delivery_notifications(self, limit=100):
         raise StorageError("fixture")
 

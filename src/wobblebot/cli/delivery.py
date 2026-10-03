@@ -29,6 +29,7 @@ from wobblebot.config.logging import configure_logging
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.delivery import forward_notifications
+from wobblebot.services.health_response import HealthObserver
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 async def run(config: WobbleBotConfig, token: str) -> int:
     """Bounded sends in a separate process from the conversational operator."""
     assert config.delivery is not None and config.operator is not None
+    channel = config.operator.auth.outbound_channel_id
     storage = SQLiteStorageAdapter(config.delivery.operator_db)
     stop = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop, logger=_LOGGER)
@@ -47,15 +49,38 @@ async def run(config: WobbleBotConfig, token: str) -> int:
         await storage.connect()
         async with httpx.AsyncClient() as client:
             transport = DiscordDelivery(client, token)
-            while not stop.is_set():
-                await emit_heartbeat(storage, "cli/delivery")
-                await forward_notifications(
-                    storage, transport, config.operator.auth.outbound_channel_id
-                )
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=cadence)
-                except TimeoutError:
-                    continue
+
+            async def send_loop() -> None:
+                while not stop.is_set():
+                    await emit_heartbeat(storage, "cli/delivery")
+                    await forward_notifications(storage, transport, channel)
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=cadence)
+                    except TimeoutError:
+                        continue
+
+            async def health_loop() -> None:
+                interval = config.schedules.get_or_default(
+                    "health_response", timedelta(seconds=30)
+                ).total_seconds()
+                if interval <= 0:
+                    await stop.wait()
+                    return
+                observer = HealthObserver(config, storage)
+                while not stop.is_set():
+                    async with asyncio.timeout(30):
+                        await observer.poll()
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=interval)
+                    except TimeoutError:
+                        continue
+
+            async with asyncio.TaskGroup() as group:
+                group.create_task(send_loop(), name="delivery-sender")
+                group.create_task(health_loop(), name="independent-health-observer")
+    except ExceptionGroup:
+        _LOGGER.error("Independent delivery/health task failed; exiting for external supervision")
+        return 1
     except StorageError:
         _LOGGER.error("Delivery storage unavailable")
         return 1

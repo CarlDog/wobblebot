@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -566,3 +567,22 @@ class TestFetchDaemonFreshnessHonorsThresholds:
             now=now,
         )
         assert _by_name(rows_tight)["cli/observe"].status is DaemonStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_future_evidence_is_unknown_for_primary_writes_and_heartbeats(tmp_path):
+    """Clock skew cannot make a future-dated stalled daemon permanently green."""
+    import sqlite3
+
+    path = tmp_path / "future # evidence.db"
+    now = datetime.now(UTC)
+    future = (now + timedelta(days=1)).isoformat()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("CREATE TABLE price_snapshots(observed_at TEXT)")
+        connection.execute("INSERT INTO price_snapshots VALUES (?)", (future,))
+        connection.execute("CREATE TABLE daemon_heartbeats(name TEXT, last_beat_at TEXT)")
+        connection.execute("INSERT INTO daemon_heartbeats VALUES ('cli/operator', ?)", (future,))
+        connection.commit()
+    rows = await fetch_daemon_freshness(observe_db=path, advise_db=None, operator_db=path, now=now)
+    assert next(row for row in rows if row.name == "cli/observe").status == DaemonStatus.UNKNOWN
+    assert next(row for row in rows if row.name == "cli/operator").status == DaemonStatus.UNKNOWN

@@ -369,3 +369,17 @@ class TestLLMHealthSection:
             assert "OpenAI" in resp.text
             overall = client.get("/health/overall.json")
             assert overall.json()["overall"] == "yellow"
+
+
+def test_health_observation_exception_never_reports_green(client_no_probe, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "wobblebot.web.routes.health.load_health_snapshot",
+        AsyncMock(side_effect=RuntimeError("private fixture detail")),
+    )
+    login_as(client_no_probe)
+    response = client_no_probe.get("/health/overall.json")
+    assert response.status_code == 200
+    assert response.json() == {"overall": "yellow", "reason": "observation_unavailable"}
+    assert "private fixture detail" not in response.text

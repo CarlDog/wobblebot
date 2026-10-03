@@ -72,3 +72,15 @@ async def test_sender_runs_without_operator_process(tmp_path, monkeypatch):
         assert row.forwarded and row.delivery_message_id == "456"
     finally:
         await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_health_observer_failure_terminates_supervised_daemon(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from tests.services.test_health_response import operator_config
+
+    config = operator_config(tmp_path / "operator.db")
+    monkeypatch.setattr(delivery, "install_signal_handlers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(delivery.HealthObserver, "poll", AsyncMock(side_effect=RuntimeError))
+    assert await asyncio.wait_for(delivery.run(config, "fixture-token"), timeout=5) == 1

@@ -414,3 +414,7 @@ findings as sub-tasks. Findings get fixed in separate commits per
 category (per the global rule's process discipline). Audit-fatigue
 mitigation: if a category goes three audits with no findings, drop
 its cadence per the global rule.
+
+Read-only diagnosis: `python -m wobblebot.cli.doctor --config config/settings.yml --json`.
+Independent health alerts run in the opt-in delivery process; see
+[health response and doctor](docs/implementation/health-response-and-doctor.md).

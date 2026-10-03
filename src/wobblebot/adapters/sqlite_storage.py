@@ -35,7 +35,7 @@ from uuid import UUID
 import aiosqlite
 from pydantic import ValidationError
 
-from wobblebot.adapters import sqlite_delivery
+from wobblebot.adapters import sqlite_delivery, sqlite_health_alerts
 from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_llm_attempts,
@@ -1985,6 +1985,31 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             ) as connection:
                 await connection.execute("PRAGMA synchronous=FULL")
                 yield connection
+
+    async def record_health_transition(
+        self, daemon: str, status: str, notification: Notification
+    ) -> bool:
+        try:
+            async with self._delivery_connection() as conn:
+                return await sqlite_health_alerts.record(conn, daemon, status, notification)
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist health transition and alert") from exc
+
+    async def get_unresolved_deliveries(self, limit: int = 100) -> list[PersistedNotification]:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """SELECT n.*, d.state AS delivery_state, d.attempts AS delivery_attempts,
+                   d.message_id AS delivery_message_id FROM notifications n
+                   JOIN notification_delivery d ON d.notification_id=n.id
+                   WHERE d.state IN ('sending','failed','uncertain')
+                   ORDER BY n.created_at, n.id LIMIT ?""",
+                (min(100, max(1, limit)),),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_notification(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot read unresolved delivery outcomes") from exc
 
     async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
         conn = self._require_conn()

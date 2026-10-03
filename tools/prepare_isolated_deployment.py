@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OWNERS = ("live", "observe", "news", "advise", "harvest", "operator", "shadow", "sandbox")
 # These are filesystem grants only: operator.db still has multiple table writers.
 ACCESS = {
-    "delivery": {"operator": "rw"},
+    "delivery": {"operator": "rw", "observe": "ro", "advise": "ro"},
     "live": {"live": "rw", "operator": "rw", "observe": "ro"},
     "observe": {"observe": "rw", "operator": "rw"},
     "news": {"news": "rw", "operator": "rw"},

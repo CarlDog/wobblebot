@@ -79,7 +79,8 @@ def load_resolved_config(
     merged = resolve_config(raw, profile_name=profile_name, cli_overrides=cli_overrides)
     config = WobbleBotConfig.model_validate(merged)
     _LOGGER.info(
-        "runtime identity: %s", json.dumps(runtime_identity(merged, profile_name), sort_keys=True)
+        "runtime identity: %s",
+        json.dumps(runtime_identity(config.model_dump(mode="json"), profile_name), sort_keys=True),
     )
     return config
 

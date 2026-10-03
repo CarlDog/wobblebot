@@ -284,3 +284,7 @@ For opt-in per-service directory isolation, see the [staging and migration guide
 See [reproducible builds and runtime identity](docs/implementation/reproducible-builds.md) for hashed installs and digest-pinned deployment plans.
 
 The [independent delivery guide](docs/implementation/notification-delivery.md) describes opt-in alert sending and uncertain outcomes.
+
+Read-only diagnosis: `python -m wobblebot.cli.doctor --config config/settings.yml --json`.
+Independent health alerts run in the opt-in delivery process; see
+[health response and doctor](docs/implementation/health-response-and-doctor.md).

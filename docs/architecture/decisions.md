@@ -3836,3 +3836,28 @@ event with its notification producer. A process crash before a producer saves an
 alert can still lose that alert; do not claim a general exactly-once event bus.
 Unknown Discord outcomes require channel inspection before a replacement send.
 The mechanism does not promise exactly-once Discord delivery or automatic repair.
+
+## ADR-051: Independent page-only health observer and read-only doctor
+
+**Status:** Accepted for local implementation, 2026-10-03.
+
+**Context:** N4 requires operator death not to disable its own health response,
+and a diagnostic surface that distinguishes unknown evidence from health.
+N1-N3 already provide restricted readers, identity and durable delivery.
+
+**Decision:** The opt-in delivery process owns a separate bounded health task.
+It reads primary-write freshness/heartbeats through the existing shared classifier,
+and atomically records transitions with notification enqueue. Startup grace applies
+only to missing observations; restart/competing observers share durable deduplication.
+Recovery emits once. Any failed supervised task terminates the process. No restart
+actor or Docker authority is added; every financial daemon remains page-only.
+Doctor reads existing stores and emits human or schema-versioned JSON evidence,
+including unresolved command/delivery outcomes, provider freshness and disk bytes.
+Unknown/future/failed observations never become green. Validated configuration is
+the shared boot/doctor fingerprint input.
+
+**Consequences:** External supervision and host-independent monitoring remain
+necessary for delivery/host/database outages. G1 anomaly baselines and disk alert
+thresholds are separate gated decisions. No financial policy, production activation
+or live Discord verification is implied. See the
+[operational guide](../implementation/health-response-and-doctor.md) and roadmap receipts.

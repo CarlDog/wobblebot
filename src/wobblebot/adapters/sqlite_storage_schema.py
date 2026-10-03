@@ -284,6 +284,9 @@ CREATE TABLE IF NOT EXISTS pending_commands (
 );
 
 -- Independent notification delivery shares this durable outbox with operator.
+CREATE TABLE IF NOT EXISTS health_alert_state (
+    daemon TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS delivery_backoff (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1), not_before TEXT NOT NULL
 );

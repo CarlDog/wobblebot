@@ -1054,6 +1054,16 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def record_health_transition(
+        self, daemon: str, status: str, notification: Notification
+    ) -> bool:
+        """Atomically record a changed health observation and enqueue its alert."""
+
+    @abstractmethod
+    async def get_unresolved_deliveries(self, limit: int = 100) -> list[PersistedNotification]:
+        """Oldest unresolved delivery outcomes, independent of recent successes."""
+
+    @abstractmethod
     async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
         """Oldest-first bounded due outbox batch, including expired sender leases."""
 

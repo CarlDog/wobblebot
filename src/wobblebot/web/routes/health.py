@@ -202,24 +202,13 @@ async def health_overall_json(
 
     Cheap (Kraken probe is TTL-cached on app.state; daemon freshness
     is a single SELECT per configured DB). Failures collapse to
-    ``{"overall": "green"}`` so the dot doesn't lie under transient
-    storage hiccups — the /health page itself remains the source of
-    truth.
+    yellow/unavailable: missing evidence must never imply healthy state.
     """
     try:
         snapshot = await load_health_snapshot(request, config)
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        # Collapse to green so a transient hiccup doesn't make the nav dot
-        # lie — but LOG it (this was silently swallowed): a *persistent*
-        # warning here is a real, non-transient bug to investigate. The
-        # /health page itself, not this cosmetic badge, is the source of truth.
-        _LOGGER.warning(
-            "health overall.json probe failed; reporting green: %s: %s",
-            type(exc).__name__,
-            exc,
-            extra={"error": str(exc), "error_type": type(exc).__name__},
-        )
-        return JSONResponse({"overall": "green"})
+        _LOGGER.warning("health observation unavailable (%s)", type(exc).__name__)
+        return JSONResponse({"overall": "yellow", "reason": "observation_unavailable"})
     return JSONResponse({"overall": snapshot.overall.value})
 
 

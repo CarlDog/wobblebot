@@ -7,6 +7,23 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 N4 independent health and doctor
+
+ADR-051 adds a page-only observer in the independent delivery process, durable
+atomic transition/notification deduplication, and read-only human/JSON doctor.
+Operator death no longer stops its own observer. Startup grace, stale/future
+classification, recovery, task supervision, unknown storage and unresolved old
+outcomes are covered. No Docker socket, restart actor, real notification or
+production activation was used.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,441 passed, six private-config skips, 30 integration
+exclusions, coverage 88.44%; Black/isort/mypy/pylint passed. An earlier run caught
+two unclosed SQLite test-fixture connections; explicit closure fixed them without
+suppressing ResourceWarning. Final-image/3.14 verification will follow N5.
+The read-only diagnostic guide records external supervisor/host/network limits.
+
+
 ### 2026-10-03 N3 notification delivery
 
 N3b implements ADR-050's durable delivery claims, atomic message receipts,

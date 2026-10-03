@@ -220,7 +220,7 @@ async def _latest_iso_timestamp(db_path: Path, table: str, column: str) -> str |
     Read-only ``mode=ro`` URI prevents any accidental write — this is
     observability tooling, not a writer.
     """
-    uri = f"file:{db_path}?mode=ro"
+    uri = db_path.resolve().as_uri() + "?mode=ro"
     async with managed_connection(uri, uri=True) as conn:
         async with conn.execute(f"SELECT MAX({column}) FROM {table}") as cursor:
             row = await cursor.fetchone()
@@ -301,7 +301,11 @@ async def _read_daemon(  # pylint: disable=too-many-arguments
     if last_seen.tzinfo is None:
         last_seen = last_seen.replace(tzinfo=UTC)
     age_seconds = (now - last_seen).total_seconds()
-    status = DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+    status = (
+        DaemonStatus.UNKNOWN
+        if age_seconds < 0
+        else DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+    )
     return DaemonHealth(
         name=name,
         label=label,
@@ -324,7 +328,7 @@ async def _heartbeats_or_empty(operator_db: Path | None) -> dict[str, datetime] 
     """
     if operator_db is None or not operator_db.exists():
         return None
-    uri = f"file:{operator_db}?mode=ro"
+    uri = operator_db.resolve().as_uri() + "?mode=ro"
     out: dict[str, datetime] = {}
     try:
         async with managed_connection(uri, uri=True) as conn:
@@ -376,7 +380,11 @@ def _classify_heartbeat(
             detail="no heartbeat yet",
         )
     age_seconds = (now - last_seen).total_seconds()
-    status = DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+    status = (
+        DaemonStatus.UNKNOWN
+        if age_seconds < 0
+        else DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+    )
     return DaemonHealth(
         name=name,
         label=label,
