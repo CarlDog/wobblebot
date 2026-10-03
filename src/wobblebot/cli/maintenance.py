@@ -604,8 +604,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements
         deleted += _retention_prunes(retention_targets, Path(maintenance.archive_dir))
         prune_total_deleted += deleted
         _LOGGER.info(
-            "prune cycle complete (rows_deleted=%s, retention_table_count=%s, "
-            "elapsed_seconds=%s)",
+            "prune cycle complete (rows_deleted=%s, retention_table_count=%s, elapsed_seconds=%s)",
             deleted,
             len(retention_targets),
             round(time.monotonic() - cycle_started, 2),
@@ -842,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
     log_file_path = config.maintenance.log_file_path if config.maintenance else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

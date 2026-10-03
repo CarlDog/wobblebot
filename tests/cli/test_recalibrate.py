@@ -10,17 +10,11 @@ from textwrap import dedent
 
 import pytest
 
-from tests.fixtures import grid_config as _grid_config_fixture
-from tests.fixtures import safety_config as _safety_config_fixture
 from wobblebot.cli import recalibrate as cli_recalibrate
-from wobblebot.config.cli import LiveConfig
-from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.loader import WobbleBotConfig
-from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.calibrator import (
     RecalibrationChange,
     RecalibrationProposal,
-    recalibrate,
 )
 
 pytestmark = pytest.mark.unit

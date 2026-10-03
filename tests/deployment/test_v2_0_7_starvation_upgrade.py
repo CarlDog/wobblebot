@@ -15,7 +15,6 @@ import pytest
 
 from wobblebot.adapters import sqlite_storage
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
-from wobblebot.domain.engine_state import EngineStateRow
 from wobblebot.domain.value_objects import Symbol
 
 pytestmark = pytest.mark.unit

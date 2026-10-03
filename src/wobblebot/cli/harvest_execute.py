@@ -570,8 +570,7 @@ async def _execute_proposal(  # pylint: disable=too-many-return-statements,too-m
             level="error",
             title=f"Withdrawal failed: {proposal.amount} {proposal.asset}",
             message=(
-                f"Kraken /Withdraw rejected proposal {proposal.proposal_id}: {exc}. "
-                "No money moved."
+                f"Kraken /Withdraw rejected proposal {proposal.proposal_id}: {exc}. No money moved."
             ),
             event=WithdrawalFailedEvent(
                 proposal_id=proposal.proposal_id,

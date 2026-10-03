@@ -57,10 +57,7 @@ def _make_summary() -> PerformanceSummary:
 
 def _ollama_response(inner_json: dict[str, object] | str) -> dict[str, object]:
     """Wrap an LLM output in Ollama's response envelope shape."""
-    if isinstance(inner_json, dict):
-        inner = json.dumps(inner_json)
-    else:
-        inner = inner_json
+    inner = json.dumps(inner_json) if isinstance(inner_json, dict) else inner_json
     return {
         "model": "test-model",
         "created_at": "2026-05-15T12:00:00Z",
@@ -456,7 +453,7 @@ class TestExtractLastJsonObject:
     def test_multiple_objects_returns_last(self) -> None:
         # Thinking sometimes contains illustrative JSON-shaped examples
         # earlier in the reasoning; the last successful parse is the answer.
-        text = 'Maybe try {"x": 1}. Or perhaps {"x": 2}. ' 'Final: {"x": 3, "confidence": "high"}'
+        text = 'Maybe try {"x": 1}. Or perhaps {"x": 2}. Final: {"x": 3, "confidence": "high"}'
         result = extract_last_json_object(text)
         assert result == {"x": 3, "confidence": "high"}
 
@@ -652,9 +649,9 @@ class TestForceJsonOverride:
 
         body = captured["body"]
         assert isinstance(body, dict)
-        assert (
-            body["format"] == _RESPONSE_JSON_SCHEMA
-        ), "force_json=True must override is_thinking_model and send the schema"
+        assert body["format"] == _RESPONSE_JSON_SCHEMA, (
+            "force_json=True must override is_thinking_model and send the schema"
+        )
         # And the response is parsed directly, not via the free-text extractor.
         assert rec.recommendations == {"spacing_percentage": 1.0}
 

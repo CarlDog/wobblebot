@@ -432,8 +432,7 @@ def main() -> int:
         "--search-limit",
         type=int,
         default=50,
-        help="How many recent suggestions to scan when matching "
-        "--recommendation-id. Default 50.",
+        help="How many recent suggestions to scan when matching --recommendation-id. Default 50.",
     )
     parser.add_argument(
         "--commit",

@@ -57,17 +57,17 @@ test-unit: ## Run unit tests only
 test-cov: ## Run tests with coverage report
 	$(PYTHON) -m pytest tests/ -v --cov=wobblebot --cov-report=html --cov-report=term
 
-lint: ## Run all linters (mypy, pylint)
+lint: ## Run Ruff, mypy and retained pylint checks
+	$(PYTHON) -m ruff check src/ tests/
 	$(PYTHON) -m mypy src/
 	$(PYTHON) -m pylint src/
 
-format: ## Format code with black and isort
-	$(PYTHON) -m black src/ tests/
-	$(PYTHON) -m isort src/ tests/
+format: ## Format code and sort imports with Ruff
+	$(PYTHON) -m ruff check --select I --fix src/ tests/
+	$(PYTHON) -m ruff format src/ tests/
 
-format-check: ## Check if code is formatted correctly
-	$(PYTHON) -m black --check src/ tests/
-	$(PYTHON) -m isort --check-only src/ tests/
+format-check: ## Check formatting without rewriting source
+	$(PYTHON) -m ruff format --check src/ tests/
 
 check-config-drift: ## Fail if settings.yml/.env drift from their example files
 	$(PYTHON) -m pytest tests/config/test_schema_drift.py -q --no-cov

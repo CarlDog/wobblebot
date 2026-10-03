@@ -31,6 +31,13 @@ application:
   # gate engine features on it.
   mode: "live"
 
+# Future real-share support; disabled independently of crypto operation.
+# This build has no Kraken Securities stock/ETF adapter. true fails at config
+# validation before any provider call; Spot/xStocks cannot substitute for it.
+# Account design target is cash; no settlement balance is inferred from crypto USD.
+equities:
+  enabled: false
+
 # Operator-controlled SETTINGS: engine-enforced caps and guards.
 # Order-count, exposure, daily BUY spend and inventory caps are six future
 # POLICY candidates, static today (ADR-040/044). Guard settings stay static.

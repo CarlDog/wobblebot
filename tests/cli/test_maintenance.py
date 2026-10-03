@@ -101,7 +101,7 @@ class TestBackupAll:
         backup_dir = tmp_path / "backups"
         # Pre-seed 5 older backups so retention=2 keeps the new one + 1 old.
         for i in range(5):
-            (tmp_path / f"backups").mkdir(exist_ok=True)
+            (tmp_path / "backups").mkdir(exist_ok=True)
             (tmp_path / "backups" / f"live-2026010{i}-0000.db").write_bytes(b"")
         cfg = MaintenanceConfig(
             target_dbs=[str(src)],

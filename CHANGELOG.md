@@ -32,8 +32,13 @@ fresh `[Unreleased]` heading created at that time.
   fixture sets, and reject provider-reported truncation after cost accounting.
 - Back off repeatedly failing news sources without delaying healthy feeds or
   rewriting configuration; recover normal cadence after successful fetches.
-- Clarify Phase 9 contract inputs and retain the demonstrated Ruff coverage
-  conflict pending an explicit tooling disposition.
+- Adopt Ruff formatting/imports and lint, retaining pylint and mypy under the
+  operator-approved repository-specific decision; keep semantic checks enforced.
+- Add strict disabled-by-default `equities.enabled` validation. Unsupported
+  activation fails before provider wiring; real securities integration and its
+  dependent workflows are explicitly deferred until a verified official contract.
+- File official Robinhood/Kraken agentic-platform research as later proposals,
+  with capability/approval/retry limits and no new integration authority.
 
 ## [2.1.0-alpha.1] — local test candidate, unpublished
 

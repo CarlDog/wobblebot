@@ -618,9 +618,7 @@ def main() -> int:
     parser.add_argument(
         "--until",
         default=None,
-        help=(
-            "Backfill upper bound (ISO 8601). Defaults to now (UTC). " "Only used with --backfill."
-        ),
+        help=("Backfill upper bound (ISO 8601). Defaults to now (UTC). Only used with --backfill."),
     )
     parser.add_argument(
         "--rate-limit-seconds",
@@ -677,7 +675,7 @@ def main() -> int:
             symbols_override = [Symbol.from_string(s) for s in parse_symbol_csv(args.symbols)]
         # `--since auto` is the doc'd equivalent spelling of --catchup.
         catchup = args.catchup or args.since == "auto"
-        run_with_clean_exit(
+        return run_with_clean_exit(
             backfill_main(
                 config,
                 since_raw=None if args.since == "auto" else args.since,
@@ -692,8 +690,7 @@ def main() -> int:
             ),
             logger=_LOGGER,
         )
-    else:
-        run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

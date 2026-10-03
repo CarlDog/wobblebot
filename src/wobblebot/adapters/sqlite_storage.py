@@ -1885,8 +1885,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             params.append(status)
             if status == "approved":
                 clauses.append(
-                    "NOT EXISTS "
-                    "(SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
+                    "NOT EXISTS (SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
                 )
         if kinds is not None:
             placeholders = ", ".join("?" for _ in kinds)

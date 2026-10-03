@@ -66,9 +66,9 @@ class TestPublicEndpoints:
         # Sanity-bracket the price. Wide range — we just want to catch a
         # parse error giving us a number that's off by a factor of 1000.
         assert price.amount > Decimal("1000"), f"BTC/USD suspiciously cheap: {price.amount}"
-        assert price.amount < Decimal(
-            "10_000_000"
-        ), f"BTC/USD suspiciously expensive: {price.amount}"
+        assert price.amount < Decimal("10_000_000"), (
+            f"BTC/USD suspiciously expensive: {price.amount}"
+        )
 
 
 class TestPrivateEndpoints:

@@ -58,13 +58,17 @@ def _score(strategy) -> Counter:  # type: ignore[no-untyped-def]
 
 _HOLD = lambda fx: {}  # noqa: E731
 _SMALLER = lambda fx: {"order_size_usd": fx.summary.current_grid.order_size_usd * 0.7}  # noqa: E731
-_WIDER = lambda fx: {
-    "spacing_percentage": fx.summary.current_grid.spacing_percentage * 1.3
-}  # noqa: E731
+
+
+def _WIDER(fx):
+    return {"spacing_percentage": fx.summary.current_grid.spacing_percentage * 1.3}  # noqa: E731
+
+
 _LARGER = lambda fx: {"order_size_usd": fx.summary.current_grid.order_size_usd * 1.3}  # noqa: E731
-_TIGHTER = lambda fx: {
-    "spacing_percentage": fx.summary.current_grid.spacing_percentage * 0.7
-}  # noqa: E731
+
+
+def _TIGHTER(fx):
+    return {"spacing_percentage": fx.summary.current_grid.spacing_percentage * 0.7}  # noqa: E731
 
 
 class TestSeverityGrading:

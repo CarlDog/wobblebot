@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from tests.fixtures import grid_config as _grid_config
 from tests.fixtures import safety_config as _safety_config
@@ -15,7 +16,6 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.safety import SafetyConfig, SellGuardConfig
 from wobblebot.domain.value_objects import Symbol
 from wobblebot.services.calibrator import (
-    RecalibrationProposal,
     recalibrate,
 )
 
@@ -459,7 +459,7 @@ class TestProposalShape:
             target_balance=Decimal("50"),
             current_config=cfg,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             prop.scale_factor = Decimal("99")  # type: ignore[misc]
 
     def test_changes_tuple_is_immutable(self) -> None:

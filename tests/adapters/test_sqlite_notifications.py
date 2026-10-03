@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from sqlite3 import IntegrityError
 
 import pytest
 import pytest_asyncio
@@ -158,7 +159,7 @@ async def test_level_check_rejects_unknown_value(
     # Pydantic blocks invalid Notification construction; this asserts
     # the CHECK constraint catches a direct-SQL bypass.
     conn = storage._require_conn()  # pylint: disable=protected-access
-    with pytest.raises(Exception):  # IntegrityError
+    with pytest.raises(IntegrityError):  # IntegrityError
         await conn.execute(
             """
             INSERT INTO notifications (level, title, message, timestamp, created_at)

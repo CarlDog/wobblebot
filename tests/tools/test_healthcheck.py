@@ -19,8 +19,8 @@ from unittest.mock import Mock
 from urllib.error import HTTPError
 
 import pytest
-
 from tools.healthcheck import main
+
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 
 pytestmark = pytest.mark.unit

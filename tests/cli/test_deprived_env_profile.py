@@ -91,9 +91,9 @@ def test_unknown_profile_exits_2_without_a_traceback(
     )
 
     err = capsys.readouterr().err
-    assert (
-        "Traceback (most recent call last)" not in err
-    ), f"cli/{name} printed a traceback for an unknown --profile"
+    assert "Traceback (most recent call last)" not in err, (
+        f"cli/{name} printed a traceback for an unknown --profile"
+    )
     assert "no-such-profile-xyz" in err, (
-        f"cli/{name} exited 2 but never named the bad profile; the operator " "cannot act on that"
+        f"cli/{name} exited 2 but never named the bad profile; the operator cannot act on that"
     )

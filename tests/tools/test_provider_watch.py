@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
-
 from tools.provider_watch import Observation, ingest
 
 pytestmark = pytest.mark.unit

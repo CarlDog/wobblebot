@@ -314,7 +314,7 @@ async def _close_news_sources(
             continue
         try:
             await asyncio.wait_for(aclose(), timeout=per_source_timeout_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning(
                 "source close exceeded %ss budget; proceeding",
                 per_source_timeout_seconds,
@@ -432,7 +432,7 @@ def main() -> int:
     log_file_path = config.news.log_file_path if config.news else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

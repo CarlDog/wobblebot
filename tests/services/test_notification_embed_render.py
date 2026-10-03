@@ -67,7 +67,7 @@ class TestPerEventEmbeds:
         assert "session started" in embed["title"].lower()
         assert "2 symbol(s)" in embed["title"]
         assert embed["color"] == COLOR_INFO
-        assert "BTC/USD, ETH/USD" == embed["description"]
+        assert embed["description"] == "BTC/USD, ETH/USD"
         # Four short counters ride inline so Discord packs them
         # three-per-row rather than stacking eight lines above the
         # symbol list (P3 slice 18 follow-up).
@@ -207,7 +207,7 @@ class TestPerEventEmbeds:
                     command_kind="reanchor",
                     symbol="BTC/USD",
                     success=True,
-                    message="re-anchored BTC/USD: 74769.80 -> 65193.50; " "cancelled 0, placed 0/6",
+                    message="re-anchored BTC/USD: 74769.80 -> 65193.50; cancelled 0, placed 0/6",
                 )
             ),
             row_id=9,

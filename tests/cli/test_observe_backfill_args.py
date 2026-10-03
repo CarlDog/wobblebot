@@ -11,7 +11,7 @@ Slice 4 of the v1.1 backfill feature. Covers:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,7 +39,7 @@ class TestParseDateArg:
         caller can still compare against UTC datetimes."""
         parsed = _parse_date_arg("2026-04-01T07:00:00-05:00")
         # 07:00 CDT == 12:00 UTC
-        assert parsed == datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert parsed == datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
 
     def test_invalid_string_raises(self) -> None:
         with pytest.raises(ValueError):

@@ -20,10 +20,10 @@ from decimal import Decimal
 
 import pytest
 import pytest_asyncio
+from tools.auditor import AuditorExchangeAdapter, replay_symbol
 
 from tests.fixtures import grid_config as shared_grid_config
 from tests.fixtures import safety_config as shared_safety_config
-from tools.auditor import AuditorExchangeAdapter, replay_symbol
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.safety import SafetyConfig

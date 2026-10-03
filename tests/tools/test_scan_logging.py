@@ -16,7 +16,6 @@ import pathlib
 import textwrap
 
 import pytest
-
 from tools.scan_logging import scan_decimal, scan_rule1
 
 pytestmark = pytest.mark.unit

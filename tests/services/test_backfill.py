@@ -298,5 +298,5 @@ class TestProgressCallback:
         # work queued. The final terminating empty page doesn't fire it.
         assert len(callback_calls) >= 1
         # Running totals are non-decreasing.
-        for prior, latest in zip(callback_calls, callback_calls[1:]):
+        for prior, latest in zip(callback_calls, callback_calls[1:], strict=False):
             assert latest.bars_inserted >= prior.bars_inserted

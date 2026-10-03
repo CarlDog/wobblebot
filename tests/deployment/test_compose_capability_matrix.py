@@ -242,11 +242,11 @@ def test_config_is_read_only_except_for_the_authorized_writer(
     config_mounts = [
         m
         for m in mounts
-        if isinstance(m, str) and (m.endswith(":/app/config") or m.endswith(":/app/config:ro"))
+        if isinstance(m, str) and (m.endswith((":/app/config", ":/app/config:ro")))
     ]
-    assert (
-        len(config_mounts) == 1
-    ), f"service {name!r} should mount /app/config exactly once; found {config_mounts}"
+    assert len(config_mounts) == 1, (
+        f"service {name!r} should mount /app/config exactly once; found {config_mounts}"
+    )
     is_read_only = config_mounts[0].endswith(":ro")
     if name in CONFIG_WRITERS:
         assert not is_read_only, (

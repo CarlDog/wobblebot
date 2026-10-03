@@ -25,7 +25,8 @@ header should be bumped whenever this test is re-run successfully.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
@@ -135,13 +136,13 @@ class TestAssetPairs:
         payload = await _get_json(kraken_client, "/0/public/AssetPairs?pair=XDGUSD")
         result = _unwrap(payload, "AssetPairs?pair=XDGUSD")
 
-        assert (
-            "XDGUSD" in result
-        ), f"DOGE pair key drift detected. Expected 'XDGUSD', got: {list(result.keys())}"
+        assert "XDGUSD" in result, (
+            f"DOGE pair key drift detected. Expected 'XDGUSD', got: {list(result.keys())}"
+        )
         pair = result["XDGUSD"]
-        assert (
-            pair["base"] == "XXDG"
-        ), f"DOGE base code drift. Expected 'XXDG', got {pair['base']!r}"
+        assert pair["base"] == "XXDG", (
+            f"DOGE base code drift. Expected 'XXDG', got {pair['base']!r}"
+        )
 
 
 class TestTicker:

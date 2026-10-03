@@ -28,15 +28,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Literal, TypeVar
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
 
 from wobblebot.domain.exceptions import LLMRetryExhausted
 from wobblebot.services.llm_failures import classify_error
-
-T = TypeVar("T")
 
 RetryClass = Literal["transient", "permanent"]
 
@@ -88,7 +86,7 @@ def default_classifier(exc: Exception) -> RetryClass:
     return "permanent"
 
 
-async def retry_with_backoff(
+async def retry_with_backoff[T](
     fn: Callable[[], Awaitable[T]],
     config: LLMRetryConfig,
     *,

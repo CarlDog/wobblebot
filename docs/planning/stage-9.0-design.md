@@ -1,9 +1,19 @@
 # Stage 9.0: equity integration evidence and unresolved risk contract
 
-Status: kickoff investigation, **not ratified and not implemented**. This preserves
-the committed Phase 9 track; it does not replace the roadmap with a smaller product.
-Reviewed 2026-10-03 in the authorized cloud checkout. No account keys, real orders,
-new venue, paid feed or capital allocation were used.
+Status: **real securities API integration and dependent workflows explicitly
+deferred by the operator on 2026-10-03**. Reentry requires verified official
+Kraken Securities stock/ETF API support, not an assumption that no API exists.
+The subsequent request adopts a disabled boolean boundary and proportionate
+contract-supported infrastructure; ADR-055 governs that current slice. It is
+implemented in `config/equities.py`, not a trading adapter. The intended design
+target is a cash account; account existence and entitlement remain unverified.
+This scope revision removes deferred integration from the current completion
+gate without marking it implemented. No support monitor or external contact.
+
+Reviewed 2026-10-03 in the authorized cloud checkout. Historical investigation
+and input matrices below remain reentry evidence, not outstanding questions that
+must block the revised assignment. No account keys, real orders, new venue,
+paid feed or capital allocation were used.
 
 ## Official evidence and effect on the old sketch
 

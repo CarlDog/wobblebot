@@ -311,14 +311,13 @@ class TestTraceStamping:
         async def call_fn() -> dict[str, Any]:
             raise _http_status_error(401)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            with llm_trace("cycle-43"):
-                await execute_cloud_call(
-                    ctx=_ctx(storage),
-                    estimated_cost_usd=Decimal("0.01"),
-                    call_fn=call_fn,
-                    extract_tokens=_simple_extract,
-                )
+        with pytest.raises(httpx.HTTPStatusError), llm_trace("cycle-43"):
+            await execute_cloud_call(
+                ctx=_ctx(storage),
+                estimated_cost_usd=Decimal("0.01"),
+                call_fn=call_fn,
+                extract_tokens=_simple_extract,
+            )
         row = (await storage.get_llm_calls())[0]
         assert row.success is False
         assert row.trace_id == "cycle-43"

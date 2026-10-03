@@ -30,7 +30,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.domain.models import Balance, LedgerEntry
-from wobblebot.domain.value_objects import FeeRates, PairLimits
+from wobblebot.domain.value_objects import FeeRates, PairLimits, Symbol
 from wobblebot.domain.value_objects import Timestamp as _Timestamp
 from wobblebot.ports.exceptions import ExchangeError, StorageError
 from wobblebot.ports.exchange import ExchangePort
@@ -397,10 +397,10 @@ class TestRunCycleHappyPath:
         assert proposal_logs
         # Direction is correct for surplus → exchange_to_bank.
         record = proposal_logs[0]
-        assert getattr(record, "direction") == "exchange_to_bank"
-        assert getattr(record, "asset") == "USD"
+        assert record.direction == "exchange_to_bank"
+        assert record.asset == "USD"
         # Amount = 600 - 375 (midpoint) = 225.
-        assert getattr(record, "amount") == "225"
+        assert record.amount == "225"
 
     async def test_topup_band_logs_hypothetical_proposal(
         self, caplog: pytest.LogCaptureFixture
@@ -413,9 +413,9 @@ class TestRunCycleHappyPath:
         proposal_logs = [r for r in caplog.records if "HYPOTHETICAL" in r.message]
         assert proposal_logs
         record = proposal_logs[0]
-        assert getattr(record, "direction") == "bank_to_exchange"
+        assert record.direction == "bank_to_exchange"
         # Amount = 375 (midpoint) - 210 = 165.
-        assert getattr(record, "amount") == "165"
+        assert record.amount == "165"
 
     async def test_deficit_logs_no_proposal(self, caplog: pytest.LogCaptureFixture) -> None:
         """Below the floor is operator-only territory — the daemon

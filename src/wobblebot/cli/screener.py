@@ -128,8 +128,7 @@ async def _screen(  # pylint: disable=too-many-locals
 def _render(rankings: list[ScreenerRanking], skipped: list[Symbol], config: ScreenerConfig) -> None:
     """Log-table output (the blueprint's v1 surface — no DB, no web)."""
     _LOGGER.info(
-        "screener: %d symbol(s) ranked over %dd of %dm bars "
-        "(vol center %.3f%%, ATR center %.2f%%)",
+        "screener: %d symbol(s) ranked over %dd of %dm bars (vol center %.3f%%, ATR center %.2f%%)",
         len(rankings),
         config.lookback_days,
         config.interval_minutes,

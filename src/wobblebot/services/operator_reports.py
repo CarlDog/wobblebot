@@ -88,7 +88,7 @@ async def compose_status_report_narrative(  # pylint: disable=too-many-arguments
         f"  proposals_in_lookback: {len(recent_proposals.proposals)}",
         f"  harvester_band: {harvester_status.band}",
         f"  total_usd_balance: {fmt_usd(status.total_usd_balance)}",
-        f"  todays_realized_pnl: " f"{fmt_usd(status.session_pnl, signed=True)}",
+        f"  todays_realized_pnl: {fmt_usd(status.session_pnl, signed=True)}",
     ]
     blob_lines = [
         f"LOOKBACK_HOURS: {lookback_hours}",

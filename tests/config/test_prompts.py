@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.config.prompts import Prompt, PromptMetadata, load_prompt
 
@@ -98,12 +99,12 @@ class TestLoadPromptErrors:
 
     def test_invalid_role_rejected(self, tmp_path: Path) -> None:
         path = _write_prompt(tmp_path / "bad_role.md", role="not-a-real-role")
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):  # pydantic ValidationError
             load_prompt(path)
 
     def test_temperature_hint_out_of_range_rejected(self, tmp_path: Path) -> None:
         path = _write_prompt(tmp_path / "hot.md", temperature_hint=5.0)
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):  # pydantic ValidationError
             load_prompt(path)
 
     def test_missing_required_metadata_rejected(self, tmp_path: Path) -> None:
@@ -113,7 +114,7 @@ class TestLoadPromptErrors:
             "---\nrole: quant\n---\n\nbody\n",
             encoding="utf-8",
         )
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):  # pydantic ValidationError
             load_prompt(path)
 
 
@@ -165,5 +166,5 @@ class TestPromptMetadataModel:
             description="x",
             response_schema="advisor_recommendation_v1",
         )
-        with pytest.raises(Exception):  # pydantic ValidationError on assignment
+        with pytest.raises(ValidationError):  # pydantic ValidationError on assignment
             meta.role = "risk"  # type: ignore[misc]

@@ -42,7 +42,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs WobbleBot in **editable mode** with all development dependencies (pytest, black, mypy, etc.).
+This installs WobbleBot in **editable mode** with all development dependencies (pytest, Ruff, mypy, pylint, etc.).
 
 ### 4. Verify Installation
 
@@ -60,16 +60,16 @@ committing (`bash scripts/install-hooks.sh` or `scripts/install-hooks.ps1`).
 
 ### Code Formatting
 
-**Black** (code formatter):
+**Ruff** (code formatter):
 ```bash
-black src/ tests/                    # Format code
-black --check src/ tests/            # Check without modifying
+ruff format src/ tests/                    # Format code
+ruff format --check src/ tests/            # Check without modifying
 ```
 
-**isort** (import sorting):
+**Ruff** (import sorting):
 ```bash
-isort src/ tests/                    # Sort imports
-isort --check-only src/ tests/       # Check without modifying
+ruff check --select I --fix src/ tests/                    # Sort imports
+ruff check src/ tests/       # Check without modifying
 ```
 
 ### Type Checking
@@ -150,15 +150,14 @@ The workspace recommends these extensions (install via `.code-workspace`):
 
 - **Python** (`ms-python.python`) – Core Python support
 - **Pylance** (`ms-python.vscode-pylance`) – Fast language server
-- **Black Formatter** (`ms-python.black-formatter`) – Auto-formatting
-- **isort** (`ms-python.isort`) – Import sorting
+- **Ruff** (`charliermarsh.ruff`) – Formatting, import sorting and lint
 - **Mypy Type Checker** (`ms-python.mypy-type-checker`) – Type checking
 - **GitLens** (`eamodio.gitlens`) – Git superpowers
 - **GitHub Copilot** (`github.copilot`) – AI assistance
 
 ### Format on Save
 
-Workspace settings enable **format on save** with Black and isort. Files are automatically formatted when you save.
+Workspace settings enable **format on save** with Ruff. Files are automatically formatted when you save.
 
 ### Tasks
 
@@ -166,8 +165,8 @@ Use **Terminal → Run Task** or `Ctrl+Shift+P` → "Tasks: Run Task":
 
 - **Test: All** – Run all tests
 - **Test: Unit Only** – Run unit tests only
-- **Format: Black** – Format all code
-- **Format: isort** – Sort all imports
+- **Format: Ruff** – Format all code
+- **Format: Imports** – Sort all imports
 - **Lint: mypy** – Type check source
 - **Lint: pylint** – Lint source
 - **Pre-commit: All Checks** – Run all checks (format, lint, test)
@@ -197,8 +196,8 @@ make install        # Install dependencies
 make test           # Run all tests
 make test-unit      # Run unit tests only
 make test-cov       # Run tests with coverage
-make lint           # Run mypy + pylint
-make format         # Format with black + isort
+make lint           # Run Ruff + mypy + retained pylint
+make format         # Format and sort imports with Ruff
 make format-check   # Check formatting without modifying
 make check          # Check formatting, types, lint and tests without rewriting source
 make clean          # Remove build artifacts and cache
@@ -214,8 +213,8 @@ Before committing code, run all checks:
 
 ```bash
 # Check formatting without rewriting the candidate
-black --check src/ tests/
-isort --check-only src/ tests/
+ruff format --check src/ tests/
+ruff check src/ tests/
 
 # Type check
 mypy src/
@@ -304,7 +303,7 @@ Dev-only dependencies (testing, linting) go under `[project.optional-dependencie
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
-    "black>=23.7.0",
+    "ruff==0.16.10",
     # Add dev tools here
 ]
 ```
@@ -372,8 +371,8 @@ local verification does not imply any of these actions. See the authoritative
 Before submitting a pull request:
 
 - [ ] All tests pass (`pytest`)
-- [ ] Code is formatted (`black --check src/ tests/`)
-- [ ] Imports are sorted (`isort --check-only src/ tests/`)
+- [ ] Code is formatted (`ruff format --check src/ tests/`)
+- [ ] Imports are sorted (`ruff check src/ tests/`)
 - [ ] Type checking passes (`mypy src/`)
 - [ ] Linting passes (`pylint src/`)
 - [ ] New code has tests (unit tests minimum)

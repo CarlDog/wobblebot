@@ -1,9 +1,10 @@
 """Tests for domain models (Order, Trade, Balance)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.domain.exceptions import InvalidOrderState
 from wobblebot.domain.models import Balance, Order, Trade
@@ -19,7 +20,7 @@ class TestOrder:
         side = OrderSide.BUY
         price = Price(amount=Decimal("50000"), currency="USD")
         amount = Amount(value=Decimal("0.1"), asset="BTC")
-        now = Timestamp(dt=datetime.now(timezone.utc))
+        now = Timestamp(dt=datetime.now(UTC))
 
         order = Order(
             symbol=symbol,
@@ -142,7 +143,7 @@ class TestOrder:
 
     def _create_test_order(self) -> Order:
         """Helper to create a test order."""
-        now = Timestamp(dt=datetime.now(timezone.utc))
+        now = Timestamp(dt=datetime.now(UTC))
         return Order(
             symbol=Symbol(base="BTC", quote="USD"),
             side=OrderSide.BUY,
@@ -161,7 +162,7 @@ class TestTrade:
         side = OrderSide.SELL
         price = Price(amount=Decimal("51000"), currency="USD")
         amount = Amount(value=Decimal("0.1"), asset="BTC")
-        executed_at = Timestamp(dt=datetime.now(timezone.utc))
+        executed_at = Timestamp(dt=datetime.now(UTC))
 
         trade = Trade(
             id="TXID-789",  # String ID (Kraken txid)
@@ -184,7 +185,7 @@ class TestTrade:
         """Test that Trade is frozen."""
         trade = self._create_test_trade()
 
-        with pytest.raises(Exception):  # Pydantic raises ValidationError
+        with pytest.raises(ValidationError):  # Pydantic raises ValidationError
             trade.fee = Decimal("10.00")  # type: ignore
 
     def _create_test_trade(self) -> Trade:
@@ -198,7 +199,7 @@ class TestTrade:
             amount=Amount(value=Decimal("0.1"), asset="BTC"),
             fee=Decimal("5.10"),
             cost=Decimal("5100.00"),
-            executed_at=Timestamp(dt=datetime.now(timezone.utc)),
+            executed_at=Timestamp(dt=datetime.now(UTC)),
         )
 
 
@@ -224,5 +225,5 @@ class TestBalance:
     def test_balance_is_frozen(self):
         """A Balance is an immutable snapshot - attribute assignment must raise."""
         balance = Balance(asset="BTC", total=Decimal("1.5"), available=Decimal("1.5"))
-        with pytest.raises(Exception):  # Pydantic ValidationError on frozen model
+        with pytest.raises(ValidationError):  # Pydantic ValidationError on frozen model
             balance.available = Decimal("1.0")  # type: ignore

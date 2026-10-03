@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
 import logging
 import os
@@ -284,11 +285,9 @@ async def _bootstrap_app(
 
 async def _close_storages(adapters: list[SQLiteStorageAdapter]) -> None:
     for adapter in adapters:
-        try:
+        # Best-effort cleanup; shutdown is happening regardless.
+        with contextlib.suppress(StorageError):
             await adapter.close()
-        except StorageError:
-            # Best-effort cleanup; shutdown is happening regardless.
-            pass
 
 
 async def _release_check_loop(
@@ -452,7 +451,7 @@ def _serve_command(args: argparse.Namespace) -> int:
     log_file_path = config.web.log_file_path if config.web else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_serve_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_serve_async(config), logger=_LOGGER)
 
 
 # --------------------------------------------------------------------- #
@@ -578,7 +577,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     cu = subs.add_parser(
         "create-user",
-        help=("Prompt for a username + password and seed an operator account " "in operator.db."),
+        help=("Prompt for a username + password and seed an operator account in operator.db."),
     )
     add_config_args(cu)
     cu.add_argument("--log-format", choices=("plain", "json"), default=None)

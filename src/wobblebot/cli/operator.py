@@ -786,8 +786,7 @@ async def _handle_inbound_message(  # pylint: disable=too-many-arguments,too-man
     if decision.intent is not None:
         intent = decision.intent
         _LOGGER.info(
-            "operator message parsed deterministically (parse_path=fast, verb=%s, "
-            "intent_kind=%s)",
+            "operator message parsed deterministically (parse_path=fast, verb=%s, intent_kind=%s)",
             decision.verb,
             decision.intent.kind,
             extra={
@@ -1317,7 +1316,7 @@ async def _close_transport_with_cap(
     """
     try:
         await asyncio.wait_for(transport.close(), timeout=timeout_seconds)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _LOGGER.warning(
             "discord transport close exceeded %ss budget; "
             "cancelling gateway task and proceeding to shutdown",
@@ -1997,7 +1996,7 @@ def main() -> int:
     # Catch KeyboardInterrupt at the top so Ctrl+C produces a clean
     # exit-code-0 line instead of a CancelledError traceback —
     # mirrors the pattern cli/live and cli/web already use.
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

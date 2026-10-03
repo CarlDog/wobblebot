@@ -19,8 +19,8 @@ gpt-5-mini 8/8 (the LLM run is live and not asserted here).
 from __future__ import annotations
 
 import pytest
-
 from tools.probe_arbitrator import _fixtures, _grade
+
 from wobblebot.services.aggregators import aggregate_voting, aggregate_weighted_confidence
 
 pytestmark = pytest.mark.unit
@@ -56,9 +56,9 @@ class TestRubricShape:
                 for op in fx.opinions
                 if "spacing_percentage" in op.recommendations
             }
-            assert (
-                fx.expect_spacing in proposed
-            ), f"{fx.name}: expected {fx.expect_spacing} was proposed by no expert"
+            assert fx.expect_spacing in proposed, (
+                f"{fx.name}: expected {fx.expect_spacing} was proposed by no expert"
+            )
 
     def test_no_fixture_expects_a_tighten_or_a_sub_floor_value(self) -> None:
         """The constraints are absolute, so no fixture may require

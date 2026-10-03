@@ -50,10 +50,13 @@ change fingerprints. Image inspection and permission checks remain necessary.
 
 CI separates quality from a Linux/Windows × Python 3.13/3.14 test matrix; both gate
 publishing. Historical upgrade tags are required. Local Linux results do not prove
-Windows or hosted CI. Quality retains the established exact-pinned Black/isort/
-pylint/mypy chain: no second lint stack is added solely to turn an audit green.
-PY-01 Ruff and the Ruff portion of PY-06 remain a disclosed standards gap, not a
-newly accepted exception. CodeQL has no checked-in advanced configuration;
+Windows or hosted CI. Quality runs exact-pinned Ruff lint/format, mypy and pylint.
+Ruff replaces Black and the standalone isort formatting command. Pylint remains
+by explicit operator decision (ADR-054), preserving semantic checks such as
+cross-module cyclic imports. Its transitive isort library is not a second format
+gate. This is an approved repository-specific deviation from PY-01's literal
+removal of pylint, not a change to Fleet-wide standards. PY-06's Ruff jobs remain
+required alongside pylint. CodeQL has no checked-in advanced configuration;
 GitHub default-setup/analysis status must be reconciled through authorized remote
 access before any completed-analysis claim. Existing UTF-8 text conventions and
 .gitattributes remain; no repository-wide encoding rewrite is necessary.

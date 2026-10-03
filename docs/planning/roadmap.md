@@ -7,6 +7,73 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 revised scope: Ruff migration, equities boundary and research
+
+The operator approved retaining pylint's semantic checks during Ruff migration
+and explicitly deferred the real equities API until verified support, then asked
+for a disabled boolean and useful contract-supported infrastructure. ADR-054 and
+ADR-055 record these decisions. They supersede the earlier pending tooling choice
+and equities-as-current-blocker entries below. Deferred is not implemented.
+
+**Delivered:** Ruff 0.16.10 (MIT) replaces Black and standalone isort formatting
+in Make, CI and editor tasks. Canonical Ruff rules, 100-column/Python 3.13 config,
+hashed dev resolution and Dependabot routing are aligned; mypy and every existing
+pylint setting/check remain enforced. The editor's all-checks task now uses the
+selected interpreter, propagates failures, includes pylint and avoids formatting
+writes. Runtime/build dependency versions are unchanged. Isort remains only as a
+pylint dependency. Explicit re-exports preserve module API, broader exception
+assertions now name real errors, and zip behavior remains explicitly truncating.
+The reviewed unsafe SQLite Row membership rewrite was rejected; row-key fallback
+semantics remain intact. A positive real-Row control and a project lesson record
+why dictionary-shaped lint rewrites need runtime-type review.
+
+`equities.enabled` is a strict immutable boolean, false when omitted. Both loaders,
+profile/CLI override resolution and deployment planning use the same config
+boundary. True fails with an actionable unavailable-adapter error before task or
+provider construction. False adds no equities request, worker, execution or UI
+action, and existing crypto configuration/workflows remain unchanged. No fake
+Kraken API, tokenized substitution, settlement/tax ledger or dormant trading
+adapter is presented as infrastructure. The intended cash-account design is
+retained; personal operator details are not committed. Actual Securities API and
+dependent Phase 9 workflows are explicitly deferred until verified official
+support/account entitlement and a reviewed contract, not current completion
+blockers. No monitoring or broker contact is introduced.
+
+[Agentic broker platforms research](../reference/agentic-broker-platforms-research-2026-10-03.md)
+is filed and linked from the backlog. It distinguishes shipped Robinhood MCP,
+native announcements and Cortex engineering; documents Kraken CLI acknowledgment,
+retry/audit limits and tokenized-vs-real-share distinctions; and maps proposed
+read-only capabilities, approval/reconciliation, deterministic policy and sealed
+replay to existing WobbleBot mechanisms. These are **later proposals**, not new
+implementation scope or authority. No integration dependency, account or tool
+connection was added.
+
+Verification:
+
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: Ruff format/lint, mypy and pylint all pass; **4,498 passed,
+  6 private-config skips, 30 integration deselected**, 88.61% coverage, 115.50s.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  /tmp/wobblebot-venv314/bin/python -m pytest --no-cov`: **4,498 passed,
+  6 private-config skips, 30 deselected**, 88.23s.
+- Flag, example-schema and architecture tests: **67 passed**. Enabled unsupported
+  startup returns code 2 with no task dispatch; omitted/false remain equivalent;
+  profile/override activation fails and a declared crypto substitute is rejected.
+- Workspace JSON parses after removing comment-only lines. `git diff --check`
+  passes. The prior negative-control cycle still demonstrates why pylint stays.
+- Fleet 3.1 machine audit exits 0: **18 PASS, 6 NA, 2 UNKNOWN**. Manual review
+  retains the approved PY-01 pylint-retention deviation; machine PASS is not
+  unmodified conformance. Literal Dockerfile HEALTHCHECK, remote metadata,
+  CodeQL/OC and unavailable hosted/platform/private checks remain separate.
+
+Current local scope is implemented; full completion remains unclaimed because
+required private configuration checks and external development evidence are not
+available or waived. G1/G3 readiness dispositions remain honest about missing
+history; G2/G5-G8/G10 keep their source-specific adoption gates. G4/NW04 repairs
+from the preceding receipt remain implemented. The existing local prerelease tag
+is immutable; new work is untagged and unpublished. No new paid, financial,
+external-message, access or deployment action occurred.
+
 ### 2026-10-03 bounded evidence addendum; decisions pending
 
 The parent supplied additional official public API, equities-eligibility and
@@ -4859,7 +4926,11 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, After 2.1 Close)
 
-**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after the accepted 2.1 closure. No implementation has begun; this remains a historical scoping sketch.
+**Current scope, 2026-10-03:** the operator explicitly deferred real Securities
+API integration and its dependent workflows until verified official support.
+ADR-055's disabled activation boundary is the implemented current slice. The
+historical operator-committed 2026-05-20 sketch below remains reentry context,
+not a claim of implementation or a blocker to the revised local assignment.
 
 **Reconciliation 2026-09-08:** the market/API, account, session, PDT, settlement,
 tax and capital figures below are May 2026 design assumptions, not verified

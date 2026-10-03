@@ -1237,9 +1237,7 @@ class TestMultiSymbol:
         # ETH step raises because no price is set; the engine doesn't
         # silently swallow this — adapter contract says raise on missing
         # price. Caller (cli/live) is the layer that catches per-symbol.
-        with pytest.raises(
-            Exception
-        ):  # ExchangeError; broad catch keeps the test focused on isolation
+        with pytest.raises(ExchangeError):
             await engine.step(ETH_USD)
 
         # BTC's state is untouched by ETH's failure

@@ -44,7 +44,7 @@ Hand checks: `git ls-files pyproject.toml .github/workflows docker/Dockerfile`
 confirms tracked sources; pyproject uses Black/isort/pylint, the image base is
 unpinned before N2, and installed hooks retain all four security properties.
 
-## Final manual reconciliation
+## Pre-migration manual reconciliation (historical)
 
 - PY-03: tracked hashed runtime/build/dev locks and exact dev pins are consumed
   by Make/CI/Docker. The cross-lock test prevents untested runtime versions.
@@ -80,7 +80,7 @@ Large cohesive SQLite/engine/operator modules are retained, with future extracti
 only on a concrete ownership/change need. No speculative rewrite was performed.
 No remote issue/PR, access change, publish, deployment or real money action occurred.
 
-## Ruff follow-up: demonstrated coverage conflict
+## Historical Ruff follow-up: demonstrated coverage conflict
 
 The previous blanket statement that migration was unrelated work was too broad.
 The operator explicitly requested assessment and routine remediation. Read Fleet
@@ -102,3 +102,15 @@ rule and would not satisfy PY-01's literal replacement requirement. No exception
 is accepted by recording this conflict. The operator has been asked whether to
 retain semantic pylint checks during a migration or adopt the Fleet replacement
 coverage intentionally. Current disposition/commands belong in the roadmap.
+
+
+## Approved Ruff disposition (ADR-054)
+
+The operator explicitly accepted retaining pylint's semantic checks during Ruff
+migration. Ruff now owns formatting/imports and the canonical rule selection;
+Make/CI/editor retain mypy and unchanged pylint checks. The prior pending choice
+is resolved. This is an accepted repository-specific deviation from PY-01's
+literal pylint removal, not blanket Fleet conformance. No Fleet standards changed.
+PY-06's Ruff quality steps are implemented. Verification receipts belong in the
+roadmap; hosted/remote/private checks and the literal Dockerfile HEALTHCHECK
+finding remain independently visible.

@@ -237,7 +237,7 @@ class ShadowExchangeAdapter(ExchangePort):
         """
         if timeout_seconds < 0:
             raise ValueError(f"timeout_seconds must be >= 0, got {timeout_seconds}")
-        return None
+        return
 
     async def withdraw(self, asset: str, amount: Decimal, destination: str) -> str:
         raise NotImplementedError(

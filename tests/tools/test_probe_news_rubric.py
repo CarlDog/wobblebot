@@ -18,12 +18,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
 from tools.probe_news import (
     _CURRENT_SPACING,
     _fixtures,
     _grade,
 )
+
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import AdvisorRecommendation
 

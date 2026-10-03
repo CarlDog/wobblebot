@@ -406,7 +406,7 @@ def _parse_json_from_text(
             raise error_factory(str(exc)) from json_exc
         if not isinstance(parsed, dict):
             raise error_factory(
-                f"{provider_name} response is JSON but not an object: " f"{type(parsed).__name__}"
+                f"{provider_name} response is JSON but not an object: {type(parsed).__name__}"
             ) from exc
         return parsed
 
@@ -446,7 +446,7 @@ def build_advisor_recommendation(
         )
     except KeyError as exc:
         raise AdvisorError(
-            f"LLM output missing required field {exc.args[0]!r}; " f"got keys: {sorted(inner)}"
+            f"LLM output missing required field {exc.args[0]!r}; got keys: {sorted(inner)}"
         ) from exc
     except ValidationError as exc:
         raise AdvisorError(

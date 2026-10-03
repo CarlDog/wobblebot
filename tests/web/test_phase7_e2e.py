@@ -180,7 +180,7 @@ def client(
     advise_storage: SQLiteStorageAdapter,
     harvest_storage: SQLiteStorageAdapter,
     news_storage: SQLiteStorageAdapter,
-) -> "TestClient":
+) -> TestClient:
     app = create_app(
         config=WebConfig(bcrypt_cost=10),
         operator_storage=operator_storage,

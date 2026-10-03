@@ -59,9 +59,7 @@ def _build_observe_db(path: Path, *, observed_at: datetime | None) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE price_snapshots ("
-            " id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE price_snapshots ( id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL)"
         )
         if observed_at is not None:
             conn.execute(
@@ -77,9 +75,7 @@ def _build_advise_db(path: Path, *, created_at: datetime | None) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE advisor_suggestions ("
-            " id INTEGER PRIMARY KEY, created_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE advisor_suggestions ( id INTEGER PRIMARY KEY, created_at TEXT NOT NULL)"
         )
         if created_at is not None:
             conn.execute(
@@ -321,9 +317,7 @@ def _build_operator_db_with_heartbeats(path: Path, heartbeats: dict[str, datetim
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE daemon_heartbeats ("
-            " name TEXT PRIMARY KEY, last_beat_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE daemon_heartbeats ( name TEXT PRIMARY KEY, last_beat_at TEXT NOT NULL)"
         )
         for name, ts in heartbeats.items():
             conn.execute(

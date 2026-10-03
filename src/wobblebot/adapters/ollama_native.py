@@ -13,9 +13,7 @@ from wobblebot.ports.exceptions import AdvisorError, AssistantError
 PortError = type[AdvisorError] | type[AssistantError]
 
 
-def require_local_target(
-    model: str, base_url: str, error: PortError
-) -> None:  # pylint: disable=too-many-boolean-expressions
+def require_local_target(model: str, base_url: str, error: PortError) -> None:  # pylint: disable=too-many-boolean-expressions
     """Reject explicit cloud routing before any prompt or metadata request."""
     try:
         target = urlsplit(base_url)

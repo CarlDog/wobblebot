@@ -31,9 +31,8 @@ def test_nested_scope_shadows_and_restores_outer() -> None:
 
 
 def test_scope_restores_on_exception() -> None:
-    with pytest.raises(RuntimeError):
-        with llm_trace("doomed"):
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), llm_trace("doomed"):
+        raise RuntimeError("boom")
     assert current_trace_id() is None
 
 

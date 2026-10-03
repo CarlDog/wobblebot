@@ -226,7 +226,7 @@ class HeuristicAdvisorAdapter(AdvisorPort):
             return max(curve[0].spacing, floor)
         if vol >= curve[-1].vol:
             return max(curve[-1].spacing, floor)
-        for lo, hi in zip(curve, curve[1:]):
+        for lo, hi in zip(curve, curve[1:], strict=False):
             if lo.vol <= vol <= hi.vol:
                 frac = (vol - lo.vol) / (hi.vol - lo.vol)
                 interp = lo.spacing + frac * (hi.spacing - lo.spacing)

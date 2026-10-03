@@ -168,15 +168,17 @@ class TestForwarderLoopDeathIsLoud:
         """
         storage = _StubStorage(fail_on_call=2)
         stop = asyncio.Event()
-        with caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"):
-            with pytest.raises(RuntimeError, match="synthetic upstream failure"):
-                await _forwarder_loop(
-                    storage=storage,  # type: ignore[arg-type]
-                    transport=MagicMock(spec=DiscordTransport),
-                    channel_id="C-1",
-                    poll_seconds=0.005,
-                    stop_event=stop,
-                )
+        with (
+            caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"),
+            pytest.raises(RuntimeError, match="synthetic upstream failure"),
+        ):
+            await _forwarder_loop(
+                storage=storage,  # type: ignore[arg-type]
+                transport=MagicMock(spec=DiscordTransport),
+                channel_id="C-1",
+                poll_seconds=0.005,
+                stop_event=stop,
+            )
         # Proves the loop really cycled rather than dying on entry.
         assert storage.get_calls == 2
         assert storage.heartbeats == 2
@@ -503,6 +505,6 @@ class TestNoTaskLeak:
             if task not in before and task is not current and task not in mine
         }
         assert not strays, (
-            "the supervise+cancel sequence leaked " f"{[(t.get_name(), t.done()) for t in strays]}"
+            f"the supervise+cancel sequence leaked {[(t.get_name(), t.done()) for t in strays]}"
         )
         assert all(task.done() for task in mine)

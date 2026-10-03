@@ -51,17 +51,17 @@ async def lab():
     def build(handler, **kwargs):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
         clients.append(client)
-        defaults = dict(
-            model="gpt-oss:120b",
-            prompt=load_prompt(Path("config/prompts/quant.md")),
-            role="quant",
-            api_key="test-only",
-            storage=storage,
-            session_tracker=tracker,
-            cost_config=LLMCostConfig(),
-            retry_config=LLMRetryConfig(max_retries=1, initial_backoff_seconds=0.001),
-            client=client,
-        )
+        defaults = {
+            "model": "gpt-oss:120b",
+            "prompt": load_prompt(Path("config/prompts/quant.md")),
+            "role": "quant",
+            "api_key": "test-only",
+            "storage": storage,
+            "session_tracker": tracker,
+            "cost_config": LLMCostConfig(),
+            "retry_config": LLMRetryConfig(max_retries=1, initial_backoff_seconds=0.001),
+            "client": client,
+        }
         return OllamaCloudAdvisorAdapter(**(defaults | kwargs))
 
     yield build, storage, tracker, clients

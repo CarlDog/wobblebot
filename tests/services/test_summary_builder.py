@@ -303,9 +303,7 @@ class TestTAFields:
         (indistinguishable from legitimate no-TA). Pin all three."""
         assert set(_TA_FIELD_NAMES) <= set(PerformanceSummary.model_fields)
         await _seed_hourly_bars(storage, count=250)
-        fields = await SummaryBuilder(
-            storage
-        )._compute_ta_fields(  # pylint: disable=protected-access
+        fields = await SummaryBuilder(storage)._compute_ta_fields(  # pylint: disable=protected-access
             BTC_USD, now=datetime.now(UTC), interval_minutes=60
         )
         assert set(fields) == set(_TA_FIELD_NAMES)

@@ -94,19 +94,19 @@ class Answers:
 
 
 def args(**overrides):
-    values = dict(
-        provider="ollama",
-        model="fixture",
-        fixture_set="v1",
-        json=True,
-        prompt_file="config/prompts/risk.md",
-        base_url="http://localhost:11434",
-        temperature=0.4,
-        max_tokens=4000,
-        timeout_seconds=1,
-        session_cap=2,
-        daily_cap=5,
-    )
+    values = {
+        "provider": "ollama",
+        "model": "fixture",
+        "fixture_set": "v1",
+        "json": True,
+        "prompt_file": "config/prompts/risk.md",
+        "base_url": "http://localhost:11434",
+        "temperature": 0.4,
+        "max_tokens": 4000,
+        "timeout_seconds": 1,
+        "session_cap": 2,
+        "daily_cap": 5,
+    }
     return SimpleNamespace(**(values | overrides))
 
 

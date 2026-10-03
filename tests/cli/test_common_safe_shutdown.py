@@ -122,15 +122,17 @@ class TestSafeShutdownTimeoutEscapeValve:
         async def hangs_forever() -> None:
             await asyncio.sleep(60)  # well beyond the test's timeout budget
 
-        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.shutdown"):
-            with pytest.raises(_ExitCalled) as exc_info:
-                await safe_shutdown(
-                    [
-                        ("first_phase_ok", _noop_coro),
-                        ("stuck_phase", hangs_forever),
-                    ],
-                    timeout_seconds=0.05,
-                )
+        with (
+            caplog.at_level(logging.WARNING, logger="wobblebot.cli.shutdown"),
+            pytest.raises(_ExitCalled) as exc_info,
+        ):
+            await safe_shutdown(
+                [
+                    ("first_phase_ok", _noop_coro),
+                    ("stuck_phase", hangs_forever),
+                ],
+                timeout_seconds=0.05,
+            )
 
         assert exc_info.value.code == 1
         assert exit_calls == [1]
@@ -159,9 +161,11 @@ class TestSafeShutdownTimeoutEscapeValve:
         async def yield_then_hang() -> None:
             await asyncio.sleep(60)
 
-        with caplog.at_level(logging.WARNING, logger="wobblebot.cli.shutdown"):
-            with pytest.raises(SystemExit):
-                await safe_shutdown([("the_only_phase", yield_then_hang)], timeout_seconds=0.05)
+        with (
+            caplog.at_level(logging.WARNING, logger="wobblebot.cli.shutdown"),
+            pytest.raises(SystemExit),
+        ):
+            await safe_shutdown([("the_only_phase", yield_then_hang)], timeout_seconds=0.05)
 
         timeout_warnings = [r for r in caplog.records if "shutdown hung in phase" in r.message]
         # Phase should be the one that started; "init" is the pre-loop
@@ -173,4 +177,4 @@ async def _noop_coro() -> None:
     """Awaitable that returns immediately. Used as a benign first phase
     so we can prove the timeout warning carries the SECOND phase's
     name, not the first's."""
-    return None
+    return

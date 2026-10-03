@@ -24,7 +24,6 @@ polls remain the sole path to the engine (ADR-002/ADR-013).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -233,7 +232,7 @@ class ConfirmButton(
         """Reply privately; never edits the shared confirmation message."""
         try:
             await interaction.response.send_message(message, ephemeral=True)
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError):
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError):
             LOGGER.exception("failed to send refusal response")
 
 

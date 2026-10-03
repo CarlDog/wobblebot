@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import math
 import time
@@ -2197,10 +2198,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals,too-m
                 )
                 last_terminal_heartbeat_at = now
 
-            try:
+            # normal — tick interval elapsed
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=live.tick_seconds)
-            except asyncio.TimeoutError:
-                pass  # normal — tick interval elapsed
     finally:
         # Stage 8.4 hotfix: each cleanup step gets its own try/except so a
         # transient failure in one (e.g. DNS down during a power outage
@@ -2772,7 +2772,9 @@ def main() -> int:
     log_file_path = config.live.log_file_path if config.live else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config, ignore_cool_down=args.ignore_cool_down), logger=_LOGGER)
+    return run_with_clean_exit(
+        _main_async(config, ignore_cool_down=args.ignore_cool_down), logger=_LOGGER
+    )
 
 
 if __name__ == "__main__":

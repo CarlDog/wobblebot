@@ -19,6 +19,7 @@ HTMX is unnecessary for the login flow itself.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Form, Request, status
@@ -124,12 +125,10 @@ async def login_submit(
     request.session["username"] = user.username
     rotate_csrf_token(request)
     if user.id is not None:
-        try:
+        # Don't fail the login because the timestamp bookkeeping
+        # failed; the session is already established.
+        with contextlib.suppress(StorageError):
             await storage.update_user_last_login(user.id, Timestamp(dt=datetime.now(UTC)))
-        except StorageError:
-            # Don't fail the login because the timestamp bookkeeping
-            # failed; the session is already established.
-            pass
 
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
 

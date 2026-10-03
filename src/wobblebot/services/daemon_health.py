@@ -221,9 +221,11 @@ async def _latest_iso_timestamp(db_path: Path, table: str, column: str) -> str |
     observability tooling, not a writer.
     """
     uri = db_path.resolve().as_uri() + "?mode=ro"
-    async with managed_connection(uri, uri=True) as conn:
-        async with conn.execute(f"SELECT MAX({column}) FROM {table}") as cursor:
-            row = await cursor.fetchone()
+    async with (
+        managed_connection(uri, uri=True) as conn,
+        conn.execute(f"SELECT MAX({column}) FROM {table}") as cursor,
+    ):
+        row = await cursor.fetchone()
     if row is None or row[0] is None:
         return None
     return str(row[0])
@@ -304,7 +306,9 @@ async def _read_daemon(  # pylint: disable=too-many-arguments
     status = (
         DaemonStatus.UNKNOWN
         if age_seconds < 0
-        else DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+        else DaemonStatus.FRESH
+        if age_seconds <= threshold_seconds
+        else DaemonStatus.STALE
     )
     return DaemonHealth(
         name=name,
@@ -331,9 +335,11 @@ async def _heartbeats_or_empty(operator_db: Path | None) -> dict[str, datetime] 
     uri = operator_db.resolve().as_uri() + "?mode=ro"
     out: dict[str, datetime] = {}
     try:
-        async with managed_connection(uri, uri=True) as conn:
-            async with conn.execute("SELECT name, last_beat_at FROM daemon_heartbeats") as cursor:
-                rows = await cursor.fetchall()
+        async with (
+            managed_connection(uri, uri=True) as conn,
+            conn.execute("SELECT name, last_beat_at FROM daemon_heartbeats") as cursor,
+        ):
+            rows = await cursor.fetchall()
     except (aiosqlite.Error, OSError, StorageError):
         return None
     for name, iso_ts in rows:
@@ -383,7 +389,9 @@ def _classify_heartbeat(
     status = (
         DaemonStatus.UNKNOWN
         if age_seconds < 0
-        else DaemonStatus.FRESH if age_seconds <= threshold_seconds else DaemonStatus.STALE
+        else DaemonStatus.FRESH
+        if age_seconds <= threshold_seconds
+        else DaemonStatus.STALE
     )
     return DaemonHealth(
         name=name,

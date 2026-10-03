@@ -34,7 +34,7 @@ FAILOVER_ERROR_KINDS = frozenset(
 
 _HINTS = {
     "insufficient_credit": (
-        "Provider API credit is insufficient; " "check the provider billing balance."
+        "Provider API credit is insufficient; check the provider billing balance."
     ),
     "quota_exceeded": "Provider quota or spend limit reached; check usage and billing limits.",
     "billing_error": "Provider rejected billing; check payment and account status.",

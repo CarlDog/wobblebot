@@ -186,7 +186,7 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
     api_key = os.environ.get(key_var)
     if not api_key or not api_key.strip():
         raise OperatorConfigError(
-            f"{key_var} missing from environment; required when " f"advisor.provider=='{provider}'."
+            f"{key_var} missing from environment; required when advisor.provider=='{provider}'."
         )
     return api_key
 
@@ -987,7 +987,7 @@ def main() -> int:
     log_file_path = config.advise.log_file_path if config.advise else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

@@ -145,7 +145,7 @@ def bar_returns(bars: list[OHLCBar]) -> dict[str, float]:
     symbols' returns only pair up when their bars share an opened_at.
     """
     out: dict[str, float] = {}
-    for prev, cur in zip(bars, bars[1:]):
+    for prev, cur in zip(bars, bars[1:], strict=False):
         if prev.close == 0:
             continue
         out[cur.opened_at.isoformat()] = float((cur.close - prev.close) / prev.close)
@@ -159,7 +159,7 @@ def pearson(xs: list[float], ys: list[float]) -> float | None:
         return None
     mean_x = sum(xs) / n
     mean_y = sum(ys) / n
-    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=False))
     var_x = sum((x - mean_x) ** 2 for x in xs)
     var_y = sum((y - mean_y) ** 2 for y in ys)
     if var_x == 0.0 or var_y == 0.0:

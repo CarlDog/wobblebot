@@ -91,10 +91,10 @@ gitleaks — missing the PII/identity checks required for this repo.
 | Run integration tests only | `pytest -m integration` |
 | Run a single test | `pytest tests/path/to/test_file.py::TestClass::test_name` |
 | Tests with coverage HTML | `pytest --cov=wobblebot --cov-report=html` |
-| Format | `black src/ tests/ && isort src/ tests/` |
-| Format check (no writes) | `black --check src/ tests/ && isort --check-only src/ tests/` |
+| Format | `make format` |
+| Format check (no writes) | `ruff format --check src/ tests/ && ruff check src/ tests/` |
 | Type check | `mypy src/` |
-| Lint | `pylint src/` |
+| Lint | `ruff check src/ tests/ && pylint src/` |
 | All pre-commit checks | `make check` (format + lint + test) |
 
 **Pytest config gotchas** (`pyproject.toml`):
@@ -229,7 +229,7 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Pydantic v2 models** for structured data (domain entities, config schemas). The Pydantic **mypy plugin** is enabled in `pyproject.toml` and load-bearing — do not remove it.
 - **Port error convention:** a domain-data miss returns `T | None`; a protocol/transport failure raises the port's error type (`ExchangeError`, `StorageError`, `DataCollectorError`, etc. — in `wobblebot.ports.exceptions`). More ratified conventions in `docs/architecture/ratified-decisions.md`.
 - **Async ports:** `ExchangePort` and other I/O-bound ports are `async`. Use `pytest-asyncio` for tests of async code.
-- **Line length 100** (black + isort + pylint all configured to this).
+- **Line length 100** (Ruff and pylint both configured to this).
 - **Keep files under ~300-400 lines.** Split modules that turn into junk drawers.
 - **No `print()`, no swallowed exceptions, no real network calls in unit tests.** Use mocks/stubs (`httpx.MockTransport` is the test seam for `KrakenAdapter`). Integration tests carry the `integration` marker and are excluded from the default `pytest` run via `addopts`; run them explicitly with `pytest -m integration`.
 

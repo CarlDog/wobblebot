@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from tools.prepare_isolated_deployment import prepare
+
 from wobblebot.config.runtime import load_resolved_config
 
 pytestmark = pytest.mark.unit

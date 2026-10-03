@@ -44,7 +44,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If price cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_ticker(self, symbol: Symbol) -> Ticker:
@@ -64,7 +63,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If the ticker cannot be retrieved.
         """
-        pass
 
     @abstractmethod
     async def get_fee_rates(self, symbol: Symbol) -> FeeRates:
@@ -86,7 +84,6 @@ class ExchangePort(ABC):
                 fall back to the ``config.grid.KRAKEN_*_FEE_RATE``
                 constants and log the fallback).
         """
-        pass
 
     @abstractmethod
     async def get_pair_limits(self, symbol: Symbol) -> PairLimits:
@@ -111,7 +108,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If the limits cannot be retrieved.
         """
-        pass
 
     @abstractmethod
     async def get_ledger_entries(
@@ -148,7 +144,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If the entries cannot be retrieved.
         """
-        pass
 
     @abstractmethod
     async def get_balances(self) -> list[Balance]:
@@ -160,7 +155,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If balances cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_balance(self, asset: str) -> Balance | None:
@@ -180,7 +174,6 @@ class ExchangePort(ABC):
             ExchangeError: If balance cannot be retrieved due to a
                 transport or protocol failure.
         """
-        pass
 
     @abstractmethod
     async def place_order(self, order: Order) -> Order:
@@ -196,7 +189,6 @@ class ExchangePort(ABC):
             ExchangeError: If order placement fails
             InsufficientBalance: If account lacks sufficient funds
         """
-        pass
 
     @abstractmethod
     async def cancel_order(self, order: Order) -> Order:
@@ -212,7 +204,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If cancellation fails
         """
-        pass
 
     @abstractmethod
     async def set_dead_mans_switch(self, timeout_seconds: int) -> datetime | None:
@@ -251,7 +242,6 @@ class ExchangePort(ABC):
             ExchangeError: On transport / protocol failure when arming.
             ValueError: If ``timeout_seconds`` is negative.
         """
-        pass
 
     @abstractmethod
     async def get_order_status(self, order: Order) -> Order:
@@ -266,7 +256,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If status cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
@@ -281,7 +270,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If orders cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_trade_history(
@@ -299,7 +287,6 @@ class ExchangePort(ABC):
         Raises:
             ExchangeError: If trade history cannot be retrieved
         """
-        pass
 
     @abstractmethod
     async def get_order_trades(self, order: Order) -> list[Trade]:
@@ -326,7 +313,6 @@ class ExchangePort(ABC):
             ExchangeError: If the lookup itself fails (transport, auth,
                 malformed response). Distinct from an empty list.
         """
-        pass
 
     @abstractmethod
     async def get_ohlc(
@@ -379,4 +365,3 @@ class ExchangePort(ABC):
             ExchangeError: If withdrawal fails
             InsufficientBalance: If insufficient funds
         """
-        pass

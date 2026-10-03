@@ -59,7 +59,7 @@ class TestDeficit:
     def test_exactly_at_min_proposes_topup(self) -> None:
         """At-floor is in the top-up band (min ≤ balance < topup).
         Floor is inclusive on the top-up side — the balance is still
-        considered "above the floor.\" """
+        considered "above the floor.\""""
         result = propose_transfer(balance_usd=Decimal("200"), config=_config())
         assert result is not None
         assert result.direction == "bank_to_exchange"

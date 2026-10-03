@@ -81,7 +81,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def get_order(self, order_id: UUID) -> Order | None:
@@ -96,7 +95,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     @abstractmethod
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
@@ -111,7 +109,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     @abstractmethod
     async def get_orders(
@@ -139,7 +136,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     # Trade operations
     @abstractmethod
@@ -152,7 +148,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
@@ -186,7 +181,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: If the save fails (no partial write is left),
                 or if ``order.filled_amount > 0`` and ``trades`` is empty.
         """
-        pass
 
     @abstractmethod
     async def save_fill_pending_trades(self, order: Order, trades: Sequence[Trade] = ()) -> None:
@@ -211,7 +205,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
                 cancel — use ``save_fill``), if ``exchange_id`` is
                 missing, or if the write fails; no partial write is left.
         """
-        pass
 
     @abstractmethod
     async def record_pending_fill_trades(
@@ -228,7 +221,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the write fails; no partial write is left.
         """
-        pass
 
     @abstractmethod
     async def note_pending_fill_trades_attempt(
@@ -251,7 +243,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the update fails.
         """
-        pass
 
     @abstractmethod
     async def get_pending_fill_trades(
@@ -267,7 +258,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the read fails.
         """
-        pass
 
     @abstractmethod
     async def get_trades(
@@ -291,7 +281,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Exchange ledger operations (ADR-040 follow-up)
     @abstractmethod
@@ -314,7 +303,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the write fails
         """
-        pass
 
     @abstractmethod
     async def get_ledger_entries(
@@ -336,7 +324,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Balance operations
     @abstractmethod
@@ -349,7 +336,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def get_latest_balance_snapshot(self) -> list[Balance]:
@@ -361,7 +347,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Grid state operations (Stage 2.2)
     @abstractmethod
@@ -381,7 +366,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails.
         """
-        pass
 
     @abstractmethod
     async def get_grid_state(self, symbol: Symbol) -> GridState | None:
@@ -397,7 +381,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     # Price snapshot operations (Stage 3.0 — Observer mode)
     @abstractmethod
@@ -421,7 +404,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails.
         """
-        pass
 
     @abstractmethod
     async def save_price_snapshots(self, snapshots: list[tuple[Symbol, Price, Timestamp]]) -> int:
@@ -898,7 +880,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     @abstractmethod
     async def delete_price_snapshots(self, *, before: datetime) -> int:

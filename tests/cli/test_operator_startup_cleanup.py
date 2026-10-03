@@ -142,7 +142,9 @@ async def test_early_startup_failure_closes_all_open_resources(
     attempted = (
         _DATABASES[:1]
         if failure_point == "primary_connect"
-        else _DATABASES[:5] if failure_point == "optional_connect" else _DATABASES
+        else _DATABASES[:5]
+        if failure_point == "optional_connect"
+        else _DATABASES
     )
     assert opened == list(attempted)
     assert closed == list(attempted)

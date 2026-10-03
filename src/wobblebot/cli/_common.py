@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -40,7 +41,7 @@ import sys
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NoReturn, Protocol, TypeVar
+from typing import Any, NoReturn, Protocol
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
@@ -52,8 +53,6 @@ from wobblebot.ports.exceptions import ExchangeError, WobbleBotPortError
 from wobblebot.ports.notification_events import NotificationEvent
 from wobblebot.ports.notifier import Notification, NotifierPort
 from wobblebot.ports.storage import StoragePort
-
-T = TypeVar("T")
 
 _NOTIFY_LOGGER = logging.getLogger("wobblebot.cli.notify")
 _HEARTBEAT_LOGGER = logging.getLogger("wobblebot.cli.heartbeat")
@@ -140,7 +139,7 @@ def parse_symbol_csv(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-def identity(value: T) -> T:
+def identity[T](value: T) -> T:
     """No-op converter — passes the argparse value through unchanged."""
     return value
 
@@ -299,13 +298,11 @@ def parse_interval_arg(raw: str) -> int:
             minutes = int(text)
         except ValueError as exc:
             raise argparse.ArgumentTypeError(
-                f"invalid interval {raw!r}; use 1m/5m/15m/30m/1h/4h/1d/1w "
-                f"or a bare minute count"
+                f"invalid interval {raw!r}; use 1m/5m/15m/30m/1h/4h/1d/1w or a bare minute count"
             ) from exc
     if minutes not in OHLCBar.ALLOWED_INTERVALS:
         raise argparse.ArgumentTypeError(
-            f"interval {minutes}m not in Kraken's allowed set "
-            f"{sorted(OHLCBar.ALLOWED_INTERVALS)}"
+            f"interval {minutes}m not in Kraken's allowed set {sorted(OHLCBar.ALLOWED_INTERVALS)}"
         )
     return minutes
 
@@ -533,10 +530,8 @@ async def run_poll_loop(
     """
     while not stop_event.is_set():
         await do_one_cycle()
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
-        except asyncio.TimeoutError:
-            pass
 
 
 class SymbolPartitioner(Protocol):
@@ -614,8 +609,7 @@ async def partition_or_exit(
         return 2
     if unknown:
         logger.warning(
-            "Kraken does not list %d configured symbol(s): %s — per-tick polls "
-            "for them will fail",
+            "Kraken does not list %d configured symbol(s): %s — per-tick polls for them will fail",
             len(unknown),
             ", ".join(str(s) for s in unknown),
             extra={"unknown": [str(s) for s in unknown]},
@@ -776,7 +770,7 @@ async def safe_shutdown(
 
     try:
         await asyncio.wait_for(_run_all(), timeout=timeout_seconds)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning(
             "shutdown hung in phase %r beyond %.1fs; forcing exit",
             current_phase[0],

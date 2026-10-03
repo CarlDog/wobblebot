@@ -8,6 +8,7 @@ from textwrap import dedent
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from wobblebot.config.llm import LLMConfig
 from wobblebot.config.loader import WobbleBotConfig, load_config
@@ -66,7 +67,7 @@ class TestLLMConfigDefaults:
 
     def test_frozen(self) -> None:
         cfg = LLMConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.cost = None  # type: ignore[misc]
 
 
@@ -110,7 +111,7 @@ class TestWobbleBotConfigLLMField:
             **_BASE_REQUIRED,
             "llm": {"retry": {"max_retries": -1}},
         }
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WobbleBotConfig.model_validate(data)
 
     def test_negative_session_cap_rejected(self) -> None:
@@ -118,7 +119,7 @@ class TestWobbleBotConfigLLMField:
             **_BASE_REQUIRED,
             "llm": {"cost": {"max_spend_per_session_usd": "0"}},
         }
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WobbleBotConfig.model_validate(data)
 
 

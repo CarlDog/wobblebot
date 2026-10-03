@@ -6,6 +6,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.config.cli import WebConfig
 from wobblebot.config.loader import WobbleBotConfig, load_config
@@ -57,7 +58,7 @@ class TestWebConfigDefaults:
 
     def test_frozen(self) -> None:
         cfg = WebConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.bind_port = 9000  # type: ignore[misc]
 
 
@@ -69,7 +70,7 @@ class TestWebConfigDefaults:
 class TestWebConfigValidation:
     @pytest.mark.parametrize("invalid_port", [0, -1, 65536, 100000])
     def test_invalid_port_rejected(self, invalid_port: int) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(bind_port=invalid_port)
 
     @pytest.mark.parametrize("valid_port", [1, 80, 443, 8000, 65535])
@@ -78,55 +79,55 @@ class TestWebConfigValidation:
         assert cfg.bind_port == valid_port
 
     def test_empty_bind_host_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(bind_host="")
 
     def test_empty_session_secret_env_var_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(session_secret_env_var="")
 
     def test_session_max_age_bounds(self) -> None:
         # 0 is rejected; 1 is min; 90 is max
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(session_max_age_days=0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(session_max_age_days=91)
         WebConfig(session_max_age_days=1)
         WebConfig(session_max_age_days=90)
 
     def test_bcrypt_cost_bounds(self) -> None:
         # Per ADR-017, 12 is default; 10-15 acceptable
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(bcrypt_cost=9)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(bcrypt_cost=16)
         WebConfig(bcrypt_cost=10)
         WebConfig(bcrypt_cost=15)
 
     def test_rate_limit_attempts_bounds(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(rate_limit_attempts=0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(rate_limit_attempts=101)
         WebConfig(rate_limit_attempts=1)
         WebConfig(rate_limit_attempts=100)
 
     def test_htmx_poll_seconds_must_be_positive(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(htmx_poll_seconds=0.0)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(htmx_poll_seconds=-1.0)
         cfg = WebConfig(htmx_poll_seconds=0.001)
         assert cfg.htmx_poll_seconds == 0.001
 
     def test_htmx_poll_seconds_upper_bound(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(htmx_poll_seconds=301.0)
         cfg = WebConfig(htmx_poll_seconds=300.0)
         assert cfg.htmx_poll_seconds == 300.0
 
     def test_invalid_log_format_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WebConfig(log_format="syslog")  # type: ignore[arg-type]
 
 
@@ -167,7 +168,7 @@ class TestWobbleBotConfigWebField:
 
     def test_invalid_block_propagates(self) -> None:
         data = {**_BASE_REQUIRED, "web": {"bind_port": 99999}}
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WobbleBotConfig.model_validate(data)
 
 

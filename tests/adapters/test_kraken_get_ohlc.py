@@ -7,16 +7,17 @@ and returns canned ``/0/public/OHLC`` envelopes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest
 
 from wobblebot.adapters.kraken_exchange import KrakenAdapter
 from wobblebot.config.kraken import KrakenConfig
-from wobblebot.domain.value_objects import OHLCBar, Symbol
+from wobblebot.domain.value_objects import Symbol
 from wobblebot.ports.exceptions import ExchangeError
 
 pytestmark = pytest.mark.unit

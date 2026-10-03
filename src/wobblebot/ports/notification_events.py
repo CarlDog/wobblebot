@@ -23,7 +23,7 @@ sentinel strings become real ``None``.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -141,16 +141,14 @@ class CommandResultEvent(_FrozenEvent):
 
 
 NotificationEvent = Annotated[
-    Union[
-        SessionStartEvent,
-        FillEvent,
-        LossCapEvent,
-        SessionEndEvent,
-        HarvestProposalEvent,
-        WithdrawalFailedEvent,
-        WithdrawalSubmittedEvent,
-        CommandResultEvent,
-    ],
+    SessionStartEvent
+    | FillEvent
+    | LossCapEvent
+    | SessionEndEvent
+    | HarvestProposalEvent
+    | WithdrawalFailedEvent
+    | WithdrawalSubmittedEvent
+    | CommandResultEvent,
     Field(discriminator="kind"),
 ]
 

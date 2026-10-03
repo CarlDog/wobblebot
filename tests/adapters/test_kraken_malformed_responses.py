@@ -23,9 +23,10 @@ Test seam: httpx.MockTransport, same as the sibling adapter tests.
 from __future__ import annotations
 
 import decimal
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest

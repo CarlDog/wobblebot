@@ -17,7 +17,7 @@ from wobblebot.config.grid import CoinGridConfig, GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.domain.models import Balance
 from wobblebot.domain.value_objects import Amount, Symbol, Timestamp
-from wobblebot.ports.exceptions import ExchangeError, OperatorError
+from wobblebot.ports.exceptions import ExchangeError
 from wobblebot.ports.operator import (
     CancelOpenOrdersCommand,
     GridConfigQuery,
@@ -515,7 +515,7 @@ class TestStatusQuery:
         from uuid import uuid4
 
         from wobblebot.domain.models import Trade
-        from wobblebot.domain.value_objects import Amount, Price
+        from wobblebot.domain.value_objects import Price
 
         now = datetime.now(UTC)
         # Anchor both legs to fixed hours of TODAY (UTC), not `now - Nh`:
@@ -574,7 +574,7 @@ class TestStatusQuery:
         from uuid import uuid4
 
         from wobblebot.domain.models import Trade
-        from wobblebot.domain.value_objects import Amount, Price
+        from wobblebot.domain.value_objects import Price
 
         now = datetime.now(UTC)
         today_at = now.replace(minute=0, second=0, microsecond=0)

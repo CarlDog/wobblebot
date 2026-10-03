@@ -3907,3 +3907,57 @@ values and safe untruncated error detail. Interpret numeric direction separately
 from small magnitude. Preserve old fixture sets and use named new sets whose
 input evidence, not expected labels, resolves contested cases. No historical
 campaign is regraded and no new paid campaign or seat change is authorized.
+
+## ADR-054: Ruff formatting and lint with retained pylint coverage
+
+**Status:** explicitly approved repository-specific decision, 2026-10-03.
+The operator instructed: “Retain pylint if that's your recommendation.”
+
+Ruff replaces Black and standalone isort formatting/import commands in Make,
+CI and the editor. Use the Fleet PY-01 rule selection with the existing 100-column
+Python 3.13 target. Keep mypy and all existing pylint configuration/checks,
+including pylint-pydantic and cyclic-import detection. Pin Ruff in the hashed dev
+resolution; its MIT license is compatible with this MIT project.
+
+This deliberately deviates from Fleet PY-01's requirement to remove pylint. It
+is an accepted project decision, not unmodified Fleet conformance or an edit to
+Fleet-wide standards. PY-06's Ruff quality steps are implemented alongside the
+retained checks. Do not disable semantic checks to achieve a tool-count target.
+
+Ruff auto-fixes must be reviewed for runtime types and side effects. In particular,
+SQLite Row iteration/membership uses values, so `.keys()` checks must remain;
+SIM118 is excluded in the two row-decoding adapters with that explanation.
+FastAPI Depends is an immutable injection sentinel, explicitly recognized by
+B008 configuration. E501 follows the canonical formatter exclusion. Broad test
+exception assertions are narrowed to actual contract errors; no test is dropped.
+The migration preserves truncating zip semantics explicitly and documented
+cleanup suppression, and uses explicit terminal returns for NoReturn helpers.
+
+## ADR-055: Disabled equities boundary and deferred broker integration
+
+**Status:** operator-authorized scope revision and local activation boundary,
+2026-10-03. The operator deferred equities API work until verified support and
+then requested a boolean flag and useful infrastructure where contracts permit.
+
+`equities.enabled` is a strict boolean, default false, in the ordinary immutable
+configuration model and YAML/profile resolution. Omitted configuration stays
+backward-compatible. This build has no supported Kraken Securities stock/ETF
+adapter: true raises an actionable configuration error before provider/task
+wiring. No config-supplied alias can promote Spot crypto or tokenized xStocks to
+real-share capability. Disabled mode adds no equities request, worker, execution
+path or UI action. Deployment planning validates the same root model.
+
+The intended eventual design is an unlevered cash account. Do not infer settled
+cash, buying power or actual account existence from crypto balances. The current
+functional infrastructure is typed activation validation, profile propagation,
+fail-closed startup and boundary regression tests. A guessed adapter, settlement
+ledger, earnings feed or tax importer would lack an adopted broker data contract;
+none is added as a placeholder. No personal residence/tax details belong in the
+public repository.
+
+The real securities adapter and dependent execution/settlement/earnings/tax/live
+acceptance are explicitly deferred, not implemented and not blockers for this
+revised assignment. Reentry requires verified official real-share securities API
+support, account eligibility/entitlement and a reviewed risk/data contract. Actual
+financial activation remains separately authorized. No availability monitor or
+external contact is authorized by the deferral.

@@ -16,8 +16,8 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-
 from tools.score_report import build_report
+
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.heuristic import CurvePoint, HeuristicSpec
 from wobblebot.domain.value_objects import Timestamp

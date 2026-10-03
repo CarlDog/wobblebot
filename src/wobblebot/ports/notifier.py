@@ -96,7 +96,6 @@ class NotifierPort(ABC):
         Raises:
             NotifierError: If notification cannot be sent
         """
-        pass
 
     @abstractmethod
     async def send_error_alert(self, error: Exception, context: dict[str, Any]) -> None:
@@ -109,4 +108,3 @@ class NotifierPort(ABC):
         Raises:
             NotifierError: If alert cannot be sent
         """
-        pass

@@ -11,6 +11,7 @@ fleet incorporation. Canonical verification receipts remain in the
 | [Independent hashed locks can disagree](2026-10-03-independent-hashed-locks-can-disagree.md) | New Python-specific lesson, related to existing npm-version-skew and test-engine-newer-than-prod-floor lessons. |
 | [Copied file modes can break non-root images](2026-10-03-copied-modes-break-nonroot-images.md) | Specific Docker lesson or concrete extension of verify-docker-base-image-claims-with-a-real-build. |
 | [Verification must be portable and non-mutating](2026-10-03-portable-nonmutating-verification.md) | New build-tool lesson; keep actual Windows verification limits explicit. |
+| [Linter migrations need semantic parity](2026-10-03-linter-migrations-need-semantic-parity.md) | New Python-specific migration evidence; runtime protocol differences and approved local coverage retention. |
 
 ## Evidence to extend existing lessons, not duplicate them
 

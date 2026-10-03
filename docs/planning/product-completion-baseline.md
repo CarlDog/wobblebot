@@ -19,7 +19,7 @@ Neither an open issue nor code presence independently establishes adoption.
 The old five-milestone shape is reconciled to the later eight-phase roadmap;
 M5's dashboard/recovery/release criteria remain attached to Phases 7/8.
 
-Done means every adopted behavior below is implemented and integrated, all
+Done means every currently adopted, non-deferred behavior below is implemented and integrated, all
 required development gates pass (or the operator explicitly accepts an exception),
 documentation is accurate, and changes are preserved/accounted for. Historical
 production receipts are provenance, not fresh cloud-environment results.
@@ -86,19 +86,20 @@ and tests remain the implementation evidence, not the checkmarks alone.
 | C5 / closeout plan | Exact release/deploy/observation identity, individually accepted limitations and formal operator closure | Historical releases exist; formal close and fresh production evidence B2 remain separate from authorized local development. Publication not authorized |
 | N0 / closeout plan | Accepted 2.0 close, reconciled N1-N5 scope, unique ADR references, first slice criteria | Local implementation authorization confirmed; formal phase acceptance remains separate. ADR-047 onward record local decisions |
 | N1 / closeout plan §5; ADR-041 | Per-service data/config/secret capabilities, WAL/backups/settings consumers; remove unnecessary web cloud keys using authoritative fresh health | Implemented locally under ADR-047; final-image capability and WAL rehearsals passed. Operator/NAS configuration and production migration remain B2; shared operator-table authority remains explicit |
-| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Linux 3.13/3.14 passed. Hosted Windows/CI and CodeQL evidence remain B2; Ruff gap disclosed |
+| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Linux 3.13/3.14 passed. Hosted Windows/CI and CodeQL evidence remain B2; ADR-054 authorizes retained pylint alongside Ruff |
 | N3a / closeout plan §5 | Immutable approval, atomic claims, expiry/mutation rejection, post-effect ambiguity reconciliation | Implemented locally under ADR-049; competing consumers, mutation/expiry, restart and failed-receipt tests passed. Reconciliation requires observed external effects; no blind replay |
 | N3b / closeout plan §5 | Durable notification outbox, independent delivery, bounded retries/terminal failure; no exactly-once claim | Implemented locally under ADR-050; independent sender, claims/receipts, retry/backoff and crash-boundary tests passed. Activation and real Discord verification remain separate; no G1 anomaly daemon added |
 | N4 / closeout plan §5 | Independent dead/wedged detection, read-only human/JSON doctor, unknown/stale evidence; money daemons page-only | Implemented locally under ADR-051: independent page-only observer, durable transition alerts and read-only human/JSON doctor. External supervisor/host/Discord acceptance remains B2; no restart actor or Docker socket |
 | N5a / closeout plan §5 | Correct Ollama envelopes/prompts/errors/truncation/local-only and telemetry | Implemented locally under ADR-052: native envelopes/system prompts, local metadata/provenance refusal, port errors, truncation and explicit identity/metric measurement. NAS digest qualification and server local-only setting remain B2 |
 | N5b / closeout plan §5; GH22/GH97 | Deduplicated contract/pricing/model-watch ownership; funding retention/migration decision | Manual deduplicated snapshot ledger and project-role ownership implemented under ADR-052; legacy funding explicitly retained pending account-tested migration. No unattended schedule accepted/installed; external current-source coverage remains B2 |
-| 9.0 / roadmap Phase 9, G9 | Fresh official equity/account/session/settlement/day-trading/tax review, new equity-risk ADR | Kickoff evidence recorded in stage-9.0-design.md. Official FINRA transition invalidates unconditional old PDT assumptions; account-enabled equities API, jurisdiction and account/house rules requested. Risk ADR remains unratified |
-| 9.1 / roadmap Phase 9 | Asset-class and stock symbol/precision/session metadata and error mappings | Unstarted; 9.0 and confirmed API/account access B2 |
-| 9.2 / roadmap Phase 9 | Settlement/day-trading-aware safety with persisted history and startup guards | Unstarted; 9.0 risk/account decisions must precede financial policy implementation |
-| 9.3 / roadmap Phase 9 | Earnings-calendar pause windows, override and notification | Unstarted; verified source selection and 9.0 |
-| 9.4 / roadmap Phase 9 | Small real equity cycle, full adapter/safety/settlement path | Unstarted; separate capital/activation/trade authorization required |
-| 9.5 / roadmap Phase 9 | Tax export and wash-sale accounting with cost UI | Unstarted; verified legal/account/source assumptions and 9.0; no fabricated compliance |
-| 9.6 / roadmap Phase 9 | Multi-symbol integration, real earnings event and verified tax export, closing summary | Unstarted; all prior slices and separate live acceptance |
+| EQ-flag / operator scope revision 2026-10-03; ADR-055 | Disabled-by-default strict boolean; enabled without supported adapter fails before provider/task wiring; disabled preserves crypto workflows | Implemented config/profile/loader boundary; targeted tests cover no activation, clear failure and rejection of crypto substitution. Real-share integration is unavailable |
+| 9.0 / roadmap Phase 9, G9 | Preserve fresh official evidence and cash-account design target | Design record retained; full broker-specific risk ratification deferred with real integration |
+| 9.1 / roadmap Phase 9 | Stock/ETF API, identifiers, precision, sessions and error mapping | Explicitly deferred by operator 2026-10-03 until verified official securities API support; no API absence claim |
+| 9.2 / roadmap Phase 9 | Settlement/day-trading-aware safety | Dependent broker/account integration explicitly deferred; no guessed crypto-balance equivalence |
+| 9.3 / roadmap Phase 9 | Earnings pause windows, overrides and notifications | Dependent equities workflow explicitly deferred; no feed contract or active task invented |
+| 9.4 / roadmap Phase 9 | Tiny real equity cycle | Deferred with API integration; separate real-money authorization still required |
+| 9.5 / roadmap Phase 9 | Tax export, wash-sale lots and cost UI | Dependent equities data contract explicitly deferred; no fabricated tax output |
+| 9.6 / roadmap Phase 9 | Multi-symbol live integration and closing summary | Deferred with prior slices; not counted as implemented |
 
 ## Complete retained-candidate crosswalk
 
@@ -118,7 +119,7 @@ The following gates preserve adopted residuals without treating every idea as ad
 | G6 | Accepted ADR-040 writable POLICY/capital work | Second qualifying edit evidence, refreshed fixture and ownership/failure design unavailable; ADR-044 remains proposed |
 | G7 | Auto-tune/news-pause/confidence/learning candidates | Item-specific adoption/ADRs and credible outcomes; not automatically adopted by catalog membership |
 | G8 | Regime/Oracle/adaptive/buy-guard/MoE research | Comparative evidence then 60-90-day shadow gates; no result invented |
-| G9 | Committed equities track | 2.1 close and 9.0 decisions; retained above, not excluded |
+| G9 | Retained equities track; current activation-boundary scope | Real API and dependent workflow explicitly deferred by operator 2026-10-03; EQ-flag remains current scope |
 | G10 | Individual demand/profile/consumer-triggered candidates | Each original trigger retained in backlog; no blanket cleanup or feature adoption |
 
 Exclusions: declined SDK/banking abstraction, stop-loss/take-profit/staking/

@@ -80,7 +80,7 @@ class GridConfig(BaseModel):
         frozen = True
 
     @model_validator(mode="after")
-    def _validate_spacing_covers_fees(self) -> "GridConfig":
+    def _validate_spacing_covers_fees(self) -> GridConfig:
         """Refuse configurations where a grid cycle cannot profit.
 
         For each enabled coin (plus the always-active ``default``), the

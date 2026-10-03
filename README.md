@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
 [![CI](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml)
 
 <!-- fleet-confidence -->
@@ -127,7 +127,7 @@ pip install -e ".[dev]"
 
 # 5. Verify the install
 pytest                          # default unit suite with coverage
-black --check src/ tests/
+ruff format --check src/ tests/
 mypy src/
 ```
 
@@ -210,8 +210,8 @@ pytest tests/path/to/test_file.py::TestClass::test_name   # one test
 ### Code Quality
 
 ```bash
-black src/ tests/            # format
-isort src/ tests/            # imports
+ruff format src/ tests/            # format
+ruff check --select I --fix src/ tests/            # imports
 mypy src/                    # type check (strict)
 pylint src/                  # lint
 make check                   # non-mutating format checks + type/lint checks + tests
@@ -294,3 +294,12 @@ Independent health alerts run in the opt-in delivery process; see
 
 Local Ollama and provider maintenance: [local contract/identity](docs/implementation/ollama-local-contract.md)
 and [manual watch/funding decision](docs/implementation/provider-watch.md).
+
+
+Equities support is staged behind `equities.enabled: false` (also the default
+when omitted). This build has no supported Kraken Securities stock/ETF adapter;
+setting true fails configuration validation before provider/task setup and tells
+you to disable it. It does not enable xStocks, create a worker or expose an equity
+trading action. Real-share integration and its dependent workflows are explicitly
+deferred until a verified official contract is available; see
+[the scope and reentry record](docs/planning/stage-9.0-design.md) and ADR-055.

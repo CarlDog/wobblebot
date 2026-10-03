@@ -261,7 +261,7 @@ def evaluate_auto_apply(  # pylint: disable=too-many-locals
                     proposed=proposed_raw,
                     reason=(
                         f"delta {delta_pct:+.2f}% exceeds "
-                        f"max_{key.replace('_usd','')}_change_percentage={cap_pct}%"
+                        f"max_{key.replace('_usd', '')}_change_percentage={cap_pct}%"
                     ),
                 )
             )

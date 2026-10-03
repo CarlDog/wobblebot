@@ -326,7 +326,7 @@ class TestConfirm:
             assert row1 is not None
             first_confirmed_at = row1.confirmed_at
             # Second attempt — should not overwrite confirmed_at.
-            confirm_page2 = client.get(f"/commands/{pid}/confirm")
+            client.get(f"/commands/{pid}/confirm")
             # Note: the result template doesn't include a CSRF input;
             # but the confirm GET will still have one if we re-fetch it.
             # Use the same token (it's tied to the session, not the page).

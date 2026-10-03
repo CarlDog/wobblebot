@@ -515,7 +515,7 @@ class TestAdvisorHappyPath:
 
     async def test_prose_wrapping_json(self, storage: SQLiteStorageAdapter) -> None:
         wrapped = (
-            "Here's my analysis:\n\n" "```json\n" + json.dumps(_valid_recommendation()) + "\n```\n"
+            "Here's my analysis:\n\n```json\n" + json.dumps(_valid_recommendation()) + "\n```\n"
         )
         envelope = _gemini_envelope(text=wrapped)
 

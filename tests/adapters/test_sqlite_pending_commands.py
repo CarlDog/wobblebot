@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from sqlite3 import IntegrityError
 from uuid import UUID, uuid4
 
 import pytest
@@ -219,7 +220,7 @@ async def test_status_check_rejects_unknown_value(
     # that), so this asserts the constraint by going around the model
     # via direct SQL.
     conn = storage._require_conn()  # pylint: disable=protected-access
-    with pytest.raises(Exception):  # sqlite3.IntegrityError or similar
+    with pytest.raises(IntegrityError):  # sqlite3.IntegrityError or similar
         await conn.execute(
             """
             INSERT INTO pending_commands (

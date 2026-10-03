@@ -41,7 +41,7 @@ def _refusal_error(kind: str) -> Exception:
     if kind == "client":
         return aiohttp.ClientError("connection failed")
     if kind == "timeout":
-        return asyncio.TimeoutError("request timed out")
+        return TimeoutError("request timed out")
     return discord.DiscordException("Discord unavailable")
 
 

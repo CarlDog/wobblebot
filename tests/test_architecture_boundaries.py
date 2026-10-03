@@ -128,7 +128,7 @@ def test_package_obeys_architecture_boundaries() -> None:
     # Removing an exception's last use must also remove its permission; stale
     # allowances would otherwise make a later unrelated dependency invisible.
     observed = {(edge.source, edge.target) for edge in edges}
-    assert _ALLOWED_EDGES <= observed, f"Unused exceptions: {_ALLOWED_EDGES - observed}"
+    assert observed >= _ALLOWED_EDGES, f"Unused exceptions: {_ALLOWED_EDGES - observed}"
 
 
 @pytest.mark.parametrize(
@@ -269,8 +269,7 @@ def test_package_scan_detects_an_isolated_source_mutation(tmp_path: Path) -> Non
     assert not any(_is_forbidden(edge) for edge in _scan_package(package_root))
 
     policy.write_text(
-        "from decimal import Decimal\ndef delayed():\n"
-        "    from ..adapters import kraken_exchange\n",
+        "from decimal import Decimal\ndef delayed():\n    from ..adapters import kraken_exchange\n",
         encoding="utf-8",
     )
     violations = [edge for edge in _scan_package(package_root) if _is_forbidden(edge)]

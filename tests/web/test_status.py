@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -1491,7 +1491,7 @@ class TestReanchorViabilityStat:
 
 
 _REANCHOR_TALLY = (
-    "re-anchored BTC/USD: 30000 -> 30600; cancelled 2, " "placed 2/6 (3 refused) (1 sells deferred)"
+    "re-anchored BTC/USD: 30000 -> 30600; cancelled 2, placed 2/6 (3 refused) (1 sells deferred)"
 )
 
 

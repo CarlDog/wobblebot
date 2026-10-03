@@ -23,6 +23,7 @@ available" instead of a crash.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -731,12 +732,10 @@ class OperatorService(OperatorPort):  # pylint: disable=too-many-instance-attrib
         # window. Persist AFTER the narrative compose so a transient LLM
         # failure doesn't move the anchor and lose the data window.
         if self._operator_storage is not None and channel_id is not None and user_id is not None:
-            try:
+            # Anchor save failure is non-fatal — operator still sees
+            # the report. Next run just won't have an updated anchor.
+            with contextlib.suppress(StorageError):
                 await self._operator_storage.save_status_report_taken(channel_id, user_id, now)
-            except StorageError:
-                # Anchor save failure is non-fatal — operator still sees
-                # the report. Next run just won't have an updated anchor.
-                pass
 
         return StatusReportResult(
             lookback_hours=lookback_hours,

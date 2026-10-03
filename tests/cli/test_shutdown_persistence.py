@@ -22,8 +22,6 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from wobblebot.adapters.mock_exchange import MockExchangeAdapter
-from wobblebot.adapters.shadow_exchange import ShadowExchangeAdapter
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.cli.live import _cancel_all_open as _cancel_all_open_live
 from wobblebot.cli.shadow import _cancel_all_open as _cancel_all_open_shadow
@@ -417,7 +415,7 @@ class TestSessionEndResilience:
         then raise (for ``ended_usd``), and verifies ``_cancel_all_open``
         still cancels the open order and persists the transition.
         """
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
 
         from wobblebot.cli import live as live_module
         from wobblebot.config.cli import LiveConfig

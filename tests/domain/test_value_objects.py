@@ -1,6 +1,6 @@
 """Tests for domain value objects."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -178,7 +178,7 @@ class TestTimestamp:
 
     def test_timestamp_creation(self):
         """Test creating a valid timestamp."""
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
         ts = Timestamp(dt=dt)
         assert ts.dt == dt
 
@@ -190,13 +190,13 @@ class TestTimestamp:
 
     def test_timestamp_string_format(self):
         """Test ISO 8601 string format."""
-        dt = datetime(2025, 11, 24, 12, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2025, 11, 24, 12, 30, 45, tzinfo=UTC)
         ts = Timestamp(dt=dt)
         assert "2025-11-24T12:30:45" in str(ts)
 
     def test_timestamp_to_unix_ms(self):
         """Test conversion to Unix timestamp in milliseconds."""
-        dt = datetime(2025, 11, 24, 12, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2025, 11, 24, 12, 30, 45, tzinfo=UTC)
         ts = Timestamp(dt=dt)
         unix_ms = ts.to_unix_ms()
         assert isinstance(unix_ms, int)
@@ -204,7 +204,7 @@ class TestTimestamp:
 
     def test_timestamp_to_unix_seconds(self):
         """Test conversion to Unix timestamp in seconds (Kraken format)."""
-        dt = datetime(2025, 11, 24, 12, 30, 45, 123456, tzinfo=timezone.utc)
+        dt = datetime(2025, 11, 24, 12, 30, 45, 123456, tzinfo=UTC)
         ts = Timestamp(dt=dt)
         unix_sec = ts.to_unix_seconds()
         assert isinstance(unix_sec, float)
@@ -214,10 +214,10 @@ class TestTimestamp:
 
     def test_timestamp_immutability(self):
         """Test that Timestamp is immutable."""
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
         ts = Timestamp(dt=dt)
         with pytest.raises(ValidationError):
-            ts.dt = datetime.now(timezone.utc)  # type: ignore
+            ts.dt = datetime.now(UTC)  # type: ignore
 
     def test_timestamp_normalizes_to_utc(self):
         """Non-UTC tz-aware inputs are converted to UTC.
@@ -231,6 +231,6 @@ class TestTimestamp:
 
         eastern = timezone(timedelta(hours=-5))
         ts = Timestamp(dt=datetime(2026, 1, 1, 12, 0, 0, tzinfo=eastern))
-        assert ts.dt.tzinfo == timezone.utc
+        assert ts.dt.tzinfo == UTC
         assert ts.dt.hour == 17  # 12:00 EST -> 17:00 UTC
         assert ts.dt.isoformat().endswith("+00:00")

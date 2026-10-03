@@ -39,7 +39,9 @@ async def diagnose(config: WobbleBotConfig, storage: StoragePort | None) -> list
             status=(
                 "ok"
                 if item.status == "fresh"
-                else "unknown" if item.status == "unknown" else "warning"
+                else "unknown"
+                if item.status == "unknown"
+                else "warning"
             ),
             summary=f"{item.name}: {item.status}",
             evidence={

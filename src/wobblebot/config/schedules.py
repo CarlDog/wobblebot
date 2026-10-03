@@ -106,7 +106,7 @@ class SchedulesConfig(RootModel[dict[str, timedelta]]):
             return self.root[name]
         except KeyError as exc:
             raise KeyError(
-                f"schedule {name!r} not configured; " "add it under `schedules:` in settings.yml"
+                f"schedule {name!r} not configured; add it under `schedules:` in settings.yml"
             ) from exc
 
     def get_or_default(self, name: str, default: timedelta) -> timedelta:

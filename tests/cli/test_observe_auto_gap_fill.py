@@ -213,7 +213,7 @@ class TestPerSymbolIsolation:
             async def get_latest_observed_at(self, symbol):  # type: ignore[no-untyped-def]
                 if symbol == _BTC:
                     raise StorageError("simulated read failure on BTC")
-                return None  # ETH: treat as no-history -> skip
+                return  # ETH: treat as no-history -> skip
 
         adapter = StubOHLCAdapter()
         # Must not raise.
