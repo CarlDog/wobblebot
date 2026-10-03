@@ -30,12 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Documentation
 
-- **Prepare the 2.0.x close and 2.1 entry decisions.** A draft
+- **Close the 2.0.x stabilization milestone and open 2.1.** The
   [acceptance record](docs/planning/2.0-close-acceptance-record.md) maps each
-  formal-close requirement to its receipt and lists the limitations offered for
-  acceptance. The [N0 entry record](docs/planning/2.1-entry-n0.md) reconciles the
-  2.1 slices and proposes N1 (deployment isolation) first with acceptance criteria.
-  No status changes until the operator decides.
+  formal-close requirement to its receipt and the limitations the operator
+  accepted on 2026-10-03. The [N0 entry record](docs/planning/2.1-entry-n0.md)
+  reconciles the 2.1 slices and sets N1 (deployment isolation) next with its
+  acceptance criteria. Documentation only: no runtime change, tag or deployment.
 
 ### Changed
 
