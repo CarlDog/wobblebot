@@ -5,6 +5,39 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**2.0.x stabilization milestone closed; 2.1 opened with N1 next — ✅ 2026-10-03 UTC.**
+At 04:17:55 UTC the operator chose **"Close now"** on the decision card *"Choose how
+to close the 2.0.x milestone and open 2.1"*, whose stated premise was that
+`STATUS.md` stays a roadmap pointer. Under the
+[acceptance record](2.0-close-acceptance-record.md) that decides:
+
+- **D1, accepted.** The 2.0.x milestone closes on the v2.0.11 evidence
+  (`ddf3e8c`, tag image `sha256:f07af7ec…`, stack file v88, 33-checkpoint
+  eight-hour observation). Limitations **L1–L24** are accepted as owned
+  boundaries, not passes. They include no live withdrawal on 2.0.13 or later, no
+  production ADR-046 recovery, sampled and event-dependent observation, and the
+  unchecked OpenChronicle mirror.
+- **D2, close now.** Production runs untagged `sha-c9c6404` (stack file v93), whose
+  labels report 2.0.13 while it carries the `[Unreleased]` fixes. This is
+  recorded as L21 and owned by N2. A later 2.0.14 stays available on the 2.0
+  maintenance line.
+- **D3, not taken.** The receipt relies on the 2026-10-01 deployment read-back.
+  No same-day production check ran.
+- **D4, accepted.** 2.1 (deployment and lifecycle integrity) opens with slices
+  N1–N5 as reconciled in the [entry record](2.1-entry-n0.md). **N1, remaining
+  deployment isolation, is next.** Its decision will extend or amend ADR-041.
+  ADR-047 is the next unused number, allocated only when that decision is drafted.
+- **D5, reaffirmed.** Standards exception E02 stands: `STATUS.md` remains a
+  compatibility pointer and this roadmap the sole ledger.
+
+Issue state verified 2026-10-03: #18, #22 and #97 open as intentional records,
+#23 closed. The only open pull request is #166, which carries this receipt. The
+tested environment is the v2.0.11 release and observation receipts plus the
+2026-10-01 deployment receipt below. No trade, withdrawal, paid inference, tag
+or deployment accompanied the close. N1 implementation starts on a fresh branch
+from the `main` commit carrying this receipt. P3/P4 gated features (G1–G10) are
+not marked complete, and Phase 9 still waits for 2.1 to close.
+
 **Dependency image deployed and verified — 2026-10-01 UTC (September 30 local).**
 The operator authorized the production update after the dependency merges below.
 The deployed immutable image is

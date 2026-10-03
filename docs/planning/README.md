@@ -7,7 +7,9 @@ Each document in this folder is the single source of truth for one aspect of pro
 | File | Purpose |
 | --- | --- |
 | `roadmap.md` | Authoritative sequential phase/stage roadmap, current status, gates, and completion receipts. |
-| `2.0-closeout-and-2.1-entry-plan.md` | Authorized local 2.0.x closeout sequence, later decision gates, and proposed 2.1 scope. |
+| `2.0-closeout-and-2.1-entry-plan.md` | Historical 2.0.x closeout sequence (C0–C5, N0) and its decision gates; closed 2026-10-03. |
+| `2.0-close-acceptance-record.md` | The decided 2.0.x close: requirements, evidence, accepted limitations L1–L24 and decisions D1–D5. |
+| `2.1-entry-n0.md` | 2.1 scope (N1–N5), ADR prerequisites, and N1's acceptance criteria and design questions. |
 | `2026-09-25-post-v2.0.13-handoff.md` | Dated operations, maintenance and Dependabot handoff after the v2.0.13 deployment. |
 | `backlog.md` | Complete historical-candidate crosswalk, owners, triggers and dispositions; completion receipts remain in the roadmap. |
 | `2.0-closeout-audit.md` | Audit evidence, unresolved exceptions and the concrete release decision packet. |
