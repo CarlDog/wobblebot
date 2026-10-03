@@ -87,7 +87,8 @@ class DaemonStatus(StrEnum):
 
 
 @dataclass(frozen=True)
-class DaemonHealthThresholds:
+# One threshold per supported daemon; the eighth is the opt-in delivery sender.
+class DaemonHealthThresholds:  # pylint: disable=too-many-instance-attributes
     """Per-daemon staleness thresholds in seconds.
 
     A daemon's heartbeat/primary write older than ``<daemon>_seconds``
@@ -110,6 +111,7 @@ class DaemonHealthThresholds:
     harvest_seconds: float = 2 * 3600 + _DEFAULT_SLACK_SECONDS
     operator_seconds: float = 2 * 2 + _DEFAULT_SLACK_SECONDS
     maintenance_seconds: float = 2 * 86400 + _DEFAULT_SLACK_SECONDS
+    delivery_seconds: float = 2 * 2 + _DEFAULT_SLACK_SECONDS
 
 
 def _maintenance_min_cadence(schedules: SchedulesConfig) -> timedelta:
@@ -188,6 +190,10 @@ def derive_thresholds_from_config(
         ),
         operator_seconds=operator_cadence_seconds * 2 + slack_seconds,
         maintenance_seconds=_maintenance_min_cadence(schedules).total_seconds() * 2 + slack_seconds,
+        delivery_seconds=(
+            schedules.get_or_default("delivery_poll", timedelta(seconds=2)).total_seconds() * 2
+            + slack_seconds
+        ),
     )
 
 
@@ -409,6 +415,7 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     operator_db: Path | None = None,
     thresholds: DaemonHealthThresholds | None = None,
     now: datetime | None = None,
+    include_delivery: bool = False,
 ) -> list[DaemonHealth]:
     """Read freshness for every detectable daemon.
 
@@ -431,6 +438,8 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             callers should derive via
             :func:`derive_thresholds_from_config`.
         now: Optional wallclock override (test seam).
+        include_delivery: Include the opt-in sender's heartbeat for its independent
+            container probe; absence does not add a false alarm to legacy stacks.
 
     Returns:
         One :class:`DaemonHealth` per daemon in display order:
@@ -440,7 +449,7 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     current = now or datetime.now(UTC)
     t = thresholds or DaemonHealthThresholds()
     heartbeats = await _heartbeats_or_empty(operator_db)
-    return [
+    rows = [
         await _read_daemon(
             name="cli/observe",
             label="Price Observer",
@@ -495,6 +504,17 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             now=current,
         ),
     ]
+    if include_delivery:
+        rows.append(
+            _classify_heartbeat(
+                name="cli/delivery",
+                label="Notification Delivery",
+                heartbeats=heartbeats,
+                threshold_seconds=t.delivery_seconds,
+                now=current,
+            )
+        )
+    return rows
 
 
 __all__ = (

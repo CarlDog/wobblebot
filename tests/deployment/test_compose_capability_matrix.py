@@ -163,6 +163,22 @@ def test_every_service_is_covered_by_the_matrix(services: dict[str, Any]) -> Non
     )
 
 
+def test_each_daemon_has_its_own_probe_and_tools_disable_inheritance(services):
+    assert services["tools"]["healthcheck"] == {"disable": True}
+    for name, service in services.items():
+        if name == "tools":
+            continue
+        probe = service["healthcheck"]["test"]
+        assert probe[:3] == ["CMD", "python", "tools/healthcheck.py"]
+        if name == "web":
+            assert probe[3:] == ["--http", "http://localhost:8000/healthz"]
+        else:
+            assert probe[3:] == ["--daemon", f"cli/{name}", "--profile", "cpu-only"]
+    dockerfile = (_COMPOSE_PATH.parent / "Dockerfile").read_text()
+    assert "\nHEALTHCHECK --interval=60s" in dockerfile
+    assert 'CMD ["python", "tools/healthcheck.py", "--container"]' in dockerfile
+
+
 @pytest.mark.parametrize("name", sorted(EXPECTED_CREDENTIALS))
 def test_service_holds_exactly_its_declared_credentials(
     services: dict[str, Any], name: str

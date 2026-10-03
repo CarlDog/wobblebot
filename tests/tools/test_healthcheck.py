@@ -93,7 +93,7 @@ class TestHttpMode:
 # --------------------------------------------------------------------- #
 
 
-def _seed_db(db: Path, heartbeat_at: datetime | None = None) -> None:
+def _seed_db(db: Path, heartbeat_at: datetime | None = None, daemon: str = "cli/live") -> None:
     """Create the schema (and optionally one cli/live heartbeat) synchronously.
 
     The tests stay sync because ``main()`` itself calls ``asyncio.run``
@@ -105,7 +105,7 @@ def _seed_db(db: Path, heartbeat_at: datetime | None = None) -> None:
         await adapter.connect()
         try:
             if heartbeat_at is not None:
-                await adapter.upsert_daemon_heartbeat("cli/live", heartbeat_at)
+                await adapter.upsert_daemon_heartbeat(daemon, heartbeat_at)
         finally:
             await adapter.close()
 
@@ -153,3 +153,58 @@ class TestDaemonMode:
         """Docker reserves exit code 2 — config failures are exit 1."""
         missing = tmp_path / "nope" / "settings.yml"
         assert main(["--daemon", "cli/live", "--config", str(missing)]) == 1
+
+
+@pytest.mark.parametrize("age,expected", [(0, 0), (600, 1), (None, 1)])
+def test_delivery_probe_requires_fresh_loop_heartbeat(operator_db, age, expected):
+    if age is not None:
+        _seed_db(operator_db, datetime.now(UTC) - timedelta(seconds=age), "cli/delivery")
+    assert main(["--daemon", "cli/delivery", "--config", _EXAMPLE_CONFIG]) == expected
+
+
+@pytest.fixture
+def container_env(monkeypatch):
+    for name in ("DAEMON", "URL", "CONFIG", "PROFILE"):
+        monkeypatch.delenv(f"WOBBLEBOT_HEALTH_{name}", raising=False)
+    return monkeypatch
+
+
+def test_container_probe_uses_real_freshness_and_config(operator_db, container_env):
+    container_env.setenv("WOBBLEBOT_HEALTH_DAEMON", "cli/live")
+    container_env.setenv("WOBBLEBOT_HEALTH_CONFIG", _EXAMPLE_CONFIG)
+    container_env.setenv("WOBBLEBOT_HEALTH_PROFILE", "cpu-only")
+    _seed_db(operator_db, datetime.now(UTC))
+    assert main(["--container"]) == 0
+    _seed_db(operator_db, datetime.now(UTC) - timedelta(hours=2))
+    assert main(["--container"]) == 1
+    container_env.setenv("WOBBLEBOT_HEALTH_PROFILE", "missing-profile")
+    assert main(["--container"]) == 1
+
+
+def test_container_probe_uses_http_healthz(http_server, container_env):
+    container_env.setenv("WOBBLEBOT_HEALTH_URL", http_server)
+    assert main(["--container"]) == 0
+    _Handler.status = 503
+    try:
+        assert main(["--container"]) == 1
+    finally:
+        _Handler.status = 200
+
+
+def test_container_role_must_be_explicit_and_unambiguous(container_env):
+    assert main(["--container"]) == 1
+    container_env.setenv("WOBBLEBOT_HEALTH_DAEMON", "cli/live")
+    container_env.setenv("WOBBLEBOT_HEALTH_URL", "http://127.0.0.1:8000/healthz")
+    assert main(["--container"]) == 1
+
+
+def test_container_invalid_http_target_is_unhealthy(container_env):
+    container_env.setenv("WOBBLEBOT_HEALTH_URL", "not-a-url")
+    assert main(["--container"]) == 1
+
+
+@pytest.mark.parametrize(
+    "argv", [[], ["--invalid"], ["--daemon"], ["--http", "x", "--timeout", "x"]]
+)
+def test_invalid_probe_usage_never_returns_docker_reserved_two(argv):
+    assert main(argv) == 1

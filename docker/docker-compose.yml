@@ -264,6 +264,12 @@ services:
     environment:
       <<: *common-env
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/delivery", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
 
   operator:
     <<: *wobblebot-defaults
@@ -387,5 +393,7 @@ services:
       - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
       - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
     restart: "no"
+    healthcheck:
+      disable: true
     profiles:
       - tools

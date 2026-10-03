@@ -449,6 +449,11 @@ class TestDeriveThresholds:
         assert thresholds.operator_seconds == 304.0
         # 2 * 1d + 5min slack = 173100s
         assert thresholds.maintenance_seconds == 173100.0
+        assert thresholds.delivery_seconds == 304.0
+
+    async def test_delivery_threshold_tracks_configured_poll_cadence(self) -> None:
+        cfg = _config(schedules=SchedulesConfig(root={"delivery_poll": timedelta(minutes=10)}))
+        assert derive_thresholds_from_config(cfg).delivery_seconds == 1500.0
 
     async def test_operator_configured_advise_1h_yields_tight_threshold(self) -> None:
         """Operator who tunes schedules.advise: 1h gets a 2h+slack threshold,

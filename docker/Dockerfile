@@ -96,6 +96,12 @@ RUN mkdir -p /app/config /app/data /app/data/archive /app/data/backups /app/logs
 
 USER wobblebot
 
+# Direct daemon runs explicitly select a role through WOBBLEBOT_HEALTH_*;
+# Compose overrides this with its role-specific HTTP/heartbeat probe. Missing
+# role or stale/unknown evidence fails closed. One-shot tools disable the probe.
+HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
+    CMD ["python", "tools/healthcheck.py", "--container"]
+
 ENTRYPOINT ["/usr/local/bin/wobblebot-entrypoint"]
 
 # No long-running default command — each compose service supplies

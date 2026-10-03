@@ -29,6 +29,24 @@ For a TLS-inspecting build network, the optional BuildKit `build_ca` secret may
 supply the approved CA bundle; it is ephemeral, not an image layer. Never disable
 TLS verification. Proxy DNS must be configured by the build environment.
 
+The Dockerfile includes a real role-configured health probe. Compose supplies
+explicit per-service overrides: HTTP `/healthz` for web, configured-cadence
+heartbeat/content freshness for daemons (including optional delivery). Unknown
+or stale evidence is unhealthy; process existence alone is not health. Generated
+isolated deployments preserve these probes with the staged config path. One-shot
+`tools` disables the inherited probe; exit status is its execution result.
+
+For a direct daemon container, configure exactly one `WOBBLEBOT_HEALTH_DAEMON`
+(for example `cli/live` or `cli/delivery`) or `WOBBLEBOT_HEALTH_URL` (web's
+`http://127.0.0.1:8000/healthz`). Set `WOBBLEBOT_HEALTH_CONFIG` and optionally
+`WOBBLEBOT_HEALTH_PROFILE` to match the command's config/profile arguments. With
+neither role, or both roles, the default probe fails closed with an actionable
+message. Direct one-shot runs use `docker run --no-healthcheck ...`. A custom
+probe/interval can be supplied through Docker's normal healthcheck overrides.
+No probe places orders, sends notifications, restarts a process or needs a Docker
+socket. Docker health alone does not restart an unhealthy container; independent
+page-only observation and operator-owned financial-daemon recovery remain intact.
+
 Pass `--build-arg VCS_REF=<full-verified-commit>` for a clean source build. For a
 working tree with uncommitted changes, leave revision `unknown`; do not label it
 with a fabricated or misleading clean commit. Published CI retains revision,

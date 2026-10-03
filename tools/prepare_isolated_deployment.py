@@ -108,9 +108,12 @@ def prepare(
         elif isinstance(value, list):
             for item in value:
                 check_db_paths(item, key)
-        elif value is not None and (key == "db" or key.endswith("_db") or key == "target_dbs"):
-            if value not in roles:
-                raise ValueError(f"Unclassified database path in {key}; assign an owner first")
+        elif (
+            value is not None
+            and (key == "db" or key.endswith("_db") or key == "target_dbs")
+            and value not in roles
+        ):
+            raise ValueError(f"Unclassified database path in {key}; assign an owner first")
 
     check_db_paths(raw)
 
@@ -198,7 +201,7 @@ def prepare(
             index = command.index("--profile")
             command[index : index + 2] = ["--config", "/app/config/settings.yml"]
             service["command"] = command
-        if "healthcheck" in service and "--profile" in service["healthcheck"]["test"]:
+        if "--profile" in service.get("healthcheck", {}).get("test", []):
             command = service["healthcheck"]["test"]
             index = command.index("--profile")
             command[index : index + 2] = ["--config", "/app/config/settings.yml"]

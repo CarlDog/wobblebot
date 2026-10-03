@@ -47,6 +47,13 @@ def test_generated_contract_preserves_policy_and_denies_extra_grants(tmp_path):
     assert not any(mount["target"] == "/app/data/harvest" for mount in services["live"]["volumes"])
     assert services["live"]["restart"] == "no"
     assert services["harvest"]["restart"] == "no"
+    assert services["tools"]["healthcheck"] == {"disable": True}
+    assert services["delivery"]["healthcheck"]["test"][3:] == [
+        "--daemon",
+        "cli/delivery",
+        "--config",
+        "/app/config/settings.yml",
+    ]
     with pytest.raises(FileExistsError):
         prepare(EXAMPLE, "cpu-only", output, None)
 

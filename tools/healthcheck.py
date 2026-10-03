@@ -1,6 +1,6 @@
 """Docker HEALTHCHECK probe (P3 ops slice).
 
-Two modes, one per container flavor:
+Explicit modes plus the role-configured Dockerfile default:
 
 * ``--daemon cli/live`` — classify the daemon's freshness through the
   SAME machinery the /health page uses (``fetch_daemon_freshness`` +
@@ -14,6 +14,11 @@ Two modes, one per container flavor:
 * ``--http URL`` — liveness GET for the web container (target the
   unauthenticated ``/healthz``; the real ``/health`` page requires a
   session). Exit 0 on any 2xx; 1 otherwise.
+
+* ``--container`` — use exactly one of ``WOBBLEBOT_HEALTH_DAEMON`` or
+  ``WOBBLEBOT_HEALTH_URL``, with optional ``WOBBLEBOT_HEALTH_CONFIG`` and
+  ``WOBBLEBOT_HEALTH_PROFILE``. Missing/ambiguous roles are unhealthy.
+  Compose overrides this default with its explicit per-service probes.
 
 Docker reserves exit code 2, so this tool exits strictly 0 or 1 —
 including on config errors (an unreadable config is an unhealthy
@@ -29,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -54,7 +60,7 @@ def _check_http(url: str, timeout: float) -> int:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             status = resp.status
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
         # HTTPError is also a response; urlopen raised before entering `with`.
         if isinstance(exc, urllib.error.HTTPError):
             exc.close()
@@ -87,6 +93,7 @@ async def _check_daemon(daemon: str, config_path: str | None, profile: str | Non
         advise_db=Path(advise_db),
         operator_db=Path(web.operator_db),
         thresholds=derive_thresholds_from_config(config),
+        include_delivery=daemon == "cli/delivery",
     )
     match = next((d for d in daemons if d.name == daemon), None)
     if match is None:
@@ -110,10 +117,24 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--daemon", help="Daemon name to classify, e.g. cli/live")
     mode.add_argument("--http", metavar="URL", help="Liveness GET (2xx = healthy)")
+    mode.add_argument("--container", action="store_true", help="Read explicit container role env")
     parser.add_argument("--config", default=None, help="settings.yml path override")
     parser.add_argument("--profile", default=None, help="Config profile (e.g. cpu-only)")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout seconds")
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 1
+    if args.container:
+        args.daemon = os.environ.get("WOBBLEBOT_HEALTH_DAEMON", "").strip()
+        args.http = os.environ.get("WOBBLEBOT_HEALTH_URL", "").strip()
+        if bool(args.daemon) == bool(args.http):
+            print(
+                "unhealthy: configure exactly one WOBBLEBOT_HEALTH_DAEMON or WOBBLEBOT_HEALTH_URL"
+            )
+            return 1
+        args.config = os.environ.get("WOBBLEBOT_HEALTH_CONFIG") or args.config
+        args.profile = os.environ.get("WOBBLEBOT_HEALTH_PROFILE") or args.profile
     if args.http:
         return _check_http(args.http, args.timeout)
     return asyncio.run(_check_daemon(args.daemon, args.config, args.profile))

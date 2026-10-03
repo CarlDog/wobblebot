@@ -7,6 +7,41 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 alpha.2 healthcheck and comprehensive local reconciliation
+
+The prior Dockerfile-healthcheck finding was remediable local implementation,
+not an authoritative conflict requiring a waiver. PY-05 requires an image probe;
+P3's actual-freshness requirement and the shared image's one-shot use remain
+compatible through role-specific probes and explicit one-shot disabling.
+
+Delivered: Dockerfile `--container` health mode requires exactly one configured
+daemon or HTTP role, uses the existing freshness/HTTP machinery and fails closed
+on absent/ambiguous roles. Compose retains its per-service probes; optional
+delivery now checks its actual sender heartbeat against configured cadence.
+`tools` disables inherited daemon health; the isolation generator preserves both
+forms and maps delivery to staged config. Usage errors return 1 rather than
+Docker's reserved 2. No process-presence/always-success probe, restart actor,
+financial authority or external notification was added. Build documentation gives
+the supported direct-container role/config/profile settings and one-shot override.
+
+The [audit work item](product-completion-audit.md#final-local-gap-reconciliation-2026-10-03-follow-up)
+reconciles all baseline families and retained G1-G10 catalog gates in one pass.
+No other independently remediable local requirement was identified. Required
+private/hosted/NAS evidence remains unwaived, conditional proposals retain their
+actual adoption/data gates, and real equities integration remains explicitly
+deferred. This is local checkpoint completion, not complete-product acceptance.
+
+Precommit: `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1
+timeout 600 make check` passes Ruff, mypy, pylint and **4,514 tests**, with
+6 private-config skips, 30 integration deselected, 88.61% coverage (118.74s).
+Health/classifier/generator/capability tests: **87 passed**. Machine Fleet audit:
+18 PASS, 6 NA, 2 UNKNOWN; manual PY-05 is now implemented, while the approved
+PY-01 pylint-retention deviation and external unknowns remain explicit.
+Package/runtime identity advances to `2.1.0a2`; the existing `v2.1.0-alpha.1`
+tag is preserved. A new local annotated checkpoint is conditional on the final
+clean-revision Python 3.13/3.14 suites, offline integrations and image rehearsal.
+No remote action is authorized by that checkpoint. Final receipts follow here.
+
 ### 2026-10-03 SQLite membership regression evidence
 
 The operator requested a durable negative control for the migration finding.

@@ -40,6 +40,48 @@ it does not authorize issue publication, OpenChronicle changes or deployment.
 - Re-run phase-end config/deprived-env checks and review README, CLAUDE, AGENTS,
   changelog, dependency decisions, hook/identity/history evidence at final gate.
 
+## Final local-gap reconciliation (2026-10-03 follow-up)
+
+The earlier PY-05 disposition stopped too early: no authoritative requirement
+forbids a meaningful image probe. Fleet `standards/python-service.md` PY-05
+requires a Dockerfile `HEALTHCHECK`; roadmap P3 slice 8 requires actual freshness
+and HTTP health, and `docker/Dockerfile` intentionally has no default daemon.
+These are compatible. The image now uses an explicit role-configured probe,
+Compose retains its specific probes, delivery gains its missing heartbeat probe,
+and one-shot tools explicitly disable inherited daemon health. The generator
+preserves both overrides and disabled probes. There is no PY-05 exception to ask
+for; current execution evidence belongs in the roadmap.
+
+Comprehensive reconciliation of the finite baseline and every retained catalog
+gate, including the accepted later-phase boundaries, found these dispositions:
+
+- FR/NFR and phases 1-8, P0-P4 implemented portions, N1-N5: exercise local
+  configuration/deprived-env, approval/capability, storage upgrade/recovery,
+  provider contracts, packaged image and offline integration gates. No unfinished
+  runtime stub was found in the added configuration, delivery, health or doctor
+  paths. The new health wiring and usage-error exit normalization are the local
+  defects addressed by this follow-up. No speculative module rewrite is needed.
+- G4/PB1-PB13 and the triggered NW04 defect: offline fixes remain implemented;
+  rerun their tests with the full suite. A paid provider campaign is not authorized.
+- G1/G3/P4.6: readiness records exist; actual private history/canonical scoring
+  and the data-dependent design gates remain unavailable. Synthetic fixtures
+  cannot substantiate those acceptance criteria or justify invented conclusions.
+- G2/G5-G8/G10: each retained row still requires its original consumer, adoption,
+  policy, observed trigger or outcome evidence. No new qualifying evidence arose
+  in this reconciliation; catalog membership alone is not authorization to build
+  every proposal. The equity flag is implemented; dependent Phase 9 work remains
+  explicitly deferred by the operator, not represented as completed.
+- Documentation/setup/versioning: README and AGENTS/CLAUDE point to the current
+  roadmap rather than duplicate status; build/deployment guides now describe
+  health-role configuration, one-shot behavior and the alpha.2 checkpoint. Config
+  examples, hashed dependencies, least-privilege grants and migration contracts
+  remain test-enforced. Cohesive large modules stay outside optional refactoring.
+- True external gates remain: six actual private config checks; hosted Windows,
+  CI/CodeQL and remote metadata; authorized real-provider and NAS qualification,
+  production observations; OpenChronicle access. No local mock, image or passed
+  machine audit substitutes for them. Retained pylint is the only newly accepted
+  standards deviation; no broader waiver is inferred.
+
 Hand checks: `git ls-files pyproject.toml .github/workflows docker/Dockerfile`
 confirms tracked sources; pyproject uses Black/isort/pylint, the image base is
 unpinned before N2, and installed hooks retain all four security properties.
@@ -112,5 +154,5 @@ Make/CI/editor retain mypy and unchanged pylint checks. The prior pending choice
 is resolved. This is an accepted repository-specific deviation from PY-01's
 literal pylint removal, not blanket Fleet conformance. No Fleet standards changed.
 PY-06's Ruff quality steps are implemented. Verification receipts belong in the
-roadmap; hosted/remote/private checks and the literal Dockerfile HEALTHCHECK
-finding remain independently visible.
+roadmap; hosted/remote/private checks remain independently visible. The later
+healthcheck follow-up above resolves PY-05 through implementation, without waiver.

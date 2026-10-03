@@ -28,6 +28,14 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+## [2.1.0-alpha.2] — local test candidate, unpublished
+
+- Add a meaningful role-configured Dockerfile healthcheck, retain per-service
+  probes, cover optional delivery heartbeat freshness, and disable inherited
+  daemon checks for one-shot tools. Invalid probe usage exits 1, never Docker's
+  reserved 2. Existing page-only financial-daemon recovery policy is unchanged.
+- Preserve real-SQLite key-versus-value membership regression controls and narrow
+  Ruff exclusions; no dictionary-style rewrite may lose persisted transfer state.
 - Repair probe-battery availability/grading/provenance, preserve historical
   fixture sets, and reject provider-reported truncation after cost accounting.
 - Back off repeatedly failing news sources without delaying healthy feeds or
