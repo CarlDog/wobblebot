@@ -28,6 +28,15 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Documentation
+
+- **Prepare the 2.0.x close and 2.1 entry decisions.** A draft
+  [acceptance record](docs/planning/2.0-close-acceptance-record.md) maps each
+  formal-close requirement to its receipt and lists the limitations offered for
+  acceptance. The [N0 entry record](docs/planning/2.1-entry-n0.md) reconciles the
+  2.1 slices and proposes N1 (deployment isolation) first with acceptance criteria.
+  No status changes until the operator decides.
+
 ### Changed
 
 - **Refresh existing web and development dependencies.** Starlette 1.6.0 → 1.7.0
