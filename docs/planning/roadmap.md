@@ -66,6 +66,24 @@ Verification:
   unmodified conformance. Literal Dockerfile HEALTHCHECK, remote metadata,
   CodeQL/OC and unavailable hosted/platform/private checks remain separate.
 
+Integrated implementation and research commit:
+`5edd190935a72704d0644be6908f6e76482e2cf6`. Commit hooks passed real gitleaks,
+PII checks and example-schema validation. Offline grid/operator integration:
+`timeout 120 .venv/bin/python -m pytest -m integration
+ tests/integration/test_grid_engine_e2e.py
+ tests/integration/test_phase5_operator_e2e.py --no-cov -q` — **8 passed**, 17.98s.
+
+`timeout 600 python3 /tmp/wobblebot-verification/build_revised_scope.py` built the
+actual Dockerfile from the clean implementation commit. Local image
+`wobblebot:revised-scope-verification` has matching revision and non-root user;
+image ID `sha256:f6097fe057dfeddcf4cbc3aebb3f0f6d62d68de568267543bda7f0b4e53370e7`.
+`timeout 180 .venv/bin/python /tmp/wobblebot-verification/revised_image_smoke.py`
+passed actual image execution with network disabled: equities false ran the
+existing two-trade mock sandbox (exit 0), while true exited 2 with the actionable
+unavailable message and no simulator dispatch. No published digest or real broker
+integration is claimed. The new image is untagged locally with respect to Git;
+`v2.1.0-alpha.1` still targets `b8a2d0f` and its original image is preserved.
+
 Current local scope is implemented; full completion remains unclaimed because
 required private configuration checks and external development evidence are not
 available or waived. G1/G3 readiness dispositions remain honest about missing
