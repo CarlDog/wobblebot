@@ -3861,3 +3861,28 @@ necessary for delivery/host/database outages. G1 anomaly baselines and disk aler
 thresholds are separate gated decisions. No financial policy, production activation
 or live Discord verification is implied. See the
 [operational guide](../implementation/health-response-and-doctor.md) and roadmap receipts.
+
+## ADR-052: Local Ollama boundary and bounded provider maintenance
+
+**Status:** Accepted for local implementation, 2026-10-03.
+
+**Decision:** `ollama` remains local and unbilled. Metadata preflight rejects remote
+provenance/unsupported completion before prompts; explicit cloud tags/hosts and
+redirects are refused, completion envelopes reject remote/incomplete results.
+Use native system and chat-thinking fields and port-specific failures. Server
+cloud disabling/network restrictions remain an operator deployment gate, not a
+claim inferred from localhost. Measure installed digest/version and allowlisted
+metrics in explicit probes before changing ADR-014 persistent accounting.
+
+Contract/pricing review is owned by provider-integrator; model review by
+model-review-owner against the seat register. A manual snapshot ledger deduplicates
+public-source changes and reports coverage gaps. No unattended schedule or automatic
+model/pricing mutation is adopted. Retain active legacy funding for this candidate;
+Beta migration needs verified account/address/fee/signing/reconciliation evidence
+and preserves Harvester authority and uncertain-effect claims. Never fall through
+to another withdrawal endpoint after an ambiguous result.
+
+**Evidence and limits:** [Ollama guide](../implementation/ollama-local-contract.md),
+[watch/funding guide](../implementation/provider-watch.md), official sources linked
+there, and synthetic/local verification in the roadmap. Real NAS digest qualification,
+private funding compatibility and ongoing unattended coverage remain external gates.

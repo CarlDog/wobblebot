@@ -43,6 +43,14 @@ import httpx
 from pydantic import ValidationError
 
 from wobblebot.adapters.ollama import is_thinking_model
+from wobblebot.adapters.ollama_native import (
+    local_preflight,
+    model_identity,
+    read_envelope,
+    request_failure,
+    require_local_target,
+    response_metrics,
+)
 from wobblebot.config.prompts import Prompt
 from wobblebot.ports.assistant import AssistantPort, ConversationContext
 from wobblebot.ports.exceptions import AssistantError
@@ -208,6 +216,8 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         # compact prompt + format=json. Production code never sets this.
         if not bypass_suitability_check:
             check_model_suitability(model)
+        require_local_target(model, base_url, AssistantError)
+        self.last_metrics: dict[str, int | str | None] = {}
         self._model = model
         self._prompt = prompt
         self._base_url = base_url.rstrip("/")
@@ -237,6 +247,10 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
+    async def inspect_model(self) -> dict[str, Any]:
+        """Explicit metadata-only measurement; no general local-call persistence."""
+        return await model_identity(self._client, self._base_url, self._model, AssistantError)
+
     async def aclose(self) -> None:
         """Release the underlying httpx client if the adapter owns it."""
         if self._owns_client:
@@ -260,6 +274,8 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         # the cheapest way to force model load without burning tokens
         # on a real chat completion.
         try:
+            self.last_metrics = {}
+            await local_preflight(self._client, self._base_url, self._model, AssistantError)
             response = await self._client.post(
                 f"{self._base_url}/api/generate",
                 json={
@@ -268,14 +284,16 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                     "stream": False,
                     "options": {"num_predict": 1},
                 },
+                follow_redirects=False,
             )
             response.raise_for_status()
+            read_envelope(response, AssistantError)
             _LOGGER.info("warmed up Ollama model %r", self._model)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, AssistantError) as exc:
             _LOGGER.warning(
                 "warmup for model %r failed (%s); first message will pay cold-start cost",
                 self._model,
-                exc,
+                type(exc).__name__,
             )
 
     async def parse_intent(self, context: ConversationContext) -> OperatorIntent:
@@ -291,6 +309,8 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
                 ``OperatorIntent`` schema validation. Empty-content
                 failures raise only after the retry also returns empty.
         """
+        self.last_metrics = {}
+        await local_preflight(self._client, self._base_url, self._model, AssistantError)
         messages = self._build_messages(context)
         # When force_json overrides the heuristic, downstream parsing must
         # ALSO treat the response as direct-JSON (format=json suppresses
@@ -313,18 +333,7 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         try:
             return INTENT_ADAPTER.validate_python(inner)
         except ValidationError as exc:
-            # DEBUG-log the LLM's actual payload so operators
-            # diagnosing a new model can see exactly what shape it
-            # emitted without re-running probes. Truncated to keep
-            # the log under one screen.
-            _LOGGER.debug(
-                "schema validation failed for model %r; raw inner payload: %s",
-                self._model,
-                json.dumps(inner)[:2000],
-            )
-            raise AssistantError(
-                f"LLM output failed operator_intent_v1 schema validation: {exc}"
-            ) from exc
+            raise AssistantError("LLM output failed operator_intent_v1 schema validation") from exc
 
     async def _request_with_retry(
         self, payload: dict[str, Any], *, thinking_mode: bool
@@ -364,24 +373,25 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
     ) -> dict[str, Any]:
         """One POST + envelope extraction; transport errors wrap as AssistantError."""
         try:
-            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
+            response = await self._client.post(
+                f"{self._base_url}/api/chat", json=payload, follow_redirects=False
+            )
             response.raise_for_status()
-            envelope: dict[str, Any] = response.json()
+            envelope = read_envelope(response, AssistantError)
+            self.last_metrics = response_metrics(envelope)
         except httpx.ReadTimeout as exc:
             # Retryable (see the marker docstring): the server likely
             # FINISHED the work just after we gave up; the retry rides
             # the warm KV cache.
             raise _OllamaReadTimeoutRetry(
-                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
+                f"Ollama chat request failed: {request_failure(exc)}"
             ) from exc
         except httpx.HTTPError as exc:
             # Include the exception type: a bare ReadTimeout/ConnectTimeout
             # often has an empty str(), leaving an uninformative
             # "Ollama chat request failed: ". The type name disambiguates
             # timeout vs transport (mirrors the advisor adapter).
-            raise AssistantError(
-                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise AssistantError(f"Ollama chat request failed: {request_failure(exc)}") from exc
         return self._extract_intent_dict(envelope, thinking_mode=thinking_mode)
 
     async def summarize(
@@ -397,6 +407,8 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         Raises:
             AssistantError: Transport failure or malformed envelope.
         """
+        self.last_metrics = {}
+        await local_preflight(self._client, self._base_url, self._model, AssistantError)
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -410,26 +422,22 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             },
         }
         try:
-            response = await self._client.post(f"{self._base_url}/api/chat", json=payload)
+            response = await self._client.post(
+                f"{self._base_url}/api/chat", json=payload, follow_redirects=False
+            )
             response.raise_for_status()
-            envelope: dict[str, Any] = response.json()
-        except httpx.ReadTimeout as exc:
-            # Retryable (see the marker docstring): the server likely
-            # FINISHED the work just after we gave up; the retry rides
-            # the warm KV cache.
-            raise _OllamaReadTimeoutRetry(
-                f"Ollama chat request failed: {type(exc).__name__}: {exc}"
-            ) from exc
+            envelope = read_envelope(response, AssistantError)
+            self.last_metrics = response_metrics(envelope)
         except httpx.HTTPError as exc:
-            raise AssistantError(f"Ollama summarize request failed: {exc}") from exc
+            raise AssistantError(
+                f"Ollama summarize request failed: {request_failure(exc)}"
+            ) from exc
 
         message = envelope.get("message")
         if not isinstance(message, dict):
-            raise AssistantError(
-                f"Ollama chat envelope missing 'message' object; keys: {sorted(envelope)}"
-            )
+            raise AssistantError("Ollama chat envelope missing 'message' object")
         content = message.get("content")
-        if not isinstance(content, str):
+        if not isinstance(content, str) or not content.strip():
             raise AssistantError("Ollama chat envelope 'message.content' is not a string")
         return content.strip()
 
@@ -475,13 +483,11 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
         """
         message = envelope.get("message")
         if not isinstance(message, dict):
-            raise AssistantError(
-                f"Ollama chat envelope missing 'message' object; keys: {sorted(envelope)}"
-            )
+            raise AssistantError("Ollama chat envelope missing 'message' object")
         content = message.get("content")
         if not isinstance(content, str):
             content = ""
-        raw_thinking_field = envelope.get("thinking")
+        raw_thinking_field = message.get("thinking", envelope.get("thinking"))
         if not isinstance(raw_thinking_field, str):
             raw_thinking_field = ""
         content_empty = not content.strip()
@@ -504,14 +510,6 @@ class OllamaAssistantAdapter(AssistantPort):  # pylint: disable=too-many-instanc
             try:
                 return extract_last_json_object(combined)
             except OllamaJsonExtractError as exc:
-                # DEBUG-log a chunk of what the model emitted so operators
-                # diagnosing a new model can see WHY no JSON was found
-                # without re-running probes.
-                _LOGGER.debug(
-                    "no JSON object in thinking-mode output for model %r; first 2000 chars: %s",
-                    self._model,
-                    combined[:2000],
-                )
                 raise AssistantError(str(exc)) from exc
 
         try:

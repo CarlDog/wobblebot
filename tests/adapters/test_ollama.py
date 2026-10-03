@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.adapters.ollama_fixtures import local_transport
 from wobblebot.adapters.ollama import (
     _RESPONSE_JSON_SCHEMA,
     OllamaAdapter,
@@ -122,7 +123,7 @@ class TestGetRecommendationHappyPath:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             rec = await adapter.get_recommendation(_make_summary())
         finally:
@@ -163,7 +164,7 @@ class TestGetRecommendationHappyPath:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler), role="single")
+        adapter = _build_adapter(local_transport(handler), role="single")
         try:
             rec = await adapter.get_recommendation(_make_summary())
         finally:
@@ -184,7 +185,7 @@ class TestGetRecommendationHappyPath:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             rec = await adapter.get_recommendation(_make_summary())
         finally:
@@ -207,7 +208,7 @@ class TestGetRecommendationHappyPath:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             rec = await adapter.get_recommendation(_make_summary())
         finally:
@@ -221,7 +222,7 @@ class TestGetRecommendationErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "model exploded"})
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="Ollama request failed"):
                 await adapter.get_recommendation(_make_summary())
@@ -232,7 +233,7 @@ class TestGetRecommendationErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("connection refused")
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="Ollama request failed"):
                 await adapter.get_recommendation(_make_summary())
@@ -243,7 +244,7 @@ class TestGetRecommendationErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"done": True})  # no 'response'
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="empty across both"):
                 await adapter.get_recommendation(_make_summary())
@@ -254,7 +255,7 @@ class TestGetRecommendationErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_ollama_response("this is not json {{{"))
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="not valid JSON"):
                 await adapter.get_recommendation(_make_summary())
@@ -275,7 +276,7 @@ class TestGetRecommendationErrorPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="missing required field"):
                 await adapter.get_recommendation(_make_summary())
@@ -296,7 +297,7 @@ class TestGetRecommendationErrorPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="schema validation"):
                 await adapter.get_recommendation(_make_summary())
@@ -317,7 +318,7 @@ class TestGetRecommendationErrorPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="schema validation"):
                 await adapter.get_recommendation(_make_summary())
@@ -341,7 +342,7 @@ class TestValidateRecommendation:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             rec = await adapter.get_recommendation(_make_summary())
             assert await adapter.validate_recommendation(rec) is True
@@ -360,7 +361,7 @@ class TestClientLifecycle:
 
     async def test_does_not_close_externally_owned_client(self) -> None:
         external_client = httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200))
+            transport=local_transport(lambda r: httpx.Response(200))
         )
         adapter = OllamaAdapter(model="m", prompt=_make_prompt(), client=external_client)
         await adapter.aclose()
@@ -389,7 +390,7 @@ class TestClientLifecycle:
             model="m",
             prompt=_make_prompt(),
             base_url="http://example:11434/",
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             await adapter.get_recommendation(_make_summary())
@@ -552,7 +553,7 @@ class TestThinkingModelGetRecommendation:
             )
             return httpx.Response(200, json=_ollama_response(free_text))
 
-        adapter = self._build_thinking_adapter(httpx.MockTransport(handler))
+        adapter = self._build_thinking_adapter(local_transport(handler))
         try:
             rec = await adapter.get_recommendation(_make_summary())
         finally:
@@ -574,7 +575,7 @@ class TestThinkingModelGetRecommendation:
                 json=_ollama_response("<think>I cannot comply with that request.</think>"),
             )
 
-        adapter = self._build_thinking_adapter(httpx.MockTransport(handler))
+        adapter = self._build_thinking_adapter(local_transport(handler))
         try:
             with pytest.raises(AdvisorError, match="no JSON object at all"):
                 await adapter.get_recommendation(_make_summary())
@@ -602,7 +603,7 @@ class TestThinkingModelGetRecommendation:
         adapter = OllamaAdapter(
             model="phi4:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             await adapter.get_recommendation(_make_summary())
@@ -641,7 +642,7 @@ class TestForceJsonOverride:
         adapter = OllamaAdapter(
             model="deepseek-r1:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
             force_json=True,
         )
         try:
@@ -683,7 +684,7 @@ class TestForceJsonOverride:
         adapter = OllamaAdapter(
             model="deepseek-r1:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             await adapter.get_recommendation(_make_summary())
@@ -725,7 +726,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="qwen3.6:latest",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             rec = await adapter.get_recommendation(_make_summary())
@@ -759,7 +760,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="nemotron3:33b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             rec = await adapter.get_recommendation(_make_summary())
@@ -791,7 +792,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="phi4:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             rec = await adapter.get_recommendation(_make_summary())
@@ -807,7 +808,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="qwen3.6:latest",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             with pytest.raises(AdvisorError, match="empty across both"):
@@ -839,7 +840,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="deepseek-r1:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             rec = await adapter.get_recommendation(_make_summary())
@@ -888,7 +889,7 @@ class TestSplitResponseEnvelope:
         adapter = OllamaAdapter(
             model="deepseek-r1:14b",
             prompt=_make_prompt(),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            client=httpx.AsyncClient(transport=local_transport(handler)),
         )
         try:
             rec = await adapter.get_recommendation(_make_summary())

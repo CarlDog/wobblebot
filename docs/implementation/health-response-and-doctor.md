@@ -41,7 +41,7 @@ lock and resolved-config fingerprints plus findings with stable codes, status,
 summary and evidence. Boot and doctor hash the same validated configuration.
 Missing/old/unreadable stores, absent provider observations and future/stale
 heartbeats remain unknown or warning. Unresolved command claims and delivery
-outcomes are bounded to the oldest matching records rather than hidden behind
+outcomes are bounded to matching records rather than hidden behind
 recent successful rows. Disk free bytes are observed without inventing a G1
 threshold or historical baseline.
 

@@ -30,6 +30,16 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Changed
 
+- Independent delivery observes daemon freshness and records deduplicated health
+  transitions; read-only doctor reports lifecycle, provider and disk evidence in
+  human/JSON form. Missing/future observations cannot report healthy status.
+- Local Ollama now checks metadata/provenance before prompts, uses native system
+  and reasoning fields, refuses incomplete output and exposes only safe port
+  errors. Explicit probes measure model identity and allowlisted native metrics.
+- Manual provider-watch snapshots have durable change deduplication and separate
+  maintenance/model-review owners; legacy funding retention and migration gates
+  are explicit. No watcher schedule or financial activation is installed.
+
 - Notifications use durable send claims, atomic receipt persistence and bounded
   safe retries. An opt-in outbound-only delivery daemon can send persisted alerts
   independently of the operator process. Ambiguous and terminal failures are

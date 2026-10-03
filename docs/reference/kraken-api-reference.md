@@ -42,6 +42,8 @@
 | AddOrder | `validate=true` is documented as validation without matching-engine trading. This review did not call it. [Official AddOrder reference](https://docs.kraken.com/api-reference/trading/add-order). |
 | Withdraw | **Legacy endpoint deprecated.** Kraken says it remains active but will receive no updates and recommends Funding (Beta). The current `asset`/`key`/`amount` request and `refid` response remain documented. This is a migration-design obligation, not evidence of a failed withdrawal or permission to change transfer authority. [Official Withdraw reference](https://docs.kraken.com/api-reference/funding/withdraw-funds). |
 
+**2026-10-03 bounded follow-up:** the [retention/migration decision](../implementation/provider-watch.md#legacy-funding-retention-decision) records current public legacy/Beta documentation and N5 manual watch ownership. This is not a new private/API verification stamp.
+
 **Purpose:** Domain model design decisions based on Kraken REST API v0 data structures and field naming conventions.
 
 **Sources:**

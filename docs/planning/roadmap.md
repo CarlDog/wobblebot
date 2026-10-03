@@ -7,6 +7,37 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 N5 local Ollama and provider maintenance
+
+ADR-052 corrects native system/chat-thinking envelopes, validates local model
+metadata before prompts, rejects cloud/provenance/truncated results, normalizes
+port errors and removes raw payloads from local adapter diagnostics. Explicit
+metadata/probe receipts expose digest/version and allowlisted metrics without
+expanding ADR-014 persistence. The manual provider-watch ledger deduplicates
+reviewed public-source changes with separate maintenance/model-review ownership;
+no schedule, model/pricing mutation, remote message or paid probe was installed.
+Legacy funding is explicitly retained pending account-tested Beta migration.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,465 passed, six private-config skips, 30 integration
+exclusions, coverage 88.48%, elapsed 118.53s; all quality gates passed. Python 3.14.7
+`WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 /tmp/wobblebot-venv314/bin/python -m
+pytest`: exit 0; same pass/skip/exclusion counts, coverage 88.45%, elapsed 94.33s.
+Both interpreters passed the eight offline grid/operator integration tests using
+`-m integration tests/integration/test_grid_engine_e2e.py
+tests/integration/test_phase5_operator_e2e.py --no-cov -q` (18.03s / 19.18s).
+The deprived CLI walkthrough passed 68 cases, plus four doctor cases including
+single-document JSON and absent-store preservation. Explicit cloud-model metadata
+inspection refused before network access with exit 2.
+
+A final redaction run caught an altered diagnostic punctuation contract; restoring
+the existing `missing 'message' object` phrase preserved the test without exposing
+keys/content. A mistyped targeted test filename collected nothing; the corrected
+advisor-scoring/watch invocation passed 16 tests. Neither was counted as a pass.
+Official-source/account gaps for Phase 9 are recorded in
+[the kickoff evidence](stage-9.0-design.md); the account/API question remains open.
+
+
 ### 2026-10-03 N4 independent health and doctor
 
 ADR-051 adds a page-only observer in the independent delivery process, durable

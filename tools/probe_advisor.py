@@ -773,7 +773,11 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     # (name, expected, actual, verdict, spacing, ideal, elapsed)
     rows: list[tuple[str, str, str, str, str, float, float]] = []
 
+    identity = None
+    telemetry = []
     try:
+        if isinstance(adapter, OllamaAdapter):
+            identity = await adapter.inspect_model()
         for fx in fixtures:
             t0 = time.monotonic()
             try:
@@ -795,6 +799,8 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
                     (fx.name, fx.expected, "ERROR", str(exc)[:60], "—", fx.ideal_spacing, elapsed)
                 )
             verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+            if isinstance(adapter, OllamaAdapter):
+                telemetry.append({"scenario": fx.name, **adapter.last_metrics})
             call_times.append(elapsed)
             print(f">>> {fx.name}  expect:{fx.expected}  ideal:{fx.ideal_spacing}")
             print(
@@ -829,6 +835,8 @@ async def main_async(  # pylint: disable=too-many-arguments,too-many-positional-
     if json_output:
         result = {
             "model": model,
+            "local_identity": identity,
+            "local_metrics": telemetry,
             "prompt_chars": len(prompt.body),
             "score": total_score,
             "max_score": max_score,

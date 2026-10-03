@@ -16,7 +16,7 @@ rule); this section is a pointer, not a changelog.
   phase or release status from this file. `docs/planning/phase-8-summary.md` records the
   v1.0 close, while `docs/release/v1.1/README.md` retains the historically named post-tag plan.
   Two releases are semantically significant: **`v1.0.0`** (2026-07-31) and
-  **`v2.0.0`** (2026-08-28). Everything after 2.0.0 is on the patch line —
+  **`v2.0.0`** (2026-08-28). Later patch releases and local prerelease candidates are distinguished in the ledger —
   read `CHANGELOG.md`'s topmost version heading for the current tip, and
   `git tag -l` for the full list. Deliberately count-free: this sentence
   previously enumerated the releases, was hand-maintained five times, and
@@ -63,7 +63,7 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 ### Operator entry points
 
 The operator surface includes the original sixteen CLIs and six documented tools,
-plus the opt-in independent delivery daemon. One-line index; full behavior in each
+plus independent delivery, read-only doctor and the provider-maintenance tools. One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
 - `cli.delivery` — outbound-only durable alert delivery; opt-in Compose profile, no financial or LLM keys.
@@ -279,7 +279,7 @@ to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
 
-- **All 16 `cli/` entry points handle deprived envs cleanly.** Cycle
+- **All supported `cli/` entry points handle deprived envs cleanly.** Cycle
   each CLI through: no `.env`, no `config/settings.yml`, no `config/`
   directory at all, missing per-CLI section, empty credentials,
   bad `--config` path, bad `--profile` name. Expected: clean exit
@@ -293,7 +293,7 @@ to every project. The wobblebot-specific items below extend it:
   cli/news + cli/lurker (observe alias) — round out the original 15;
   cli/screener (P2 slice 5, 2026-08-08) makes it 16 — it exits 2 on a
   missing `screener:` section / bad --config and needs no credentials.
-  When new entry points ship, add them to this walkthrough.
+  The delivery daemon also validates missing credentials/config. Doctor needs no credentials and returns 1 for unknown evidence, 2 for invalid config. Keep new entry points in this walkthrough.
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their
@@ -418,3 +418,6 @@ its cadence per the global rule.
 Read-only diagnosis: `python -m wobblebot.cli.doctor --config config/settings.yml --json`.
 Independent health alerts run in the opt-in delivery process; see
 [health response and doctor](docs/implementation/health-response-and-doctor.md).
+
+Local Ollama and provider maintenance: [local contract/identity](docs/implementation/ollama-local-contract.md)
+and [manual watch/funding decision](docs/implementation/provider-watch.md).
