@@ -16,6 +16,7 @@ on:
     branches:
       - main
       - v1.1
+      - codex/product-completion
     # Release tags (UNI-19). GitHub does not evaluate path filters for tag
     # pushes, so the paths: allowlist below cannot suppress a release build.
     tags:
@@ -90,12 +91,12 @@ jobs:
         env:
           WOBBLEBOT_REQUIRE_UPGRADE_GATE: "1"
       - name: Offline component integration
-        run: python -m pytest -m integration tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py --no-cov -q
+        run: python -m pytest -m integration tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py --no-cov -q
 
   build-and-push:
     needs: [test, quality]
     # Publish only from main or a release tag — never on a PR, and never from
-    # the v1.1 push trigger (which exists to gate tests, not to publish
+    # development-branch push triggers (which gate tests, not publish
     # images). The tag arm is what makes UNI-19 releases possible: without it
     # `git push origin v2.0.0` skips this job and publishes nothing.
     if: >-

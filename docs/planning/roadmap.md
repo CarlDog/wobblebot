@@ -7,6 +7,27 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 authorized branch publication and hosted verification
+
+The operator explicitly authorized regular development-branch commits/pushes.
+Verified origin remains `CarlDog/wobblebot`; remote main was the untouched initial
+`9a42a79`. A non-force, explicit branch-only push published the verified alpha.2
+revision `296cdfe0def55f0923a0a2524742df5b38c7f668` to
+`codex/product-completion`, and `ls-remote` confirmed the exact SHA. Both local
+prerelease tags were excluded because `v*` pushes trigger GHCR publication.
+No PR, merge, default-branch update, release or deployment was performed.
+
+Hosted gitleaks run `37093193908` passed on that exact revision. The shell GitHub
+API returns Forbidden, but the authorized GitHub connector can read workflow
+runs. The quality/platform workflow previously filtered branch pushes to main
+and v1.1, so it did not run on the new implementation branch. Add the exact
+implementation branch to that filter and include all ten offline integration
+cases. The existing main/release-tag-only publication condition is unchanged;
+this branch cannot publish an image through the workflow. Monitor the resulting
+exact-commit quality and Linux/Windows Python 3.13/3.14 jobs; do not infer a pass
+from local results. Final run receipts and any hosted blockers are retained in
+the continuation/evidence directory. All private/NAS/data gates remain unwaived.
+
 ### 2026-10-03 alpha.2 healthcheck and comprehensive local reconciliation
 
 The prior Dockerfile-healthcheck finding was remediable local implementation,
