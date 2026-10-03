@@ -129,11 +129,11 @@ from wobblebot.services.daemon_health import (
     derive_thresholds_from_config,
     fetch_daemon_freshness,
 )
+from wobblebot.services.delivery import forward_notifications
 from wobblebot.services.discord_embed_render import render_query_embed
 from wobblebot.services.grid_engine import GridEngine
 from wobblebot.services.llm_cost_gate import SessionCostTracker
 from wobblebot.services.llm_health import build_llm_endpoints
-from wobblebot.services.notification_embed_render import render_notification_embed
 from wobblebot.services.operator_intent_fastpath import classify_fast
 from wobblebot.services.operator_service import OperatorService
 from wobblebot.services.provider_health import run_provider_health
@@ -155,52 +155,8 @@ async def _forward_pending_notifications(
     transport: DiscordTransport,
     channel_id: str,
 ) -> int:
-    """Drain ``notifications WHERE forwarded=0``; post each to Discord.
-
-    Per-row failures (Discord post fails, mark-forwarded fails) are
-    logged and the loop continues — losing forward progress on one
-    row beats stopping the whole daemon. Returns the count of rows
-    successfully forwarded.
-    """
-    try:
-        rows = await storage.get_notifications(forwarded=False)
-    except StorageError as exc:
-        _LOGGER.warning(
-            "forwarder: get_notifications failed: %s",
-            exc,
-            extra={"error": str(exc)},
-        )
-        return 0
-    forwarded = 0
-    # Rows arrive newest-first (port contract); post oldest-first so the
-    # Discord channel reads chronologically.
-    for row in reversed(rows):
-        if row.id is None:  # defensive; persisted rows always have an id
-            continue
-        try:
-            # P3 renderers slice: typed rows get the bespoke per-event
-            # embed; legacy rows (and the deliberately-generic raise
-            # sites) keep the title/message/context-fields shape.
-            await transport.send_embed(
-                channel_id,
-                **render_notification_embed(row.notification, row.id),
-            )
-            await storage.mark_notification_forwarded(row.id, Timestamp(dt=datetime.now(UTC)))
-            forwarded += 1
-        except (DiscordTransportError, StorageError) as exc:
-            _LOGGER.warning(
-                "forwarder: per-row forward failed; will retry next poll (notification_id=%s, "
-                "level=%s): %s",
-                row.id,
-                row.notification.level,
-                exc,
-                extra={
-                    "notification_id": row.id,
-                    "level": row.notification.level,
-                    "error": str(exc),
-                },
-            )
-    return forwarded
+    """Share durable outbox claims with the independent delivery process."""
+    return await forward_notifications(storage, transport, channel_id)
 
 
 async def _forwarder_loop(

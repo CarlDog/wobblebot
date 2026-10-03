@@ -282,3 +282,5 @@ MIT — see [`LICENSE`](LICENSE) for details.
 For opt-in per-service directory isolation, see the [staging and migration guide](docs/implementation/isolated-deployment.md).
 
 See [reproducible builds and runtime identity](docs/implementation/reproducible-builds.md) for hashed installs and digest-pinned deployment plans.
+
+The [independent delivery guide](docs/implementation/notification-delivery.md) describes opt-in alert sending and uncertain outcomes.

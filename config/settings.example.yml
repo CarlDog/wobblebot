@@ -119,6 +119,7 @@ grid:
 # 0s disables a scheduled task. Daemons load configuration at startup.
 schedules:
   # Credential-owning operator publishes sanitized health; 0 disables.
+  delivery_poll: 2s                     # independent outbox drain
   provider_health: 60s
   observe_prices: 30s                 # cli/observe: public Ticker poll cadence
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
@@ -1169,3 +1170,8 @@ profiles:
         # (reasoning shares the completion budget).
         max_tokens: 4000
         timeout_seconds: 120
+
+# Independent outbound alerts. Opt-in Compose profile; uses operator.auth.outbound_channel_id.
+delivery:
+  operator_db: data/wobblebot-operator.db
+  log_file_path: data/logs/delivery/delivery.log

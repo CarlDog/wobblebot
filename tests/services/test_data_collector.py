@@ -335,6 +335,15 @@ class _FailingStorage(StoragePort):
     async def get_notifications(self, forwarded=None, limit=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
+    async def get_delivery_notifications(self, limit=100):
+        raise StorageError("fixture")
+
+    async def claim_notification_delivery(self, notification_id):
+        raise StorageError("fixture")
+
+    async def finish_notification_delivery(self, notification_id, attempt, outcome, **kwargs):
+        raise StorageError("fixture")
+
     async def mark_notification_forwarded(  # type: ignore[no-untyped-def]
         self, notification_id, forwarded_at
     ):

@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import logging
 from asyncio import Lock
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -34,6 +35,7 @@ from uuid import UUID
 import aiosqlite
 from pydantic import ValidationError
 
+from wobblebot.adapters import sqlite_delivery
 from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_llm_attempts,
@@ -95,7 +97,7 @@ from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
-from wobblebot.sqlite_connection import open_connection
+from wobblebot.sqlite_connection import managed_connection, open_connection
 
 _LOGGER = logging.getLogger("wobblebot.adapters.sqlite_storage")
 
@@ -1949,14 +1951,17 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         limit: int | None = None,
     ) -> list[PersistedNotification]:
         conn = self._require_conn()
-        sql = "SELECT * FROM notifications"
+        sql = """SELECT notifications.*, d.state AS delivery_state,
+                 d.attempts AS delivery_attempts, d.message_id AS delivery_message_id
+                 FROM notifications LEFT JOIN notification_delivery d
+                   ON d.notification_id=notifications.id"""
         params: list[object] = []
         if forwarded is not None:
             sql += " WHERE forwarded = ?"
             params.append(1 if forwarded else 0)
         # Newest first, so LIMIT returns the newest N (the web page and bell
         # badge depend on this); id breaks created_at ties deterministically.
-        sql += " ORDER BY created_at DESC, id DESC"
+        sql += " ORDER BY notifications.created_at DESC, notifications.id DESC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -1966,6 +1971,74 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load notifications: {exc}") from exc
         return [row_to_notification(row) for row in rows]
+
+    @asynccontextmanager
+    async def _delivery_connection(self) -> AsyncIterator[aiosqlite.Connection]:
+        primary = self._require_conn()
+        if self._read_only:
+            raise StorageError("Read-only storage cannot deliver notifications")
+        if self._db_path == ":memory:":
+            yield primary
+        else:
+            async with managed_connection(
+                Path(self._db_path).resolve().as_uri() + "?mode=rw", uri=True
+            ) as connection:
+                await connection.execute("PRAGMA synchronous=FULL")
+                yield connection
+
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """SELECT n.* FROM notifications n
+                   LEFT JOIN notification_delivery d ON d.notification_id=n.id
+                   WHERE n.forwarded=0 AND (
+                     d.state IS NULL OR d.state='queued'
+                     OR (d.state='retry' AND julianday(d.next_attempt)<=julianday(?))
+                     OR (d.state='sending' AND julianday(d.lease_until)<=julianday(?)))
+                   ORDER BY n.created_at ASC, n.id ASC LIMIT ?""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    min(100, max(1, limit)),
+                ),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_notification(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot read notification delivery batch") from exc
+
+    async def claim_notification_delivery(self, notification_id: int) -> int | None:
+        try:
+            async with self._delivery_connection() as conn:
+                return await sqlite_delivery.claim(conn, notification_id)
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist notification delivery claim") from exc
+
+    async def finish_notification_delivery(  # pylint: disable=too-many-arguments
+        # Receipt identity, outcome and safe retry metadata form one transaction.
+        self,
+        notification_id: int,
+        attempt: int,
+        outcome: Literal["sent", "retry", "failed", "uncertain"],
+        *,
+        message_id: str | None = None,
+        error_type: str | None = None,
+        retry_after_seconds: float = 0,
+    ) -> None:
+        try:
+            async with self._delivery_connection() as conn:
+                await sqlite_delivery.finish(
+                    conn,
+                    notification_id,
+                    attempt,
+                    outcome,
+                    message_id=message_id,
+                    error_type=error_type,
+                    retry_after_seconds=retry_after_seconds,
+                )
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist notification delivery outcome") from exc
 
     async def mark_notification_forwarded(
         self, notification_id: int, forwarded_at: Timestamp

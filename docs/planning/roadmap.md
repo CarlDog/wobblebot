@@ -7,6 +7,31 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 N3 notification delivery
+
+N3b implements ADR-050's durable delivery claims, atomic message receipts,
+bounded safe retries and shared persistent Retry-After. An opt-in outbound-only
+`cli.delivery` process uses the same outbox as operator, with only the Discord
+token and operator-store grant. Unknown send outcomes are not automatically
+replayed; delivery attempts/state/IDs are visible in `/notifications`.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0, 4,431 passed, six private-config skips, 30 integration
+deselections; Black/isort/mypy/pylint passed. Recorded coverage was 87.83% while
+two untested N4 doctor drafts were present in the source tree; those drafts are
+now preserved outside the package in ignored `tmp/product-completion-n4/`, not
+included in N3 delivery. New behavior tests cover concurrent connections,
+abandoned send leases, actual post-send receipt failure, bounded retry,
+persisted provider backoff, safe REST errors and an independent daemon cycle
+with real SQLite plus synthetic HTTP. No real Discord message was sent.
+The first full run found two old supervision stubs; updating their queue method
+preserved their existing loud-death/clean-stop assertions. No check was disabled.
+
+N3 activation/deployed recovery remains separate. N4 independent health alerting
+and doctor are next; N5 and retained phase/evidence gates remain in the baseline.
+All full runs completed below two minutes; no command exceeded its checkpoint.
+
+
 ### 2026-10-03 N3 command lifecycle
 
 N3a implements ADR-049's immutable command/approval guards and atomic pre-effect

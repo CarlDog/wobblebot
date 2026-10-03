@@ -255,6 +255,16 @@ services:
   # commands route through pending_commands → cli/live's approved
   # poll). Safe to auto-restart.
   # ------------------------------------------------------------------
+  # Outbound-only independent sender; activation is opt-in, never automatic.
+  delivery:
+    <<: *wobblebot-defaults
+    profiles: [delivery]
+    container_name: wobblebot-delivery
+    command: python -m wobblebot.cli.delivery --profile cpu-only
+    environment:
+      <<: *common-env
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+
   operator:
     <<: *wobblebot-defaults
     container_name: wobblebot-operator

@@ -71,6 +71,7 @@ from wobblebot.adapters.discord_confirm_view import (
     build_confirm_view,
 )
 from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.delivery import DeliveryError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ class ReactionEvent(BaseModel):
         frozen = True
 
 
-class DiscordTransportError(Exception):
+class DiscordTransportError(DeliveryError):
     """Raised when a Discord transport operation fails.
 
     Wraps protocol / API / channel-resolution failures — both

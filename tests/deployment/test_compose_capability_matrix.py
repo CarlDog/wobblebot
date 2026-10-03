@@ -69,6 +69,8 @@ _CLOUD_LLM = frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"}
 # establishes the need. Anything absent from a row is a credential that
 # service must not receive.
 EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
+    # Outbound-only REST delivery survives the operator Gateway/LLM process.
+    "delivery": frozenset({"DISCORD_BOT_TOKEN"}),
     # cli/live.py:1954 — KrakenConfig.from_env(key_var="KRAKEN_TRADER_API_KEY", …).
     # Notifications go to the DB for cli/operator to forward, so no Discord token.
     "live": _TRADER,

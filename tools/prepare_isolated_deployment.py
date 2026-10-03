@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OWNERS = ("live", "observe", "news", "advise", "harvest", "operator", "shadow", "sandbox")
 # These are filesystem grants only: operator.db still has multiple table writers.
 ACCESS = {
+    "delivery": {"operator": "rw"},
     "live": {"live": "rw", "operator": "rw", "observe": "ro"},
     "observe": {"observe": "rw", "operator": "rw"},
     "news": {"news": "rw", "operator": "rw"},
@@ -96,7 +97,7 @@ def prepare(
             }
         )
     for role in ACCESS:
-        if role != "tools" and raw.get(role) is None:
+        if role not in {"tools", "delivery"} and raw.get(role) is None:
             raise ValueError(f"The full deployment requires the {role} section")
 
     # Reject unclassified database targets; guessing ownership would widen authority.
@@ -143,6 +144,8 @@ def prepare(
     WobbleBotConfig.model_validate(settings)
     template = yaml.safe_load((ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
     compose = {"services": copy.deepcopy(template["services"])}
+    if raw.get("delivery") is None:
+        compose["services"].pop("delivery", None)
     host = (host_root or output).absolute()
     for name, service in compose["services"].items():
         service["environment"]["WOBBLEBOT_BOOTSTRAP_CONFIG"] = "0"

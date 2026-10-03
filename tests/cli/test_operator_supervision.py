@@ -58,7 +58,7 @@ _SPIN_SECONDS = 0.005
 class _StubStorage:
     """The two StoragePort methods ``_forwarder_loop``'s cycle touches.
 
-    ``get_notifications`` counts its calls so a test can prove at least
+    ``get_delivery_notifications`` counts its calls so a test can prove at least
     one full cycle ran before asserting — an async test that never lets
     its loop schedule passes for the wrong reason.
     """
@@ -71,9 +71,7 @@ class _StubStorage:
     async def upsert_daemon_heartbeat(self, daemon_name: str, when: datetime) -> None:
         self.heartbeats += 1
 
-    async def get_notifications(
-        self, forwarded: bool | None = None, limit: int | None = None
-    ) -> list[PersistedNotification]:
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
         self.get_calls += 1
         if self._fail_on_call is not None and self.get_calls >= self._fail_on_call:
             # Deliberately NOT a StorageError: the incident's exception

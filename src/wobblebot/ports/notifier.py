@@ -60,6 +60,9 @@ class PersistedNotification(BaseModel):
     forwarded_at: Timestamp | None = None
     created_at: Timestamp
     read_at: Timestamp | None = None
+    delivery_state: str | None = None
+    delivery_attempts: int = 0
+    delivery_message_id: str | None = None
 
     class Config:
         frozen = True

@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from wobblebot.domain.engine_state import EngineStateRow
@@ -1051,6 +1052,28 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
+
+    @abstractmethod
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
+        """Oldest-first bounded due outbox batch, including expired sender leases."""
+
+    @abstractmethod
+    async def claim_notification_delivery(self, notification_id: int) -> int | None:
+        """Durably claim a send; return its attempt token, or None when not due."""
+
+    @abstractmethod
+    async def finish_notification_delivery(  # pylint: disable=too-many-arguments
+        # Receipt identity, outcome and safe retry metadata form one transaction.
+        self,
+        notification_id: int,
+        attempt: int,
+        outcome: Literal["sent", "retry", "failed", "uncertain"],
+        *,
+        message_id: str | None = None,
+        error_type: str | None = None,
+        retry_after_seconds: float = 0,
+    ) -> None:
+        """Atomically persist outcome and, for success, the forwarded receipt."""
 
     @abstractmethod
     async def mark_notification_forwarded(

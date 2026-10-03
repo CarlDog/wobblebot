@@ -62,7 +62,14 @@
                 {{ n.row.notification.title }}
               {% endif %}
             </td>
-            <td class="muted">{{ n.row.notification.message }}</td>
+            <td class="muted">{{ n.row.notification.message }}
+              {% if n.row.delivery_state %}
+                <br><span class="tag {{ 'fail' if n.row.delivery_state in ('failed', 'uncertain') else 'info' }}">delivery: {{ n.row.delivery_state }}</span>
+                ({{ n.row.delivery_attempts }} attempts)
+                {% if n.row.delivery_message_id %} receipt {{ n.row.delivery_message_id }}{% endif %}
+                {% if n.row.delivery_state == 'uncertain' %}Check Discord before requesting another send.{% endif %}
+              {% endif %}
+            </td>
             <td class="notif-action">
               {% if not n.row.read_at %}
                 <form method="post" action="/notifications/{{ n.row.id }}/read">

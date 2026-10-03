@@ -83,15 +83,15 @@ and tests remain the implementation evidence, not the checkmarks alone.
 | P4.6 / p4-completion-plan | Read-only long-horizon Historian, findings store and UI after scored corpus/design | Not implemented; G3 requires unavailable corpus and NAS scoring, model/cadence/privacy design |
 | P4.7 / p4-completion-plan | Cost honesty, infra declared-vs-unknown, trace grouping, no double-count fees | Existing cost page/evaluator tests |
 | C0-C4 / closeout plan | Preserved baseline, truthful starvation diagnostics, four repairs, migration/old-writer safety, full audit and review | Existing implementation and historical review; fresh suite/upgrade verification; D1 setup correction; B2/B4 audit limits |
-| C5 / closeout plan | Exact release/deploy/observation identity, individually accepted limitations and formal operator closure | Historical releases exist; formal close pending B1, fresh production evidence B2. Publication not authorized |
-| N0 / closeout plan | Accepted 2.0 close, reconciled N1-N5 scope, unique ADR references, first slice criteria | B1 unresolved; do not infer phase acceptance from general historical deployments |
-| N1 / closeout plan §5; ADR-041 | Per-service data/config/secret capabilities, WAL/backups/settings consumers; remove unnecessary web cloud keys using authoritative fresh health | Not implemented as full residual scope; B1, then capability design and isolated Compose positive/negative tests (B3) |
-| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Not implemented; N1/B1; Linux floor checks do not satisfy hosted Windows or 3.14 matrix |
-| N3a / closeout plan §5 | Immutable approval, atomic claims, expiry/mutation rejection, post-effect ambiguity reconciliation | Withdrawal-specific protection exists, broader lifecycle absent; N1-N2/B1. Concurrent/crash-boundary tests required |
-| N3b / closeout plan §5 | Durable notification outbox, independent delivery, bounded retries/terminal failure; no exactly-once claim | Not implemented; N3a and G1 consumer coordination; crash-before/after-send tests required |
-| N4 / closeout plan §5 | Independent dead/wedged detection, read-only human/JSON doctor, unknown/stale evidence; money daemons page-only | Not implemented; N1-N3/B1. Restart actor authority needs explicit design decision |
-| N5a / closeout plan §5 | Correct Ollama envelopes/prompts/errors/truncation/local-only and telemetry | Some maintenance/fallback tests already shipped; reconcile residual against source after B1/N4; no paid probes |
-| N5b / closeout plan §5; GH22/GH97 | Deduplicated contract/pricing/model-watch ownership; funding retention/migration decision | Not implemented as complete watcher; N5a/B1, external ownership/access B2; no unapproved schedule |
+| C5 / closeout plan | Exact release/deploy/observation identity, individually accepted limitations and formal operator closure | Historical releases exist; formal close and fresh production evidence B2 remain separate from authorized local development. Publication not authorized |
+| N0 / closeout plan | Accepted 2.0 close, reconciled N1-N5 scope, unique ADR references, first slice criteria | Local implementation authorization confirmed; formal phase acceptance remains separate. ADR-047 onward record local decisions |
+| N1 / closeout plan §5; ADR-041 | Per-service data/config/secret capabilities, WAL/backups/settings consumers; remove unnecessary web cloud keys using authoritative fresh health | Implemented locally under ADR-047; final-image capability and WAL rehearsals passed. Operator/NAS configuration and production migration remain B2; shared operator-table authority remains explicit |
+| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Linux 3.13/3.14 passed. Hosted Windows/CI and CodeQL evidence remain B2; Ruff gap disclosed |
+| N3a / closeout plan §5 | Immutable approval, atomic claims, expiry/mutation rejection, post-effect ambiguity reconciliation | Implemented locally under ADR-049; competing consumers, mutation/expiry, restart and failed-receipt tests passed. Reconciliation requires observed external effects; no blind replay |
+| N3b / closeout plan §5 | Durable notification outbox, independent delivery, bounded retries/terminal failure; no exactly-once claim | Implemented locally under ADR-050; independent sender, claims/receipts, retry/backoff and crash-boundary tests passed. Activation and real Discord verification remain separate; no G1 anomaly daemon added |
+| N4 / closeout plan §5 | Independent dead/wedged detection, read-only human/JSON doctor, unknown/stale evidence; money daemons page-only | Implementation next: independent page-only observer and read-only doctor. Draft doctor sources preserved outside the package; no restart actor or Docker socket planned |
+| N5a / closeout plan §5 | Correct Ollama envelopes/prompts/errors/truncation/local-only and telemetry | Some maintenance/fallback tests already shipped; reconcile residual against current official Ollama contracts after N4; no paid probes |
+| N5b / closeout plan §5; GH22/GH97 | Deduplicated contract/pricing/model-watch ownership; funding retention/migration decision | Not implemented as complete watcher; N5a and external ownership/access B2; no unapproved schedule |
 | 9.0 / roadmap Phase 9, G9 | Fresh official equity/account/session/settlement/day-trading/tax review, new equity-risk ADR | Committed track; unstarted after accepted 2.1 close. May scoping figures are unratified, not requirements |
 | 9.1 / roadmap Phase 9 | Asset-class and stock symbol/precision/session metadata and error mappings | Unstarted; 9.0 and confirmed API/account access B2 |
 | 9.2 / roadmap Phase 9 | Settlement/day-trading-aware safety with persisted history and startup guards | Unstarted; 9.0 risk/account decisions must precede financial policy implementation |
@@ -138,8 +138,9 @@ No exclusion is based merely on cost, difficulty or a later-phase label.
 - B2: fresh external evidence/access: GitHub API and public Kraken connectivity,
   private configs/keys, canonical OHLC/outcome data, NAS and production observations.
   Do not copy historical counts as current facts or run paid/money operations.
-- B3: actual container build/runtime validation. Preserve failed command evidence;
-  source-level Compose tests do not substitute for an executed container rehearsal.
+- B3: local product image build and isolated capability rehearsal resolved with
+  hashed wheels, explicit proxy hostname mapping and an ephemeral trusted CA.
+  Rebuild/rehearse the final whole-product candidate after remaining changes.
 - B4: tooling availability resolved by read-only Fleet Kit source at verified
   commit `990747556e73d874d76d4ab6d2212460eabe7652`; see the
   [audit work item](product-completion-audit.md). Remote/OC unknowns remain.

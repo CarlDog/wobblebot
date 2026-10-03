@@ -3810,3 +3810,29 @@ not a defense against an administrator who can drop triggers or edit the schema.
 
 G1 baseline/anomaly evidence is still unavailable; no anomaly daemon is introduced
 or readiness inferred from synthetic history by this independent lifecycle work.
+
+## ADR-050: Durable notification delivery with an independent sender
+
+**Status:** adopted for local implementation, 2026-10-03; activation remains opt-in.
+
+Operator and `cli.delivery` drain one SQLite outbox through the same bounded
+service. Each send owns a durable attempt claim, and a returned message ID and
+forwarded flag commit together. File-backed claim/receipt transactions use isolated
+connections with FULL synchronization. A lease abandoned before or after a send
+becomes `uncertain`; it is never blindly resent. Known pre-connect failures and
+explicit rate-limit rejections use bounded exponential retries, at most five
+attempts. Provider Retry-After is a persisted lower bound shared by senders.
+Permanent rejections become failed; ambiguous transport/server/receipt failures
+become uncertain. Dashboard delivery state is separate from human acknowledgement.
+
+The independent sender has only the Discord token, operator database and its own
+log/config mounts. It has no Gateway command handling, LLM or financial credential.
+Its Compose profile is opt-in; no schedule, service activation or real message is
+part of implementation validation. Both new sender paths may coexist because they
+share claims, but stop pre-outbox binaries before upgrading/downgrading senders.
+
+This protects delivery of persisted notifications, not atomicity of every business
+event with its notification producer. A process crash before a producer saves an
+alert can still lose that alert; do not claim a general exactly-once event bus.
+Unknown Discord outcomes require channel inspection before a replacement send.
+The mechanism does not promise exactly-once Discord delivery or automatic repair.

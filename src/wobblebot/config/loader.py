@@ -37,6 +37,7 @@ from wobblebot.config.cli import (
     StatusConfig,
     WebConfig,
 )
+from wobblebot.config.delivery import DeliveryConfig
 from wobblebot.config.grid import GridConfig
 from wobblebot.config.harvester import HarvesterConfig
 from wobblebot.config.llm import LLMConfig
@@ -150,6 +151,7 @@ class WobbleBotConfig(BaseModel):
     harvest: HarvestConfig | None = None
     harvester: HarvesterConfig | None = None
     operator: OperatorConfig | None = None
+    delivery: DeliveryConfig | None = None
     llm: LLMConfig | None = None
     web: WebConfig | None = None
     maintenance: MaintenanceConfig | None = None

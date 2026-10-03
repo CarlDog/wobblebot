@@ -30,6 +30,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Changed
 
+- Notifications use durable send claims, atomic receipt persistence and bounded
+  safe retries. An opt-in outbound-only delivery daemon can send persisted alerts
+  independently of the operator process. Ambiguous and terminal failures are
+  visible in the dashboard and are not blindly resent.
+
+
 - Runtime/build/dev dependency resolutions now carry hashes; Docker pins its base
   digest and installs verified binary wheels. CI separates quality from the
   Python/platform test matrix. Startup records sanitized configuration/asset

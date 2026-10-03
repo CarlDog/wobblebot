@@ -283,6 +283,21 @@ CREATE TABLE IF NOT EXISTS pending_commands (
     created_at          TEXT NOT NULL
 );
 
+-- Independent notification delivery shares this durable outbox with operator.
+CREATE TABLE IF NOT EXISTS delivery_backoff (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1), not_before TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notification_delivery (
+    notification_id INTEGER PRIMARY KEY,
+    state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN
+        ('queued','sending','sent','retry','failed','uncertain')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_until TEXT,
+    next_attempt TEXT,
+    message_id TEXT,
+    error_type TEXT
+);
+
 -- N3 claims are durable before dispatch. Never automatically release a claim:
 -- a crash after an external effect but before its receipt is ambiguous.
 CREATE TABLE IF NOT EXISTS command_claims (

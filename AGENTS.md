@@ -29,9 +29,11 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Twenty-two surfaces (sixteen `cli/` + six `tools/`). One-line index; full behavior in each
+The operator surface includes the original sixteen CLIs and six documented tools,
+plus the opt-in independent delivery daemon. One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
+- `cli.delivery` — outbound-only durable alert delivery; opt-in Compose profile, no financial or LLM keys.
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
 - `cli.status` — read-only Kraken price + balance check.
 - `cli.preflight` — one engine step via Kraken `validate=true` (nothing placed). **Run before every live session.**
