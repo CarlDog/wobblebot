@@ -766,6 +766,12 @@ async def _process_pending_commands(
         _LOGGER.debug("no approved execute_proposal commands to process")
         return 0
     for pending in approved:
+        try:
+            if not await operator_storage.claim_pending_command(pending):
+                continue
+        except StorageError:
+            _LOGGER.warning("cannot durably claim withdrawal command; dispatch blocked")
+            continue
         result = await _dispatch_one_command(
             pending=pending,
             adapter=adapter,
@@ -783,17 +789,15 @@ async def _process_pending_commands(
         try:
             await operator_storage.save_pending_command(updated)
         except WobbleBotPortError as exc:
-            # Same hazard cli/live documents, but sharper here: the row
-            # stays 'approved' and WILL be re-polled. The idempotency
-            # guard (layer 2b) is what stops a re-poll from double-
-            # withdrawing — it sees the pending TransferResult this run
-            # already persisted and refuses.
+            # The pre-effect command claim and ADR-026 transfer reservation
+            # survive a missing receipt. Do not emit a success or replay it.
             _LOGGER.warning(
                 "failed to persist dispatched execute_proposal row %s: %s",
                 pending.id,
                 exc,
                 extra={"pending_id": str(pending.id)},
             )
+            continue
         await notify(
             notifier,
             level="warning" if result.success else "error",

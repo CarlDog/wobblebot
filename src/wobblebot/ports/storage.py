@@ -943,6 +943,14 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def claim_pending_command(self, pending: PendingCommand) -> bool:
+        """Durably claim an exact, unexpired approval once before dispatch.
+
+        False means another consumer won, expiry, or a changed approval. A claim
+        is never automatically released: uncertain effects require reconciliation.
+        """
+
+    @abstractmethod
     async def get_pending_command(self, pending_id: UUID) -> PendingCommand | None:
         """Look up one ``PendingCommand`` by id.
 

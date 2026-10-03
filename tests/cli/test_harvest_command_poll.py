@@ -218,7 +218,7 @@ class TestApprovedExecution:
             await operator_storage.close()
             await harvest_storage.close()
 
-    async def test_second_poll_does_not_double_withdraw(self) -> None:
+    async def test_second_poll_does_not_double_withdraw(self, monkeypatch) -> None:
         """Idempotency: a re-polled row hits the layer-2b guard."""
         operator_storage = SQLiteStorageAdapter(":memory:")
         harvest_storage = SQLiteStorageAdapter(":memory:")
@@ -231,17 +231,24 @@ class TestApprovedExecution:
             adapter = _WithdrawingExchange()
             config = _full_config(harvester=_enabled_harvester())
 
+            save = operator_storage.save_pending_command
+
+            async def fail_receipt(pending):
+                from wobblebot.ports.exceptions import StorageError
+
+                if pending.status in {"dispatched", "failed"}:
+                    raise StorageError("fixture receipt failure after effect")
+                await save(pending)
+
+            monkeypatch.setattr(operator_storage, "save_pending_command", fail_receipt)
             await _process_pending_commands(
                 adapter=adapter,
                 storage=harvest_storage,
                 operator_storage=operator_storage,
                 config=config,
             )
-            # Simulate the persistence-failure hazard: the row is still
-            # 'approved' on the next poll.
-            await operator_storage.save_pending_command(
-                row.model_copy(update={"status": "approved"})
-            )
+            # The actual receipt failed after the effect; the durable claim
+            # survives and excludes this row from a second consumer's poll.
             await _process_pending_commands(
                 adapter=adapter,
                 storage=harvest_storage,
@@ -252,8 +259,8 @@ class TestApprovedExecution:
             assert len(adapter.withdraw_calls) == 1
             updated = await operator_storage.get_pending_command(row.id)
             assert updated is not None
-            assert updated.status == "failed"
-            assert "already executed" in updated.result.message  # type: ignore[union-attr]
+            assert updated.status == "claimed"
+            assert updated.result is None
         finally:
             await operator_storage.close()
             await harvest_storage.close()

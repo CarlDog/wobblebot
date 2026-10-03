@@ -283,6 +283,43 @@ CREATE TABLE IF NOT EXISTS pending_commands (
     created_at          TEXT NOT NULL
 );
 
+-- N3 claims are durable before dispatch. Never automatically release a claim:
+-- a crash after an external effect but before its receipt is ambiguous.
+CREATE TABLE IF NOT EXISTS command_claims (
+    command_id TEXT PRIMARY KEY,
+    claimed_at TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS pending_command_immutable
+BEFORE UPDATE ON pending_commands
+WHEN OLD.command_json != NEW.command_json
+  OR OLD.command_kind != NEW.command_kind
+  OR OLD.channel_id != NEW.channel_id
+  OR OLD.requesting_user_id != NEW.requesting_user_id
+  OR OLD.created_at != NEW.created_at
+  OR (OLD.status != 'awaiting_confirmation' AND OLD.ttl_expires_at != NEW.ttl_expires_at)
+  OR (OLD.status != 'awaiting_confirmation' AND (
+      OLD.confirming_user_id IS NOT NEW.confirming_user_id
+      OR OLD.confirmed_at IS NOT NEW.confirmed_at))
+BEGIN
+    SELECT RAISE(ABORT, 'immutable command or approval');
+END;
+
+CREATE TRIGGER IF NOT EXISTS pending_command_transition
+BEFORE UPDATE ON pending_commands
+WHEN NOT (
+    (OLD.status = 'awaiting_confirmation' AND NEW.status IN
+        ('awaiting_confirmation', 'approved', 'rejected', 'expired'))
+    OR (OLD.status = 'approved' AND NEW.status IN ('dispatched', 'failed', 'expired'))
+    OR (OLD.status = NEW.status AND OLD.result_json IS NEW.result_json
+        AND OLD.confirmed_at IS NEW.confirmed_at
+        AND OLD.confirming_user_id IS NEW.confirming_user_id
+        AND OLD.dispatched_at IS NEW.dispatched_at)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'invalid command lifecycle transition');
+END;
+
 CREATE INDEX IF NOT EXISTS idx_pending_commands_status
     ON pending_commands(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_commands_created

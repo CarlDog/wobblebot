@@ -83,6 +83,7 @@ from wobblebot.ports.operator_results import (
 PendingCommandStatus = Literal[
     "awaiting_confirmation",
     "approved",
+    "claimed",
     "rejected",
     "expired",
     "dispatched",

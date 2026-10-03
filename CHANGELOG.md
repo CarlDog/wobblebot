@@ -59,6 +59,12 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Human-approved command payloads and decisions are immutable. Live and harvest
+  durably claim each unexpired approval before dispatch, so concurrent consumers
+  and lost terminal receipts cannot replay it. Unresolved effects remain visible
+  for reconciliation; they are never automatically retried.
+
+
 - **Release resources after interrupted startup.** SQLite closes an opened connection
   if schema setup, migration, or cancellation interrupts startup. The operator daemon
   closes acquired databases, its assistant, and created tasks when partial startup fails.

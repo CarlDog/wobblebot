@@ -7,6 +7,30 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 N3 command lifecycle
+
+N3a implements ADR-049's immutable command/approval guards and atomic pre-effect
+claims in both live and harvest consumers. File-backed claims own a separate
+FULL-synchronous transaction so another coroutine's rollback cannot erase a
+successful claim. Read-only adapters cannot acquire claims. Unresolved results
+remain visibly `claimed`, excluded from approved polls after restart; no claim
+is automatically released or retried. The existing withdrawal reservation remains.
+See [command reconciliation and downgrade limits](../implementation/command-lifecycle.md).
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,413 passed, six absent-private-config skips, 30 integration
+deselections, coverage 88.47%; all quality gates passed. New tests cover competing
+file-backed consumers, restart, expiry, changed payload, conflicting human
+decisions and read-only denial. Prior corruption tests deliberately remove the
+SQL guards to inject damaged legacy data; production guards stay enabled. Prior
+replay tests now inject an actual failed terminal receipt instead of rewinding
+completed commands, which the new lifecycle correctly forbids.
+
+The separately added runtime-lock drift test passed (one test); runtime dotenv
+now matches the dev pin. N3b delivery/outbox and N4/N5 remain outstanding. No real
+exchange, Discord send, deployment, remote publication or paid probe occurred.
+
+
 ### 2026-10-03 N2 local build and platform verification
 
 Local N1 commit: `062d9a7`. N2 adds hashed runtime/build/dev resolutions, consumes

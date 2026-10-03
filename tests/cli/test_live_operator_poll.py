@@ -231,7 +231,7 @@ async def test_failed_refusal_write_cannot_replay_reanchor_after_recovery(
         reanchor_approval_after=datetime.now(UTC),
     )
     still_approved = await storage.get_pending_command(pending.id)
-    assert still_approved is not None and still_approved.status == "approved"
+    assert still_approved is not None and still_approved.status == "claimed"
 
     await _process_pending_commands(
         svc,
@@ -241,8 +241,9 @@ async def test_failed_refusal_write_cannot_replay_reanchor_after_recovery(
         reanchor_approval_after=datetime.now(UTC),
     )
     refused = await storage.get_pending_command(pending.id)
-    assert refused is not None and refused.status == "failed"
-    assert refused.result is not None and "predates" in refused.result.message
+    assert refused is not None and refused.status == "claimed"
+    assert refused.result is None
+    assert await storage.get_pending_commands(status="approved") == []
     dispatch.assert_not_awaited()
 
 
@@ -395,8 +396,9 @@ async def test_loop_does_not_replay_reanchor_after_refusal_write_fails(
     assert valuation_calls >= 5
     assert len(pending_ids) == 1
     refused = await storage.get_pending_command(pending_ids[0])
-    assert refused is not None and refused.status == "failed"
-    assert refused.result is not None and "predates" in refused.result.message
+    assert refused is not None and refused.status == "claimed"
+    assert refused.result is None
+    assert await storage.get_pending_commands(status="approved") == []
     dispatch.assert_not_awaited()
 
 

@@ -35,6 +35,10 @@ async def test_decoder_failures_use_storage_error(storage, reader, column, value
     pending = _pending(status="approved")
     await storage.save_pending_command(pending)
     conn = storage._require_conn()
+    # Deliberately simulate corruption below the SQL guard, as for damaged or
+    # legacy data. Normal writes must not be able to create these fixtures.
+    await conn.execute("DROP TRIGGER pending_command_immutable")
+    await conn.execute("DROP TRIGGER pending_command_transition")
     await conn.execute("PRAGMA ignore_check_constraints=ON")
     await conn.execute(
         f"UPDATE pending_commands SET {column}=? WHERE id=?", (value, str(pending.id))
@@ -56,6 +60,8 @@ async def test_real_live_loop_contains_corrupt_batch_without_dispatch(storage, m
     valid = _pending(status="approved")
     await storage.save_pending_command(broken)
     await storage.save_pending_command(valid)
+    await storage._require_conn().execute("DROP TRIGGER pending_command_immutable")
+    await storage._require_conn().execute("DROP TRIGGER pending_command_transition")
     await storage._require_conn().execute(
         "UPDATE pending_commands SET command_json=? WHERE id=?", ("{broken", str(broken.id))
     )

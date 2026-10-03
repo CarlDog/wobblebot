@@ -317,6 +317,9 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def claim_pending_command(self, pending):
+        raise StorageError("test storage unavailable")
+
     async def save_pending_command(self, pending):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 

@@ -175,7 +175,10 @@ def _decode_pending_command(row: aiosqlite.Row) -> PendingCommand:
     batch; it never becomes an empty result or a silently discarded approval.
     """
     try:
-        return row_to_pending_command(row)
+        pending = row_to_pending_command(row)
+        if "is_claimed" in row.keys() and row["is_claimed"] and pending.status == "approved":
+            return pending.model_copy(update={"status": "claimed"})
+        return pending
     except (ValueError, TypeError) as exc:
         raw_id = row["id"]
         try:
@@ -1781,11 +1784,70 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await conn.rollback()
             raise StorageError(f"Failed to save pending command {pending.id}: {exc}") from exc
 
+    async def claim_pending_command(self, pending: PendingCommand) -> bool:
+        """One SQLite insert selects the exact still-valid approval, then commits."""
+        primary = self._require_conn()
+        if self._read_only:
+            raise StorageError("Read-only storage cannot claim a command")
+        conn = None
+        now = datetime.now(UTC).isoformat()
+        try:
+            # File-backed claims own a connection/transaction: an unrelated
+            # coroutine's rollback on the shared adapter cannot erase the claim.
+            conn = (
+                primary
+                if self._db_path == ":memory:"
+                else await open_connection(
+                    Path(self._db_path).resolve().as_uri() + "?mode=rw", uri=True
+                )
+            )
+            # A confirmed claim must survive power loss before an external effect.
+            # Keep FULL for this connection; never weaken another task's durability.
+            await conn.execute("PRAGMA synchronous = FULL")
+            cursor = await conn.execute(
+                """
+                INSERT OR IGNORE INTO command_claims (command_id, claimed_at)
+                SELECT id, ? FROM pending_commands
+                WHERE id = ? AND status = 'approved' AND command_json = ?
+                  AND confirming_user_id IS ? AND confirmed_at IS ?
+                  AND julianday(ttl_expires_at) > julianday(?)
+                """,
+                (
+                    now,
+                    str(pending.id),
+                    pending.command.model_dump_json(),
+                    pending.confirming_user_id,
+                    pending.confirmed_at.dt.isoformat() if pending.confirmed_at else None,
+                    now,
+                ),
+            )
+            claimed = cursor.rowcount == 1
+            await conn.execute(
+                """UPDATE pending_commands SET status='expired'
+                   WHERE id=? AND status='approved'
+                     AND julianday(ttl_expires_at) <= julianday(?)
+                     AND NOT EXISTS (SELECT 1 FROM command_claims WHERE command_id=?)""",
+                (str(pending.id), now, str(pending.id)),
+            )
+            await conn.commit()
+            return claimed
+        except (aiosqlite.Error, OSError) as exc:
+            if conn is not None:
+                await conn.rollback()
+            raise StorageError("Cannot durably claim command; dispatch blocked") from exc
+        finally:
+            if conn is not None and conn is not primary:
+                await conn.close()
+
     async def get_pending_command(self, pending_id: UUID) -> PendingCommand | None:
         conn = self._require_conn()
         try:
             async with conn.execute(
-                "SELECT * FROM pending_commands WHERE id = ?", (str(pending_id),)
+                """SELECT pending_commands.*,
+                   EXISTS(SELECT 1 FROM command_claims
+                          WHERE command_id=pending_commands.id) AS is_claimed
+                   FROM pending_commands WHERE id = ?""",
+                (str(pending_id),),
             ) as cursor:
                 row = await cursor.fetchone()
         except (aiosqlite.Error, OSError) as exc:
@@ -1805,12 +1867,25 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         # crash instead of an empty result.
         if kinds is not None and not kinds:
             return []
-        sql = "SELECT * FROM pending_commands"
+        sql = """SELECT pending_commands.*,
+                 EXISTS(SELECT 1 FROM command_claims
+                          WHERE command_id=pending_commands.id) AS is_claimed
+                 FROM pending_commands"""
         params: list[object] = []
         clauses: list[str] = []
-        if status is not None:
+        if status == "claimed":
+            clauses.append(
+                "status = 'approved' AND EXISTS "
+                "(SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
+            )
+        elif status is not None:
             clauses.append("status = ?")
             params.append(status)
+            if status == "approved":
+                clauses.append(
+                    "NOT EXISTS "
+                    "(SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
+                )
         if kinds is not None:
             placeholders = ", ".join("?" for _ in kinds)
             clauses.append(f"command_kind IN ({placeholders})")

@@ -3774,3 +3774,39 @@ database, Docker socket, paid service or automatic deployment is introduced.
 Retain the current quality tools during this functional build change. A broad
 Ruff migration is a separate standards gap, not a duplicate lint stack or implicit
 exception. Hosted platform/CodeQL facts cannot be inferred from local configuration.
+
+## ADR-049: Immutable approvals and durable one-time command claims
+
+**Status:** adopted for local implementation, 2026-10-03.
+
+An approval is a durable capability for one exact command, not a mutable queue
+slot. SQLite guards command payload/request identity and post-confirmation TTL,
+confirmer and confirmation time. State transitions cannot rewind a terminal
+outcome or replace a competing decision. The existing confirmation surfaces keep
+their authorization checks; storage adds atomic protection against races.
+
+Before live or harvest dispatch, one atomic conditional insert claims the exact
+still-approved, unexpired row, and commits with FULL synchronous durability.
+Only one consumer wins. Claim failure blocks dispatch. Expired approvals expire
+without an effect. The claim stays durable if dispatch, cancellation, process
+exit or final receipt persistence fails. Readers expose an unresolved approval
+as `claimed`; it is excluded from future approved polls and the UI directs the
+operator to reconcile before issuing a replacement. This is at-most-once dispatch,
+not proof that an external exchange operation occurred exactly once.
+
+A successful final receipt retains the claim as audit evidence. There is no
+automatic lease expiry/retry for commands and no automatic claim-clearing tool.
+Reconciliation inspects command ID, daemon logs, engine/exchange state and (for
+withdrawals) ADR-026's durable transfer reservation and Kraken records. A new
+human approval, after determining the effect, is a new command; never reset or
+reuse the old UUID. The Harvester's existing replay/cap controls remain mandatory.
+
+Claims are additive, with a virtual read status to avoid rewriting the existing
+pending-command table. **Do not downgrade to a pre-claim consumer while any
+unresolved claim exists:** old binaries do not understand that side table. Stop
+consumers and reconcile first. Shared operator.db writers remain a filesystem
+capability residual; these guards are application/database correctness controls,
+not a defense against an administrator who can drop triggers or edit the schema.
+
+G1 baseline/anomaly evidence is still unavailable; no anomaly daemon is introduced
+or readiness inferred from synthetic history by this independent lifecycle work.

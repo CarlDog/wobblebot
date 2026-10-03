@@ -1370,6 +1370,8 @@ async def _process_pending_commands(
                 extra={"pending_id": str(pending.id), "command_kind": command.kind},
             )
             continue
+        if not await operator_storage.claim_pending_command(pending):
+            continue
         try:
             if isinstance(command, ReanchorCommand):
                 # A re-anchor places a fresh grid inside dispatch_command.
@@ -1423,11 +1425,8 @@ async def _process_pending_commands(
         try:
             await operator_storage.save_pending_command(updated)
         except WobbleBotPortError as exc:
-            # Persistence failure here is bad — the operator's confirm
-            # already happened, but we cannot record the outcome. A row
-            # that remains approved may be retried next tick; the approval
-            # floor prevents a refused stale re-anchor from executing on
-            # that retry. Other commands retain the v1 idempotency limit.
+            # The durable pre-effect claim survives a missing terminal receipt.
+            # No subsequent poll may dispatch this approval again.
             _LOGGER.warning(
                 "failed to persist dispatched pending_command (pending_id=%s): %s",
                 pending.id,
@@ -1435,8 +1434,7 @@ async def _process_pending_commands(
                 extra={"pending_id": str(pending.id), "error": str(exc)},
             )
             # No receipt is truthful until the terminal status is durable.
-            # The approval floor above keeps an old re-anchor refused on
-            # the next poll, even if the valuation has recovered meanwhile.
+            # An unresolved claim remains visible for explicit reconciliation.
             processed += 1
             continue
         processed += 1
