@@ -148,6 +148,9 @@ No exclusion is based merely on cost, difficulty or a later-phase label.
   interpreter. Repair must preserve Windows/override selection and make verification
   non-mutating; synchronize the contributor workflow with current process guidance.
 
+The final local test candidate is tagged `v2.1.0-alpha.1`; it is not product/phase
+acceptance. See the latest roadmap receipt for exact tested source and image identity.
+
 Resume from this branch, inspect `git status`, read the latest roadmap receipt,
 and address the named blockers before phase-dependent work. Keep existing code,
 financial invariants and all unresolved criteria intact. Never mark a handoff as

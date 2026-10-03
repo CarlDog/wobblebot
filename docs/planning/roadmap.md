@@ -7,6 +7,89 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 final local candidate: completion gate remains open
+
+Verified candidate commit: `b8a2d0fb704081d0e2d347ba2137e1bb8b9b8ab5`.
+Authorized local annotated tag: `v2.1.0-alpha.1`, package `2.1.0a1`.
+No existing tag moved and nothing was pushed. The following receipt-only commit
+may follow the tagged source; it does not change the tested application.
+
+The actual Dockerfile built successfully with hashed dependencies and the existing
+bounded proxy/ephemeral trusted-CA procedure. Image inspection confirms revision
+`b8a2d0fb704081d0e2d347ba2137e1bb8b9b8ab5`, non-root user `wobblebot` (UID 1001),
+and matching installed/runtime package version. Local image ID:
+`sha256:1dcce15327c107b2c6b7cf1e759b16ea57e8e36d03426c40903b5c2b924ce741`.
+This is a local image ID, **not** a published registry manifest digest.
+
+Executable image checks, all exit 0 after the named harness corrections:
+
+- `timeout 600 python3 /tmp/wobblebot-verification/build_local.py` — exact clean
+  candidate, `docker build -f docker/Dockerfile -t wobblebot:local-verification`,
+  verified revision build argument, hashed wheels and successful `pip check`.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 60 docker run --rm --network none
+  wobblebot:local-verification python -m wobblebot.cli.sandbox --config
+  config/settings.example.yml` — actual entrypoint, packaged code, SQLite and
+  mock buy/sell cycle; no exchange calls.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 180 python3
+  /tmp/wobblebot-verification/n1_wal.py` — actual candidate image, UID 1001,
+  read-only directory mount sees concurrent committed WAL updates after reader
+  restart and rejects writes.
+- `PYTHONPATH=/workspace/wobblebot DOCKER_CONFIG=/tmp/wobblebot-docker timeout 300
+  .venv/bin/python /tmp/wobblebot-verification/compose_rehearsal.py` — all ten
+  generated service grants passed: owner/log writes, denied foreign/config
+  writes, read-only SQLite integrity and non-root identity, with network disabled.
+- The extended maintenance/settings portion was then completed with
+  `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 180 python3
+  /tmp/wobblebot-verification/extended_rehearsal.py`: actual backup, restoration
+  integrity, vacuum and atomic settings replacement, followed by a fresh read-only
+  observer loading the replacement. All data/configs were disposable fixtures.
+
+Harness corrections were not product failures or waived checks: the first wrapper
+needed the repository on PYTHONPATH; the extension passed a string to a Path API,
+then discovered its seeded database filenames differed from the generated config.
+Correcting those fixtures produced new evidence at each step; the successful
+permission checks were retained and only the incomplete extension was rerun.
+The combined harness is corrected for future repetitions. No production files,
+secrets, Discord messages, withdrawals, trades or paid inference were used.
+
+**Final reconciliation:** canonical FR/NFR and shipped Phases 1-8/P/C substrate
+retain their full tests and upgrade checks; N1-N5 have local implementation,
+integration, operating guides and acceptance fixtures. Every retained catalog
+entry still has its source, disposition and gate in the baseline/backlog. G1/G3's
+current-phase obligation is the honest readiness receipt (closeout plan §4), not
+an invented detector/Historian: no private usable history, Q2 corpus or canonical
+NAS scoring data is present. G2/G4-G8/G10 keep their named ownership/evidence/
+activation triggers; no parked or unratified proposal was promoted by inference.
+The committed Phase 9 track remains incomplete: kickoff evidence is recorded,
+but its account-enabled API/account/jurisdiction/risk contract is unresolved.
+
+**Blockers and smallest resume actions:**
+
+- Required private configuration drift gates remain six skips, not accepted
+  exceptions. Supply authorized sanitized operator config/env-key structure or
+  run those gates in the approved private checkout and provide the receipt.
+- Public Kraken contract checks previously failed via proxy 403 and direct DNS
+  timeout; authenticated/API/provider/NAS/Windows/hosted-CI/CodeQL checks are
+  unavailable here. Provide a permitted reachable verification environment and
+  the specific read-only access/receipts. Financial or paid tests need separate
+  authorization; no need to publish merely to continue local development.
+- Provide Q2/canonical history and the approved NAS evidence lane for G1/G3;
+  preserve selection/fidelity/gap caveats. ADR-040 Stage 2 needs actual qualifying
+  edit evidence. Unratified G2/G5/G7/G8 decisions remain gated by their own sources.
+- For Phase 9, confirm Kraken Securities account type, jurisdiction and official
+  account-enabled equities API/house rules. The historical PDT assumption cannot
+  safely determine the current account policy. Earnings source and broker lot/tax
+  inputs then complete the risk design; real cycles remain separately authorized.
+- Fleet Ruff migration, literal Dockerfile-healthcheck deviation and remote/OC
+  unknowns remain disclosed in the audit; no blanket conformance claim or new
+  exception is made. No remote issue, metadata or access action was taken.
+
+Full-product completion is **not declared**. Useful independent implementation and
+executable local verification are preserved; remaining work requires these external
+facts, source-defined triggers or separately scoped authorization. The exact
+continuation record and command logs are in ignored `tmp/product-completion-*`.
+
+
 ### 2026-10-03 local prerelease candidate and audit checkpoint
 
 Package/runtime metadata now agree on `2.1.0a1` (planned local-only annotated tag
