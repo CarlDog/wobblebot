@@ -59,7 +59,7 @@ def test_generated_contract_preserves_policy_and_denies_extra_grants(tmp_path):
 
 
 def test_unknown_or_shared_database_owner_is_rejected_before_output(tmp_path):
-    raw = yaml.safe_load(EXAMPLE.read_text())
+    raw = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))
     raw["web"]["live_db"] = "data/unclassified.db"
     config = tmp_path / "settings.yml"
     config.write_text(yaml.safe_dump(raw))

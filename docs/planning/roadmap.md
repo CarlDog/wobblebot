@@ -28,6 +28,16 @@ exact-commit quality and Linux/Windows Python 3.13/3.14 jobs; do not infer a pas
 from local results. Final run receipts and any hosted blockers are retained in
 the continuation/evidence directory. All private/NAS/data gates remain unwaived.
 
+The first matrix run (`37093427658`, commit `e666109`) passed quality and both
+Linux jobs, then exposed two Windows fixture defects: `?` is forbidden in Windows
+filenames, and a fixture read the UTF-8 example config using the locale encoding.
+Use a legal space/hash/percent filename on both platforms, retain the original
+question-mark case on POSIX with an explicit Windows filesystem skip, and read
+the UTF-8 fixture explicitly. These preserve the real SQLite URI-escaping and
+unsafe-owner rejection assertions; no production behavior or check is disabled.
+The generator itself already reads/writes UTF-8. Push the verified correction and
+require a new exact-commit matrix result rather than retrying unchanged failures.
+
 ### 2026-10-03 alpha.2 healthcheck and comprehensive local reconciliation
 
 The prior Dockerfile-healthcheck finding was remediable local implementation,
