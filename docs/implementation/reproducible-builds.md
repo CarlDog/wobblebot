@@ -15,9 +15,9 @@ and license changes, then verify the full supported matrix. The resolver used
 here is `uv pip compile`, not a migration to uv project/package management:
 
 ```sh
-uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.13 --output-file requirements.lock
 uv pip compile requirements-build.in --universal --generate-hashes --python-version 3.13 --output-file requirements-build.lock
 uv pip compile pyproject.toml requirements-build.in --extra dev --universal --generate-hashes --python-version 3.13 --output-file requirements-dev.lock
+uv pip compile pyproject.toml --constraint requirements-dev.lock --universal --generate-hashes --python-version 3.13 --output-file requirements.lock
 ```
 
 The Dockerfile pins the Python base by digest, verifies runtime/build hashes,

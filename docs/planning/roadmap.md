@@ -19,7 +19,11 @@ identity limits and the retained Ruff gap. No image or commit was published.
   --generate-hashes --python-version 3.13` generated all three reviewed locks;
   exact reproducible invocations are in the build guide. Hashed runtime and dev
   binary-wheel downloads for Python 3.14 passed. Hashed installs on 3.13 and 3.14
-  passed; runtime resolution matches the dev lock's runtime versions.
+  passed. A later exact cross-check found python-dotenv 1.2.4 in the
+  initial runtime lock versus the dev pin 1.2.3; the earlier matching claim was
+  incorrect. Runtime resolution now constrains against the dev lock, and a
+  regression test requires every runtime version to be exercised by CI. The
+  original image receipts above remain receipts for their exact earlier image.
 - `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
   make check`: exit 0, 4,409 passed, six private-config skips, 30 integration
   deselections; coverage 88.47%; Black/isort/mypy/pylint all passed.
