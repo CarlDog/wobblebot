@@ -26,7 +26,7 @@ a patch on top of it. They are now one `[2.0.0]` section, per
 `docs/planning/release-2.0-plan.md` §1a. Post-2.0.0 work lands under a
 fresh `[Unreleased]` heading created at that time.
 
-## [Unreleased]
+## [2.1.0-alpha.1] — local test candidate, unpublished
 
 ### Changed
 

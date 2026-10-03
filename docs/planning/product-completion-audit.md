@@ -43,3 +43,39 @@ it does not authorize issue publication, OpenChronicle changes or deployment.
 Hand checks: `git ls-files pyproject.toml .github/workflows docker/Dockerfile`
 confirms tracked sources; pyproject uses Black/isort/pylint, the image base is
 unpinned before N2, and installed hooks retain all four security properties.
+
+## Final manual reconciliation
+
+- PY-03: tracked hashed runtime/build/dev locks and exact dev pins are consumed
+  by Make/CI/Docker. The cross-lock test prevents untested runtime versions.
+- PY-05: actual image is multi-stage/non-root and digest-pinned. Health checks
+  are per-service in Compose, not a generic Dockerfile HEALTHCHECK: one image
+  also serves one-shot tools. This remains a literal standard deviation, not a
+  false claim that the machine script checked it.
+- PY-06: tracked separate quality and Linux/Windows Python matrix both gate
+  publication. Existing Black/isort/pylint/mypy are retained under ADR-048;
+  Ruff migration remains a standards gap. Replacing the whole lint/format stack
+  is a separately scoped tooling migration, not a product defect repair.
+- PY-07: architecture AST, withdrawal authority, approval and capability tests
+  cover new lifecycle/delivery/health/provider wiring. No framework types entered
+  the domain or service API; explicit legacy adapter/helper exceptions stay bounded.
+- UNI-09: current stamp names the audited standard and links these gaps; it does
+  not claim blanket conformance or accepted exceptions.
+- UNI-12: manifest/runtime/installed version synchronization is test-enforced.
+  The authorized local prerelease is explicitly unpublished; no existing tag is
+  moved. The existing release checker deliberately does not compare prerelease
+  suffixes; it still displays current/latest identity without asserting an update.
+- UNI-17: SECURITY.md is tracked and describes real financial/key threat boundaries.
+- UNI-18: missing DEVELOPER-TOOLS.md was a verified documentation gap; it now names
+  required/recommended tools and scoped Azure applicability without installing any.
+- UNI-11/19 and CodeQL: current remote/hosted evidence remains unavailable; no
+  local config or historical receipt is substituted for it.
+- UNI-21: authorized OpenChronicle MCP is unavailable; no CLI, project creation
+  or metadata mutation was used. Machine NA is not verification.
+
+Required private config drift checks remain skipped because the operator files
+are absent; no exception has been accepted. Config example parity, deprived CLI
+behavior, local quality, upgrade gates and offline integration are exercised.
+Large cohesive SQLite/engine/operator modules are retained, with future extraction
+only on a concrete ownership/change need. No speculative rewrite was performed.
+No remote issue/PR, access change, publish, deployment or real money action occurred.

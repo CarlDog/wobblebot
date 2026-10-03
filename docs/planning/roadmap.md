@@ -7,6 +7,31 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 local prerelease candidate and audit checkpoint
+
+Package/runtime metadata now agree on `2.1.0a1` (planned local-only annotated tag
+`v2.1.0-alpha.1`). This is a test candidate, not accepted 2.1 closure or publication.
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0, 4,465 passed, six private-config skips, 30 integration
+exclusions, coverage 88.48%, elapsed 117.11s. Python 3.14 metadata/release-surface
+checks passed 35 tests after reinstalling the editable package with `uv pip
+install --python /tmp/wobblebot-venv314/bin/python --no-deps --no-build-isolation
+-e .`; that disposable uv-created environment has no pip module. The initial
+pip reinstall failed and the version test correctly detected stale installed
+metadata; no failure was waived. The N5 full 3.14 run above verifies unchanged
+runtime behavior; the targeted rerun verifies the candidate identity change.
+
+Fresh Fleet machine audit: exit 1, 17 pass, one fail, six NA, two unknown, no
+stale stamp. PY-01 Ruff remains a known gap; manual PY-05/06 deviations and
+UNI-12/17/18 checks are explicit in the audit work item. DEVELOPER-TOOLS.md fills
+an actual missing documentation requirement. No new exception is presumed.
+Gitleaks history scan: exit 0, 1,103 scanned commits, no findings. Identity review
+of all reachable history found 1,196 commits: no non-noreply authors, 143 GitHub
+service-domain committers, no other committer domains. All implementation commits
+use the configured noreply identity; no history was rewritten.
+Final committed-image verification follows this checkpoint.
+
+
 ### 2026-10-03 N5 local Ollama and provider maintenance
 
 ADR-052 corrects native system/chat-thinking envelopes, validates local model
