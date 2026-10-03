@@ -7,6 +7,30 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-03 SQLite membership regression evidence
+
+The operator requested a durable negative control for the migration finding.
+`tests/adapters/test_sqlite_row_membership.py` now exercises the production
+`row_to_transfer_result` mapper with real in-memory SQLite rows: modern reserved
+and rejected states survive, and a legacy row containing the missing column's
+name as another column's value still uses the legacy fallback. Opposing key/value
+membership assertions make the runtime contract explicit. An isolated mapper copy
+with only `.keys()` removed fails all three cases; production source was unchanged.
+The lesson links the exact source/test paths, and `pyproject.toml` points to the
+regression beside its narrowly scoped SIM118 exclusions. The test's intentional
+key-membership assertion has one explained line-level suppression.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check` passes Ruff format/lint, mypy and pylint: **4,501 passed, 6 private-config
+skipped, 30 integration deselected**, 88.61% coverage, 114.91s.
+`timeout 60 /tmp/wobblebot-venv314/bin/python -m pytest
+tests/adapters/test_sqlite_row_membership.py --no-cov -q`: **3 passed**; the earlier
+full Python 3.14 receipt below remains applicable to the unchanged implementation.
+Evidence: `sqlite-row-final-check.log` and `sqlite-row-mutation.log` in the ignored
+verification directory. No runtime behavior or image changed; the image receipt
+below remains tied to its exact implementation revision. No remote publication,
+Fleet source change, new tag, or waiver of remaining completion gates occurred.
+
 ### 2026-10-03 revised scope: Ruff migration, equities boundary and research
 
 The operator approved retaining pylint's semantic checks during Ruff migration

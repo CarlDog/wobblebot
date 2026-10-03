@@ -164,6 +164,7 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # sqlite3/aiosqlite Row membership searches VALUES and has no .get().
 # These two adapters must explicitly test row.keys() for legacy-schema fallback.
+# Real-row regression/negative control: tests/adapters/test_sqlite_row_membership.py.
 "src/wobblebot/adapters/sqlite_storage_rowmap.py" = ["SIM118"]
 "src/wobblebot/adapters/sqlite_storage.py" = ["SIM118"]
 

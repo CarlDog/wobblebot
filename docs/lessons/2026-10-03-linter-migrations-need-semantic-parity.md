@@ -11,6 +11,7 @@ prevention:
   - Review auto-fixes against actual runtime protocols, not names that resemble dictionaries.
 mechanized_by:
   - pyproject.toml retained pylint gate and SQLite Row exclusions
+  - tests/adapters/test_sqlite_row_membership.py
 related: [2026-10-03-portable-nonmutating-verification]
 ---
 
@@ -35,7 +36,20 @@ from this repository-specific decision.
 **Evidence** — The roadmap migration receipt, the retained Make/CI pylint gate,
 `ruff-cycle-parity.log` and `ruff-row-membership.log` in the ignored verification
 evidence directory, and the existing SQLite command/delivery/provenance tests.
-The positive membership control uses a real sqlite3.Row, not a dictionary mock.
+The committed `tests/adapters/test_sqlite_row_membership.py` regression uses real
+in-memory `sqlite3.Row` values and the production `row_to_transfer_result` mapper
+in `src/wobblebot/adapters/sqlite_storage_rowmap.py`. Modern rows must preserve
+reserved/rejected state even though the column name is absent from their values;
+a legacy row deliberately stores `submission_state` as a value in another column
+and must still take the missing-column fallback. Explicit opposing key/value
+membership assertions preserve both negative controls. Replacing the production
+key check with value membership fails all three cases. The SIM118 exclusions in
+`pyproject.toml` cover only the two SQLite adapter files with these row checks;
+they do not disable the rule across ordinary dictionaries or other modules.
+The regression's intentional key-membership assertion has one explanatory
+`noqa: SIM118`; its value-membership assertion remains unsuppressed. An isolated
+copy of the production mapper with only that guard mutated failed all three
+tests (`sqlite-row-mutation.log`), without changing production source.
 
 **Applicability limits** — This does not require pylint in every Ruff project or
 forbid supported fixes. Establish the project's actual contract and preserve it.
