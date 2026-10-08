@@ -7,6 +7,79 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 exact-code qualification receipt and remaining gates
+
+Reviewed code candidate: `cc95a21f7ebc0ad8bfab24d7f3eefb2bfaff19c5`, package
+`2.1.0a2`, non-force pushed to `codex/product-completion` and verified with
+`git ls-remote`. This candidate includes accepted main `5c0e303` via merge
+`ab2f071`; no main update, release, tag push or deployment occurred. Existing
+local alpha.1/alpha.2 tags remain immutable. A subsequent documentation-only
+receipt commit records these results without changing the qualified code; its
+SHA is not misrepresented as the matrix-tested candidate.
+
+[Hosted CI 37722489368](https://github.com/CarlDog/wobblebot/actions/runs/37722489368)
+completed successfully on that exact code SHA. Individual jobs and log summaries
+were checked: quality passed; Linux Python 3.13/3.14 each passed 4,518 tests with
+six private-config skips and 30 integration deselections; Windows Python 3.13/3.14
+each passed 4,516 with eight skips and 30 deselections. Windows retains the two
+platform-specific skips described in the prior receipt. All ten offline integration
+cases passed on every matrix target. Image publication was explicitly **skipped**.
+[Hosted gitleaks 37722489331](https://github.com/CarlDog/wobblebot/actions/runs/37722489331)
+passed at the same SHA. Local `timeout 90 /tmp/wobblebot-tools/gitleaks detect
+--source . --redact --no-banner` passed (1,120 commits scanned), and commit hooks
+passed identity, staged secret and PII checks. CodeQL is not among this candidate's
+checks; no clean CodeQL result or security-configuration change is claimed.
+
+Fresh Dockerfile build `timeout 600 python3
+ tmp/qualification-2026-10-08/build_image.py` passed from the clean exact code
+revision, using the previously documented ephemeral trusted-CA/proxy build route
+and existing hashed dependencies. Local image ID:
+`sha256:90bc5cb8fbb57b1fc92d2c28777600623dd3a421b2b1861a7bfa7f33df1479b5`.
+This is a local image ID, not a published registry manifest digest. Non-root image
+revision/version matched; all 174 packaged Python files, healthcheck and runtime
+lock matched checkout bytes. No new version or tag was created.
+
+Fresh disposable, network-disabled image checks (all exit 0):
+
+- `timeout 180 .venv/bin/python tmp/qualification-2026-10-08/image_smoke.py`:
+  actual web CLI health succeeds, a real SQLite delivery heartbeat changes healthy
+  to unhealthy when stale, and an unconfigured role is unhealthy. The producer is
+  synthetic; real Discord delivery is not claimed. Equities false runs two mock
+  trades; true refuses unsupported activation with exit 2.
+- `timeout 600 env PYTHONPATH=. .venv/bin/python
+  tmp/qualification-2026-10-08/compose_rehearsal.py`: all ten generated service
+  grants, owner/log writes and denied foreign/config writes pass; real maintenance
+  backup/restoration/vacuum and atomic settings rewrite with a fresh reader pass.
+- `timeout 60 .venv/bin/python tmp/qualification-2026-10-08/package_identity.py`:
+  installed source and lock identity match the candidate.
+- `timeout 90 .venv/bin/python tmp/qualification-2026-10-08/wal_rehearsal.py`:
+  the actual non-root image's read-only adapter sees two committed WAL updates
+  through a read-only directory mount while its writer remains open; WAL/SHM exist.
+
+Scripts/logs and the machine receipt remain in the ignored qualification directory
+in the saved development environment. Disposable containers and the isolated
+mutation worktree were removed. These checks qualify local implementation behavior,
+not the NAS filesystem, production migration, real providers or financial effects.
+
+**Completion reconciliation:** N0 is accepted; N1–N5 remain implemented with fresh
+local/hosted qualification and the N3 defect repaired. PB1–PB13, NW04 and the
+strict disabled equities boundary are preserved and covered by the full suite.
+No later proposal is adopted and 2.1 is not closed. The remaining requirements
+need these smallest external actions; none is waived:
+
+| Gate | Missing evidence / smallest action |
+| --- | --- |
+| Private configuration | Run the existing strict schema-drift checks against actual operator files in their trusted environment and provide only redacted pass/skip results. Six absent-file skips here remain unverified. |
+| Exact-candidate CodeQL | Obtain a real analysis of `cc95a21` through the existing authorized security workflow/client, or explicitly authorize any necessary setup correction. Repository files expose no CodeQL workflow, the CLI is absent locally, and shell GitHub API access is forbidden; the connected reader confirms no check. Historical neutral/missing-baseline warnings do not pass this gate. |
+| N1/N2 NAS qualification | Separately authorize a staged isolated rehearsal on the actual host, with consistent disposable data copies, actual permissions/WAL/backup/restore/settings paths and exact runtime image identity. No migration or deployment is implied by this local result. |
+| N3/N4 real delivery and health | Separately authorize the dedicated delivery path and bounded operator-death/notification/health observation on the target environment. Synthetic HTTP/heartbeat fixtures cannot establish external delivery or host survival. |
+| N5 local/provider qualification | Select and authorize a WobbleBot local-only Ollama endpoint while preserving explicit cloud-provider accounting; verify server policy, installed model identity and authorized bounded probes. The shared-server design assessment is not a waiver or permission for cloud calls. |
+| Tracking tools | Expose authorized OpenChronicle/Serena tools if their context/mirroring is required. Neither is callable in this session; no external installation, credentials or access changes were attempted. |
+
+Next action is target-environment/security qualification when access and the scoped
+authorizations are available. Further unrelated implementation would not close
+these evidence gates. The actual NAS remains unchanged by this work.
+
 ### 2026-10-08 N3 expiry under SQLite writer contention
 
 Reconciliation merge `ab2f0713f9a2c7ca7e1bd92bdcac9aae9464af6f` is pushed and

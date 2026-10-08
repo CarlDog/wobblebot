@@ -86,7 +86,7 @@ and tests remain the implementation evidence, not the checkmarks alone.
 | C5 / closeout plan | Exact release/deploy/observation identity, individually accepted limitations and formal operator closure | Formal 2.0.x close accepted through main PR #166 with L1–L24 retained as limitations; fresh 2.1 acceptance remains separate. Release publication not authorized |
 | N0 / closeout plan | Accepted 2.0 close, reconciled N1-N5 scope, unique ADR references, first slice criteria | N0 accepted through PR #166; existing branch continuation explicitly authorized 2026-10-08. ADR-047 onward record implementation; 2.1 close remains separate |
 | N1 / closeout plan §5; ADR-041 | Per-service data/config/secret capabilities, WAL/backups/settings consumers; remove unnecessary web cloud keys using authoritative fresh health | Implemented locally under ADR-047; final-image capability and WAL rehearsals passed. Operator/NAS configuration and production migration remain B2; shared operator-table authority remains explicit |
-| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Historical Linux/Windows 3.13/3.14 CI passed at fa625d0. Reconciled-candidate CI and CodeQL evidence remain required; ADR-054 authorizes retained pylint alongside Ruff |
+| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Reconciled code candidate cc95a21 passed Linux/Windows 3.13/3.14 CI; exact-candidate CodeQL and actual NAS identity remain required (roadmap receipt); ADR-054 authorizes retained pylint alongside Ruff |
 | N3a / closeout plan §5 | Immutable approval, atomic claims, expiry/mutation rejection, post-effect ambiguity reconciliation | Implemented locally under ADR-049; competing consumers, mutation/expiry, restart and failed-receipt tests passed. Reconciliation requires observed external effects; no blind replay |
 | N3b / closeout plan §5 | Durable notification outbox, independent delivery, bounded retries/terminal failure; no exactly-once claim | Implemented locally under ADR-050; independent sender, claims/receipts, retry/backoff and crash-boundary tests passed. Activation and real Discord verification remain separate; no G1 anomaly daemon added |
 | N4 / closeout plan §5 | Independent dead/wedged detection, read-only human/JSON doctor, unknown/stale evidence; money daemons page-only | Implemented locally under ADR-051: independent page-only observer, durable transition alerts and read-only human/JSON doctor. External supervisor/host/Discord acceptance remains B2; no restart actor or Docker socket |
@@ -136,8 +136,10 @@ No exclusion is based merely on cost, difficulty or a later-phase label.
   confirmed by the parent. Continue all independently buildable adopted work.
   Formal 2.0 acceptance is recorded in PR #166; fresh 2.1 production evidence and old exceptions remain separate;
   no missing criterion is waived by the local sequencing decision.
-- B2: fresh external evidence/access: GitHub API and public Kraken connectivity,
-  private configs/keys, canonical OHLC/outcome data, NAS and production observations.
+- B2: fresh external evidence/access: exact-candidate security analysis, required
+  provider checks, private configs/keys, canonical OHLC/outcome data, NAS and production observations.
+  Authorized GitHub connector reads and hosted matrix results are available;
+  shell GitHub API access remains forbidden.
   Do not copy historical counts as current facts or run paid/money operations.
 - B3: local product image build and isolated capability rehearsal resolved with
   hashed wheels, explicit proxy hostname mapping and an ephemeral trusted CA.
@@ -145,9 +147,9 @@ No exclusion is based merely on cost, difficulty or a later-phase label.
 - B4: tooling availability resolved by read-only Fleet Kit source at verified
   commit `990747556e73d874d76d4ab6d2212460eabe7652`; see the
   [audit work item](product-completion-audit.md). Remote/OC unknowns remain.
-- D1: demonstrated local setup defect: Linux Make targets select a Windows-only
-  interpreter. Repair must preserve Windows/override selection and make verification
-  non-mutating; synchronize the contributor workflow with current process guidance.
+- D1: resolved local setup defect: Make now selects the platform interpreter,
+  preserves explicit overrides and runs non-mutating verification. Contributor
+  workflow is synchronized; historical repair evidence remains in the roadmap.
 
 The original local checkpoint `v2.1.0-alpha.1` is immutable. The expanded local
 candidate is `v2.1.0-alpha.2`; neither represents product/phase acceptance. See the
