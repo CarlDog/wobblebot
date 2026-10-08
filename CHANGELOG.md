@@ -28,6 +28,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- Recheck command approval expiry after acquiring SQLite write ownership, so
+  lock contention cannot dispatch an approval that expired while waiting.
+
 ### Documentation
 
 - **Close the 2.0.x stabilization milestone and open 2.1.** The

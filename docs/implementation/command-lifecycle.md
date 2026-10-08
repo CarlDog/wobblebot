@@ -6,6 +6,9 @@ rewritten, and terminal decisions cannot be reset to approved. Concurrent decisi
 race atomically; a losing write returns a conflict instead of replacing the winner.
 
 Live and harvest claim an exact, unexpired approval durably before dispatch.
+For file-backed stores, write ownership is acquired before sampling the approval
+validity time. An approval that expires while another writer holds SQLite’s lock
+is marked expired and cannot dispatch.
 A claimed command disappears from the approved work queue. If the daemon dies
 or fails to save its result, the claim remains visible as `claimed` on the command
 watch/history surfaces; restart never silently retries it. The command may have

@@ -7,6 +7,40 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 N3 expiry under SQLite writer contention
+
+Reconciliation merge `ab2f0713f9a2c7ca7e1bd92bdcac9aae9464af6f` is pushed and
+remote-verified; its hosted gitleaks run `37722126903` passed. Its docs-only push
+correctly did not trigger the path-filtered platform workflow. Main is unchanged.
+
+Independent qualification review found that `claim_pending_command` sampled time
+before SQLite write-lock acquisition. A competing writer could hold the lock
+past approval expiry, then the stale timestamp admitted dispatch. File-backed
+claims now acquire `BEGIN IMMEDIATE` before sampling validity time, keeping the
+claim and expiry update atomic with FULL durability. In-memory fixtures retain
+the existing shared-connection transaction seam. No financial effect is retried.
+
+The regression holds an actual competing SQLite write transaction and advances a
+controlled clock across expiry after a trace barrier. The public claim result and
+persisted status must reject/expire the short approval; a long-lived approval
+still succeeds. An isolated checkout at `ab2f071` with only the new tests fails
+that expired case and passes the long-lived control (pytest exit 1). Import path
+was verified against that checkout. Restoring the fixed adapter there passes all
+seven claim tests. The ordinary in-memory one-dispatch control also passes.
+Independent production-correctness and test-honesty reviews report no findings;
+the former reran 15 claim/harvest tests, the latter seven claim tests. These are
+bounded reviews, not a full deployment review or NAS acceptance.
+
+Fresh verification: `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check` exits 0: Ruff format/lint, mypy,
+pylint 10.00/10, 4,518 passed, six private-config skips, 30 deselected, 88.62%
+coverage. The same ten-case offline integration command in the reconciliation
+receipt passes. `timeout 30 .venv/bin/python -m pytest
+tests/config/test_schema_drift.py --no-cov -q -rs` passes 26 and skips six because
+actual operator settings/env files are absent. No skip is accepted as a pass.
+`git diff --check` passes. Candidate image/hosted security and matrix results
+remain to be obtained after this reviewed code checkpoint; no release is claimed.
+
 ### 2026-10-08 accepted-main reconciliation and renewed qualification
 
 Work item: `CarlDog/wobblebot:2.1-qualification`. Initial saved checkout was clean

@@ -1792,7 +1792,6 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         if self._read_only:
             raise StorageError("Read-only storage cannot claim a command")
         conn = None
-        now = datetime.now(UTC).isoformat()
         try:
             # File-backed claims own a connection/transaction: an unrelated
             # coroutine's rollback on the shared adapter cannot erase the claim.
@@ -1806,6 +1805,11 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             # A confirmed claim must survive power loss before an external effect.
             # Keep FULL for this connection; never weaken another task's durability.
             await conn.execute("PRAGMA synchronous = FULL")
+            if conn is not primary:
+                # A competing writer can hold the lock beyond the approval TTL.
+                # Obtain write ownership before sampling the validity timestamp.
+                await conn.execute("BEGIN IMMEDIATE")
+            now = datetime.now(UTC).isoformat()
             cursor = await conn.execute(
                 """
                 INSERT OR IGNORE INTO command_claims (command_id, claimed_at)

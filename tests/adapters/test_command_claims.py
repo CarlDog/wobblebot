@@ -113,3 +113,71 @@ async def test_read_only_consumer_cannot_escape_grant_to_claim(tmp_path):
     finally:
         await reader.close()
         await writer.close()
+
+
+@pytest.mark.parametrize("expires_during_wait", [True, False])
+async def test_claim_checks_expiry_after_writer_lock(tmp_path, monkeypatch, expires_during_wait):
+    """Real SQLite contention with a controlled clock, without timing-sensitive sleeps."""
+    from wobblebot.adapters import sqlite_storage
+    from wobblebot.sqlite_connection import open_connection
+
+    path = tmp_path / "operator.db"
+    storage = SQLiteStorageAdapter(path)
+    await storage.connect()
+    pending = command(seconds=5 if expires_during_wait else 300)
+    await storage.save_pending_command(pending)
+    clock = pending.created_at.dt
+    entered_write = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.astimezone(tz)
+
+    async def observed_connection(*args, **kwargs):
+        conn = await open_connection(*args, **kwargs)
+
+        def trace(statement):
+            if statement.strip().upper().startswith("BEGIN"):
+                loop.call_soon_threadsafe(entered_write.set)
+
+        await conn.set_trace_callback(trace)
+        return conn
+
+    monkeypatch.setattr(sqlite_storage, "datetime", Clock)
+    monkeypatch.setattr(sqlite_storage, "open_connection", observed_connection)
+    blocker = await open_connection(str(path))
+    claim = None
+    try:
+        await blocker.execute("BEGIN IMMEDIATE")
+        claim = asyncio.create_task(storage.claim_pending_command(pending))
+        await asyncio.wait_for(entered_write.wait(), timeout=2)
+        assert not claim.done()
+        # Advance across the short approval's TTL while the real writer holds
+        # the lock. The long-lived approval is the positive contention control.
+        clock += timedelta(seconds=10)
+        await blocker.rollback()
+        assert await asyncio.wait_for(claim, timeout=5) is not expires_during_wait
+        saved = await storage.get_pending_command(pending.id)
+        assert saved.status == ("expired" if expires_during_wait else "claimed")
+    finally:
+        await blocker.rollback()
+        if claim is not None and not claim.done():
+            claim.cancel()
+            await asyncio.gather(claim, return_exceptions=True)
+        await blocker.close()
+        await storage.close()
+
+
+async def test_in_memory_claim_preserves_single_dispatch():
+    storage = SQLiteStorageAdapter(":memory:")
+    await storage.connect()
+    try:
+        pending = command()
+        await storage.save_pending_command(pending)
+        assert await storage.claim_pending_command(pending)
+        assert not await storage.claim_pending_command(pending)
+        assert (await storage.get_pending_command(pending.id)).status == "claimed"
+    finally:
+        await storage.close()
