@@ -30,6 +30,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Health reads now degrade to unknown when operator-database path resolution
+  fails, using one read-only open without a separate existence check.
+- Missing web session-key diagnostics reference the configuration field without
+  echoing its configured environment-variable name.
+
 - Constrain the container HTTP health probe to loopback `/healthz`, reject
   unintended destinations before I/O, and ignore redirects and proxy settings.
 - Replace deployment image-reference regex validation with equivalent linear

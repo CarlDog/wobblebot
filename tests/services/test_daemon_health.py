@@ -330,6 +330,53 @@ def _build_operator_db_with_heartbeats(path: Path, heartbeats: dict[str, datetim
 
 
 class TestHeartbeatBasedDaemons:
+    async def test_operator_path_failure_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, now: datetime
+    ) -> None:
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {"cli/live": now})
+
+        def fail_path_operation(*_args, **_kwargs):
+            raise OSError("filesystem path lookup failed")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(type(op_db), "resolve", fail_path_operation)
+            rows = await fetch_daemon_freshness(
+                observe_db=None, advise_db=None, operator_db=op_db, now=now
+            )
+        by_name = _by_name(rows)
+        for name in _HEARTBEAT_NAMES:
+            assert by_name[name].status is DaemonStatus.UNKNOWN
+            assert by_name[name].detail == "operator.db unwired or unreachable"
+
+    async def test_missing_operator_database_stays_absent(
+        self, tmp_path: Path, now: datetime
+    ) -> None:
+        op_db = tmp_path / "missing.db"
+        rows = await fetch_daemon_freshness(
+            observe_db=None, advise_db=None, operator_db=op_db, now=now
+        )
+        assert not op_db.exists()
+        assert list(tmp_path.iterdir()) == []
+        for name in _HEARTBEAT_NAMES:
+            assert _by_name(rows)[name].status is DaemonStatus.UNKNOWN
+
+    async def test_heartbeat_read_does_not_require_a_separate_stat(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, now: datetime
+    ) -> None:
+        op_db = tmp_path / "operator.db"
+        _build_operator_db_with_heartbeats(op_db, {"cli/live": now})
+
+        def fail_stat(*_args, **_kwargs):
+            raise OSError("separate path check failed")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(type(op_db), "exists", fail_stat)
+            rows = await fetch_daemon_freshness(
+                observe_db=None, advise_db=None, operator_db=op_db, now=now
+            )
+        assert _by_name(rows)["cli/live"].status is DaemonStatus.FRESH
+
     async def test_no_operator_db_yields_unknown_with_reason(
         self, db_paths: dict[str, Path], now: datetime
     ) -> None:

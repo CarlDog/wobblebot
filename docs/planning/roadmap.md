@@ -7,6 +7,53 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 post-merge health and diagnostic hardening
+
+PR #170 merged at `dfd1156ee3d854e114898814823a1b40385c2a98`. The draft/unmerged
+wording below describes its earlier checkpoint. Main CodeQL run `37782370490`
+subsequently reported new high alerts 48 and 49, independent of the previously
+reviewed alerts. [Exact flows and trust-boundary analysis](../implementation/postmerge-security-triage.md)
+show startup-configured paths and an environment-variable name, not a request
+path or actual session-key value. No remote exploitation or key disclosure was
+established; no dismissal, suppression or scanner configuration change was made.
+
+Branch `codex/postmerge-security` starts at that exact integrated commit and
+contains two bounded corrections. The heartbeat reader now performs one read-only
+open with URI construction inside its error handler; a redundant existence check
+no longer lets filesystem failures escape unknown-health handling. A real overlong
+path reproduced `OSError` on Python 3.13 before the change and returns unknown
+afterward. The missing-session-key diagnostic now gives static configuration-field
+guidance without echoing the configured name. Custom names, path URI escaping,
+missing-file non-creation and startup refusal remain supported.
+
+Verification in the isolated worktree:
+
+- `timeout 600 env PYTHONPATH=src:. PYLINTHOME=/tmp/wobblebot-postmerge-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make PYTHON=/workspace/wobblebot/.venv/bin/python
+  check`: exit 0; Ruff, mypy (174 source files), pylint 10.00/10;
+  **4,556 passed, six private skips, 30 deselected**, 88.62% coverage.
+- `timeout 60 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  tests/cli/test_web.py tests/services/test_daemon_health.py tests/web/test_health.py
+  --no-cov -q`: **88 passed** after the logging-test review correction. Ruff
+  lint/format also passed again after that test-only change.
+- `timeout 120 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  -m integration tests/integration/test_grid_engine_e2e.py
+  tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py
+  --no-cov -q`: **10 passed**.
+- Disposable exact-baseline checkout: four new regressions fail and two positive
+  controls pass; restoring implementations passes all six. Worktree imports were
+  verified. No private data or remote provider was used.
+- Independent source review agreed with the bounded changes. Test-honesty review
+  found default log capture missed INFO-level leaks; capture was corrected to
+  DEBUG and the same leak mutation then failed all three cases. Independent
+  restored focused verification passed 66 tests with no remaining review blocker.
+
+Fresh PR platform/CodeQL evidence remains required; local tests cannot establish
+alert disposition. The earlier approvals for 44–46 do not cover 48–49. This source
+patch does not deploy the published main image, change configuration, or close
+2.1/private-config/NAS/provider/observation gates. Logs and proposed PR text are in
+the ignored `tmp/postmerge-security/` directory of the saved fix worktree.
+
 ### 2026-10-08 draft PR #170 security triage and bounded hardening
 
 The operator authorized draft [PR #170](https://github.com/CarlDog/wobblebot/pull/170)

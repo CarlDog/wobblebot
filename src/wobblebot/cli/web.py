@@ -115,8 +115,8 @@ def _resolve_session_secret(web_config: WebConfig) -> str | None:
             "session secret env var is unset; refusing to start. "
             "Mint one with: "
             'python -c "import secrets; print(secrets.token_urlsafe(32))" '
-            "and export it as %s in your environment.",
-            env_var,
+            "and export it under the environment-variable name configured by "
+            "web.session_secret_env_var.",
         )
         return None
     return secret
