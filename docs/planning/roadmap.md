@@ -18,6 +18,95 @@ overclaim. Relative source links and whitespace were checked. No runtime code,
 version assignment, accepted design, private-data result or gate waiver is added.
 Actual per-signal history, verified Q2 imports, authorized canonical NAS scoring
 and consumer/design decisions remain prerequisites. 2.2/2.3 grouping is proposed.
+### 2026-10-08 PR #173 startup-bound health database capabilities
+
+At `461c590`, PR #173's CodeQL analysis reported alert 50 at the guarded URI
+operation. Browser-provided flows and independent review confirmed the same
+startup-config dependency source; no HTTP-selected path was established. The
+operator explicitly requested pre-emptive defense instead of dismissal.
+
+The [new reader contract](../implementation/health-database-capabilities.md)
+binds observe/advise/operator files once in the app factory. Health handlers no
+longer accept configuration or file-selection arguments. Canonical regular-file
+identities are pinned at startup or first appearance; detected replacements or
+path failures produce unknown/unavailable observations, including when a swap is
+detected after either query group. Operator external paths, startup symlink
+targets, read-only WAL and ordinary VACUUM remain supported. An intentional file
+replacement/path change requires web restart. Existing OS/mount permission and
+NAS qualification gates remain; separate path checks cannot sandbox a hostile
+filesystem writer. LLM streak URI escaping was corrected to preserve custom `#`/`%`
+filenames consistently with the freshness reader.
+
+Verification before this code checkpoint, in `/workspace/wobblebot-postmerge-security`:
+
+- `timeout 600 env PYTHONPATH=src:. PYLINTHOME=/tmp/wobblebot-postmerge-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make PYTHON=/workspace/wobblebot/.venv/bin/python
+  check`: exit 0; Ruff format/lint, mypy (175 source files), pylint 10.00/10;
+  **4,566 passed, six private skips, 30 deselected**, 88.63% coverage.
+- `timeout 60 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  tests/services/test_health_reader.py tests/web/test_health.py
+  tests/services/test_llm_call_streak.py --no-cov -q`: **45 passed**.
+- The ten-case offline integration command in the preceding receipt passed again.
+- Isolated mutations: removing identity enforcement fails three tests (one
+  positive control passes); request-time reader rebinding fails both authenticated
+  route tests; removing post-read verification fails the swap regression.
+  Restoring the implementation passes all 32 reader/route tests.
+- Independent source review passed 76 health-related tests and found no blocking
+  issue; independent test-honesty review passed 32 and independently caught an
+  unchecked-path mutation in both replacement tests. Review requires the documented
+  restart/race limits, not an OS-sandbox claim. No provider or financial call ran.
+
+Exact-head hosted platform checks and aggregate CodeQL remain to be verified after
+push to the existing PR. No alert dismissal, scanner suppression, PR metadata edit,
+host permission change, merge, deployment or gate waiver was performed. Logs and
+continuation are in ignored `tmp/postmerge-security/capability-*` files.
+
+### 2026-10-08 post-merge health and diagnostic hardening
+
+PR #170 merged at `dfd1156ee3d854e114898814823a1b40385c2a98`. The draft/unmerged
+wording below describes its earlier checkpoint. Main CodeQL run `37782370490`
+subsequently reported new high alerts 48 and 49, independent of the previously
+reviewed alerts. [Exact flows and trust-boundary analysis](../implementation/postmerge-security-triage.md)
+show startup-configured paths and an environment-variable name, not a request
+path or actual session-key value. No remote exploitation or key disclosure was
+established; no dismissal, suppression or scanner configuration change was made.
+
+Branch `codex/postmerge-security` starts at that exact integrated commit and
+contains two bounded corrections. The heartbeat reader now performs one read-only
+open with URI construction inside its error handler; a redundant existence check
+no longer lets filesystem failures escape unknown-health handling. A real overlong
+path reproduced `OSError` on Python 3.13 before the change and returns unknown
+afterward. The missing-session-key diagnostic now gives static configuration-field
+guidance without echoing the configured name. Custom names, path URI escaping,
+missing-file non-creation and startup refusal remain supported.
+
+Verification in the isolated worktree:
+
+- `timeout 600 env PYTHONPATH=src:. PYLINTHOME=/tmp/wobblebot-postmerge-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make PYTHON=/workspace/wobblebot/.venv/bin/python
+  check`: exit 0; Ruff, mypy (174 source files), pylint 10.00/10;
+  **4,556 passed, six private skips, 30 deselected**, 88.62% coverage.
+- `timeout 60 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  tests/cli/test_web.py tests/services/test_daemon_health.py tests/web/test_health.py
+  --no-cov -q`: **88 passed** after the logging-test review correction. Ruff
+  lint/format also passed again after that test-only change.
+- `timeout 120 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  -m integration tests/integration/test_grid_engine_e2e.py
+  tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py
+  --no-cov -q`: **10 passed**.
+- Disposable exact-baseline checkout: four new regressions fail and two positive
+  controls pass; restoring implementations passes all six. Worktree imports were
+  verified. No private data or remote provider was used.
+- Independent source review agreed with the bounded changes. Test-honesty review
+  found default log capture missed INFO-level leaks; capture was corrected to
+  DEBUG and the same leak mutation then failed all three cases. Independent
+  restored focused verification passed 66 tests with no remaining review blocker.
+
+Fresh PR platform/CodeQL evidence remains required; local tests cannot establish
+alert disposition. The earlier approvals for 44–46 do not cover 48–49. This source
+patch does not deploy the published main image, change configuration, or close
+2.1/private-config/NAS/provider/observation gates. Logs and proposed PR text are in
+the ignored `tmp/postmerge-security/` directory of the saved fix worktree.
 
 ### 2026-10-08 draft PR #170 security triage and bounded hardening
 
@@ -65,9 +154,36 @@ Verification before the security code checkpoint:
   Three thousand deterministic varied image references matched the old validator's
   accepted syntax. These are bounded checks, not NAS/provider acceptance.
 
-Fresh exact-head PR CI and aggregate CodeQL must be checked after push. No claim
-that all five findings are resolved is made by this local receipt. Existing
-private/NAS/provider/observation gates remain; real equities remain disabled.
+Post-push verification at `a89d017d804dd0eae8dd16804aa2d71d7b38ee0f`:
+
+- Aggregate CodeQL check `113142262240` still fails, now with **three high**
+  findings. Analysis run `37725324024` succeeded; this does not waive the
+  outstanding path-alert adjudication. Secret scan `37725322579` passed.
+- Linux CI passed. Windows PR CI `37725327890` exposed a test-ID portability
+  defect: pytest put the 100,000-character adversarial input into
+  `PYTEST_CURRENT_TEST`, exceeding Windows' environment-value limit during setup
+  and teardown. The follow-up gives all nine inputs short descriptive IDs,
+  retaining the complete adversarial values and assertions. All 14 generator
+  tests and explicit Ruff checks passed locally; fresh Windows CI remains required.
+- `timeout 600 python3 tmp/qualification-2026-10-08/security_build_image.py`
+  built image `sha256:f767ce9eec3c405f8194046ff1ce12caff92e1e8db6729287556aebaea872c2c`
+  with the exact `a89d017` revision label. The subsequent test-ID/docs-only change
+  does not change packaged runtime bytes; it is not a new image revision claim.
+- `timeout 180 .venv/bin/python tmp/qualification-2026-10-08/security_image_smoke.py`
+  passed disabled/enabled equities behavior, real web `/healthz`, unhealthy
+  unconfigured role, and fresh-to-stale SQLite heartbeat Docker health.
+- `timeout 60 python3 tmp/qualification-2026-10-08/security_package_identity.py`
+  matched all 174 package sources, healthcheck and runtime lock to checkout bytes.
+- `timeout 600 env PYTHONPATH=. .venv/bin/python
+  tmp/qualification-2026-10-08/security_compose_rehearsal.py` passed all ten service
+  grant contracts, denied writes, non-root execution, actual backup/integrity/vacuum
+  and atomic settings replacement visibility.
+- `timeout 90 .venv/bin/python tmp/qualification-2026-10-08/security_wal_rehearsal.py`
+  passed two committed updates visible through the actual read-only adapter while
+  a writer retained WAL/SHM. Containers used disposable fixtures and no network.
+
+No claim that all five findings are resolved is made. Existing private/NAS/provider/
+observation gates remain; real equities remain disabled.
 
 
 ### 2026-10-08 exact-code qualification receipt and remaining gates

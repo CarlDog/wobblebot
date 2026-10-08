@@ -131,6 +131,28 @@ class TestResolveSessionSecret:
         web = WebConfig(session_secret_env_var="CUSTOM_KEY")
         assert cli_web._resolve_session_secret(web) == "custom-secret-value-32-bytes-min"
 
+    @pytest.mark.parametrize("value", [None, "", "test-only-cookie-signing-value"])
+    def test_session_lookup_does_not_log_configured_name_or_value(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        value: str | None,
+    ) -> None:
+        name = "CUSTOM_TEST_COOKIE_KEY"
+        monkeypatch.delenv(name, raising=False)
+        if value is not None:
+            monkeypatch.setenv(name, value)
+        with caplog.at_level("DEBUG", logger=cli_web._LOGGER.name):
+            result = cli_web._resolve_session_secret(WebConfig(session_secret_env_var=name))
+        assert result == (value or None)
+        assert name not in caplog.text
+        if value:
+            assert value not in caplog.text
+            assert not caplog.records
+        else:
+            assert "web.session_secret_env_var" in caplog.text
+            assert "secrets.token_urlsafe(32)" in caplog.text
+
 
 # --------------------------------------------------------------------- #
 # _open_storage                                                         #

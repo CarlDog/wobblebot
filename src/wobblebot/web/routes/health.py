@@ -34,42 +34,31 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from wobblebot.config.cli import WebConfig
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.services.daemon_health import (
     DaemonHealth,
-    DaemonHealthThresholds,
     DaemonStatus,
-    fetch_daemon_freshness,
 )
 from wobblebot.services.kraken_health import (
     KrakenHealthProbe,
     KrakenHealthResult,
     KrakenSystemStatus,
 )
-from wobblebot.services.llm_call_streak import LLMCallStreak, fetch_llm_call_streaks
+from wobblebot.services.llm_call_streak import LLMCallStreak
 from wobblebot.services.llm_health import LLMEndpointHealth, ProviderHealthReader
 from wobblebot.web.auth import get_user_preferences, require_user
 from wobblebot.web.dependencies import (
-    get_config,
     get_templates,
 )
 
 router = APIRouter(tags=["health"])
 
 _LOGGER = logging.getLogger("wobblebot.web.routes.health")
-
-# Roles whose failure streaks are worth surfacing. `single` is what the
-# cascade's escalation records itself as (verified against the live
-# ledger 2026-08-11 — the 3.5-day outage is 387 `single` rows), so
-# omitting it would miss the exact incident this was built for.
-_STREAK_ROLES = ("single", "quant", "risk", "news", "arbitrator", "operator")
 
 
 class OverallStatus(StrEnum):
@@ -144,11 +133,7 @@ def compute_overall_status(
     return OverallStatus.YELLOW if has_yellow else OverallStatus.GREEN
 
 
-def _path_or_none(raw: str | None) -> Path | None:
-    return Path(raw) if raw else None
-
-
-async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSnapshot:
+async def load_health_snapshot(request: Request) -> HealthSnapshot:
     """Build a :class:`HealthSnapshot` for the current request.
 
     Pulls the Kraken probe singleton off ``app.state`` (``None`` when
@@ -162,21 +147,7 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
         request.app.state, "llm_health_checker", None
     )
     llm = await llm_checker.get() if llm_checker is not None else ()
-    thresholds: DaemonHealthThresholds | None = getattr(
-        request.app.state, "daemon_health_thresholds", None
-    )
-    daemons = await fetch_daemon_freshness(
-        observe_db=_path_or_none(config.observe_db),
-        advise_db=_path_or_none(config.advise_db),
-        operator_db=_path_or_none(config.operator_db),
-        thresholds=thresholds,
-    )
-    streaks = tuple(
-        await fetch_llm_call_streaks(
-            operator_db=_path_or_none(config.operator_db),
-            roles=_STREAK_ROLES,
-        )
-    )
+    daemons, streaks = await request.app.state.health_database_reader.read()
     return HealthSnapshot(
         kraken=kraken_result,
         daemons=tuple(daemons),
@@ -191,7 +162,6 @@ async def load_health_snapshot(request: Request, config: WebConfig) -> HealthSna
 async def health_overall_json(
     request: Request,
     user: User = Depends(require_user),  # pylint: disable=unused-argument
-    config: WebConfig = Depends(get_config),
 ) -> JSONResponse:
     """Return just the overall traffic-light status as JSON.
 
@@ -205,7 +175,7 @@ async def health_overall_json(
     yellow/unavailable: missing evidence must never imply healthy state.
     """
     try:
-        snapshot = await load_health_snapshot(request, config)
+        snapshot = await load_health_snapshot(request)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         _LOGGER.warning("health observation unavailable (%s)", type(exc).__name__)
         return JSONResponse({"overall": "yellow", "reason": "observation_unavailable"})
@@ -230,12 +200,11 @@ async def healthz() -> JSONResponse:
 async def health_page(
     request: Request,
     user: User = Depends(require_user),
-    config: WebConfig = Depends(get_config),
     prefs: UserPreferences = Depends(get_user_preferences),
     templates: Jinja2Templates = Depends(get_templates),
 ) -> Response:
     """Full application health page — Upstream + Daemons sections."""
-    snapshot = await load_health_snapshot(request, config)
+    snapshot = await load_health_snapshot(request)
     return templates.TemplateResponse(
         request,
         "health.html",
