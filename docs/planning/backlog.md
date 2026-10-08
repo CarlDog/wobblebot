@@ -33,7 +33,7 @@ and are recorded in the roadmap. The formal 2.0.x close was accepted on 2026-10-
 
 ## Current phase: 2.1
 
-2.1 opened 2026-10-03 after the formal 2.0.x close. The [N0 entry record](2.1-entry-n0.md) reconciles the slices; **N1 is next**, then N2–N5 in order. The detailed contracts and ordering
+2.1 opened 2026-10-03 after the formal 2.0.x close. The [N0 entry record](2.1-entry-n0.md) accepts the N1 → N5 order. Current branch implementation and remaining qualification are recorded in the roadmap; the N0 receipt is not a claim that those slices remain unstarted. The detailed contracts and ordering
 are in the [accepted sequencing plan](2.0-closeout-and-2.1-entry-plan.md#5-reconciled-21-proposal).
 New ADRs use semantic names until an unused number is allocated from the current register.
 
@@ -57,7 +57,7 @@ New ADRs use semantic names until an unused number is allocated from the current
 | G6 | Writable POLICY tier and capital-allocation policy. | Configuration/strategy owner; ADR-040 Stage 2 waits for the second qualifying manual POLICY edit and a refreshed fixture. | Accepted policy boundaries, validation, audit and operator-controlled settings. [Proposed ADR-044](../architecture/adr-044-settings-layout-and-policy-authority.md) reviews field ownership, layout, failure semantics and the actual-counter-notional prerequisite; it does not open this gate. Existing capital reports are not automatic envelope growth. |
 | G7 | Auto-tune; news auto-pause; confidence extension; learning. | Advisor designer + operator; separate item-specific ADRs and credible P4 outcomes. | Auto-tune needs demonstrated trust/use case; auto-pause needs ADR-002 exception and calibrated false positives; extension needs regime evidence/budget; learning needs 60-90 days of outcomes. |
 | G8 | Regime/Oracle, adaptive modes/targets, buy-guard research, MoE mathematics. | Strategy research owner; comparative evidence beats the stipulated baseline, then 60-90 days of shadow evidence before live use. | Falsifiable evaluation, fresh input coverage and relevant ADR; fixed target modes and current MoE remain shipped. |
-| G9 | Phase 9 equities; margin/futures remain separate gates. | Operator + Phase 9 designer; accepted 2.1 close before equities design. | Fresh official API/account/session/settlement/day-trading/tax review; new equity-risk ADR, then separately approved capital/activation. Preserve standing experience gates for margin/futures. |
+| G9 | Real securities API and dependent Phase 9 workflows explicitly deferred by operator 2026-10-03; margin/futures remain separate. | Reenter on verified official Securities API support and account entitlement. ADR-055 keeps the disabled activation flag in current scope. | Preserve API/account/session/settlement/tax evidence and cash-account target; deferred is not implemented. No automatic support monitor or activation. |
 | G10 | Demand/profile-triggered catalog below. | Named area owner; each row retains its specific source trigger. | Focused design and proportional validation when scheduled; no blanket implementation of the historical catalog. |
 
 ## Catalog crosswalk
@@ -251,7 +251,7 @@ news/external = provider integrator; harvester = treasury integrator; trading sc
 | T01 | [High-frequency grid on high-volatility pairs](../release/v1.1/trading-scope.md) | G10: explicit instrument expansion and adequate tax/accounting capacity; venue/liquidity/fee validation. |
 | T02 | [Multi-asset / multi-exchange expansion](../release/v1.1/trading-scope.md) | Partly shipped: multi-coin Kraken spot. G10: separately approved assets/exchange allocation and adapter design. |
 | T03 | [Configurable quote currency (non-USD: EUR / GBP / ...)](../release/v1.1/trading-scope.md) | G10: real non-USD deployment demand; audit quote assumptions and all money/display fields, not just a selector. |
-| T04 | [Kraken Securities equities support (Phase 9 committed track)](../release/v1.1/trading-scope.md) | G9: accepted 2.1 close then fresh equity-risk design; capital/activation separate. |
+| T04 | [Kraken Securities equities support (Phase 9 retained track)](../release/v1.1/trading-scope.md) | G9/ADR-055: actual API and dependent workflow explicitly deferred by operator 2026-10-03 until verified support; disabled feature boundary remains current. Capital/activation separate. |
 | T05 | [Margin trading support](../release/v1.1/trading-scope.md) | G9: all four margin experience/education/paper/approval gates in standing-rules; no phase-close shortcut. |
 | T06 | [Futures trading support (long-short grid variant)](../release/v1.1/trading-scope.md) | G9: margin gates plus all three futures-specific gates in standing-rules; no phase-close shortcut. |
 
@@ -282,3 +282,14 @@ The pre-2.0.4 pause control on untraded symbols remains a documented harmless
 no-op UX limitation (U17/UI owner, next accepted control-surface review). The
 readiness and model-watch follow-ups outside this repository require their own
 authorization; they are not delegated or scheduled by this document.
+
+
+## Unadopted external-platform research
+
+[Agentic broker platforms, 2026-10-03](../reference/agentic-broker-platforms-research-2026-10-03.md)
+records official Robinhood/Kraken product and engineering evidence, source limits,
+existing-feature overlap, proposed priorities and reentry criteria. Filed at the
+operator's explicit request for later development. This is not an adopted feature
+or authorization to install/connect a broker, register execution tools, schedule
+an agent or change financial authority. Real-share Kraken integration remains
+subject to the separate equities contract gate; tokenized xStocks do not clear it.

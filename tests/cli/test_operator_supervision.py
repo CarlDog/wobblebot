@@ -58,7 +58,7 @@ _SPIN_SECONDS = 0.005
 class _StubStorage:
     """The two StoragePort methods ``_forwarder_loop``'s cycle touches.
 
-    ``get_notifications`` counts its calls so a test can prove at least
+    ``get_delivery_notifications`` counts its calls so a test can prove at least
     one full cycle ran before asserting — an async test that never lets
     its loop schedule passes for the wrong reason.
     """
@@ -71,9 +71,7 @@ class _StubStorage:
     async def upsert_daemon_heartbeat(self, daemon_name: str, when: datetime) -> None:
         self.heartbeats += 1
 
-    async def get_notifications(
-        self, forwarded: bool | None = None, limit: int | None = None
-    ) -> list[PersistedNotification]:
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
         self.get_calls += 1
         if self._fail_on_call is not None and self.get_calls >= self._fail_on_call:
             # Deliberately NOT a StorageError: the incident's exception
@@ -170,15 +168,17 @@ class TestForwarderLoopDeathIsLoud:
         """
         storage = _StubStorage(fail_on_call=2)
         stop = asyncio.Event()
-        with caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"):
-            with pytest.raises(RuntimeError, match="synthetic upstream failure"):
-                await _forwarder_loop(
-                    storage=storage,  # type: ignore[arg-type]
-                    transport=MagicMock(spec=DiscordTransport),
-                    channel_id="C-1",
-                    poll_seconds=0.005,
-                    stop_event=stop,
-                )
+        with (
+            caplog.at_level(logging.INFO, logger="wobblebot.cli.operator"),
+            pytest.raises(RuntimeError, match="synthetic upstream failure"),
+        ):
+            await _forwarder_loop(
+                storage=storage,  # type: ignore[arg-type]
+                transport=MagicMock(spec=DiscordTransport),
+                channel_id="C-1",
+                poll_seconds=0.005,
+                stop_event=stop,
+            )
         # Proves the loop really cycled rather than dying on entry.
         assert storage.get_calls == 2
         assert storage.heartbeats == 2
@@ -505,6 +505,6 @@ class TestNoTaskLeak:
             if task not in before and task is not current and task not in mine
         }
         assert not strays, (
-            "the supervise+cancel sequence leaked " f"{[(t.get_name(), t.done()) for t in strays]}"
+            f"the supervise+cancel sequence leaked {[(t.get_name(), t.done()) for t in strays]}"
         )
         assert all(task.done() for task in mine)

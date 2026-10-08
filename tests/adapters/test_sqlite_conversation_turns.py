@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from sqlite3 import IntegrityError
 from uuid import UUID, uuid4
 
 import pytest
@@ -147,7 +148,7 @@ async def test_limit_returns_most_recent_in_chronological_order(
 
 async def test_role_check_rejects_unknown_value(storage: SQLiteStorageAdapter) -> None:
     conn = storage._require_conn()  # pylint: disable=protected-access
-    with pytest.raises(Exception):  # IntegrityError
+    with pytest.raises(IntegrityError):  # IntegrityError
         await conn.execute(
             """
             INSERT INTO conversation_turns

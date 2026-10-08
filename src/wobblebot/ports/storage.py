@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from wobblebot.domain.engine_state import EngineStateRow
@@ -29,6 +30,7 @@ from wobblebot.domain.models import (
     PriceSnapshot,
     Trade,
 )
+from wobblebot.domain.provider_health import ProviderHealthSnapshot
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -79,7 +81,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def get_order(self, order_id: UUID) -> Order | None:
@@ -94,7 +95,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     @abstractmethod
     async def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
@@ -109,7 +109,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     @abstractmethod
     async def get_orders(
@@ -137,7 +136,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     # Trade operations
     @abstractmethod
@@ -150,7 +148,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def save_fill(self, order: Order, trades: Sequence[Trade]) -> None:
@@ -184,7 +181,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
             StorageError: If the save fails (no partial write is left),
                 or if ``order.filled_amount > 0`` and ``trades`` is empty.
         """
-        pass
 
     @abstractmethod
     async def save_fill_pending_trades(self, order: Order, trades: Sequence[Trade] = ()) -> None:
@@ -209,7 +205,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
                 cancel — use ``save_fill``), if ``exchange_id`` is
                 missing, or if the write fails; no partial write is left.
         """
-        pass
 
     @abstractmethod
     async def record_pending_fill_trades(
@@ -226,7 +221,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the write fails; no partial write is left.
         """
-        pass
 
     @abstractmethod
     async def note_pending_fill_trades_attempt(
@@ -249,7 +243,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the update fails.
         """
-        pass
 
     @abstractmethod
     async def get_pending_fill_trades(
@@ -265,7 +258,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the read fails.
         """
-        pass
 
     @abstractmethod
     async def get_trades(
@@ -289,7 +281,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Exchange ledger operations (ADR-040 follow-up)
     @abstractmethod
@@ -312,7 +303,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If the write fails
         """
-        pass
 
     @abstractmethod
     async def get_ledger_entries(
@@ -334,7 +324,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Balance operations
     @abstractmethod
@@ -347,7 +336,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails
         """
-        pass
 
     @abstractmethod
     async def get_latest_balance_snapshot(self) -> list[Balance]:
@@ -359,7 +347,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails
         """
-        pass
 
     # Grid state operations (Stage 2.2)
     @abstractmethod
@@ -379,7 +366,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails.
         """
-        pass
 
     @abstractmethod
     async def get_grid_state(self, symbol: Symbol) -> GridState | None:
@@ -395,7 +381,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     # Price snapshot operations (Stage 3.0 — Observer mode)
     @abstractmethod
@@ -419,7 +404,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If save fails.
         """
-        pass
 
     @abstractmethod
     async def save_price_snapshots(self, snapshots: list[tuple[Symbol, Price, Timestamp]]) -> int:
@@ -896,7 +880,6 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
-        pass
 
     @abstractmethod
     async def delete_price_snapshots(self, *, before: datetime) -> int:
@@ -939,6 +922,14 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
 
         Raises:
             StorageError: If save fails.
+        """
+
+    @abstractmethod
+    async def claim_pending_command(self, pending: PendingCommand) -> bool:
+        """Durably claim an exact, unexpired approval once before dispatch.
+
+        False means another consumer won, expiry, or a changed approval. A claim
+        is never automatically released: uncertain effects require reconciliation.
         """
 
     @abstractmethod
@@ -1042,6 +1033,38 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: If retrieval fails.
         """
+
+    @abstractmethod
+    async def record_health_transition(
+        self, daemon: str, status: str, notification: Notification
+    ) -> bool:
+        """Atomically record a changed health observation and enqueue its alert."""
+
+    @abstractmethod
+    async def get_unresolved_deliveries(self, limit: int = 100) -> list[PersistedNotification]:
+        """Oldest unresolved delivery outcomes, independent of recent successes."""
+
+    @abstractmethod
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
+        """Oldest-first bounded due outbox batch, including expired sender leases."""
+
+    @abstractmethod
+    async def claim_notification_delivery(self, notification_id: int) -> int | None:
+        """Durably claim a send; return its attempt token, or None when not due."""
+
+    @abstractmethod
+    async def finish_notification_delivery(  # pylint: disable=too-many-arguments
+        # Receipt identity, outcome and safe retry metadata form one transaction.
+        self,
+        notification_id: int,
+        attempt: int,
+        outcome: Literal["sent", "retry", "failed", "uncertain"],
+        *,
+        message_id: str | None = None,
+        error_type: str | None = None,
+        retry_after_seconds: float = 0,
+    ) -> None:
+        """Atomically persist outcome and, for success, the forwarded receipt."""
 
     @abstractmethod
     async def mark_notification_forwarded(
@@ -1539,3 +1562,11 @@ class StoragePort(ABC):  # pylint: disable=too-many-public-methods
         Raises:
             StorageError: On retrieval failure.
         """
+
+    @abstractmethod
+    async def save_provider_health(self, snapshot: ProviderHealthSnapshot) -> None:
+        """Replace a producer's complete sanitized health observation."""
+
+    @abstractmethod
+    async def get_provider_health(self) -> list[ProviderHealthSnapshot]:
+        """Read observations; missing legacy tables must raise StorageError."""

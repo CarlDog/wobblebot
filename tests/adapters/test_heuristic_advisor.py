@@ -20,7 +20,6 @@ import pytest
 from wobblebot.adapters.heuristic_advisor import HeuristicAdvisorAdapter
 from wobblebot.config.heuristic import (
     CurvePoint,
-    HeuristicGuards,
     HeuristicSpec,
     load_heuristic_spec,
 )

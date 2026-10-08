@@ -5,6 +5,965 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+## Cloud product completion verification
+
+### 2026-10-08 draft PR #170 security triage and bounded hardening
+
+The operator authorized draft [PR #170](https://github.com/CarlDog/wobblebot/pull/170)
+from this branch to main. It remains draft/unmerged. Original head `bcc29e0`
+passed ordinary PR CI `37723876740` (Linux/Windows matrix and quality; historical
+counts as in the prior receipt). CodeQL analysis jobs in `37723875426` succeeded,
+but aggregate security check `113137606505` **failed with five new alerts**, one
+critical and four high. A successful analysis job is not a security-clean result.
+
+The [five-alert triage](../implementation/pr170-security-triage.md) records exact
+sources, reachability, changes and proposed dispositions. Alert 43's environment
+URL could reach unrestricted urllib fetching; the intended container-local probe
+now connects only to fixed loopback HTTP `/healthz`, with a configurable port,
+no proxies/redirects, and early validation. Alert 47's image regex is replaced
+with equivalent linear parsing; local measurement did not reproduce polynomial
+behavior, and no exploitation is asserted. No dependencies, security settings,
+CodeQL rules/severities, alert dismissals or suppression comments were changed.
+
+For path alerts 44–46, independent source review recommends individual false-positive
+classification: actual FastAPI dependencies supply startup app configuration,
+and CLI database arguments intentionally select operator files. The configured
+path contract and URI escaping remain intact. Two endpoint regressions show that
+request parameters cannot choose database paths. This is a recommendation for
+parent/operator review, **not an accepted exception or dismissed alert**. Pending
+that decision and fresh scanner results, security qualification remains open.
+
+Verification before the security code checkpoint:
+
+- `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check`: exit 0; Ruff format/lint, mypy,
+  retained pylint 10.00/10; **4,550 passed, six private skips, 30 deselected**,
+  88.62% coverage. Explicit Ruff lint/format also passed on both changed tools.
+- `timeout 60 .venv/bin/python -m pytest tests/tools/test_healthcheck.py
+  tests/tools/test_prepare_isolated_deployment.py tests/web/test_health.py
+  --no-cov -q`: **76 passed**. The ten-case offline integration command in the
+  preceding receipt also passed; no paid or remote provider call was made.
+- Separate disposable checkout at `bcc29e0`: old HTTP implementation fails all
+  fifteen new destination/redirect checks; a mutation sourcing config from request
+  parameters fails both endpoint boundary checks. Restored implementations pass
+  all seventeen. Interpreter/module paths were checked in that checkout. Rejected
+  destinations were mocked so the negative control could not contact them.
+- Independent correctness and test-honesty reviews found no blocking issue in
+  the changes. The latter independently passed 31 selected non-network cases.
+  Three thousand deterministic varied image references matched the old validator's
+  accepted syntax. These are bounded checks, not NAS/provider acceptance.
+
+Post-push verification at `a89d017d804dd0eae8dd16804aa2d71d7b38ee0f`:
+
+- Aggregate CodeQL check `113142262240` still fails, now with **three high**
+  findings. Analysis run `37725324024` succeeded; this does not waive the
+  outstanding path-alert adjudication. Secret scan `37725322579` passed.
+- Linux CI passed. Windows PR CI `37725327890` exposed a test-ID portability
+  defect: pytest put the 100,000-character adversarial input into
+  `PYTEST_CURRENT_TEST`, exceeding Windows' environment-value limit during setup
+  and teardown. The follow-up gives all nine inputs short descriptive IDs,
+  retaining the complete adversarial values and assertions. All 14 generator
+  tests and explicit Ruff checks passed locally; fresh Windows CI remains required.
+- `timeout 600 python3 tmp/qualification-2026-10-08/security_build_image.py`
+  built image `sha256:f767ce9eec3c405f8194046ff1ce12caff92e1e8db6729287556aebaea872c2c`
+  with the exact `a89d017` revision label. The subsequent test-ID/docs-only change
+  does not change packaged runtime bytes; it is not a new image revision claim.
+- `timeout 180 .venv/bin/python tmp/qualification-2026-10-08/security_image_smoke.py`
+  passed disabled/enabled equities behavior, real web `/healthz`, unhealthy
+  unconfigured role, and fresh-to-stale SQLite heartbeat Docker health.
+- `timeout 60 python3 tmp/qualification-2026-10-08/security_package_identity.py`
+  matched all 174 package sources, healthcheck and runtime lock to checkout bytes.
+- `timeout 600 env PYTHONPATH=. .venv/bin/python
+  tmp/qualification-2026-10-08/security_compose_rehearsal.py` passed all ten service
+  grant contracts, denied writes, non-root execution, actual backup/integrity/vacuum
+  and atomic settings replacement visibility.
+- `timeout 90 .venv/bin/python tmp/qualification-2026-10-08/security_wal_rehearsal.py`
+  passed two committed updates visible through the actual read-only adapter while
+  a writer retained WAL/SHM. Containers used disposable fixtures and no network.
+
+No claim that all five findings are resolved is made. Existing private/NAS/provider/
+observation gates remain; real equities remain disabled.
+
+
+### 2026-10-08 exact-code qualification receipt and remaining gates
+
+Reviewed code candidate: `cc95a21f7ebc0ad8bfab24d7f3eefb2bfaff19c5`, package
+`2.1.0a2`, non-force pushed to `codex/product-completion` and verified with
+`git ls-remote`. This candidate includes accepted main `5c0e303` via merge
+`ab2f071`; no main update, release, tag push or deployment occurred. Existing
+local alpha.1/alpha.2 tags remain immutable. A subsequent documentation-only
+receipt commit records these results without changing the qualified code; its
+SHA is not misrepresented as the matrix-tested candidate.
+
+[Hosted CI 37722489368](https://github.com/CarlDog/wobblebot/actions/runs/37722489368)
+completed successfully on that exact code SHA. Individual jobs and log summaries
+were checked: quality passed; Linux Python 3.13/3.14 each passed 4,518 tests with
+six private-config skips and 30 integration deselections; Windows Python 3.13/3.14
+each passed 4,516 with eight skips and 30 deselections. Windows retains the two
+platform-specific skips described in the prior receipt. All ten offline integration
+cases passed on every matrix target. Image publication was explicitly **skipped**.
+[Hosted gitleaks 37722489331](https://github.com/CarlDog/wobblebot/actions/runs/37722489331)
+passed at the same SHA. Local `timeout 90 /tmp/wobblebot-tools/gitleaks detect
+--source . --redact --no-banner` passed (1,120 commits scanned), and commit hooks
+passed identity, staged secret and PII checks. CodeQL is not among this candidate's
+checks; no clean CodeQL result or security-configuration change is claimed.
+
+Fresh Dockerfile build `timeout 600 python3
+ tmp/qualification-2026-10-08/build_image.py` passed from the clean exact code
+revision, using the previously documented ephemeral trusted-CA/proxy build route
+and existing hashed dependencies. Local image ID:
+`sha256:90bc5cb8fbb57b1fc92d2c28777600623dd3a421b2b1861a7bfa7f33df1479b5`.
+This is a local image ID, not a published registry manifest digest. Non-root image
+revision/version matched; all 174 packaged Python files, healthcheck and runtime
+lock matched checkout bytes. No new version or tag was created.
+
+Fresh disposable, network-disabled image checks (all exit 0):
+
+- `timeout 180 .venv/bin/python tmp/qualification-2026-10-08/image_smoke.py`:
+  actual web CLI health succeeds, a real SQLite delivery heartbeat changes healthy
+  to unhealthy when stale, and an unconfigured role is unhealthy. The producer is
+  synthetic; real Discord delivery is not claimed. Equities false runs two mock
+  trades; true refuses unsupported activation with exit 2.
+- `timeout 600 env PYTHONPATH=. .venv/bin/python
+  tmp/qualification-2026-10-08/compose_rehearsal.py`: all ten generated service
+  grants, owner/log writes and denied foreign/config writes pass; real maintenance
+  backup/restoration/vacuum and atomic settings rewrite with a fresh reader pass.
+- `timeout 60 .venv/bin/python tmp/qualification-2026-10-08/package_identity.py`:
+  installed source and lock identity match the candidate.
+- `timeout 90 .venv/bin/python tmp/qualification-2026-10-08/wal_rehearsal.py`:
+  the actual non-root image's read-only adapter sees two committed WAL updates
+  through a read-only directory mount while its writer remains open; WAL/SHM exist.
+
+Scripts/logs and the machine receipt remain in the ignored qualification directory
+in the saved development environment. Disposable containers and the isolated
+mutation worktree were removed. These checks qualify local implementation behavior,
+not the NAS filesystem, production migration, real providers or financial effects.
+
+**Completion reconciliation:** N0 is accepted; N1–N5 remain implemented with fresh
+local/hosted qualification and the N3 defect repaired. PB1–PB13, NW04 and the
+strict disabled equities boundary are preserved and covered by the full suite.
+No later proposal is adopted and 2.1 is not closed. The remaining requirements
+need these smallest external actions; none is waived:
+
+| Gate | Missing evidence / smallest action |
+| --- | --- |
+| Private configuration | Run the existing strict schema-drift checks against actual operator files in their trusted environment and provide only redacted pass/skip results. Six absent-file skips here remain unverified. |
+| Exact-candidate CodeQL | Obtain a real analysis of `cc95a21` through the existing authorized security workflow/client, or explicitly authorize any necessary setup correction. Repository files expose no CodeQL workflow, the CLI is absent locally, and shell GitHub API access is forbidden; the connected reader confirms no check. Historical neutral/missing-baseline warnings do not pass this gate. |
+| N1/N2 NAS qualification | Separately authorize a staged isolated rehearsal on the actual host, with consistent disposable data copies, actual permissions/WAL/backup/restore/settings paths and exact runtime image identity. No migration or deployment is implied by this local result. |
+| N3/N4 real delivery and health | Separately authorize the dedicated delivery path and bounded operator-death/notification/health observation on the target environment. Synthetic HTTP/heartbeat fixtures cannot establish external delivery or host survival. |
+| N5 local/provider qualification | Select and authorize a WobbleBot local-only Ollama endpoint while preserving explicit cloud-provider accounting; verify server policy, installed model identity and authorized bounded probes. The shared-server design assessment is not a waiver or permission for cloud calls. |
+| Tracking tools | Expose authorized OpenChronicle/Serena tools if their context/mirroring is required. Neither is callable in this session; no external installation, credentials or access changes were attempted. |
+
+Next action is target-environment/security qualification when access and the scoped
+authorizations are available. Further unrelated implementation would not close
+these evidence gates. The actual NAS remains unchanged by this work.
+
+### 2026-10-08 N3 expiry under SQLite writer contention
+
+Reconciliation merge `ab2f0713f9a2c7ca7e1bd92bdcac9aae9464af6f` is pushed and
+remote-verified; its hosted gitleaks run `37722126903` passed. Its docs-only push
+correctly did not trigger the path-filtered platform workflow. Main is unchanged.
+
+Independent qualification review found that `claim_pending_command` sampled time
+before SQLite write-lock acquisition. A competing writer could hold the lock
+past approval expiry, then the stale timestamp admitted dispatch. File-backed
+claims now acquire `BEGIN IMMEDIATE` before sampling validity time, keeping the
+claim and expiry update atomic with FULL durability. In-memory fixtures retain
+the existing shared-connection transaction seam. No financial effect is retried.
+
+The regression holds an actual competing SQLite write transaction and advances a
+controlled clock across expiry after a trace barrier. The public claim result and
+persisted status must reject/expire the short approval; a long-lived approval
+still succeeds. An isolated checkout at `ab2f071` with only the new tests fails
+that expired case and passes the long-lived control (pytest exit 1). Import path
+was verified against that checkout. Restoring the fixed adapter there passes all
+seven claim tests. The ordinary in-memory one-dispatch control also passes.
+Independent production-correctness and test-honesty reviews report no findings;
+the former reran 15 claim/harvest tests, the latter seven claim tests. These are
+bounded reviews, not a full deployment review or NAS acceptance.
+
+Fresh verification: `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check` exits 0: Ruff format/lint, mypy,
+pylint 10.00/10, 4,518 passed, six private-config skips, 30 deselected, 88.62%
+coverage. The same ten-case offline integration command in the reconciliation
+receipt passes. `timeout 30 .venv/bin/python -m pytest
+tests/config/test_schema_drift.py --no-cov -q -rs` passes 26 and skips six because
+actual operator settings/env files are absent. No skip is accepted as a pass.
+`git diff --check` passes. Candidate image/hosted security and matrix results
+remain to be obtained after this reviewed code checkpoint; no release is claimed.
+
+### 2026-10-08 accepted-main reconciliation and renewed qualification
+
+Work item: `CarlDog/wobblebot:2.1-qualification`. Initial saved checkout was clean
+on `codex/product-completion` at `fa625d0adf57e0d6925b0d925793cdae18fd15de`,
+version `2.1.0a2`. Origin was verified as `CarlDog/wobblebot`; main now resolves
+to `5c0e303a1e389cb5db6079af02dcaa1818249bb9` (merged PR #166). The branch is
+22 commits ahead and five behind that main before reconciliation. All five
+incoming commits change documentation only. Preserve both histories with a merge;
+retain all N1–N5, PB1–PB13 and NW04 implementation and immutable local alpha tags.
+The user explicitly authorized continuing this existing development branch rather
+than restarting from N0's historical fresh-branch instruction.
+
+Accepted D1/D4/D5 resolve the former formal 2.0-close/N0 blocker; they do not accept
+2.1, waive its private/NAS gates, or adopt the later 2.2/2.3 proposals. Real equities
+remain disabled and deferred. N0's accepted criteria remain intact; its inferred
+rollback proposal is reconciled with ADR-047's explicit stop-and-reconcile procedure.
+
+Prior exact-commit hosted evidence, now entered into the durable ledger:
+[CI 37093912493](https://github.com/CarlDog/wobblebot/actions/runs/37093912493)
+passed at `fa625d0`: quality, Linux 3.13/3.14 (each 4,515 passed, six private skips,
+30 deselected), Windows 3.13/3.14 (each 4,513 passed, eight skips, 30 deselected),
+and ten offline integration cases on each matrix target. Windows additionally
+skips the POSIX shell case and illegal question-mark filename; legal URI escaping
+remains exercised. Gitleaks run `37093912409` passed; image publication was skipped.
+These are historical passes, not qualification of the reconciled candidate.
+
+Current punch list: reconcile acceptance/status drift; independently review the
+implemented 2.1 boundaries; run fresh quality/upgrade/offline checks with pylint;
+record exact candidate security/CI evidence; continue any demonstrated offline
+repairs. External gates remain actual private-config tests, exact-candidate CodeQL,
+NAS isolation/WAL/backup/restore/runtime identity/health/notification/provider
+qualification and bounded observation. No paid call, live financial action,
+release, main merge, security-setting change or deployment is authorized here.
+Reconciliation checks: `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check` passed Ruff format/lint, mypy
+(174 source files), retained pylint and 4,515 tests (six private-config skips,
+30 integration deselections; 88.61% coverage). `timeout 120 .venv/bin/python
+-m pytest -m integration tests/integration/test_grid_engine_e2e.py
+tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py
+--no-cov -q` passed all ten offline cases. `timeout 90
+/tmp/wobblebot-tools/gitleaks detect --source . --redact --no-banner` scanned
+1,119 commits with no findings; `git diff --cached --check` passed. These local
+checks cover the reconciled source; hosted results still need its exact commit.
+
+Independent review reproduced one N3 defect despite the green suite: a command
+can expire while its claim waits for SQLite's write lock, because the TTL check
+uses time sampled before waiting. This is an unblocked repair, not an accepted
+limitation; fix and lock-contention regression follow as a separate code commit.
+No new actionable N1/N4 defect was found in that bounded review. OpenChronicle
+and Serena tools are unavailable in this session; no usage or mirror update is
+claimed, and no integration/access change was made to enable them.
+
+
+### 2026-10-03 authorized branch publication and hosted verification
+
+The operator explicitly authorized regular development-branch commits/pushes.
+Verified origin remains `CarlDog/wobblebot`; remote main was the untouched initial
+`9a42a79`. A non-force, explicit branch-only push published the verified alpha.2
+revision `296cdfe0def55f0923a0a2524742df5b38c7f668` to
+`codex/product-completion`, and `ls-remote` confirmed the exact SHA. Both local
+prerelease tags were excluded because `v*` pushes trigger GHCR publication.
+No PR, merge, default-branch update, release or deployment was performed.
+
+Hosted gitleaks run `37093193908` passed on that exact revision. The shell GitHub
+API returns Forbidden, but the authorized GitHub connector can read workflow
+runs. The quality/platform workflow previously filtered branch pushes to main
+and v1.1, so it did not run on the new implementation branch. Add the exact
+implementation branch to that filter and include all ten offline integration
+cases. The existing main/release-tag-only publication condition is unchanged;
+this branch cannot publish an image through the workflow. Monitor the resulting
+exact-commit quality and Linux/Windows Python 3.13/3.14 jobs; do not infer a pass
+from local results. Final run receipts and any hosted blockers are retained in
+the continuation/evidence directory. All private/NAS/data gates remain unwaived.
+
+The first matrix run (`37093427658`, commit `e666109`) passed quality and both
+Linux jobs, then exposed two Windows fixture defects: `?` is forbidden in Windows
+filenames, and a fixture read the UTF-8 example config using the locale encoding.
+Use a legal space/hash/percent filename on both platforms, retain the original
+question-mark case on POSIX with an explicit Windows filesystem skip, and read
+the UTF-8 fixture explicitly. These preserve the real SQLite URI-escaping and
+unsafe-owner rejection assertions; no production behavior or check is disabled.
+The generator itself already reads/writes UTF-8. Push the verified correction and
+require a new exact-commit matrix result rather than retrying unchanged failures.
+
+### 2026-10-03 alpha.2 healthcheck and comprehensive local reconciliation
+
+The prior Dockerfile-healthcheck finding was remediable local implementation,
+not an authoritative conflict requiring a waiver. PY-05 requires an image probe;
+P3's actual-freshness requirement and the shared image's one-shot use remain
+compatible through role-specific probes and explicit one-shot disabling.
+
+Delivered: Dockerfile `--container` health mode requires exactly one configured
+daemon or HTTP role, uses the existing freshness/HTTP machinery and fails closed
+on absent/ambiguous roles. Compose retains its per-service probes; optional
+delivery now checks its actual sender heartbeat against configured cadence.
+`tools` disables inherited daemon health; the isolation generator preserves both
+forms and maps delivery to staged config. Usage errors return 1 rather than
+Docker's reserved 2. No process-presence/always-success probe, restart actor,
+financial authority or external notification was added. Build documentation gives
+the supported direct-container role/config/profile settings and one-shot override.
+
+The [audit work item](product-completion-audit.md#final-local-gap-reconciliation-2026-10-03-follow-up)
+reconciles all baseline families and retained G1-G10 catalog gates in one pass.
+No other independently remediable local requirement was identified. Required
+private/hosted/NAS evidence remains unwaived, conditional proposals retain their
+actual adoption/data gates, and real equities integration remains explicitly
+deferred. This is local checkpoint completion, not complete-product acceptance.
+
+Precommit: `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1
+timeout 600 make check` passes Ruff, mypy, pylint and **4,514 tests**, with
+6 private-config skips, 30 integration deselected, 88.61% coverage (118.74s).
+Health/classifier/generator/capability tests: **87 passed**. Machine Fleet audit:
+18 PASS, 6 NA, 2 UNKNOWN; manual PY-05 is now implemented, while the approved
+PY-01 pylint-retention deviation and external unknowns remain explicit.
+Package/runtime identity advances to `2.1.0a2`; the existing `v2.1.0-alpha.1`
+tag is preserved. A new local annotated checkpoint is conditional on the final
+clean-revision Python 3.13/3.14 suites, offline integrations and image rehearsal.
+No remote action is authorized by that checkpoint. Final receipts follow here.
+
+Implementation commit `8ec9647796bd4b4feb518ce85d7c3ff5c8ea7861` passed the full
+Python 3.14 suite (**4,514 passed, 6 private skips, 30 deselected**, 91.64s) and
+offline grid/operator integration (**8 passed**, 19.56s). Actual non-root image
+`sha256:cc818e74fe1e4040eac8ad5136feaa0b0f417fba741412864794478aef53b109`
+matches that exact revision and package version `2.1.0a2`. All 174 packaged Python
+files, the healthcheck and runtime lock match checkout bytes. Network-disabled
+rehearsal confirms false equities runs two mock trades; true refuses activation;
+Docker delivery health moves healthy-to-unhealthy after a real SQLite fixture's
+heartbeat becomes stale; the actual web CLI `/healthz` is healthy; an unconfigured
+role is unhealthy after startup grace. The heartbeat producer is synthetic, not
+real Discord delivery. Docker interprets a zero start-period override as inherited
+grace in this environment, so the bounded rehearsal uses an explicit 1s grace.
+
+`PYTHONPATH=. timeout 600 .venv/bin/python
+/tmp/wobblebot-verification/alpha2_compose_rehearsal.py` passes all ten generated
+service grants, readonly DB integrity, owner/log writes and denied foreign/config
+writes. Actual maintenance backup/restore/vacuum and atomic settings rewrite with
+a fresh readonly consumer pass on disposable fixtures. No real daemon deployment
+or real-money action occurred.
+
+Final checkpoint procedure repeats quality and the full suite on both supported
+Python versions at this receipt revision, offline integration on both versions,
+the image build/health/package/Compose rehearsals, diff/security checks and Fleet
+audit. The immutable local annotated `v2.1.0-alpha.2` tag is created only after
+those pass; its annotation and ignored `tmp/product-completion-verification/alpha2-*`
+receipts record the final revision/image/results. `alpha.1` stays unchanged.
+Current external requirements remain in the baseline; no tag waives them.
+
+### 2026-10-03 SQLite membership regression evidence
+
+The operator requested a durable negative control for the migration finding.
+`tests/adapters/test_sqlite_row_membership.py` now exercises the production
+`row_to_transfer_result` mapper with real in-memory SQLite rows: modern reserved
+and rejected states survive, and a legacy row containing the missing column's
+name as another column's value still uses the legacy fallback. Opposing key/value
+membership assertions make the runtime contract explicit. An isolated mapper copy
+with only `.keys()` removed fails all three cases; production source was unchanged.
+The lesson links the exact source/test paths, and `pyproject.toml` points to the
+regression beside its narrowly scoped SIM118 exclusions. The test's intentional
+key-membership assertion has one explained line-level suppression.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check` passes Ruff format/lint, mypy and pylint: **4,501 passed, 6 private-config
+skipped, 30 integration deselected**, 88.61% coverage, 114.91s.
+`timeout 60 /tmp/wobblebot-venv314/bin/python -m pytest
+tests/adapters/test_sqlite_row_membership.py --no-cov -q`: **3 passed**; the earlier
+full Python 3.14 receipt below remains applicable to the unchanged implementation.
+Evidence: `sqlite-row-final-check.log` and `sqlite-row-mutation.log` in the ignored
+verification directory. No runtime behavior or image changed; the image receipt
+below remains tied to its exact implementation revision. No remote publication,
+Fleet source change, new tag, or waiver of remaining completion gates occurred.
+
+### 2026-10-03 revised scope: Ruff migration, equities boundary and research
+
+The operator approved retaining pylint's semantic checks during Ruff migration
+and explicitly deferred the real equities API until verified support, then asked
+for a disabled boolean and useful contract-supported infrastructure. ADR-054 and
+ADR-055 record these decisions. They supersede the earlier pending tooling choice
+and equities-as-current-blocker entries below. Deferred is not implemented.
+
+**Delivered:** Ruff 0.16.10 (MIT) replaces Black and standalone isort formatting
+in Make, CI and editor tasks. Canonical Ruff rules, 100-column/Python 3.13 config,
+hashed dev resolution and Dependabot routing are aligned; mypy and every existing
+pylint setting/check remain enforced. The editor's all-checks task now uses the
+selected interpreter, propagates failures, includes pylint and avoids formatting
+writes. Runtime/build dependency versions are unchanged. Isort remains only as a
+pylint dependency. Explicit re-exports preserve module API, broader exception
+assertions now name real errors, and zip behavior remains explicitly truncating.
+The reviewed unsafe SQLite Row membership rewrite was rejected; row-key fallback
+semantics remain intact. A positive real-Row control and a project lesson record
+why dictionary-shaped lint rewrites need runtime-type review.
+
+`equities.enabled` is a strict immutable boolean, false when omitted. Both loaders,
+profile/CLI override resolution and deployment planning use the same config
+boundary. True fails with an actionable unavailable-adapter error before task or
+provider construction. False adds no equities request, worker, execution or UI
+action, and existing crypto configuration/workflows remain unchanged. No fake
+Kraken API, tokenized substitution, settlement/tax ledger or dormant trading
+adapter is presented as infrastructure. The intended cash-account design is
+retained; personal operator details are not committed. Actual Securities API and
+dependent Phase 9 workflows are explicitly deferred until verified official
+support/account entitlement and a reviewed contract, not current completion
+blockers. No monitoring or broker contact is introduced.
+
+[Agentic broker platforms research](../reference/agentic-broker-platforms-research-2026-10-03.md)
+is filed and linked from the backlog. It distinguishes shipped Robinhood MCP,
+native announcements and Cortex engineering; documents Kraken CLI acknowledgment,
+retry/audit limits and tokenized-vs-real-share distinctions; and maps proposed
+read-only capabilities, approval/reconciliation, deterministic policy and sealed
+replay to existing WobbleBot mechanisms. These are **later proposals**, not new
+implementation scope or authority. No integration dependency, account or tool
+connection was added.
+
+Verification:
+
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: Ruff format/lint, mypy and pylint all pass; **4,498 passed,
+  6 private-config skips, 30 integration deselected**, 88.61% coverage, 115.50s.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  /tmp/wobblebot-venv314/bin/python -m pytest --no-cov`: **4,498 passed,
+  6 private-config skips, 30 deselected**, 88.23s.
+- Flag, example-schema and architecture tests: **67 passed**. Enabled unsupported
+  startup returns code 2 with no task dispatch; omitted/false remain equivalent;
+  profile/override activation fails and a declared crypto substitute is rejected.
+- Workspace JSON parses after removing comment-only lines. `git diff --check`
+  passes. The prior negative-control cycle still demonstrates why pylint stays.
+- Fleet 3.1 machine audit exits 0: **18 PASS, 6 NA, 2 UNKNOWN**. Manual review
+  retains the approved PY-01 pylint-retention deviation; machine PASS is not
+  unmodified conformance. Literal Dockerfile HEALTHCHECK, remote metadata,
+  CodeQL/OC and unavailable hosted/platform/private checks remain separate.
+
+Integrated implementation and research commit:
+`5edd190935a72704d0644be6908f6e76482e2cf6`. Commit hooks passed real gitleaks,
+PII checks and example-schema validation. Offline grid/operator integration:
+`timeout 120 .venv/bin/python -m pytest -m integration
+ tests/integration/test_grid_engine_e2e.py
+ tests/integration/test_phase5_operator_e2e.py --no-cov -q` — **8 passed**, 17.98s.
+
+`timeout 600 python3 /tmp/wobblebot-verification/build_revised_scope.py` built the
+actual Dockerfile from the clean implementation commit. Local image
+`wobblebot:revised-scope-verification` has matching revision and non-root user;
+image ID `sha256:f6097fe057dfeddcf4cbc3aebb3f0f6d62d68de568267543bda7f0b4e53370e7`.
+`timeout 180 .venv/bin/python /tmp/wobblebot-verification/revised_image_smoke.py`
+passed actual image execution with network disabled: equities false ran the
+existing two-trade mock sandbox (exit 0), while true exited 2 with the actionable
+unavailable message and no simulator dispatch. No published digest or real broker
+integration is claimed. The new image is untagged locally with respect to Git;
+`v2.1.0-alpha.1` still targets `b8a2d0f` and its original image is preserved.
+
+Current local scope is implemented; full completion remains unclaimed because
+required private configuration checks and external development evidence are not
+available or waived. G1/G3 readiness dispositions remain honest about missing
+history; G2/G5-G8/G10 keep their source-specific adoption gates. G4/NW04 repairs
+from the preceding receipt remain implemented. The existing local prerelease tag
+is immutable; new work is untagged and unpublished. No new paid, financial,
+external-message, access or deployment action occurred.
+
+### 2026-10-03 bounded evidence addendum; decisions pending
+
+The parent supplied additional official public API, equities-eligibility and
+xStocks sources, recorded with their limits in
+[Stage 9.0](stage-9.0-design.md#supplemental-official-source-evidence-supplied-by-the-parent).
+The conclusion remains **absent verified Securities stock/ETF API contract**, not
+proof that no such API exists. App/Pro eligibility and tokenized-asset API support
+do not establish personal Securities API access; conflicting EEA availability
+statements do not resolve personal eligibility. The parent has asked Carl about
+account type, API entitlement, residence/tax status and retaining pylint semantic
+checks. No answer or exception has been accepted. This is documentation-only;
+implementation, tests, local image and immutable tag receipts below are unchanged.
+
+### 2026-10-03 follow-up: offline defects repaired; Ruff decision remains open
+
+This supersedes the previous claim that independent work was exhausted. Rechecking
+G4 found offline repairs incorrectly parked behind the paid-campaign gate. NW04's
+recorded repeated RSS failures also support a bounded reliability repair under
+the original user instruction. ADR-053 records the implementation decisions.
+The existing `v2.1.0-alpha.1` tag remains immutable; this follow-up is untagged.
+
+**G4/PB1-PB13 reconciliation:** PB1 separates judgment from availability, including
+risk severity totals and null accuracy when nothing answers; PB2 catches news
+cost-cap denials and preserves its report; PB3 documents/enforces the existing
+per-model session budget and shared daily backstop without cap resets or silent
+increases; PB4 rejects explicit cloud truncation after usage accounting with no
+paid repair retry (native Ollama truncation already covered by N5); PB5 reports
+requested and actually-sent temperature, with null for provider-controlled models;
+PB6 separates small de-risk direction from magnitude; PB7 treats malformed and
+nonfinite numerics as availability; PB8 checks confidence on echoed HOLD too;
+PB9 makes examples inert and consistent with the requested field order; PB10 adds
+separately versioned explicit-evidence fixtures, preserving old labels and sets;
+PB11 leaves error direction unknown; PB12 retains emitted values, confidence,
+safe full error detail, fixture/version and sampling settings; PB13 wires cloud
+risk calls to the risk ledger role while preserving the shared builder default.
+New versions are news `gen3` and risk `gen2`; no historical campaign is regraded.
+No model, price, seat, cap or live configuration was changed.
+
+**NW04:** per-source in-memory exponential backoff after consecutive failures,
+first retry at normal cadence, capped at six hours or a longer normal interval.
+Healthy feeds and heartbeats continue; empty success resets; storage failure
+is not upstream failure. Initial degradation warns, repeated failures use INFO,
+and recovery is logged. No settings writer, persistent disable or real feed call.
+
+**Ruff finding:** Fleet standards 3.1 PY-01 requires replacement of Black/isort/
+pylint with Ruff (`E,W,F,I,UP,B,C4,PIE,SIM,RET`), and PY-06 requires Ruff in CI.
+Closeout plan §3 disallows a duplicate stack solely to flip the check. A bounded
+Ruff 0.16.10 dry run found 429 findings in 134 files and 46 format changes. More
+importantly, the disposable used-import cycle in `ruff-cycle-parity.log` fails
+pylint with R0401 (exit 8) and passes the prescribed Ruff rules (exit 0). Current
+AST tests check layer boundaries, not all cycles; Ruff's official FAQ explicitly
+rejects a pure drop-in-equivalence claim. Removing that gate would weaken checks;
+retaining it needs a deliberate disposition of PY-01's literal replacement rule.
+An explicit choice has been requested; no exception, duplicate gate, broad source
+rewrite or configuration-only machine-pass claim was made. The exploratory Ruff
+installation is local only; dependency locks and existing gates remain intact.
+
+Verification for this follow-up (all offline, no credentials):
+
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: exit 0; Black/isort/mypy/pylint pass, **4,486 passed, 6 private-config
+  skips, 30 integration deselected**, 88.53% coverage, 116.59 seconds.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  /tmp/wobblebot-venv314/bin/python -m pytest --no-cov`: exit 0; **4,486 passed,
+  6 private-config skips, 30 deselected**, 87.20 seconds.
+- Targeted news/backoff/probe negative controls: 35 passed; expanded probe/adapter
+  controls: 86 passed before the final versioned-fixture and role checks, which
+  are included in the full-suite receipts above. A real in-memory SQLite cost
+  ledger test rejects a valid-JSON truncated result after charging exactly once.
+- Initial targeted fixtures missed the required recommendation ID/type; corrected
+  using the actual Pydantic contract. A boundary test exposed floating-point
+  classification at exactly 5%, repaired with the direction epsilon. The news
+  backoff initially needed an explicit float return for mypy. No check was waived.
+
+Follow-up implementation commit: `d3abf4fd25a7e6d13660e67ae2bbb53cd3a48809`.
+`timeout 120 .venv/bin/python -m pytest -m integration
+ tests/integration/test_grid_engine_e2e.py
+ tests/integration/test_phase5_operator_e2e.py --no-cov -q` passed all eight
+checks (17.41 seconds). `timeout 600 python3
+/tmp/wobblebot-verification/build_followup.py` built the actual Dockerfile from
+that clean commit; image `wobblebot:followup-verification` has matching revision,
+non-root user `wobblebot`, ID
+`sha256:cfe7dc87bb30805e03003ab8a2aa64b0ad2e4a35ce5d7fb52f037424debccc72`.
+Network-disabled image runs of `python -m wobblebot.cli.sandbox --config
+config/settings.example.yml` and `python -m wobblebot.cli.news --help` passed.
+This is an untagged local image, not a registry digest or published candidate;
+`v2.1.0-alpha.1` still targets `b8a2d0f`. The commit hook's real gitleaks and PII
+checks passed. Full-product completion is still not declared.
+
+**Individual gated-work disposition:**
+
+| Gate | Source/evidence and remaining boundary | Independent work disposition |
+| --- | --- | --- |
+| G1 | Closeout §4 and backlog G1 require usable per-signal coverage/gaps/retention plus an accepted anomaly/disk consumer. No private history is present; oldest timestamp/elapsed days do not satisfy it. N4 doctor supplies current disk diagnostics, not an anomaly baseline. | Current closeout readiness receipt is complete. Detector/calibration work requires the actual data and consumer contract; no invented history. |
+| G2 | Backlog G2 and ADR-034 retain the settings-writer ownership decision for Apply/Approve-Reject and a concrete cloud-summary consumer. N3 approval/outbox substrate is implemented, but does not adopt a writer or grant LLM execution. | No further adopted consumer implementation can be derived from the existing contract. Resolve ownership/use case before wiring it. |
+| G3 | Backlog G3/P4.6 requires Q2 imports, canonical NAS scoring, fidelity/missing-bar/pending tallies and accepted Historian design. No Q2/NAS corpus available; local replay/evaluator substrate and tests exist. | Readiness disposition complete. Actual scoring/selection-bias analysis needs data; a placeholder Historian is not acceptance. |
+| G4 | PB1-PB13 are now addressed offline as described above, with negative controls and preserved historical versions. | Local defect repairs performed without a paid campaign. Real model qualification and selection remain separate, unauthorized operations. |
+| G5 | Proposed ADR-042 explicitly requires six-symbol trade-and-ledger reconciliation, retirement/lifecycle policy and net-margin choice; a daily clean=6 is not the receipt. None is supplied here. | Default-off speculative sell-extension code would precede its ratification; no independent adopted implementation remains before those inputs. |
+| G6 | Accepted ADR-040 Stage 2 requires a second qualifying manual POLICY edit plus refreshed fixture and ownership/failure design. Proposed ADR-044 does not open the gate. | Current capital reports and Stage 1 remain implemented; no qualifying edit evidence was fabricated. |
+| G7 | Each auto-tune/news-pause/confidence/learning candidate retains its own ADR, evidence/trust/cost trigger; auto-pause specifically requires an ADR-002 exception. | Not activated by catalog membership. Existing opt-in apply workflow remains tested; no new autonomous financial authority. |
+| G8 | Regime/Oracle/adaptive/buy-guard/MoE candidates require comparative evidence and the stated shadow period. No qualifying outcome corpus or shadow receipt is available. | Existing fixed modes remain tested. Synthetic baseline tests cannot certify research superiority or the elapsed shadow gate. |
+| G9 | Committed Phase 9 remains open. Roadmap reconciliation makes the May API/PDT sketch non-authoritative; stage-9.0-design.md now distinguishes actual contract inputs from private/live validation. | Public research and precise input matrix completed. No securities wire contract or account-policy facts exist to implement 9.1/9.2 correctly. Balances/credentials are not demanded to start code. |
+| G10 | Backlog's per-row catalog remains the exhaustive crosswalk: demand/consumer/profile/architecture and separate-repo gates are retained individually. NW04 is explicitly not G10-gated and its observed failure repair is now implemented. | No blanket activation of optional candidates. E12 awaits Phase 9 write-volume expansion or contention; hosting/SQLCipher/MFA/multi-user/multi-arch/new integrations lack their source triggers. No known triggered adopted local defect is left hidden behind this grouping. |
+
+The exact first Phase 9 reply is account type (cash/margin), residence country/state
+and US-taxpayer status, plus official securities API documentation or redacted
+broker support confirmation of the product/API entitlement. Earnings source and
+broker lot-selection/export schema can follow during 9.0. Public rules and
+schemas can support offline code; actual credentials/history and real trading
+belong to later acceptance. See the linked design's per-slice blocker matrix.
+
+### 2026-10-03 final local candidate: completion gate remains open
+
+Verified candidate commit: `b8a2d0fb704081d0e2d347ba2137e1bb8b9b8ab5`.
+Authorized local annotated tag: `v2.1.0-alpha.1`, package `2.1.0a1`.
+No existing tag moved and nothing was pushed. The following receipt-only commit
+may follow the tagged source; it does not change the tested application.
+
+The actual Dockerfile built successfully with hashed dependencies and the existing
+bounded proxy/ephemeral trusted-CA procedure. Image inspection confirms revision
+`b8a2d0fb704081d0e2d347ba2137e1bb8b9b8ab5`, non-root user `wobblebot` (UID 1001),
+and matching installed/runtime package version. Local image ID:
+`sha256:1dcce15327c107b2c6b7cf1e759b16ea57e8e36d03426c40903b5c2b924ce741`.
+This is a local image ID, **not** a published registry manifest digest.
+
+Executable image checks, all exit 0 after the named harness corrections:
+
+- `timeout 600 python3 /tmp/wobblebot-verification/build_local.py` — exact clean
+  candidate, `docker build -f docker/Dockerfile -t wobblebot:local-verification`,
+  verified revision build argument, hashed wheels and successful `pip check`.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 60 docker run --rm --network none
+  wobblebot:local-verification python -m wobblebot.cli.sandbox --config
+  config/settings.example.yml` — actual entrypoint, packaged code, SQLite and
+  mock buy/sell cycle; no exchange calls.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 180 python3
+  /tmp/wobblebot-verification/n1_wal.py` — actual candidate image, UID 1001,
+  read-only directory mount sees concurrent committed WAL updates after reader
+  restart and rejects writes.
+- `PYTHONPATH=/workspace/wobblebot DOCKER_CONFIG=/tmp/wobblebot-docker timeout 300
+  .venv/bin/python /tmp/wobblebot-verification/compose_rehearsal.py` — all ten
+  generated service grants passed: owner/log writes, denied foreign/config
+  writes, read-only SQLite integrity and non-root identity, with network disabled.
+- The extended maintenance/settings portion was then completed with
+  `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 180 python3
+  /tmp/wobblebot-verification/extended_rehearsal.py`: actual backup, restoration
+  integrity, vacuum and atomic settings replacement, followed by a fresh read-only
+  observer loading the replacement. All data/configs were disposable fixtures.
+
+Harness corrections were not product failures or waived checks: the first wrapper
+needed the repository on PYTHONPATH; the extension passed a string to a Path API,
+then discovered its seeded database filenames differed from the generated config.
+Correcting those fixtures produced new evidence at each step; the successful
+permission checks were retained and only the incomplete extension was rerun.
+The combined harness is corrected for future repetitions. No production files,
+secrets, Discord messages, withdrawals, trades or paid inference were used.
+
+**Final reconciliation:** canonical FR/NFR and shipped Phases 1-8/P/C substrate
+retain their full tests and upgrade checks; N1-N5 have local implementation,
+integration, operating guides and acceptance fixtures. Every retained catalog
+entry still has its source, disposition and gate in the baseline/backlog. G1/G3's
+current-phase obligation is the honest readiness receipt (closeout plan §4), not
+an invented detector/Historian: no private usable history, Q2 corpus or canonical
+NAS scoring data is present. G2/G4-G8/G10 keep their named ownership/evidence/
+activation triggers; no parked or unratified proposal was promoted by inference.
+The committed Phase 9 track remains incomplete: kickoff evidence is recorded,
+but its account-enabled API/account/jurisdiction/risk contract is unresolved.
+
+**Blockers and smallest resume actions:**
+
+- Required private configuration drift gates remain six skips, not accepted
+  exceptions. Supply authorized sanitized operator config/env-key structure or
+  run those gates in the approved private checkout and provide the receipt.
+- Public Kraken contract checks previously failed via proxy 403 and direct DNS
+  timeout; authenticated/API/provider/NAS/Windows/hosted-CI/CodeQL checks are
+  unavailable here. Provide a permitted reachable verification environment and
+  the specific read-only access/receipts. Financial or paid tests need separate
+  authorization; no need to publish merely to continue local development.
+- Provide Q2/canonical history and the approved NAS evidence lane for G1/G3;
+  preserve selection/fidelity/gap caveats. ADR-040 Stage 2 needs actual qualifying
+  edit evidence. Unratified G2/G5/G7/G8 decisions remain gated by their own sources.
+- For Phase 9, confirm Kraken Securities account type, jurisdiction and official
+  account-enabled equities API/house rules. The historical PDT assumption cannot
+  safely determine the current account policy. Earnings source and broker lot/tax
+  inputs then complete the risk design; real cycles remain separately authorized.
+- Fleet Ruff migration, literal Dockerfile-healthcheck deviation and remote/OC
+  unknowns remain disclosed in the audit; no blanket conformance claim or new
+  exception is made. No remote issue, metadata or access action was taken.
+
+Full-product completion is **not declared**. Useful independent implementation and
+executable local verification are preserved; remaining work requires these external
+facts, source-defined triggers or separately scoped authorization. The exact
+continuation record and command logs are in ignored `tmp/product-completion-*`.
+
+
+### 2026-10-03 local prerelease candidate and audit checkpoint
+
+Package/runtime metadata now agree on `2.1.0a1` (planned local-only annotated tag
+`v2.1.0-alpha.1`). This is a test candidate, not accepted 2.1 closure or publication.
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0, 4,465 passed, six private-config skips, 30 integration
+exclusions, coverage 88.48%, elapsed 117.11s. Python 3.14 metadata/release-surface
+checks passed 35 tests after reinstalling the editable package with `uv pip
+install --python /tmp/wobblebot-venv314/bin/python --no-deps --no-build-isolation
+-e .`; that disposable uv-created environment has no pip module. The initial
+pip reinstall failed and the version test correctly detected stale installed
+metadata; no failure was waived. The N5 full 3.14 run above verifies unchanged
+runtime behavior; the targeted rerun verifies the candidate identity change.
+
+Fresh Fleet machine audit: exit 1, 17 pass, one fail, six NA, two unknown, no
+stale stamp. PY-01 Ruff remains a known gap; manual PY-05/06 deviations and
+UNI-12/17/18 checks are explicit in the audit work item. DEVELOPER-TOOLS.md fills
+an actual missing documentation requirement. No new exception is presumed.
+Gitleaks history scan: exit 0, 1,103 scanned commits, no findings. Identity review
+of all reachable history found 1,196 commits: no non-noreply authors, 143 GitHub
+service-domain committers, no other committer domains. All implementation commits
+use the configured noreply identity; no history was rewritten.
+Final committed-image verification follows this checkpoint.
+
+
+### 2026-10-03 N5 local Ollama and provider maintenance
+
+ADR-052 corrects native system/chat-thinking envelopes, validates local model
+metadata before prompts, rejects cloud/provenance/truncated results, normalizes
+port errors and removes raw payloads from local adapter diagnostics. Explicit
+metadata/probe receipts expose digest/version and allowlisted metrics without
+expanding ADR-014 persistence. The manual provider-watch ledger deduplicates
+reviewed public-source changes with separate maintenance/model-review ownership;
+no schedule, model/pricing mutation, remote message or paid probe was installed.
+Legacy funding is explicitly retained pending account-tested Beta migration.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,465 passed, six private-config skips, 30 integration
+exclusions, coverage 88.48%, elapsed 118.53s; all quality gates passed. Python 3.14.7
+`WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 /tmp/wobblebot-venv314/bin/python -m
+pytest`: exit 0; same pass/skip/exclusion counts, coverage 88.45%, elapsed 94.33s.
+Both interpreters passed the eight offline grid/operator integration tests using
+`-m integration tests/integration/test_grid_engine_e2e.py
+tests/integration/test_phase5_operator_e2e.py --no-cov -q` (18.03s / 19.18s).
+The deprived CLI walkthrough passed 68 cases, plus four doctor cases including
+single-document JSON and absent-store preservation. Explicit cloud-model metadata
+inspection refused before network access with exit 2.
+
+A final redaction run caught an altered diagnostic punctuation contract; restoring
+the existing `missing 'message' object` phrase preserved the test without exposing
+keys/content. A mistyped targeted test filename collected nothing; the corrected
+advisor-scoring/watch invocation passed 16 tests. Neither was counted as a pass.
+Official-source/account gaps for Phase 9 are recorded in
+[the kickoff evidence](stage-9.0-design.md); the account/API question remains open.
+
+
+### 2026-10-03 N4 independent health and doctor
+
+ADR-051 adds a page-only observer in the independent delivery process, durable
+atomic transition/notification deduplication, and read-only human/JSON doctor.
+Operator death no longer stops its own observer. Startup grace, stale/future
+classification, recovery, task supervision, unknown storage and unresolved old
+outcomes are covered. No Docker socket, restart actor, real notification or
+production activation was used.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,441 passed, six private-config skips, 30 integration
+exclusions, coverage 88.44%; Black/isort/mypy/pylint passed. An earlier run caught
+two unclosed SQLite test-fixture connections; explicit closure fixed them without
+suppressing ResourceWarning. Final-image/3.14 verification will follow N5.
+The read-only diagnostic guide records external supervisor/host/network limits.
+
+
+### 2026-10-03 N3 notification delivery
+
+N3b implements ADR-050's durable delivery claims, atomic message receipts,
+bounded safe retries and shared persistent Retry-After. An opt-in outbound-only
+`cli.delivery` process uses the same outbox as operator, with only the Discord
+token and operator-store grant. Unknown send outcomes are not automatically
+replayed; delivery attempts/state/IDs are visible in `/notifications`.
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0, 4,431 passed, six private-config skips, 30 integration
+deselections; Black/isort/mypy/pylint passed. Recorded coverage was 87.83% while
+two untested N4 doctor drafts were present in the source tree; those drafts are
+now preserved outside the package in ignored `tmp/product-completion-n4/`, not
+included in N3 delivery. New behavior tests cover concurrent connections,
+abandoned send leases, actual post-send receipt failure, bounded retry,
+persisted provider backoff, safe REST errors and an independent daemon cycle
+with real SQLite plus synthetic HTTP. No real Discord message was sent.
+The first full run found two old supervision stubs; updating their queue method
+preserved their existing loud-death/clean-stop assertions. No check was disabled.
+
+N3 activation/deployed recovery remains separate. N4 independent health alerting
+and doctor are next; N5 and retained phase/evidence gates remain in the baseline.
+All full runs completed below two minutes; no command exceeded its checkpoint.
+
+
+### 2026-10-03 N3 command lifecycle
+
+N3a implements ADR-049's immutable command/approval guards and atomic pre-effect
+claims in both live and harvest consumers. File-backed claims own a separate
+FULL-synchronous transaction so another coroutine's rollback cannot erase a
+successful claim. Read-only adapters cannot acquire claims. Unresolved results
+remain visibly `claimed`, excluded from approved polls after restart; no claim
+is automatically released or retried. The existing withdrawal reservation remains.
+See [command reconciliation and downgrade limits](../implementation/command-lifecycle.md).
+
+`PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+make check`: exit 0; 4,413 passed, six absent-private-config skips, 30 integration
+deselections, coverage 88.47%; all quality gates passed. New tests cover competing
+file-backed consumers, restart, expiry, changed payload, conflicting human
+decisions and read-only denial. Prior corruption tests deliberately remove the
+SQL guards to inject damaged legacy data; production guards stay enabled. Prior
+replay tests now inject an actual failed terminal receipt instead of rewinding
+completed commands, which the new lifecycle correctly forbids.
+
+The separately added runtime-lock drift test passed (one test); runtime dotenv
+now matches the dev pin. N3b delivery/outbox and N4/N5 remain outstanding. No real
+exchange, Discord send, deployment, remote publication or paid probe occurred.
+
+
+### 2026-10-03 N2 local build and platform verification
+
+Local N1 commit: `062d9a7`. N2 adds hashed runtime/build/dev resolutions, consumes
+them in pip/Docker/CI, pins the Python base, separates quality/platform gates,
+retains image identity artifacts, and emits bounded config/asset fingerprints.
+ADR-048 and the [build guide](../implementation/reproducible-builds.md) describe
+identity limits and the retained Ruff gap. No image or commit was published.
+
+- `UV_CACHE_DIR=/tmp/wobblebot-uv-cache uv pip compile ... --universal
+  --generate-hashes --python-version 3.13` generated all three reviewed locks;
+  exact reproducible invocations are in the build guide. Hashed runtime and dev
+  binary-wheel downloads for Python 3.14 passed. Hashed installs on 3.13 and 3.14
+  passed. A later exact cross-check found python-dotenv 1.2.4 in the
+  initial runtime lock versus the dev pin 1.2.3; the earlier matching claim was
+  incorrect. Runtime resolution now constrains against the dev lock, and a
+  regression test requires every runtime version to be exercised by CI. The
+  original image receipts above remain receipts for their exact earlier image.
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: exit 0, 4,409 passed, six private-config skips, 30 integration
+  deselections; coverage 88.47%; Black/isort/mypy/pylint all passed.
+- `WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 /tmp/wobblebot-venv314/bin/python
+  -m pytest --no-cov -q`: exit 0, 4,409 passed, six private-config skips,
+  30 deselections on CPython 3.14.7. The separate offline integration command
+  for grid-engine/operator flows passed all eight tests on 3.14.
+- Normal image build exposed proxy DNS; explicit build hostname mapping advanced
+  it to the expected TLS trust failure. An ephemeral approved host CA secret
+  resolved that without disabling TLS. Reproduction script `build_local.py`
+  invokes `docker build --add-host <proxy-host>:<resolved-address> --secret
+  id=build_ca,src=/etc/ssl/certs/ca-certificates.crt --build-arg HTTP_PROXY
+  --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg VCS_REF=unknown
+  -f docker/Dockerfile -t wobblebot:local-verification .` with a 600-second limit.
+  Final build passed. Local image ID (not a registry manifest digest):
+  `sha256:a6531082a6d55b62394dfe766bff6f9beffd6ddac63fc0365559617ab7b03958`.
+- `DOCKER_CONFIG=/tmp/wobblebot-docker timeout 90 docker run --rm --network none
+  wobblebot:local-verification python -m wobblebot.cli.sandbox --config
+  config/settings.example.yml --db /app/data/sandbox.db`: exit 0, real entrypoint
+  and installed wheel under non-root user, two synthetic trades persisted.
+  The first smoke revealed restrictive copied file modes; Docker now explicitly
+  sets readable defaults/tools/lock and an executable/readable entrypoint.
+- `PYTHONPATH=/workspace/wobblebot timeout 480 .venv/bin/python
+  /tmp/wobblebot-verification/compose_rehearsal.py`: exit 0 against the final
+  image. All nine generated service definitions ran with empty credentials and
+  network disabled; real mounted owner/log/settings writes and denied foreign/
+  config writes matched the matrix, mounted DB quick checks passed, UID=1001.
+  This exercised capability grants, not real daemon/provider connections or NAS
+  maintenance scheduling. Existing maintenance/backup/settings tests passed in
+  both complete suites; actual deployed data/config remain unavailable.
+
+B3's image-build blocker is resolved locally. Windows/hosted CI, remote CodeQL
+setup/results and operator/NAS acceptance remain unverified. UNI-21 has no
+callable OpenChronicle MCP in this environment. PY-01 and the Ruff portion of
+PY-06 remain disclosed gaps; no new standards exception has been accepted.
+All commands completed within their finite checkpoints. Continue N3 independent
+lifecycle work; G1's real historical-data readiness and new anomaly-daemon scope
+remain blocked separately and are not invented by synthetic fixtures.
+
+
+### 2026-10-03 local continuation and N1 implementation
+
+The parent confirmed that the user's full-product authorization supersedes the
+routine local phase-entry checkpoint. **B1 is resolved for local implementation**;
+formal 2.0 acceptance and all external/production evidence remain outstanding.
+Continue independently buildable N1-N5 and retained requirements. **B4 tooling
+availability is resolved** by read-only Fleet Kit source at commit
+`990747556e73d874d76d4ab6d2212460eabe7652` (plugin 0.21.0, standards 3.1).
+The [audit punch list](product-completion-audit.md) records findings before fixes.
+No plugin installation, remote issue or OpenChronicle mutation occurred.
+
+N1 implements read-only foreign consumers, additive persisted provider health,
+removal of web cloud keys and an opt-in deployment-plan generator. ADR-047 and
+[the migration guide](../implementation/isolated-deployment.md) document coverage,
+permissions, rollback and the shared operator-table residual. No existing data
+was moved; no services with financial credentials were started.
+
+- `python3 -B /workspace/fleet-kit-audit-source/fleet/scripts/standards_audit.py
+  /workspace/wobblebot --type python-service --json`: exit 1; 17 PASS, one FAIL
+  (PY-01 Ruff), six NA, two UNKNOWN (remote branch/visibility), one stale stamp.
+  NA includes unassessed items, not passes. PY-03/05/06/07 and UNI-21 need manual
+  evidence. JSON retained in the ignored verification directory.
+- `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600
+  make check`: N1 second run exit 0, 4,405 passed, six absent-private-config skips,
+  30 integration deselections, coverage 88.44%; Black/isort/mypy/pylint passed.
+  The first run exposed a fixture that created a missing foreign database; it
+  now initializes through the owner, and a separate test asserts no reader creation.
+- `timeout 150 .venv/bin/python /tmp/wobblebot-verification/n1_wal.py`: exit 0,
+  real Docker Python 3.14, UID 1001, network disabled, directory mounted `:ro`.
+  A concurrent host writer committed two changes; readers saw each, rejected
+  writes, and survived restart. Initial failure exposed host file permissions;
+  the fixture grants read access explicitly. This is not the final product image.
+- Final N1 `make check` (same command) exit 0: 4,406 passed, six private-config
+  skips, 30 deselections, coverage 88.44%; all quality gates passed.
+- Generated Compose `config --quiet`: passed. Full final-image/maintenance/settings
+  rehearsal remains required. Forwarded-proxy Docker build still failed Debian
+  DNS; N2's hashed binary-wheel design removes the unnecessary floating compiler
+  installation as part of reproducible builds, not as a waived check.
+
+
+**2026-10-02 UTC — local verification and setup repair; product incomplete.**
+Work item `CarlDog/wobblebot:product-completion`; the
+[finite acceptance baseline](product-completion-baseline.md) retains FR/NFR,
+Phases 1-9, P0-P4, C0-C5, N0-N5 and every backlog candidate's adoption/gate.
+Initial checkout: clean branch `work`, commit
+`9a42a790f670eb74df0cc381c6a484c7324e6b90`, origin
+`https://github.com/CarlDog/wobblebot.git`. The authorized cloud checkout does
+not contain unpushed laptop work. Local branch: `codex/product-completion`.
+
+**Implemented D1:** `e7ab18a` fixes the demonstrated Linux `make format-check`
+failure (hard-coded `.venv/Scripts/python.exe`, exit 127). Make now selects
+Windows/POSIX venv paths, retains command-line `PYTHON`/`PIP` overrides and uses
+`python -m pip`. `make check` is non-mutating. Contributor docs now identify the
+correct remote, module names and current branch workflow. No trading/runtime
+Python, tests, manifest, schema, operational settings or Compose grants changed.
+The commit passed the installed author/committer identity, gitleaks and PII hooks.
+
+**Environment:** Linux, CPython 3.13.5, editable installation of the exact current
+manifest. Setup used `UV_CACHE_DIR=/tmp/wobblebot-uv-cache
+UV_PYTHON_INSTALL_DIR=/tmp/wobblebot-python uv venv --python 3.13 .venv`, then
+`UV_CACHE_DIR=/tmp/wobblebot-uv-cache uv pip install --python .venv/bin/python
+-e '.[dev]'`. The default cache directory was read-only; relocating tool caches
+resolved it. Pip was subsequently installed into this uv-created venv to exercise
+the documented wheel workflow. `uv pip check --python .venv/bin/python` passed.
+Gitleaks v8.24.3 was extracted from the official tool image
+`ghcr.io/gitleaks/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055`
+into `/tmp/wobblebot-bin`; no repository hook was bypassed.
+
+### Local verification commands and outcomes
+
+All commands ran from the repository root unless stated. Each had a finite
+`timeout` (at most 600 seconds). Raw logs and reproduction scripts are retained
+in ignored `tmp/product-completion-verification/`; no private operator data was
+copied into tracked evidence.
+
+| Command | Outcome / evidence limit |
+| --- | --- |
+| `PYLINTHOME=/tmp/wobblebot-pylint WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 timeout 600 make check` | Exit 0. Black: 429 unchanged files; isort: pass; mypy: 158 source files clean; pylint: 10.00/10, exit 0; pytest: 4,394 passed, six private-config skips, 30 integration deselections; coverage 88.46%. `make` stops on a failing recipe. |
+| `.venv/bin/python -m pytest -m integration tests/integration/test_grid_engine_e2e.py tests/integration/test_phase5_operator_e2e.py --no-cov -q` | Exit 0, eight passed. Real engine/SQLite/operator composition with synthetic exchange/transport; not live integration. Includes 1,000-tick oscillation and restart/resume. |
+| `.venv/bin/python -m pytest tests/config/test_schema_drift.py -q --no-cov -rs` | Exit 0, 26 passed, six skipped because `config/settings.yml` and `.env` are absent. This does not validate deployed/operator configuration. |
+| `.venv/bin/python /tmp/wobblebot-verification/cli_walkthrough.py` | Exit 0, 64 subprocess cases: every one of 16 CLIs returned 2 without traceback for absent config directory, bad explicit config, unknown profile and missing own section. Script/results archived; existing credential tests also ran in the full suite. |
+| `.venv/bin/python -m wobblebot.cli.sandbox --config config/settings.example.yml --db /tmp/wobblebot-verification/sandbox.db` | Exit 0; two mock orders, two trades, round trip persisted. No network or real money. |
+| `.venv/bin/python tools/profile_storage.py --iterations 100` | Exit 0, all six operations profiled on disposable synthetic data. p99 ranged from 0.129 to 40.442 ms. Cloud-host evidence only, not NAS performance acceptance. |
+| `make -n PYTHON=/tmp/custom-python format-check`; `make -n install`; `make -n check` | Exit 0; custom interpreter preserved, pip uses selected interpreter, check runs `--check`/`--check-only` rather than source formatters. A disposable malformed Python file made `make check` fail without rewriting it; a simulated Windows venv selected `Scripts/python.exe`. No Windows host execution claimed. |
+| `DOCKER_CONFIG=/tmp/wobblebot-docker docker compose --env-file /dev/null -f docker/docker-compose.yml config --quiet` | Exit 0 with expected missing-credential warnings. Syntax validation only; no service started and no resolved credentials printed. |
+| `.venv/bin/python -m pip wheel --no-deps --wheel-dir /tmp/wobblebot-verification/wheels .` | Exit 0, wheel built; SHA-256 `3e7776cd5b0a7f29585ca710eb7b2de56f6ab4fe5d028290247ec7087b77e04e`. |
+| `.venv/bin/python -m pip download --only-binary=:all: --python-version 3.14 --dest /tmp/wobblebot-verification/runtime-wheels /tmp/wobblebot-verification/wheels/wobblebot-2.0.13-py3-none-any.whl` | Exit 0; compatible runtime wheels downloaded. This is not a dependency lock or N2 completion. |
+| `DOCKER_CONFIG=/tmp/wobblebot-docker docker run --rm --network none -v /tmp/wobblebot-verification/runtime-wheels:/wheels:ro -v /workspace/wobblebot/config:/config:ro python:3.14-slim sh -c 'pip install --no-index --find-links /wheels wobblebot && pip check && python -m wobblebot.cli.sandbox --config /config/settings.example.yml --db /tmp/sandbox.db'` | Exit 0, installed wheel and dependencies valid; sandbox persisted its two-trade cycle on Python 3.14. This is a separate base-image smoke, not the product Dockerfile/non-root/entrypoint or full Python 3.14 suite. |
+| `git diff --check` | Exit 0; no whitespace errors. |
+
+The first full suite failed because the fresh checkout lacked `v2.0.7` and
+`v2.0.9`; `v1.0.0` had already been fetched. The failures were not suppressed.
+`git fetch origin tag v2.0.7 tag v2.0.9` restored the trusted historical fixtures,
+then the complete `make check` above passed with the upgrade gate enabled.
+No relevant test was weakened. The six private-config skips remain visible.
+
+### Blockers and exact next actions
+
+- **B1 — phase entry:** the latest pre-existing receipt and accepted closeout plan
+  explicitly leave formal 2.0.x acceptance outstanding. N0/N1-N5 and ultimately
+  Phase 9 depend on it. The initial question conflated production-risk acceptance with local sequencing.
+  The parent was given the exact gate and limitation list and asked to resolve
+  local sequencing under the user's explicit override of routine checkpoints.
+  Local N1 work need not imply acceptance of missing production evidence. No
+  acceptance or phase closure has been inferred. The [N1 capability inventory](n1-capability-inventory.md)
+  prepares the actual source seams, shared-store residual and required rehearsal.
+- **B2 — external evidence:** `gh api repos/CarlDog/wobblebot` and a direct GitHub
+  API HTTPS attempt failed with proxy 403. Read-only Git tag fetches work, but do
+  not establish issue/PR/hosted-CI state. The five public Kraken contract tests
+  (`pytest -m integration tests/integration/test_kraken_api_health.py --no-cov -q`)
+  all failed on `httpx.ProxyError: 403 Forbidden`; a direct connection attempt
+  timed out resolving the host. No application API assertion was reached. Restore
+  allowed external connectivity before repeating these checks. NAS, current
+  operator config/keys, Q2 history and canonical outcome data are absent; G1/G3/G6
+  evidence cannot be manufactured. Provide approved read-only access or sanitized
+  evidence through the established workflow. No live or paid tests ran.
+- **B3 — product image:** normal `docker build` first encountered a read-only
+  Docker cache location; setting `DOCKER_CONFIG` fixed that. Both the normal build
+  and a materially different `--network=host` build then failed at Debian DNS / gcc
+  installation. Logs retain exit 100 from apt and exit 1 from the build. Restore
+  build-network DNS/approved package access and rerun the unchanged Dockerfile,
+  then perform the isolated full-image/Compose rehearsal. The separate wheel smoke
+  above is explicitly insufficient to clear this gate.
+- **B4 — audit tooling:** no repository `.agents/skills` directory, and the
+  referenced Fleet Kit phase-end skill/standards script was not found in available
+  workspace or installed skill locations/catalog. Explicit repository checks were
+  executed; no Fleet conformance or independent phase-close review is claimed.
+  Supply that installed skill/tooling when conducting the formal close audit.
+
+E01-E03 remain the historical scoped exceptions from September 8; this work
+accepts no new exceptions. 2.1, Historian, writable POLICY, equity-risk decisions
+and later live acceptance remain unfinished, not excluded. No source publication,
+PR, merge, release, deployment, access change, production database edit, trade,
+withdrawal, paid model call or external schedule was performed. Local commits
+and disposable test data are the only delivery actions.
+
+**Continuation:** start from `codex/product-completion`, inspect Git state, read
+this receipt and the baseline, then resolve B1 while restoring B2-B4 as applicable.
+The setup repair is isolated in `e7ab18a`; the following documentation commit
+preserves this inventory and evidence. Checkpoints are not product completion.
+
+## Historical 2.0.x close and N0 acceptance
+
 **2.0.x stabilization milestone closed; 2.1 opened with N1 next — ✅ 2026-10-03 UTC.**
 At 04:17:55 UTC the operator chose **"Close now"** on the decision card *"Choose how
 to close the 2.0.x milestone and open 2.1"*, whose stated premise was that
@@ -4376,7 +5335,11 @@ dms_trigger_at` as of the START of the tick, so a same-tick
 
 ## Phase 9 – Kraken Securities Equities (Committed Track, After 2.1 Close)
 
-**Status:** Operator-committed 2026-05-20 (during soak Day 2). Starts after the accepted 2.1 closure. No implementation has begun; this remains a historical scoping sketch.
+**Current scope, 2026-10-03:** the operator explicitly deferred real Securities
+API integration and its dependent workflows until verified official support.
+ADR-055's disabled activation boundary is the implemented current slice. The
+historical operator-committed 2026-05-20 sketch below remains reentry context,
+not a claim of implementation or a blocker to the revised local assignment.
 
 **Reconciliation 2026-09-08:** the market/API, account, session, PDT, settlement,
 tax and capital figures below are May 2026 design assumptions, not verified

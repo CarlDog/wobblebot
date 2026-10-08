@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -58,9 +59,7 @@ def _build_observe_db(path: Path, *, observed_at: datetime | None) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE price_snapshots ("
-            " id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE price_snapshots ( id INTEGER PRIMARY KEY, observed_at TEXT NOT NULL)"
         )
         if observed_at is not None:
             conn.execute(
@@ -76,9 +75,7 @@ def _build_advise_db(path: Path, *, created_at: datetime | None) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE advisor_suggestions ("
-            " id INTEGER PRIMARY KEY, created_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE advisor_suggestions ( id INTEGER PRIMARY KEY, created_at TEXT NOT NULL)"
         )
         if created_at is not None:
             conn.execute(
@@ -320,9 +317,7 @@ def _build_operator_db_with_heartbeats(path: Path, heartbeats: dict[str, datetim
     conn = sqlite3.connect(path)
     try:
         conn.execute(
-            "CREATE TABLE daemon_heartbeats ("
-            " name TEXT PRIMARY KEY, last_beat_at TEXT NOT NULL"
-            ")"
+            "CREATE TABLE daemon_heartbeats ( name TEXT PRIMARY KEY, last_beat_at TEXT NOT NULL)"
         )
         for name, ts in heartbeats.items():
             conn.execute(
@@ -454,6 +449,11 @@ class TestDeriveThresholds:
         assert thresholds.operator_seconds == 304.0
         # 2 * 1d + 5min slack = 173100s
         assert thresholds.maintenance_seconds == 173100.0
+        assert thresholds.delivery_seconds == 304.0
+
+    async def test_delivery_threshold_tracks_configured_poll_cadence(self) -> None:
+        cfg = _config(schedules=SchedulesConfig(root={"delivery_poll": timedelta(minutes=10)}))
+        assert derive_thresholds_from_config(cfg).delivery_seconds == 1500.0
 
     async def test_operator_configured_advise_1h_yields_tight_threshold(self) -> None:
         """Operator who tunes schedules.advise: 1h gets a 2h+slack threshold,
@@ -566,3 +566,22 @@ class TestFetchDaemonFreshnessHonorsThresholds:
             now=now,
         )
         assert _by_name(rows_tight)["cli/observe"].status is DaemonStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_future_evidence_is_unknown_for_primary_writes_and_heartbeats(tmp_path):
+    """Clock skew cannot make a future-dated stalled daemon permanently green."""
+    import sqlite3
+
+    path = tmp_path / "future # evidence.db"
+    now = datetime.now(UTC)
+    future = (now + timedelta(days=1)).isoformat()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("CREATE TABLE price_snapshots(observed_at TEXT)")
+        connection.execute("INSERT INTO price_snapshots VALUES (?)", (future,))
+        connection.execute("CREATE TABLE daemon_heartbeats(name TEXT, last_beat_at TEXT)")
+        connection.execute("INSERT INTO daemon_heartbeats VALUES ('cli/operator', ?)", (future,))
+        connection.commit()
+    rows = await fetch_daemon_freshness(observe_db=path, advise_db=None, operator_db=path, now=now)
+    assert next(row for row in rows if row.name == "cli/observe").status == DaemonStatus.UNKNOWN
+    assert next(row for row in rows if row.name == "cli/operator").status == DaemonStatus.UNKNOWN

@@ -8,7 +8,6 @@ from typing import cast
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.users import User

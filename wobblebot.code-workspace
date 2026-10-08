@@ -24,21 +24,14 @@
 		// Formatting
 		"editor.formatOnSave": true,
 		"[python]": {
-			"editor.defaultFormatter": "ms-python.black-formatter",
+			"editor.defaultFormatter": "charliermarsh.ruff",
 			"editor.formatOnSave": true,
 			"editor.codeActionsOnSave": {
 				"source.organizeImports": "explicit"
 			}
 		},
-		// Black formatter
-		"black-formatter.args": [
-			"--line-length=100"
-		],
-		// isort
-		"isort.args": [
-			"--profile=black",
-			"--line-length=100"
-		],
+		// Ruff reads pyproject.toml; use the locked environment version.
+		"ruff.importStrategy": "fromEnvironment",
 		// Mypy
 		"mypy-type-checker.args": [
 			"--config-file=pyproject.toml"
@@ -75,8 +68,7 @@
 		"recommendations": [
 			"ms-python.python",
 			"ms-python.vscode-pylance",
-			"ms-python.black-formatter",
-			"ms-python.isort",
+			"charliermarsh.ruff",
 			"ms-python.mypy-type-checker",
 			"ms-python.pylint",
 			"github.copilot",
@@ -128,12 +120,13 @@
 				}
 			},
 			{
-				"label": "Format: Black",
+				"label": "Format: Ruff",
 				"type": "shell",
 				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
 				"args": [
 					"-m",
-					"black",
+					"ruff",
+					"format",
 					"src/",
 					"tests/"
 				],
@@ -143,12 +136,16 @@
 				}
 			},
 			{
-				"label": "Format: isort",
+				"label": "Format: Imports",
 				"type": "shell",
 				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
 				"args": [
 					"-m",
-					"isort",
+					"ruff",
+					"check",
+					"--select",
+					"I",
+					"--fix",
 					"src/",
 					"tests/"
 				],
@@ -191,7 +188,7 @@
 				"command": "${workspaceFolder}/.venv/Scripts/python.exe",
 				"args": [
 					"-c",
-					"import subprocess; subprocess.run(['python', '-m', 'black', 'src/', 'tests/']); subprocess.run(['python', '-m', 'isort', 'src/', 'tests/']); subprocess.run(['python', '-m', 'mypy', 'src/']); subprocess.run(['python', '-m', 'pytest', 'tests/', '-v'])"
+					"import os, subprocess, sys; os.environ['WOBBLEBOT_REQUIRE_UPGRADE_GATE']='1'; os.environ['WOBBLEBOT_STRICT_CONFIG_DRIFT']='1'; checks=[['ruff','format','--check','src/','tests/'],['ruff','check','src/','tests/'],['mypy','src/'],['pylint','src/'],['pytest','tests/','-v']]; [subprocess.run([sys.executable,'-m',*check],check=True,timeout=600) for check in checks]"
 				],
 				"group": {
 					"kind": "build",

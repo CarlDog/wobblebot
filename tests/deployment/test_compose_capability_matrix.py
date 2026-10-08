@@ -69,6 +69,8 @@ _CLOUD_LLM = frozenset({"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"}
 # establishes the need. Anything absent from a row is a credential that
 # service must not receive.
 EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
+    # Outbound-only REST delivery survives the operator Gateway/LLM process.
+    "delivery": frozenset({"DISCORD_BOT_TOKEN"}),
     # cli/live.py:1954 — KrakenConfig.from_env(key_var="KRAKEN_TRADER_API_KEY", …).
     # Notifications go to the DB for cli/operator to forward, so no Discord token.
     "live": _TRADER,
@@ -97,17 +99,8 @@ EXPECTED_CREDENTIALS: dict[str, frozenset[str]] = {
     # observe.db's balance_snapshots (operator.py:530-535) and a
     # MockExchangeAdapter is injected at operator.py:1399.
     "operator": _CLOUD_LLM | {"DISCORD_BOT_TOKEN"},
-    # cli/web.py:245-247 — the cloud keys drive the /health LLM card's
-    # ok/unauthorized/not-configured badge (non-billable GET /v1/models
-    # probes). NO Kraken credential: web.py:229 builds a bare httpx client for
-    # public probes only, which is ADR-016/017's credential-free web tier.
-    #
-    # ACCEPTED RESIDUAL (ADR-041): web is the reverse-proxied service and it
-    # holds three billable keys to render a badge. Dropping them would make
-    # the card report "not configured" for providers that ARE configured,
-    # which is worse than no card. Sourcing that status from a daemon that
-    # already holds the keys is a named 2.1 follow-up, not a silent change here.
-    "web": _CLOUD_LLM | {"WOBBLEBOT_WEB_SESSION_SECRET"},
+    # N1: web reads persisted daemon observations and holds only its session secret.
+    "web": {"WOBBLEBOT_WEB_SESSION_SECRET"},
     # cli/maintenance.py:116-118 imports the capital / ledger / reconcile
     # cycles, each of which calls KrakenConfig.from_env(key_var=
     # "KRAKEN_READER_API_KEY", …).
@@ -168,6 +161,22 @@ def test_every_service_is_covered_by_the_matrix(services: dict[str, Any]) -> Non
         "compose services and the ADR-041 matrix disagree; add the new service "
         "to EXPECTED_CREDENTIALS with the source that establishes what it needs"
     )
+
+
+def test_each_daemon_has_its_own_probe_and_tools_disable_inheritance(services):
+    assert services["tools"]["healthcheck"] == {"disable": True}
+    for name, service in services.items():
+        if name == "tools":
+            continue
+        probe = service["healthcheck"]["test"]
+        assert probe[:3] == ["CMD", "python", "tools/healthcheck.py"]
+        if name == "web":
+            assert probe[3:] == ["--http", "http://localhost:8000/healthz"]
+        else:
+            assert probe[3:] == ["--daemon", f"cli/{name}", "--profile", "cpu-only"]
+    dockerfile = (_COMPOSE_PATH.parent / "Dockerfile").read_text()
+    assert "\nHEALTHCHECK --interval=60s" in dockerfile
+    assert 'CMD ["python", "tools/healthcheck.py", "--container"]' in dockerfile
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_CREDENTIALS))
@@ -249,11 +258,11 @@ def test_config_is_read_only_except_for_the_authorized_writer(
     config_mounts = [
         m
         for m in mounts
-        if isinstance(m, str) and (m.endswith(":/app/config") or m.endswith(":/app/config:ro"))
+        if isinstance(m, str) and (m.endswith((":/app/config", ":/app/config:ro")))
     ]
-    assert (
-        len(config_mounts) == 1
-    ), f"service {name!r} should mount /app/config exactly once; found {config_mounts}"
+    assert len(config_mounts) == 1, (
+        f"service {name!r} should mount /app/config exactly once; found {config_mounts}"
+    )
     is_read_only = config_mounts[0].endswith(":ro")
     if name in CONFIG_WRITERS:
         assert not is_read_only, (

@@ -71,6 +71,7 @@ from wobblebot.adapters.discord_confirm_view import (
     build_confirm_view,
 )
 from wobblebot.domain.value_objects import Timestamp
+from wobblebot.ports.delivery import DeliveryError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ class ReactionEvent(BaseModel):
         frozen = True
 
 
-class DiscordTransportError(Exception):
+class DiscordTransportError(DeliveryError):
     """Raised when a Discord transport operation fails.
 
     Wraps protocol / API / channel-resolution failures — both
@@ -226,9 +227,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             return False
         if not self._config.allowed_channel_ids:
             return False
-        if channel_id not in self._config.allowed_channel_ids:
-            return False
-        return True
+        return channel_id in self._config.allowed_channel_ids
 
     async def receive_message(self, message: InboundMessage) -> None:
         """Dispatch an inbound message to handlers (after allowlist filter).
@@ -282,7 +281,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         channel = await self._resolve_text_channel(channel_id)
         try:
             message = await channel.send(content=content)
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(
                 f"Failed to send message to channel {channel_id}: {exc}"
             ) from exc
@@ -322,7 +321,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             embed.set_footer(text=footer)
         try:
             message = await channel.send(embed=embed)
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(
                 f"Failed to send embed to channel {channel_id}: {exc}"
             ) from exc
@@ -348,7 +347,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         try:
             message = await channel.fetch_message(numeric_msg_id)
             await message.add_reaction(emoji)
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(
                 f"Failed to add reaction to message {message_id}: {exc}"
             ) from exc
@@ -373,7 +372,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
                 if self._bot_user_id is not None and str(message.author.id) == self._bot_user_id:
                     continue
                 messages.append(_inbound_from_message(message))
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(
                 f"Failed to fetch history for channel {channel_id}: {exc}"
             ) from exc
@@ -433,7 +432,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         embed.set_footer(text=f"id: {ref_id}")
         try:
             message = await channel.send(embed=embed, view=build_confirm_view(ref_id))
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(
                 f"Failed to send confirmation to channel {channel_id}: {exc}"
             ) from exc
@@ -470,7 +469,7 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
             await client.start(token)
         except discord.LoginFailure as exc:
             raise DiscordTransportError(f"Discord login failed: {exc}") from exc
-        except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
             raise DiscordTransportError(f"Discord gateway connection failed: {exc}") from exc
 
     async def close(self) -> None:
@@ -511,14 +510,13 @@ class DiscordTransport:  # pylint: disable=too-many-instance-attributes
         if channel is None:
             try:
                 channel = await client.fetch_channel(numeric_id)
-            except (discord.DiscordException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, discord.DiscordException, aiohttp.ClientError) as exc:
                 raise DiscordTransportError(
                     f"Channel {channel_id} could not be resolved: {exc}"
                 ) from exc
         if not hasattr(channel, "send"):
             raise DiscordTransportError(
-                f"Channel {channel_id} is not a sendable text channel "
-                f"({type(channel).__name__})"
+                f"Channel {channel_id} is not a sendable text channel ({type(channel).__name__})"
             )
         return channel
 

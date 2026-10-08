@@ -31,6 +31,13 @@ application:
   # gate engine features on it.
   mode: "live"
 
+# Future real-share support; disabled independently of crypto operation.
+# This build has no Kraken Securities stock/ETF adapter. true fails at config
+# validation before any provider call; Spot/xStocks cannot substitute for it.
+# Account design target is cash; no settlement balance is inferred from crypto USD.
+equities:
+  enabled: false
+
 # Operator-controlled SETTINGS: engine-enforced caps and guards.
 # Order-count, exposure, daily BUY spend and inventory caps are six future
 # POLICY candidates, static today (ADR-040/044). Guard settings stay static.
@@ -118,6 +125,10 @@ grid:
 # Shared task cadences. Duration suffixes: s/m/h/d; bare number = seconds.
 # 0s disables a scheduled task. Daemons load configuration at startup.
 schedules:
+  # Credential-owning operator publishes sanitized health; 0 disables.
+  health_response: 30s                  # independent observer, 0 disables
+  delivery_poll: 2s                     # independent outbox drain
+  provider_health: 60s
   observe_prices: 30s                 # cli/observe: public Ticker poll cadence
   observe_balances: 10m               # cli/observe: private BalanceEx; 0s disables
   news: 30m                           # cli/news: poll every enabled source
@@ -1167,3 +1178,10 @@ profiles:
         # (reasoning shares the completion budget).
         max_tokens: 4000
         timeout_seconds: 120
+
+# Independent outbound alerts. Opt-in Compose profile; uses operator.auth.outbound_channel_id.
+delivery:
+  operator_db: data/wobblebot-operator.db
+  observe_db: data/wobblebot-observe.db
+  advise_db: data/wobblebot-advise.db
+  log_file_path: data/logs/delivery/delivery.log

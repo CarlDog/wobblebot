@@ -119,6 +119,12 @@ class _FailingStorage(StoragePort):
     Used to verify the metric methods wrap upstream storage failures.
     """
 
+    async def save_provider_health(self, snapshot):
+        raise NotImplementedError
+
+    async def get_provider_health(self):
+        raise NotImplementedError
+
     def __init__(self, message: str = "simulated storage failure") -> None:
         self._message = message
 
@@ -311,6 +317,9 @@ class _FailingStorage(StoragePort):
     ):
         raise NotImplementedError
 
+    async def claim_pending_command(self, pending):
+        raise StorageError("test storage unavailable")
+
     async def save_pending_command(self, pending):  # type: ignore[no-untyped-def]
         raise NotImplementedError
 
@@ -325,6 +334,21 @@ class _FailingStorage(StoragePort):
 
     async def get_notifications(self, forwarded=None, limit=None):  # type: ignore[no-untyped-def]
         raise NotImplementedError
+
+    async def record_health_transition(self, daemon, status, notification):
+        raise StorageError("fixture")
+
+    async def get_unresolved_deliveries(self, limit=100):
+        raise StorageError("fixture")
+
+    async def get_delivery_notifications(self, limit=100):
+        raise StorageError("fixture")
+
+    async def claim_notification_delivery(self, notification_id):
+        raise StorageError("fixture")
+
+    async def finish_notification_delivery(self, notification_id, attempt, outcome, **kwargs):
+        raise StorageError("fixture")
 
     async def mark_notification_forwarded(  # type: ignore[no-untyped-def]
         self, notification_id, forwarded_at

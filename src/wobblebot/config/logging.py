@@ -20,6 +20,7 @@ Module loggers use ``logging.getLogger(__name__)``, so a record from
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -164,10 +165,7 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
     resolved_stream = stream if stream is not None else sys.stderr
 
     formatter: logging.Formatter
-    if resolved_format == "json":
-        formatter = JsonFormatter()
-    else:
-        formatter = PlainExtraFormatter(_PLAIN_FORMAT)
+    formatter = JsonFormatter() if resolved_format == "json" else PlainExtraFormatter(_PLAIN_FORMAT)
 
     handler = logging.StreamHandler(resolved_stream)
     handler.setFormatter(formatter)
@@ -185,10 +183,8 @@ def configure_logging(  # pylint: disable=too-many-arguments,too-many-positional
     kept_handlers = []
     for h in root.handlers:
         if h.get_name() in (_HANDLER_NAME, _ROTATING_HANDLER_NAME):
-            try:
+            with contextlib.suppress(Exception):
                 h.close()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
         else:
             kept_handlers.append(h)
     root.handlers = kept_handlers

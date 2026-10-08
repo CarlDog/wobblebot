@@ -9,6 +9,7 @@ ignored); these tests lock in that it's now typed + validated.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.config.cli import ApplicationConfig
 from wobblebot.config.loader import WobbleBotConfig
@@ -47,12 +48,12 @@ class TestApplicationConfig:
 
     def test_invalid_mode_rejected(self) -> None:
         # The old informational vocabulary (production/dev/...) is gone.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ApplicationConfig(mode="production")  # type: ignore[arg-type]
 
     def test_frozen(self) -> None:
         cfg = ApplicationConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.mode = "shadow"  # type: ignore[misc]
 
 
@@ -69,5 +70,5 @@ class TestWobbleBotConfigApplicationField:
 
     def test_invalid_mode_propagates(self) -> None:
         data = {**_BASE_REQUIRED, "application": {"mode": "nope"}}
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             WobbleBotConfig.model_validate(data)

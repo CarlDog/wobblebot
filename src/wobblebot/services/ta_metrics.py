@@ -130,14 +130,14 @@ def _compute_rsi_series(closes: list[float], period: int) -> list[float]:
         return []
     gains = []
     losses = []
-    for prev, cur in zip(closes, closes[1:]):
+    for prev, cur in zip(closes, closes[1:], strict=False):
         delta = cur - prev
         gains.append(max(delta, 0.0))
         losses.append(max(-delta, 0.0))
     avg_gain = _sma_of(gains[:period])
     avg_loss = _sma_of(losses[:period])
     series = [_rsi_from_averages(avg_gain, avg_loss)]
-    for gain, loss in zip(gains[period:], losses[period:]):
+    for gain, loss in zip(gains[period:], losses[period:], strict=False):
         avg_gain = (avg_gain * (period - 1) + gain) / period
         avg_loss = (avg_loss * (period - 1) + loss) / period
         series.append(_rsi_from_averages(avg_gain, avg_loss))
@@ -167,7 +167,7 @@ def _compute_macd_series(
     if not slow_series:
         return [], []
     # fast EMA starts (slow - fast) entries earlier; align tails.
-    macd_line = [f - s for f, s in zip(fast_series[slow - fast :], slow_series)]
+    macd_line = [f - s for f, s in zip(fast_series[slow - fast :], slow_series, strict=False)]
     signal_series = _compute_ema_series(macd_line, signal)
     if not signal_series:
         return [], []
@@ -204,7 +204,7 @@ def compute_bollinger(
 def _compute_tr_series(bars: list[OHLCBar]) -> list[float]:
     """True-range series aligned to ``bars[1:]`` (needs the prior close)."""
     series = []
-    for prev, cur in zip(bars, bars[1:]):
+    for prev, cur in zip(bars, bars[1:], strict=False):
         prev_close = float(prev.close)
         high = float(cur.high)
         low = float(cur.low)
@@ -236,7 +236,7 @@ def _directional_movements(bars: list[OHLCBar]) -> tuple[list[float], list[float
     """(+DM, -DM) series aligned to ``bars[1:]``."""
     plus_dm = []
     minus_dm = []
-    for prev, cur in zip(bars, bars[1:]):
+    for prev, cur in zip(bars, bars[1:], strict=False):
         up_move = float(cur.high) - float(prev.high)
         down_move = float(prev.low) - float(cur.low)
         plus_dm.append(up_move if up_move > down_move and up_move > 0.0 else 0.0)
@@ -264,7 +264,7 @@ def _compute_adx_series(bars: list[OHLCBar], period: int) -> list[float]:
     minus_smooth = _wilder_smooth(minus_dm, period)
     dx_series = [
         _dx_value(tr_value, plus, minus)
-        for tr_value, plus, minus in zip(tr_smooth, plus_smooth, minus_smooth)
+        for tr_value, plus, minus in zip(tr_smooth, plus_smooth, minus_smooth, strict=False)
     ]
     return _wilder_smooth(dx_series, period)
 

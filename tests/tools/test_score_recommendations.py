@@ -17,8 +17,8 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-
 from tools.score_recommendations import score_corpus
+
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.safety import SafetyConfig
 from wobblebot.domain.value_objects import OHLCBar, Symbol, Timestamp

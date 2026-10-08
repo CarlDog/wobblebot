@@ -29,9 +29,11 @@ Kraken adapter, dry-run semantics, caps split, etc.). Don't relitigate either wi
 
 ### Operator entry points
 
-Twenty-two surfaces (sixteen `cli/` + six `tools/`). One-line index; full behavior in each
+The operator surface includes the original sixteen CLIs and six documented tools,
+plus independent delivery, read-only doctor and the provider-maintenance tools. One-line index; full behavior in each
 module's `--help` and the roadmap stage that shipped it.
 
+- `cli.delivery` — outbound-only durable alert delivery; opt-in Compose profile, no financial or LLM keys.
 - `cli.sandbox` — Phase 1 mock-exchange paper-trade cycle (no real money).
 - `cli.status` — read-only Kraken price + balance check.
 - `cli.preflight` — one engine step via Kraken `validate=true` (nothing placed). **Run before every live session.**
@@ -66,7 +68,9 @@ module's `--help` and the roadmap stage that shipped it.
 
 ## Commands
 
-The Windows-friendly Makefile uses `.venv/Scripts/python.exe` — if your shell can't run `make`, invoke the same commands directly through the venv interpreter or activate it first.
+The Makefile selects `.venv/Scripts/python.exe` on Windows or `.venv/bin/python`
+on Linux/macOS. Override with `make PYTHON=/path/to/python check` if needed.
+If your shell cannot run `make`, invoke the same commands through the venv interpreter.
 
 **First-time setup on a fresh clone** — once, before your first commit:
 
@@ -81,16 +85,16 @@ gitleaks — missing the PII/identity checks required for this repo.
 
 | Task | Command |
 |------|---------|
-| Install (editable + dev extras) | `pip install -e ".[dev]"` |
+| Install (editable + dev extras) | `make install` (hashed dependencies, then editable application) |
 | Run all tests | `pytest` |
 | Run unit tests only | `pytest -m unit` |
 | Run integration tests only | `pytest -m integration` |
 | Run a single test | `pytest tests/path/to/test_file.py::TestClass::test_name` |
 | Tests with coverage HTML | `pytest --cov=wobblebot --cov-report=html` |
-| Format | `black src/ tests/ && isort src/ tests/` |
-| Format check (no writes) | `black --check src/ tests/ && isort --check-only src/ tests/` |
+| Format | `make format` |
+| Format check (no writes) | `ruff format --check src/ tests/ && ruff check src/ tests/` |
 | Type check | `mypy src/` |
-| Lint | `pylint src/` |
+| Lint | `ruff check src/ tests/ && pylint src/` |
 | All pre-commit checks | `make check` (format + lint + test) |
 
 **Pytest config gotchas** (`pyproject.toml`):
@@ -225,7 +229,7 @@ If you're about to add an abstraction "for future flexibility," check that an AD
 - **Pydantic v2 models** for structured data (domain entities, config schemas). The Pydantic **mypy plugin** is enabled in `pyproject.toml` and load-bearing — do not remove it.
 - **Port error convention:** a domain-data miss returns `T | None`; a protocol/transport failure raises the port's error type (`ExchangeError`, `StorageError`, `DataCollectorError`, etc. — in `wobblebot.ports.exceptions`). More ratified conventions in `docs/architecture/ratified-decisions.md`.
 - **Async ports:** `ExchangePort` and other I/O-bound ports are `async`. Use `pytest-asyncio` for tests of async code.
-- **Line length 100** (black + isort + pylint all configured to this).
+- **Line length 100** (Ruff and pylint both configured to this).
 - **Keep files under ~300-400 lines.** Split modules that turn into junk drawers.
 - **No `print()`, no swallowed exceptions, no real network calls in unit tests.** Use mocks/stubs (`httpx.MockTransport` is the test seam for `KrakenAdapter`). Integration tests carry the `integration` marker and are excluded from the default `pytest` run via `addopts`; run them explicitly with `pytest -m integration`.
 
@@ -241,7 +245,7 @@ to every project. The wobblebot-specific items below extend it:
 
 ### Every phase end (wobblebot extras)
 
-- **All 16 `cli/` entry points handle deprived envs cleanly.** Cycle
+- **All supported `cli/` entry points handle deprived envs cleanly.** Cycle
   each CLI through: no `.env`, no `config/settings.yml`, no `config/`
   directory at all, missing per-CLI section, empty credentials,
   bad `--config` path, bad `--profile` name. Expected: clean exit
@@ -255,7 +259,7 @@ to every project. The wobblebot-specific items below extend it:
   cli/news + cli/lurker (observe alias) — round out the original 15;
   cli/screener (P2 slice 5, 2026-08-08) makes it 16 — it exits 2 on a
   missing `screener:` section / bad --config and needs no credentials.
-  When new entry points ship, add them to this walkthrough.
+  The delivery daemon also validates missing credentials/config. Doctor needs no credentials and returns 1 for unknown evidence, 2 for invalid config. Keep new entry points in this walkthrough.
 - **Schema-drift tests pass clean.** `pytest tests/config/test_schema_drift.py`
   runs without warnings (or with documented justification).
   Operator `.env` and `settings.yml` keys are a subset of their
@@ -360,3 +364,10 @@ findings as sub-tasks. Findings get fixed in separate commits per
 category (per the global rule's process discipline). Audit-fatigue
 mitigation: if a category goes three audits with no findings, drop
 its cadence per the global rule.
+
+Read-only diagnosis: `python -m wobblebot.cli.doctor --config config/settings.yml --json`.
+Independent health alerts run in the opt-in delivery process; see
+[health response and doctor](docs/implementation/health-response-and-doctor.md).
+
+Local Ollama and provider maintenance: [local contract/identity](docs/implementation/ollama-local-contract.md)
+and [manual watch/funding decision](docs/implementation/provider-watch.md).

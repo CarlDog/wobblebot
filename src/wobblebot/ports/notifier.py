@@ -60,6 +60,9 @@ class PersistedNotification(BaseModel):
     forwarded_at: Timestamp | None = None
     created_at: Timestamp
     read_at: Timestamp | None = None
+    delivery_state: str | None = None
+    delivery_attempts: int = 0
+    delivery_message_id: str | None = None
 
     class Config:
         frozen = True
@@ -93,7 +96,6 @@ class NotifierPort(ABC):
         Raises:
             NotifierError: If notification cannot be sent
         """
-        pass
 
     @abstractmethod
     async def send_error_alert(self, error: Exception, context: dict[str, Any]) -> None:
@@ -106,4 +108,3 @@ class NotifierPort(ABC):
         Raises:
             NotifierError: If alert cannot be sent
         """
-        pass

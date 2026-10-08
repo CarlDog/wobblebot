@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import logging
 from asyncio import Lock
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -32,7 +33,9 @@ from typing import Literal
 from uuid import UUID
 
 import aiosqlite
+from pydantic import ValidationError
 
+from wobblebot.adapters import sqlite_delivery, sqlite_health_alerts
 from wobblebot.adapters.sqlite_llm_provider_migration import migrate_llm_calls_ollama_cloud
 from wobblebot.adapters.sqlite_migrations import (
     migrate_advisor_llm_attempts,
@@ -80,6 +83,7 @@ from wobblebot.domain.models import (
     PriceSnapshot,
     Trade,
 )
+from wobblebot.domain.provider_health import ProviderHealthSnapshot
 from wobblebot.domain.users import User, UserPreferences
 from wobblebot.domain.value_objects import OHLCBar, Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
@@ -93,7 +97,7 @@ from wobblebot.ports.harvester import TransferProposal, TransferResult
 from wobblebot.ports.notifier import Notification, PersistedNotification
 from wobblebot.ports.operator import PendingCommand, PendingCommandStatus
 from wobblebot.ports.storage import StoragePort
-from wobblebot.sqlite_connection import open_connection
+from wobblebot.sqlite_connection import managed_connection, open_connection
 
 _LOGGER = logging.getLogger("wobblebot.adapters.sqlite_storage")
 
@@ -173,7 +177,10 @@ def _decode_pending_command(row: aiosqlite.Row) -> PendingCommand:
     batch; it never becomes an empty result or a silently discarded approval.
     """
     try:
-        return row_to_pending_command(row)
+        pending = row_to_pending_command(row)
+        if "is_claimed" in row.keys() and row["is_claimed"] and pending.status == "approved":
+            return pending.model_copy(update={"status": "claimed"})
+        return pending
     except (ValueError, TypeError) as exc:
         raw_id = row["id"]
         try:
@@ -333,7 +340,7 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         catch elsewhere.
         """
         try:
-            uri = f"file:{self._db_path}?mode=ro"
+            uri = f"{Path(self._db_path).resolve().as_uri()}?mode=ro"
             self._conn = await open_connection(uri, uri=True)
             self._conn.row_factory = aiosqlite.Row
         except BaseException as exc:  # pylint: disable=broad-exception-caught
@@ -1779,11 +1786,74 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             await conn.rollback()
             raise StorageError(f"Failed to save pending command {pending.id}: {exc}") from exc
 
+    async def claim_pending_command(self, pending: PendingCommand) -> bool:
+        """One SQLite insert selects the exact still-valid approval, then commits."""
+        primary = self._require_conn()
+        if self._read_only:
+            raise StorageError("Read-only storage cannot claim a command")
+        conn = None
+        try:
+            # File-backed claims own a connection/transaction: an unrelated
+            # coroutine's rollback on the shared adapter cannot erase the claim.
+            conn = (
+                primary
+                if self._db_path == ":memory:"
+                else await open_connection(
+                    Path(self._db_path).resolve().as_uri() + "?mode=rw", uri=True
+                )
+            )
+            # A confirmed claim must survive power loss before an external effect.
+            # Keep FULL for this connection; never weaken another task's durability.
+            await conn.execute("PRAGMA synchronous = FULL")
+            if conn is not primary:
+                # A competing writer can hold the lock beyond the approval TTL.
+                # Obtain write ownership before sampling the validity timestamp.
+                await conn.execute("BEGIN IMMEDIATE")
+            now = datetime.now(UTC).isoformat()
+            cursor = await conn.execute(
+                """
+                INSERT OR IGNORE INTO command_claims (command_id, claimed_at)
+                SELECT id, ? FROM pending_commands
+                WHERE id = ? AND status = 'approved' AND command_json = ?
+                  AND confirming_user_id IS ? AND confirmed_at IS ?
+                  AND julianday(ttl_expires_at) > julianday(?)
+                """,
+                (
+                    now,
+                    str(pending.id),
+                    pending.command.model_dump_json(),
+                    pending.confirming_user_id,
+                    pending.confirmed_at.dt.isoformat() if pending.confirmed_at else None,
+                    now,
+                ),
+            )
+            claimed = cursor.rowcount == 1
+            await conn.execute(
+                """UPDATE pending_commands SET status='expired'
+                   WHERE id=? AND status='approved'
+                     AND julianday(ttl_expires_at) <= julianday(?)
+                     AND NOT EXISTS (SELECT 1 FROM command_claims WHERE command_id=?)""",
+                (str(pending.id), now, str(pending.id)),
+            )
+            await conn.commit()
+            return claimed
+        except (aiosqlite.Error, OSError) as exc:
+            if conn is not None:
+                await conn.rollback()
+            raise StorageError("Cannot durably claim command; dispatch blocked") from exc
+        finally:
+            if conn is not None and conn is not primary:
+                await conn.close()
+
     async def get_pending_command(self, pending_id: UUID) -> PendingCommand | None:
         conn = self._require_conn()
         try:
             async with conn.execute(
-                "SELECT * FROM pending_commands WHERE id = ?", (str(pending_id),)
+                """SELECT pending_commands.*,
+                   EXISTS(SELECT 1 FROM command_claims
+                          WHERE command_id=pending_commands.id) AS is_claimed
+                   FROM pending_commands WHERE id = ?""",
+                (str(pending_id),),
             ) as cursor:
                 row = await cursor.fetchone()
         except (aiosqlite.Error, OSError) as exc:
@@ -1803,12 +1873,24 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         # crash instead of an empty result.
         if kinds is not None and not kinds:
             return []
-        sql = "SELECT * FROM pending_commands"
+        sql = """SELECT pending_commands.*,
+                 EXISTS(SELECT 1 FROM command_claims
+                          WHERE command_id=pending_commands.id) AS is_claimed
+                 FROM pending_commands"""
         params: list[object] = []
         clauses: list[str] = []
-        if status is not None:
+        if status == "claimed":
+            clauses.append(
+                "status = 'approved' AND EXISTS "
+                "(SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
+            )
+        elif status is not None:
             clauses.append("status = ?")
             params.append(status)
+            if status == "approved":
+                clauses.append(
+                    "NOT EXISTS (SELECT 1 FROM command_claims WHERE command_id=pending_commands.id)"
+                )
         if kinds is not None:
             placeholders = ", ".join("?" for _ in kinds)
             clauses.append(f"command_kind IN ({placeholders})")
@@ -1872,14 +1954,17 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         limit: int | None = None,
     ) -> list[PersistedNotification]:
         conn = self._require_conn()
-        sql = "SELECT * FROM notifications"
+        sql = """SELECT notifications.*, d.state AS delivery_state,
+                 d.attempts AS delivery_attempts, d.message_id AS delivery_message_id
+                 FROM notifications LEFT JOIN notification_delivery d
+                   ON d.notification_id=notifications.id"""
         params: list[object] = []
         if forwarded is not None:
             sql += " WHERE forwarded = ?"
             params.append(1 if forwarded else 0)
         # Newest first, so LIMIT returns the newest N (the web page and bell
         # badge depend on this); id breaks created_at ties deterministically.
-        sql += " ORDER BY created_at DESC, id DESC"
+        sql += " ORDER BY notifications.created_at DESC, notifications.id DESC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -1889,6 +1974,99 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
         except (aiosqlite.Error, OSError) as exc:
             raise StorageError(f"Failed to load notifications: {exc}") from exc
         return [row_to_notification(row) for row in rows]
+
+    @asynccontextmanager
+    async def _delivery_connection(self) -> AsyncIterator[aiosqlite.Connection]:
+        primary = self._require_conn()
+        if self._read_only:
+            raise StorageError("Read-only storage cannot deliver notifications")
+        if self._db_path == ":memory:":
+            yield primary
+        else:
+            async with managed_connection(
+                Path(self._db_path).resolve().as_uri() + "?mode=rw", uri=True
+            ) as connection:
+                await connection.execute("PRAGMA synchronous=FULL")
+                yield connection
+
+    async def record_health_transition(
+        self, daemon: str, status: str, notification: Notification
+    ) -> bool:
+        try:
+            async with self._delivery_connection() as conn:
+                return await sqlite_health_alerts.record(conn, daemon, status, notification)
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist health transition and alert") from exc
+
+    async def get_unresolved_deliveries(self, limit: int = 100) -> list[PersistedNotification]:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """SELECT n.*, d.state AS delivery_state, d.attempts AS delivery_attempts,
+                   d.message_id AS delivery_message_id FROM notifications n
+                   JOIN notification_delivery d ON d.notification_id=n.id
+                   WHERE d.state IN ('sending','failed','uncertain')
+                   ORDER BY n.created_at, n.id LIMIT ?""",
+                (min(100, max(1, limit)),),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_notification(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot read unresolved delivery outcomes") from exc
+
+    async def get_delivery_notifications(self, limit: int = 100) -> list[PersistedNotification]:
+        conn = self._require_conn()
+        try:
+            async with conn.execute(
+                """SELECT n.* FROM notifications n
+                   LEFT JOIN notification_delivery d ON d.notification_id=n.id
+                   WHERE n.forwarded=0 AND (
+                     d.state IS NULL OR d.state='queued'
+                     OR (d.state='retry' AND julianday(d.next_attempt)<=julianday(?))
+                     OR (d.state='sending' AND julianday(d.lease_until)<=julianday(?)))
+                   ORDER BY n.created_at ASC, n.id ASC LIMIT ?""",
+                (
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    min(100, max(1, limit)),
+                ),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [row_to_notification(row) for row in rows]
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot read notification delivery batch") from exc
+
+    async def claim_notification_delivery(self, notification_id: int) -> int | None:
+        try:
+            async with self._delivery_connection() as conn:
+                return await sqlite_delivery.claim(conn, notification_id)
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist notification delivery claim") from exc
+
+    async def finish_notification_delivery(  # pylint: disable=too-many-arguments
+        # Receipt identity, outcome and safe retry metadata form one transaction.
+        self,
+        notification_id: int,
+        attempt: int,
+        outcome: Literal["sent", "retry", "failed", "uncertain"],
+        *,
+        message_id: str | None = None,
+        error_type: str | None = None,
+        retry_after_seconds: float = 0,
+    ) -> None:
+        try:
+            async with self._delivery_connection() as conn:
+                await sqlite_delivery.finish(
+                    conn,
+                    notification_id,
+                    attempt,
+                    outcome,
+                    message_id=message_id,
+                    error_type=error_type,
+                    retry_after_seconds=retry_after_seconds,
+                )
+        except (aiosqlite.Error, OSError) as exc:
+            raise StorageError("Cannot persist notification delivery outcome") from exc
 
     async def mark_notification_forwarded(
         self, notification_id: int, forwarded_at: Timestamp
@@ -2220,6 +2398,29 @@ class SQLiteStorageAdapter(StoragePort):  # pylint: disable=too-many-public-meth
             raise StorageError(
                 f"Failed to update preferences for user {preferences.user_id}: {exc}"
             ) from exc
+
+    async def save_provider_health(self, snapshot: ProviderHealthSnapshot) -> None:
+        """Persist one complete snapshot without credentials or endpoint headers."""
+        conn = self._require_conn()
+        try:
+            await conn.execute(
+                "INSERT INTO provider_health (producer, snapshot_json) VALUES (?, ?) "
+                "ON CONFLICT(producer) DO UPDATE SET snapshot_json=excluded.snapshot_json",
+                (snapshot.producer, snapshot.model_dump_json()),
+            )
+            await conn.commit()
+        except aiosqlite.Error as exc:
+            raise StorageError("Failed to save provider health") from exc
+
+    async def get_provider_health(self) -> list[ProviderHealthSnapshot]:
+        """Malformed snapshots fail closed without echoing their contents."""
+        conn = self._require_conn()
+        try:
+            async with conn.execute("SELECT snapshot_json FROM provider_health") as cursor:
+                rows = await cursor.fetchall()
+            return [ProviderHealthSnapshot.model_validate_json(row[0]) for row in rows]
+        except (aiosqlite.Error, ValidationError, ValueError):
+            raise StorageError("Failed to read provider health") from None
 
     async def upsert_daemon_heartbeat(self, name: str, beat_at: datetime) -> None:
         """Persist (or refresh) the heartbeat row for ``name``.

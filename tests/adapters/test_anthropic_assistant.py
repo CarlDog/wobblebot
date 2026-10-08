@@ -117,10 +117,7 @@ def _anthropic_envelope(
     tokens_out: int = 50,
     msg_id: str = "msg_assist_1",
 ) -> dict[str, object]:
-    if isinstance(inner, dict):
-        text = json.dumps(inner)
-    else:
-        text = inner
+    text = json.dumps(inner) if isinstance(inner, dict) else inner
     return {
         "id": msg_id,
         "type": "message",
@@ -321,7 +318,7 @@ class TestWireShape:
         captured_headers: dict[str, str] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
-            captured_headers.update({k: v for k, v in request.headers.items()})
+            captured_headers.update(dict(request.headers.items()))
             return httpx.Response(200, json=envelope)
 
         adapter = _build_adapter(httpx.MockTransport(handler), storage)

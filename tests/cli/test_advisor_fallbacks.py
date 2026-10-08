@@ -214,26 +214,28 @@ async def test_backup_checks_the_same_shared_budget_after_primary_failure(storag
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(primary_http)) as primary_client:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(backup_http)) as backup_client:
-            monkeypatch.setattr(
-                advise,
-                "AnthropicAdvisorAdapter",
-                lambda **kw: AnthropicAdvisorAdapter(client=primary_client, **kw),
-            )
-            monkeypatch.setattr(
-                advise,
-                "OpenAIAdvisorAdapter",
-                lambda **kw: OpenAIAdvisorAdapter(client=backup_client, **kw),
-            )
-            entry = advise._build_expert_entry(_config().experts[-1], wiring)
-            from tests.adapters.test_fallback_advisor import _summary
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(primary_http)) as primary_client,
+        httpx.AsyncClient(transport=httpx.MockTransport(backup_http)) as backup_client,
+    ):
+        monkeypatch.setattr(
+            advise,
+            "AnthropicAdvisorAdapter",
+            lambda **kw: AnthropicAdvisorAdapter(client=primary_client, **kw),
+        )
+        monkeypatch.setattr(
+            advise,
+            "OpenAIAdvisorAdapter",
+            lambda **kw: OpenAIAdvisorAdapter(client=backup_client, **kw),
+        )
+        entry = advise._build_expert_entry(_config().experts[-1], wiring)
+        from tests.adapters.test_fallback_advisor import _summary
 
-            with pytest.raises(LLMCostCapExceeded):
-                await entry.advisor.get_recommendation(_summary())
-            backup_http.assert_not_awaited()
-            calls = await storage.get_llm_calls()
-            assert len(calls) == 1 and calls[0].error_kind == "insufficient_credit"
+        with pytest.raises(LLMCostCapExceeded):
+            await entry.advisor.get_recommendation(_summary())
+        backup_http.assert_not_awaited()
+        calls = await storage.get_llm_calls()
+        assert len(calls) == 1 and calls[0].error_kind == "insufficient_credit"
 
 
 async def test_missing_backup_key_fails_before_any_client_is_created(storage, monkeypatch):

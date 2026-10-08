@@ -314,14 +314,14 @@ class _ScriptedCursor:
         self._raises = raises
 
     def __await__(self):  # type: ignore[no-untyped-def]
-        async def _run() -> "_ScriptedCursor":
+        async def _run() -> _ScriptedCursor:
             if self._raises is not None:
                 raise self._raises
             return self
 
         return _run().__await__()
 
-    async def __aenter__(self) -> "_ScriptedCursor":
+    async def __aenter__(self) -> _ScriptedCursor:
         if self._raises is not None:
             raise self._raises
         return self
@@ -537,7 +537,7 @@ class TestStage83IndexAudit:
         # cli/operator's forwarder polls WHERE forwarded=0.
         plan = await self._eqp(
             storage,
-            "SELECT * FROM notifications WHERE forwarded = 0 " "ORDER BY created_at LIMIT ?",
+            "SELECT * FROM notifications WHERE forwarded = 0 ORDER BY created_at LIMIT ?",
             (50,),
         )
         assert "SEARCH" in plan

@@ -255,6 +255,22 @@ services:
   # commands route through pending_commands → cli/live's approved
   # poll). Safe to auto-restart.
   # ------------------------------------------------------------------
+  # Outbound-only independent sender; activation is opt-in, never automatic.
+  delivery:
+    <<: *wobblebot-defaults
+    profiles: [delivery]
+    container_name: wobblebot-delivery
+    command: python -m wobblebot.cli.delivery --profile cpu-only
+    environment:
+      <<: *common-env
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "tools/healthcheck.py", "--daemon", "cli/delivery", "--profile", "cpu-only"]
+      interval: ${HEALTHCHECK_INTERVAL:-60s}
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
   operator:
     <<: *wobblebot-defaults
     container_name: wobblebot-operator
@@ -298,17 +314,8 @@ services:
       # httpx client for public health probes only; exchange data on the
       # dashboard comes from the DBs the daemons write.
       WOBBLEBOT_WEB_SESSION_SECRET: ${WOBBLEBOT_WEB_SESSION_SECRET}
-      # ACCEPTED RESIDUAL (ADR-041). web.py:245-247 uses these for the
-      # /health LLM card's ok / unauthorized / not-configured badge via
-      # non-billable GET /v1/models probes. This is the reverse-proxied
-      # service holding three billable keys to render a badge — a real
-      # trade. Dropping them would make the card report "not configured"
-      # for providers that ARE configured, which is worse than no card;
-      # sourcing that status from a daemon that already holds the keys
-      # is named 2.1 work, not a silent change here.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # N1: provider observations come from operator.db. No cloud key is
+      # granted to the network-facing dashboard; stale/missing data is unknown.
     ports:
       # Host port 8000 is already in use on the NAS (likely DSM Web
       # Station / FreshRSS stack). Bind 28080 on the host instead;
@@ -386,5 +393,7 @@ services:
       - ${HOST_DATA_DIR:-/volume1/docker/wobblebot/data}:/app/data
       - ${HOST_CONFIG_DIR:-/volume1/docker/wobblebot/config}:/app/config
     restart: "no"
+    healthcheck:
+      disable: true
     profiles:
       - tools

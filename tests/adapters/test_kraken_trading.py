@@ -24,9 +24,10 @@ Coverage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import parse_qs
 
 import httpx
@@ -1217,7 +1218,6 @@ class TestPartitionKnownSymbols:
     async def test_assetpairs_hit_once_across_many_symbols(self) -> None:
         """N symbols share ONE AssetPairs fetch via the cache — no per-symbol
         network call."""
-        request_paths: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(404)

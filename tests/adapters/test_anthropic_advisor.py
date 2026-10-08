@@ -85,10 +85,7 @@ def _anthropic_envelope(
     model: str = "claude-sonnet-4-6",
 ) -> dict[str, object]:
     """Build an Anthropic Messages-API response envelope."""
-    if isinstance(inner, dict):
-        text = json.dumps(inner)
-    else:
-        text = inner
+    text = json.dumps(inner) if isinstance(inner, dict) else inner
     return {
         "id": msg_id,
         "type": "message",

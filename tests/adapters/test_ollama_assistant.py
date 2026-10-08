@@ -29,6 +29,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from tests.adapters.ollama_fixtures import local_transport
 from wobblebot.adapters.ollama_assistant import OllamaAssistantAdapter
 from wobblebot.config.prompts import Prompt, PromptMetadata
 from wobblebot.domain.value_objects import Symbol, Timestamp
@@ -118,7 +119,7 @@ def _chat_envelope(content: str, *, thinking: str | None = None) -> dict[str, ob
         "done": True,
     }
     if thinking is not None:
-        env["thinking"] = thinking
+        env["message"]["thinking"] = thinking
     return env
 
 
@@ -237,7 +238,7 @@ class TestParseIntentHappyPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context(current="pause BTC"))
         finally:
@@ -269,7 +270,7 @@ class TestParseIntentHappyPaths:
                 json=_chat_envelope(json.dumps({"kind": "query", "query": {"kind": "status"}})),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context(current="how's it going?"))
         finally:
@@ -295,7 +296,7 @@ class TestParseIntentHappyPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context())
         finally:
@@ -315,7 +316,7 @@ class TestParseIntentHappyPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context(current="thanks"))
         finally:
@@ -332,7 +333,7 @@ class TestParseIntentHappyPaths:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context(current="wibble"))
         finally:
@@ -376,7 +377,7 @@ class TestConversationContext:
             timestamp=ts,
         )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             await adapter.parse_intent(
                 _context(current="now filter to ETH", turns=(op_turn, bot_turn))
@@ -409,7 +410,7 @@ class TestConversationContext:
             total_usd_balance=123.45,
             session_pnl=0.04,
         )
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             await adapter.parse_intent(_context(snapshot=snap))
         finally:
@@ -449,7 +450,7 @@ class TestThinkingMode:
             )
             return httpx.Response(200, json=_chat_envelope(reply))
 
-        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:14b")
+        adapter = _build_adapter(local_transport(handler), model="deepseek-r1:14b")
         try:
             intent = await adapter.parse_intent(_context())
         finally:
@@ -481,7 +482,7 @@ class TestThinkingMode:
                 ),
             )
 
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = httpx.AsyncClient(transport=local_transport(handler))
         adapter = OllamaAssistantAdapter(
             model="deepseek-r1:14b",
             prompt=_operator_prompt(),
@@ -496,9 +497,9 @@ class TestThinkingMode:
         assert isinstance(intent, IntentCommand)
         body = captured["body"]
         assert isinstance(body, dict)
-        assert (
-            body["format"] == "json"
-        ), "force_json=True must override is_thinking_model and add format=json"
+        assert body["format"] == "json", (
+            "force_json=True must override is_thinking_model and add format=json"
+        )
 
     async def test_force_json_default_preserves_thinking_behavior(self) -> None:
         """Regression guard: default force_json=False keeps the
@@ -516,7 +517,7 @@ class TestThinkingMode:
             )
             return httpx.Response(200, json=_chat_envelope(reply))
 
-        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:14b")
+        adapter = _build_adapter(local_transport(handler), model="deepseek-r1:14b")
         try:
             await adapter.parse_intent(_context())
         finally:
@@ -544,7 +545,7 @@ class TestThinkingMode:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context())
         finally:
@@ -578,7 +579,7 @@ class TestThinkingMode:
 
         # Thinking-mode name pattern so the combined-extraction branch runs
         # even though message.content is non-empty.
-        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:14b")
+        adapter = _build_adapter(local_transport(handler), model="deepseek-r1:14b")
         try:
             intent = await adapter.parse_intent(_context())
         finally:
@@ -599,7 +600,7 @@ class TestErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "model exploded"})
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="chat request failed"):
                 await adapter.parse_intent(_context())
@@ -610,7 +611,7 @@ class TestErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"model": "x", "done": True})
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="missing 'message' object"):
                 await adapter.parse_intent(_context())
@@ -626,7 +627,7 @@ class TestErrorPaths:
             call_count += 1
             return httpx.Response(200, json=_chat_envelope(""))
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="empty 'message.content'"):
                 await adapter.parse_intent(_context())
@@ -651,7 +652,7 @@ class TestErrorPaths:
                 return httpx.Response(200, json=_chat_envelope(""))
             return httpx.Response(200, json=_chat_envelope(json.dumps(intent_payload)))
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
                 intent = await adapter.parse_intent(_context())
@@ -665,7 +666,7 @@ class TestErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_chat_envelope("not json at all"))
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="not valid JSON"):
                 await adapter.parse_intent(_context())
@@ -676,7 +677,7 @@ class TestErrorPaths:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json=_chat_envelope("[1, 2, 3]"))
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="expected object"):
                 await adapter.parse_intent(_context())
@@ -691,7 +692,7 @@ class TestErrorPaths:
                 json=_chat_envelope(json.dumps({"kind": "telepathy", "thought": "..."})),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="operator_intent_v1 schema"):
                 await adapter.parse_intent(_context())
@@ -705,7 +706,7 @@ class TestErrorPaths:
                 json=_chat_envelope("I cannot help with this request."),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler), model="deepseek-r1:7b")
+        adapter = _build_adapter(local_transport(handler), model="deepseek-r1:7b")
         try:
             with pytest.raises(AssistantError, match="no JSON object at all"):
                 await adapter.parse_intent(_context())
@@ -733,7 +734,7 @@ class TestLifecycle:
 
     async def test_aclose_borrowed_client_left_open(self) -> None:
         # When the caller passes in a client, the adapter does NOT close it.
-        transport = httpx.MockTransport(lambda _: httpx.Response(200, json=_chat_envelope("{}")))
+        transport = local_transport(lambda _: httpx.Response(200, json=_chat_envelope("{}")))
         client = httpx.AsyncClient(transport=transport)
         adapter = OllamaAssistantAdapter(model="x", prompt=_operator_prompt(), client=client)
         await adapter.aclose()
@@ -749,7 +750,7 @@ class TestLifecycle:
             seen_paths.append(request.url.path)
             return httpx.Response(200, json={"model": "test-model", "response": "", "done": True})
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with caplog.at_level("INFO", logger="wobblebot.adapters.ollama_assistant"):
                 await adapter.warmup()
@@ -764,7 +765,7 @@ class TestLifecycle:
         def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(503, json={"error": "model not loaded"})
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with caplog.at_level("WARNING", logger="wobblebot.adapters.ollama_assistant"):
                 await adapter.warmup()  # must NOT raise
@@ -799,7 +800,7 @@ class TestReadTimeoutRetry:
                 ),
             )
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             intent = await adapter.parse_intent(_context(current="pause BTC"))
         finally:
@@ -815,7 +816,7 @@ class TestReadTimeoutRetry:
             calls["n"] += 1
             raise httpx.ReadTimeout("read timed out", request=request)
 
-        adapter = _build_adapter(httpx.MockTransport(handler))
+        adapter = _build_adapter(local_transport(handler))
         try:
             with pytest.raises(AssistantError, match="ReadTimeout"):
                 await adapter.parse_intent(_context(current="pause BTC"))

@@ -17,31 +17,29 @@
 #   docker build -f docker/Dockerfile -t wobblebot:dev .
 
 # ---------- Stage 1: builder ----------
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Build deps for any C-extension wheels that pip falls back to
-# building from source. bcrypt + pydantic-core ship wheels for
-# python:3.14-slim, so this is belt-and-suspenders, not strictly
-# required today.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc \
- && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /build
 
 # Copy only what `pip wheel` needs to resolve and build the project.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.lock requirements-build.lock ./
 COPY src/ ./src/
 
-# Produce wheels for wobblebot + all transitive runtime deps.
-RUN pip wheel --no-cache-dir --wheel-dir /wheels .
+# Fail if the selected target has no approved binary wheel. Never float through
+# an OS compiler/package repository or an unpinned build-isolation environment.
+# Optional enterprise proxy CA is ephemeral and never baked into the image.
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    pip download --require-hashes --only-binary=:all: -r requirements.lock -d /wheels \
+ && pip install --require-hashes --only-binary=:all: -r requirements-build.lock \
+ && pip wheel --no-deps --no-build-isolation --wheel-dir /app-wheel .
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.14-slim AS runtime
+FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS runtime
 
 # Streaming-friendly output (Docker captures stderr per daemon)
 # and no .pyc cruft in the layered image.
@@ -60,7 +58,16 @@ WORKDIR /app
 
 # Install from wheels only — no source, no build deps.
 COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+COPY --from=builder /app-wheel /app-wheel
+COPY requirements.lock /opt/wobblebot/requirements.lock
+RUN pip install --no-index --find-links /wheels --require-hashes -r /opt/wobblebot/requirements.lock \
+ && pip install --no-index --no-deps /app-wheel/*.whl \
+ && pip check \
+ && rm -rf /wheels /app-wheel
+
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF
+ENV WOBBLEBOT_BUILD_REVISION=$VCS_REF
 
 # Baked defaults live OUTSIDE /app/config so the compose bind
 # mount of /app/config can't hide them. The entrypoint script
@@ -74,7 +81,9 @@ COPY tools/ /app/tools/
 # /app/config from /opt/wobblebot/defaults/config on first boot,
 # then exec's whatever command was passed.
 COPY docker/entrypoint.sh /usr/local/bin/wobblebot-entrypoint
-RUN chmod +x /usr/local/bin/wobblebot-entrypoint
+RUN chmod 755 /usr/local/bin/wobblebot-entrypoint \
+ && chmod 644 /opt/wobblebot/requirements.lock \
+ && chmod -R a+rX /opt/wobblebot/defaults/config /app/tools
 
 # Writable runtime directories. Compose mounts host volumes over
 # /app/data, /app/config, /app/logs so SQLite DBs + settings +
@@ -86,6 +95,12 @@ RUN mkdir -p /app/config /app/data /app/data/archive /app/data/backups /app/logs
  && chown -R wobblebot:wobblebot /app
 
 USER wobblebot
+
+# Direct daemon runs explicitly select a role through WOBBLEBOT_HEALTH_*;
+# Compose overrides this with its role-specific HTTP/heartbeat probe. Missing
+# role or stale/unknown evidence fails closed. One-shot tools disable the probe.
+HEALTHCHECK --interval=60s --timeout=30s --start-period=120s --retries=3 \
+    CMD ["python", "tools/healthcheck.py", "--container"]
 
 ENTRYPOINT ["/usr/local/bin/wobblebot-entrypoint"]
 

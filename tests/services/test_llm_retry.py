@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.domain.exceptions import LLMRetryExhausted
 from wobblebot.services.llm_retry import (
@@ -306,22 +307,22 @@ class TestConfigValidation:
 
     def test_frozen(self) -> None:
         cfg = LLMRetryConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.max_retries = 99  # type: ignore[misc]
 
     def test_negative_max_retries_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMRetryConfig(max_retries=-1)
 
     def test_zero_backoff_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMRetryConfig(initial_backoff_seconds=0.0)
 
     def test_multiplier_below_one_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMRetryConfig(backoff_multiplier=0.5)
 
     def test_max_retries_upper_bound(self) -> None:
         # Sanity ceiling to prevent operator typos like 1000.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMRetryConfig(max_retries=11)

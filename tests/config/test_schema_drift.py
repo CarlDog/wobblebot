@@ -200,8 +200,7 @@ class TestSettingsDrift:
         operator_paths = _load_yaml_paths(_SETTINGS_OPERATOR)
         stale = operator_paths - example_paths
         assert not stale, (
-            f"settings.yml has keys that no longer exist in settings.example.yml: "
-            f"{sorted(stale)}"
+            f"settings.yml has keys that no longer exist in settings.example.yml: {sorted(stale)}"
         )
 
     def test_operator_has_all_example_keys(self) -> None:

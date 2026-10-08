@@ -13,19 +13,19 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-
 from tools.import_kraken_history import (
     ImportStats,
     _candidate_files,
     _import_pair_interval,
     _parse_row,
 )
+
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.value_objects import Symbol
 
@@ -63,7 +63,7 @@ class TestParseRow:
             _parse_row("1381093200,122.0,122.5", _BTC, 60)
 
     def test_non_numeric_price_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidOperation):
             _parse_row("1381093200,abc,122.5,121.5,122.2,0.1,1", _BTC, 60)
 
     def test_validator_violation_raises(self) -> None:

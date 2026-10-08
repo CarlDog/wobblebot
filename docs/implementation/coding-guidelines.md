@@ -23,7 +23,7 @@ Keep files focused.  If a module exceeds about 300–400 lines and feels like a 
 ## Style
 
 - Use **black** for code formatting.  Consistent formatting reduces bike‑shedding.
-- Use **isort** for import ordering (standard library, third‑party packages, local modules).
+- Use **Ruff** for import ordering (standard library, third‑party packages, local modules).
 - Use **mypy** or **pyright** for type checking on the core modules.
 
 General guidelines:

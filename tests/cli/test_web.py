@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -177,6 +176,10 @@ class TestOpenOptionalDbs:
         bad_path = tmp_path / "advise_is_a_dir"
         bad_path.mkdir()
         good_path = tmp_path / "harvest.db"
+        # The owning daemon, not its reader, creates and migrates this database.
+        owner = await cli_web._open_storage(str(good_path))
+        assert owner is not None
+        await owner.close()
 
         web = WebConfig(advise_db=str(bad_path), harvest_db=str(good_path))
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.web"):
@@ -482,3 +485,31 @@ class TestBuildOverrides:
         ns = argparse.Namespace(bind_host=None, bind_port=None, log_format=None)
         result = cli_web._build_overrides(ns)
         assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_optional_reader_never_creates_missing_database(tmp_path):
+    missing = tmp_path / "absent" / "live.db"
+    result = await cli_web._open_optional_dbs(WebConfig(live_db=str(missing)))
+    assert result["live"] is None
+    assert not missing.parent.exists()
+
+
+@pytest.mark.asyncio
+async def test_optional_database_is_actually_read_only(tmp_path):
+    from wobblebot.ports.exceptions import StorageError
+
+    path = tmp_path / "live.db"
+    owner = await cli_web._open_storage(str(path))
+    assert owner is not None
+    await owner.close()
+    result = await cli_web._open_optional_dbs(WebConfig(live_db=str(path)))
+    reader = result["live"]
+    assert reader is not None
+    try:
+        from datetime import UTC, datetime
+
+        with pytest.raises(StorageError):
+            await reader.upsert_daemon_heartbeat("forbidden", datetime.now(UTC))
+    finally:
+        await reader.close()

@@ -261,7 +261,9 @@ class TestApplyReconciliation:
 
         with caplog.at_level(logging.ERROR, logger="wobblebot.services.reconciler"):
             report = await apply_reconciliation(
-                adapter, storage, configured_symbols=frozenset({"BTC"})  # type: ignore[arg-type]
+                adapter,
+                storage,
+                configured_symbols=frozenset({"BTC"}),  # type: ignore[arg-type]
             )
 
         assert report.storage_canceled_count == 0
@@ -283,7 +285,9 @@ class TestApplyReconciliation:
         adapter = _FakeAdapter(open_orders=[shared, orphan])
 
         report = await apply_reconciliation(
-            adapter, storage, configured_symbols=frozenset({"BTC"})  # type: ignore[arg-type]
+            adapter,
+            storage,
+            configured_symbols=frozenset({"BTC"}),  # type: ignore[arg-type]
         )
 
         assert report.storage_canceled_count == 1
@@ -302,7 +306,9 @@ class TestApplyReconciliation:
         adapter = _FakeAdapter(open_orders=[sol_orphan])
 
         report = await apply_reconciliation(
-            adapter, storage, configured_symbols=frozenset({"BTC"})  # type: ignore[arg-type]
+            adapter,
+            storage,
+            configured_symbols=frozenset({"BTC"}),  # type: ignore[arg-type]
         )
 
         # Engine only configured for BTC; the SOL orphan is operator's
@@ -468,9 +474,9 @@ class TestApplyReconciliationRecoveredFills:
         assert bad_roundtripped.status == "open", "the failed row stays open, untouched"
         good_roundtripped = await storage.get_order(good.id)
         assert good_roundtripped is not None
-        assert (
-            good_roundtripped.status == "canceled"
-        ), "reconciliation must continue past the bad row"
+        assert good_roundtripped.status == "canceled", (
+            "reconciliation must continue past the bad row"
+        )
 
 
 @pytest.mark.asyncio

@@ -94,9 +94,7 @@ def _v1_schema_sql() -> str:
         _unavailable(f"cannot read {_V1_TAG}:{_SCHEMA_MODULE} from git ({exc})")
 
     namespace: dict[str, object] = {}
-    exec(
-        compile(blob, _SCHEMA_MODULE, "exec"), namespace
-    )  # noqa: S102  # trusted: our own tagged source
+    exec(compile(blob, _SCHEMA_MODULE, "exec"), namespace)  # noqa: S102  # trusted: our own tagged source
     schema = namespace.get("SCHEMA")
     if not isinstance(schema, str) or "CREATE TABLE" not in schema:
         _unavailable(f"{_V1_TAG}:{_SCHEMA_MODULE} has no usable SCHEMA constant")

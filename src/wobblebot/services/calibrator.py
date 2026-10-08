@@ -66,8 +66,8 @@ against the operator's own intent.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Iterable
 
 from pydantic import BaseModel, Field
 

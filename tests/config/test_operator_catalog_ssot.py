@@ -73,4 +73,4 @@ class TestCatalogSSOT:
         fast path in front of the LLM. A new engine command must get a
         fixed-grammar form (or an explicit decision here), and the fast
         path must not name a kind the union no longer has."""
-        assert FAST_PATH_COMMAND_KINDS == _union_kinds(OperatorCommand)
+        assert _union_kinds(OperatorCommand) == FAST_PATH_COMMAND_KINDS

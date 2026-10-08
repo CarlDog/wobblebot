@@ -50,6 +50,14 @@ from typing import Any, get_args
 
 import httpx
 
+from wobblebot.adapters.ollama_native import (
+    local_preflight,
+    model_identity,
+    read_envelope,
+    request_failure,
+    require_local_target,
+    response_metrics,
+)
 from wobblebot.config.prompts import Prompt
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -161,6 +169,8 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         client: httpx.AsyncClient | None = None,
         force_json: bool = False,
     ) -> None:
+        require_local_target(model, base_url, AdvisorError)
+        self.last_metrics: dict[str, int | str | None] = {}
         self._model = model
         self._prompt = prompt
         self._role = role
@@ -177,6 +187,10 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         # extraction path. See ``docs/release/v1.1/operator-ux.md`` →
         # "Reasoning-model support" for the planned config wiring.
         self._force_json = force_json
+
+    async def inspect_model(self) -> dict[str, Any]:
+        """Explicit metadata-only measurement; no general local-call persistence."""
+        return await model_identity(self._client, self._base_url, self._model, AdvisorError)
 
     async def aclose(self) -> None:
         """Release the underlying httpx client if the adapter owns it."""
@@ -208,7 +222,8 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         thinking_mode = is_thinking_model(self._model) and not self._force_json
         payload: dict[str, Any] = {
             "model": self._model,
-            "prompt": f"{self._prompt.body}\n\n{user_message}",
+            "system": self._prompt.body,
+            "prompt": user_message,
             "stream": False,
             "options": {
                 "temperature": self._temperature,
@@ -232,8 +247,12 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         if self._force_json or not thinking_mode:
             payload["format"] = _RESPONSE_JSON_SCHEMA
 
+        self.last_metrics = {}
+        await local_preflight(self._client, self._base_url, self._model, AdvisorError)
         try:
-            response = await self._client.post(f"{self._base_url}/api/generate", json=payload)
+            response = await self._client.post(
+                f"{self._base_url}/api/generate", json=payload, follow_redirects=False
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             # Include the exception type: a bare ReadTimeout/ConnectTimeout
@@ -241,14 +260,10 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
             # useless "Ollama request failed: " (the 2026-05-28 NAS
             # advise-timeout incident needed Ollama's own GIN log to
             # diagnose). The type name disambiguates timeout vs transport.
-            raise AdvisorError(f"Ollama request failed: {type(exc).__name__}: {exc}") from exc
+            raise AdvisorError(f"Ollama request failed: {request_failure(exc)}") from exc
 
-        try:
-            ollama_envelope = response.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise AdvisorError("Ollama response envelope is not valid JSON") from exc
-        if not isinstance(ollama_envelope, dict):
-            raise AdvisorError("Ollama response envelope must be a JSON object")
+        ollama_envelope = read_envelope(response, AdvisorError)
+        self.last_metrics = response_metrics(ollama_envelope)
 
         raw_response_field = ollama_envelope.get("response")
         raw_thinking_field = ollama_envelope.get("thinking")
@@ -260,7 +275,7 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
         if response_empty and not thinking_present:
             raise AdvisorError(
                 "Ollama response empty across both 'response' and 'thinking' fields; "
-                f"envelope keys: {sorted(ollama_envelope)}"
+                "inspect the model completion configuration"
             )
 
         inner: dict[str, Any]
@@ -296,7 +311,14 @@ class OllamaAdapter(AdvisorPort):  # pylint: disable=too-many-instance-attribute
 
         if not isinstance(inner, dict):
             raise AdvisorError("Ollama recommendation must be a JSON object")
-        return build_advisor_recommendation(inner, fallback_role=self._role)
+        if "confidence" not in inner:
+            raise AdvisorError("LLM output missing required field confidence")
+        try:
+            return build_advisor_recommendation(inner, fallback_role=self._role)
+        except AdvisorError as exc:
+            raise AdvisorError(
+                "LLM output failed advisor_recommendation_v1 schema validation"
+            ) from exc
 
     async def validate_recommendation(self, recommendation: AdvisorRecommendation) -> bool:
         """Stage 3.2: parsing-success is the only check.

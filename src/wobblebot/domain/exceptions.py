@@ -10,8 +10,6 @@ from decimal import Decimal
 class WobbleBotDomainError(Exception):
     """Base exception for all domain errors."""
 
-    pass
-
 
 class ExposureLimitExceeded(WobbleBotDomainError):
     """Raised when an operation would exceed configured exposure limits."""
@@ -46,8 +44,6 @@ class InvalidOrderState(WobbleBotDomainError):
 class InvalidGridConfiguration(WobbleBotDomainError):
     """Raised when grid parameters are invalid or inconsistent."""
 
-    pass
-
 
 class InsufficientBalance(WobbleBotDomainError):
     """Raised when attempting an operation with insufficient funds."""
@@ -63,13 +59,9 @@ class InsufficientBalance(WobbleBotDomainError):
 class InvalidPriceRange(WobbleBotDomainError):
     """Raised when price range is invalid (e.g., min > max)."""
 
-    pass
-
 
 class InvalidAmount(WobbleBotDomainError):
     """Raised when amount validation fails."""
-
-    pass
 
 
 class LLMRetryExhausted(WobbleBotDomainError):

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timezone
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.domain.value_objects import OHLCBar, Symbol
 
@@ -50,7 +51,7 @@ class TestOHLCBarHappyPath:
 
     def test_is_frozen(self) -> None:
         bar = _make()
-        with pytest.raises(Exception):  # pylint: disable=broad-exception-caught
+        with pytest.raises(ValidationError):  # pylint: disable=broad-exception-caught
             bar.open = Decimal("80000")  # type: ignore[misc]
 
 

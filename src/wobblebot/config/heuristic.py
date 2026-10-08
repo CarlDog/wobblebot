@@ -170,7 +170,7 @@ class HeuristicSpec(BaseModel):
         vols = [p.vol for p in self.curve]
         if vols != sorted(vols) or len(set(vols)) != len(vols):
             raise ValueError(
-                "heuristic curve points must be sorted by strictly increasing `vol`; " f"got {vols}"
+                f"heuristic curve points must be sorted by strictly increasing `vol`; got {vols}"
             )
         return self
 

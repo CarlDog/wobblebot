@@ -28,6 +28,16 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Fixed
+
+- Constrain the container HTTP health probe to loopback `/healthz`, reject
+  unintended destinations before I/O, and ignore redirects and proxy settings.
+- Replace deployment image-reference regex validation with equivalent linear
+  parsing, preserving pinned-digest syntax and rejecting invalid plans early.
+
+- Recheck command approval expiry after acquiring SQLite write ownership, so
+  lock contention cannot dispatch an approval that expired while waiting.
+
 ### Documentation
 
 - **Close the 2.0.x stabilization milestone and open 2.1.** The
@@ -37,7 +47,63 @@ fresh `[Unreleased]` heading created at that time.
   reconciles the 2.1 slices and sets N1 (deployment isolation) next with its
   acceptance criteria. Documentation only: no runtime change, tag or deployment.
 
+## [2.1.0-alpha.2] — local test candidate, unpublished
+
+- Add a meaningful role-configured Dockerfile healthcheck, retain per-service
+  probes, cover optional delivery heartbeat freshness, and disable inherited
+  daemon checks for one-shot tools. Invalid probe usage exits 1, never Docker's
+  reserved 2. Existing page-only financial-daemon recovery policy is unchanged.
+- Preserve real-SQLite key-versus-value membership regression controls and narrow
+  Ruff exclusions; no dictionary-style rewrite may lose persisted transfer state.
+- Repair probe-battery availability/grading/provenance, preserve historical
+  fixture sets, and reject provider-reported truncation after cost accounting.
+- Back off repeatedly failing news sources without delaying healthy feeds or
+  rewriting configuration; recover normal cadence after successful fetches.
+- Adopt Ruff formatting/imports and lint, retaining pylint and mypy under the
+  operator-approved repository-specific decision; keep semantic checks enforced.
+- Add strict disabled-by-default `equities.enabled` validation. Unsupported
+  activation fails before provider wiring; real securities integration and its
+  dependent workflows are explicitly deferred until a verified official contract.
+- File official Robinhood/Kraken agentic-platform research as later proposals,
+  with capability/approval/retry limits and no new integration authority.
+
+## [2.1.0-alpha.1] — local test candidate, unpublished
+
 ### Changed
+
+- Independent delivery observes daemon freshness and records deduplicated health
+  transitions; read-only doctor reports lifecycle, provider and disk evidence in
+  human/JSON form. Missing/future observations cannot report healthy status.
+- Local Ollama now checks metadata/provenance before prompts, uses native system
+  and reasoning fields, refuses incomplete output and exposes only safe port
+  errors. Explicit probes measure model identity and allowlisted native metrics.
+- Manual provider-watch snapshots have durable change deduplication and separate
+  maintenance/model-review owners; legacy funding retention and migration gates
+  are explicit. No watcher schedule or financial activation is installed.
+
+- Notifications use durable send claims, atomic receipt persistence and bounded
+  safe retries. An opt-in outbound-only delivery daemon can send persisted alerts
+  independently of the operator process. Ambiguous and terminal failures are
+  visible in the dashboard and are not blindly resent.
+
+
+- Runtime/build/dev dependency resolutions now carry hashes; Docker pins its base
+  digest and installs verified binary wheels. CI separates quality from the
+  Python/platform test matrix. Startup records sanitized configuration/asset
+  fingerprints, and generated deployment plans accept verified image digests.
+
+
+- Foreign database consumers open read-only without creating or migrating their
+  owners' databases. Web reads sanitized persisted provider observations rather
+  than holding cloud keys. A local isolation-plan generator stages per-service
+  mounts and resolved configuration without migrating data or starting services.
+
+
+- **Portable, non-mutating local verification.** Make targets select the Windows
+  or POSIX virtual environment and invoke pip through that interpreter.
+  `make check` checks formatting without rewriting the source under review.
+  The development guide now uses the repository's current clone URL, module
+  names and branch workflow.
 
 - **Refresh existing web and development dependencies.** Starlette 1.6.0 → 1.7.0
   ([PR #161](https://github.com/CarlDog/wobblebot/pull/161)) and uvicorn 0.52.4 → 0.54.0
@@ -49,6 +115,12 @@ fresh `[Unreleased]` heading created at that time.
   ([PR #151](https://github.com/CarlDog/wobblebot/pull/151)).
 
 ### Fixed
+
+- Human-approved command payloads and decisions are immutable. Live and harvest
+  durably claim each unexpired approval before dispatch, so concurrent consumers
+  and lost terminal receipts cannot replay it. Unresolved effects remain visible
+  for reconciliation; they are never automatically retried.
+
 
 - **Release resources after interrupted startup.** SQLite closes an opened connection
   if schema setup, migration, or cancellation interrupts startup. The operator daemon

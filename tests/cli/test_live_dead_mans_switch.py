@@ -136,7 +136,7 @@ class _UnconfirmedArmExchange(_RecordingExchange):
 
     async def set_dead_mans_switch(self, timeout_seconds: int):  # type: ignore[no-untyped-def]
         self.dms_calls.append(timeout_seconds)
-        return None
+        return
 
 
 async def test_unconfirmed_arm_logs_warning_and_does_not_crash(

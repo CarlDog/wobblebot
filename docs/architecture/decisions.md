@@ -3720,3 +3720,244 @@ lost is log-only until the next tick's drain).
 
 <!-- ADR-046 is the last in this file; new ADRs append below. -->
 <!-- ADR-020 (regime as first-class metric) DEFERRED — see ADR-019. -->
+
+## ADR-047: Staged directory isolation and persisted provider observations
+
+**Status:** adopted for local implementation, 2026-10-03. Extends ADR-041;
+production migration and full phase acceptance remain separate.
+
+**Decision.** Provide an opt-in generator of a resolved settings file, explicit
+per-service directory mounts and a migration map. Never move existing data or
+start services. Owners write their database directories; foreign consumers open
+SQLite with `mode=ro`, without migrations or creation. Mount directories, not
+individual database files, so concurrent WAL/SHM reads remain possible. Logs,
+backups, archive and settings have independent grants. Only the existing tools
+settings writer has writable configuration. Generated readers disable entrypoint
+bootstrap and use pre-staged prompt/config assets. Reject unclassified/shared
+owner paths and unsupported asset paths rather than inventing authority.
+
+The operator produces sanitized, timestamped non-billable provider observations
+using only its existing credentials. Web consumes persisted observations and
+needs no provider credentials or probe client. Coverage is explicitly the
+operator's Ollama/Anthropic/OpenAI/Google model-list endpoints; this does not
+establish advisor-only Atlas/Ollama-cloud inference or model quality. An absent,
+failed or stale producer yields unknown/stale evidence. Provider names include
+the producer. Errors contain types/statuses, never headers, URLs or raw bodies.
+
+**Residuals.** Multiple daemons legitimately write operator.db heartbeat, cost,
+notification or command tables. Directory grants do not constrain table-level
+command authority; N3 owns immutable approval and claim semantics. Offline
+SQLite/WAL/container tests are not deployed NAS acceptance. Old readers can open
+the additive schema; a new reader of an old schema reports unknown provider
+health. Existing data layout stays valid until explicitly migrated.
+
+**Rejected.** A root writable data mount defeats isolation; `immutable=1` can
+hide concurrent writes; giving web another cloud key restores excess authority;
+automatic migration/rollback can discard post-backup financial effects.
+
+## ADR-048: Hashed pip inputs and bounded declared runtime identity
+
+**Status:** adopted for local implementation, 2026-10-03.
+
+Resolve runtime, build and dev dependencies with hashes while preserving pip
+installation and the existing architecture. Docker consumes the runtime/build
+locks and a pinned Python base; CI consumes the matching dev resolution. Fail
+when a target lacks an approved binary runtime wheel. Use optional ephemeral
+build CA secrets for enterprise TLS, never insecure transport or baked credentials.
+
+Emit only allowlisted startup identity and config/asset hashes. Image digest is
+explicitly declared, not attested inside an unprivileged process. Actual image
+inspection stays an external verification step. Digest-pinned generated deployment
+files and retained CI identity evidence make that comparison possible. No manifest
+database, Docker socket, paid service or automatic deployment is introduced.
+
+Retain the current quality tools during this functional build change. A broad
+Ruff migration is a separate standards gap, not a duplicate lint stack or implicit
+exception. Hosted platform/CodeQL facts cannot be inferred from local configuration.
+
+## ADR-049: Immutable approvals and durable one-time command claims
+
+**Status:** adopted for local implementation, 2026-10-03.
+
+An approval is a durable capability for one exact command, not a mutable queue
+slot. SQLite guards command payload/request identity and post-confirmation TTL,
+confirmer and confirmation time. State transitions cannot rewind a terminal
+outcome or replace a competing decision. The existing confirmation surfaces keep
+their authorization checks; storage adds atomic protection against races.
+
+Before live or harvest dispatch, one atomic conditional insert claims the exact
+still-approved, unexpired row, and commits with FULL synchronous durability.
+Only one consumer wins. Claim failure blocks dispatch. Expired approvals expire
+without an effect. The claim stays durable if dispatch, cancellation, process
+exit or final receipt persistence fails. Readers expose an unresolved approval
+as `claimed`; it is excluded from future approved polls and the UI directs the
+operator to reconcile before issuing a replacement. This is at-most-once dispatch,
+not proof that an external exchange operation occurred exactly once.
+
+A successful final receipt retains the claim as audit evidence. There is no
+automatic lease expiry/retry for commands and no automatic claim-clearing tool.
+Reconciliation inspects command ID, daemon logs, engine/exchange state and (for
+withdrawals) ADR-026's durable transfer reservation and Kraken records. A new
+human approval, after determining the effect, is a new command; never reset or
+reuse the old UUID. The Harvester's existing replay/cap controls remain mandatory.
+
+Claims are additive, with a virtual read status to avoid rewriting the existing
+pending-command table. **Do not downgrade to a pre-claim consumer while any
+unresolved claim exists:** old binaries do not understand that side table. Stop
+consumers and reconcile first. Shared operator.db writers remain a filesystem
+capability residual; these guards are application/database correctness controls,
+not a defense against an administrator who can drop triggers or edit the schema.
+
+G1 baseline/anomaly evidence is still unavailable; no anomaly daemon is introduced
+or readiness inferred from synthetic history by this independent lifecycle work.
+
+## ADR-050: Durable notification delivery with an independent sender
+
+**Status:** adopted for local implementation, 2026-10-03; activation remains opt-in.
+
+Operator and `cli.delivery` drain one SQLite outbox through the same bounded
+service. Each send owns a durable attempt claim, and a returned message ID and
+forwarded flag commit together. File-backed claim/receipt transactions use isolated
+connections with FULL synchronization. A lease abandoned before or after a send
+becomes `uncertain`; it is never blindly resent. Known pre-connect failures and
+explicit rate-limit rejections use bounded exponential retries, at most five
+attempts. Provider Retry-After is a persisted lower bound shared by senders.
+Permanent rejections become failed; ambiguous transport/server/receipt failures
+become uncertain. Dashboard delivery state is separate from human acknowledgement.
+
+The independent sender has only the Discord token, operator database and its own
+log/config mounts. It has no Gateway command handling, LLM or financial credential.
+Its Compose profile is opt-in; no schedule, service activation or real message is
+part of implementation validation. Both new sender paths may coexist because they
+share claims, but stop pre-outbox binaries before upgrading/downgrading senders.
+
+This protects delivery of persisted notifications, not atomicity of every business
+event with its notification producer. A process crash before a producer saves an
+alert can still lose that alert; do not claim a general exactly-once event bus.
+Unknown Discord outcomes require channel inspection before a replacement send.
+The mechanism does not promise exactly-once Discord delivery or automatic repair.
+
+## ADR-051: Independent page-only health observer and read-only doctor
+
+**Status:** Accepted for local implementation, 2026-10-03.
+
+**Context:** N4 requires operator death not to disable its own health response,
+and a diagnostic surface that distinguishes unknown evidence from health.
+N1-N3 already provide restricted readers, identity and durable delivery.
+
+**Decision:** The opt-in delivery process owns a separate bounded health task.
+It reads primary-write freshness/heartbeats through the existing shared classifier,
+and atomically records transitions with notification enqueue. Startup grace applies
+only to missing observations; restart/competing observers share durable deduplication.
+Recovery emits once. Any failed supervised task terminates the process. No restart
+actor or Docker authority is added; every financial daemon remains page-only.
+Doctor reads existing stores and emits human or schema-versioned JSON evidence,
+including unresolved command/delivery outcomes, provider freshness and disk bytes.
+Unknown/future/failed observations never become green. Validated configuration is
+the shared boot/doctor fingerprint input.
+
+**Consequences:** External supervision and host-independent monitoring remain
+necessary for delivery/host/database outages. G1 anomaly baselines and disk alert
+thresholds are separate gated decisions. No financial policy, production activation
+or live Discord verification is implied. See the
+[operational guide](../implementation/health-response-and-doctor.md) and roadmap receipts.
+
+## ADR-052: Local Ollama boundary and bounded provider maintenance
+
+**Status:** Accepted for local implementation, 2026-10-03.
+
+**Decision:** `ollama` remains local and unbilled. Metadata preflight rejects remote
+provenance/unsupported completion before prompts; explicit cloud tags/hosts and
+redirects are refused, completion envelopes reject remote/incomplete results.
+Use native system and chat-thinking fields and port-specific failures. Server
+cloud disabling/network restrictions remain an operator deployment gate, not a
+claim inferred from localhost. Measure installed digest/version and allowlisted
+metrics in explicit probes before changing ADR-014 persistent accounting.
+
+Contract/pricing review is owned by provider-integrator; model review by
+model-review-owner against the seat register. A manual snapshot ledger deduplicates
+public-source changes and reports coverage gaps. No unattended schedule or automatic
+model/pricing mutation is adopted. Retain active legacy funding for this candidate;
+Beta migration needs verified account/address/fee/signing/reconciliation evidence
+and preserves Harvester authority and uncertain-effect claims. Never fall through
+to another withdrawal endpoint after an ambiguous result.
+
+**Evidence and limits:** [Ollama guide](../implementation/ollama-local-contract.md),
+[watch/funding guide](../implementation/provider-watch.md), official sources linked
+there, and synthetic/local verification in the roadmap. Real NAS digest qualification,
+private funding compatibility and ongoing unattended coverage remain external gates.
+
+
+## ADR-053: Bounded news failure cadence and honest probe measurements
+
+**Status:** adopted for local implementation under the full-product defect-repair
+instruction, 2026-10-03. Sources: backlog NW04 and G4/PB1-PB13.
+
+Repeated news source failures back off independently, in memory, without blocking
+healthy sources or daemon heartbeats. First retry keeps normal cadence, then
+exponential delays cap at six hours or the longer normal interval. Empty success
+resets failure state; local storage failures do not indict the upstream source.
+Log initial degradation and recovery, lower repeated failures to INFO. Restart
+resets this transient state; no config writes, persistent disables or new daemon.
+
+Probe grading separates availability from judgment; budget/parse/truncation errors
+are not wrong decisions. Preserve paid usage accounting on truncated responses
+and never add a paid repair retry. Report effective sampling controls, emitted
+values and safe untruncated error detail. Interpret numeric direction separately
+from small magnitude. Preserve old fixture sets and use named new sets whose
+input evidence, not expected labels, resolves contested cases. No historical
+campaign is regraded and no new paid campaign or seat change is authorized.
+
+## ADR-054: Ruff formatting and lint with retained pylint coverage
+
+**Status:** explicitly approved repository-specific decision, 2026-10-03.
+The operator instructed: “Retain pylint if that's your recommendation.”
+
+Ruff replaces Black and standalone isort formatting/import commands in Make,
+CI and the editor. Use the Fleet PY-01 rule selection with the existing 100-column
+Python 3.13 target. Keep mypy and all existing pylint configuration/checks,
+including pylint-pydantic and cyclic-import detection. Pin Ruff in the hashed dev
+resolution; its MIT license is compatible with this MIT project.
+
+This deliberately deviates from Fleet PY-01's requirement to remove pylint. It
+is an accepted project decision, not unmodified Fleet conformance or an edit to
+Fleet-wide standards. PY-06's Ruff quality steps are implemented alongside the
+retained checks. Do not disable semantic checks to achieve a tool-count target.
+
+Ruff auto-fixes must be reviewed for runtime types and side effects. In particular,
+SQLite Row iteration/membership uses values, so `.keys()` checks must remain;
+SIM118 is excluded in the two row-decoding adapters with that explanation.
+FastAPI Depends is an immutable injection sentinel, explicitly recognized by
+B008 configuration. E501 follows the canonical formatter exclusion. Broad test
+exception assertions are narrowed to actual contract errors; no test is dropped.
+The migration preserves truncating zip semantics explicitly and documented
+cleanup suppression, and uses explicit terminal returns for NoReturn helpers.
+
+## ADR-055: Disabled equities boundary and deferred broker integration
+
+**Status:** operator-authorized scope revision and local activation boundary,
+2026-10-03. The operator deferred equities API work until verified support and
+then requested a boolean flag and useful infrastructure where contracts permit.
+
+`equities.enabled` is a strict boolean, default false, in the ordinary immutable
+configuration model and YAML/profile resolution. Omitted configuration stays
+backward-compatible. This build has no supported Kraken Securities stock/ETF
+adapter: true raises an actionable configuration error before provider/task
+wiring. No config-supplied alias can promote Spot crypto or tokenized xStocks to
+real-share capability. Disabled mode adds no equities request, worker, execution
+path or UI action. Deployment planning validates the same root model.
+
+The intended eventual design is an unlevered cash account. Do not infer settled
+cash, buying power or actual account existence from crypto balances. The current
+functional infrastructure is typed activation validation, profile propagation,
+fail-closed startup and boundary regression tests. A guessed adapter, settlement
+ledger, earnings feed or tax importer would lack an adopted broker data contract;
+none is added as a placeholder. No personal residence/tax details belong in the
+public repository.
+
+The real securities adapter and dependent execution/settlement/earnings/tax/live
+acceptance are explicitly deferred, not implemented and not blockers for this
+revised assignment. Reentry requires verified official real-share securities API
+support, account eligibility/entitlement and a reviewed risk/data contract. Actual
+financial activation remains separately authorized. No availability monitor or
+external contact is authorized by the deferral.

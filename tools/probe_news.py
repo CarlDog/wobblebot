@@ -30,7 +30,7 @@ unlabelled — there is no answer key for "was widening correct on
 not a probe. These windows are hand-labelled by materiality so the
 signal-vs-noise judgment is gradeable today.
 
-**Two fixture sets** (``--fixture-set``, default ``gen2``):
+**Versioned fixture sets** (``--fixture-set``, default ``gen3``):
 
 - ``v1`` — the original twelve. **CEILINGED**: haiku-4-5, sonnet-5 and
   opus-5 all scored 12/12 on 2026-08-10, so it can no longer rank the
@@ -41,6 +41,9 @@ signal-vs-noise judgment is gradeable today.
   and half the added hold-cases are seeded with a named trigger word
   ("regulatory", "withdrawals", "hack") so a keyword-matcher is
   punished rather than rewarded. See ``_fixtures_gen2_extra``.
+
+``gen3`` keeps the same labels and supplies explicit evidence for the three
+contested quiet-window cases. Historical sets remain selectable.
 
 Note v1 was never UNSOUND — its constant baseline is 58% against 100%
 for the best real model. It was EXHAUSTED, which is a different problem
@@ -69,9 +72,10 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -80,6 +84,7 @@ from typing import Any
 from wobblebot.cli._common import load_operator_env
 from wobblebot.config.logging import configure_logging
 from wobblebot.config.prompts import load_prompt
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorRecommendation,
@@ -454,6 +459,37 @@ FIXTURE_SETS: dict[str, list[NewsFixture]] = {
 }
 
 
+# Versioned PB10 repair: labels stay unchanged; only evidence changes. No model
+# results were consulted. v1/gen2 remain available for historical reproduction.
+_NEWS_DISPOSITIVE = {
+    "bullish_rally_coverage": [
+        "Retrospective: last month's Bitcoin rally and ETF inflows; no new announcement",
+        "Current BTC tape quiet, volatility normal; report identifies no upcoming disruption",
+    ],
+    "favorable_regulatory_clarity": [
+        "Regulator republishes already-effective licensing guidance without changes",
+        "Exchanges confirm no operational change, deadline or new action; markets remain quiet",
+    ],
+    "distant_macro_event": [
+        "Old calendar repost lists next month's routine Fed meeting; no announcement today",
+        "No macro release in this trading window; BTC liquidity and volatility remain normal",
+    ],
+}
+FIXTURE_SETS["gen3"] = [
+    (
+        replace(
+            fx,
+            name=fx.name + "_explicit",
+            items=[_item(text) for text in _NEWS_DISPOSITIVE[fx.name]],
+            why="Quiet current window and no new forward disruption are explicit; news.md calls for HOLD.",
+        )
+        if fx.name in _NEWS_DISPOSITIVE
+        else fx
+    )
+    for fx in FIXTURE_SETS["gen2"]
+]
+
+
 def _summary(items: list[NewsItemSummary]) -> PerformanceSummary:
     """A deliberately UNREMARKABLE market window.
 
@@ -489,12 +525,18 @@ class Verdict:
     verdict: str
     ok: bool
     detail: str
+    emitted: dict[str, object] | None = None
+    confidence: str | None = None
 
 
 @dataclass
 class Scorecard:
     label: str
     verdicts: list[Verdict] = field(default_factory=list)
+
+    @property
+    def answered(self) -> int:
+        return sum(v.verdict not in {"ERROR", "BAD_VALUE"} for v in self.verdicts)
 
     @property
     def score(self) -> int:
@@ -504,6 +546,14 @@ class Scorecard:
 def _grade(fx: NewsFixture, rec: AdvisorRecommendation) -> Verdict:
     """Grade one call. Out-of-lane keys fail the fixture outright."""
     recs = rec.recommendations or {}
+    for key in ("spacing_percentage", *_OUT_OF_LANE_KEYS):
+        if key in recs:
+            try:
+                valid = not isinstance(recs[key], bool) and math.isfinite(float(recs[key]))
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+            if not valid:
+                return Verdict(fx.name, "BAD_VALUE", False, f"invalid numeric field: {key}")
     out_of_lane = [k for k in _OUT_OF_LANE_KEYS if k in recs]
     if out_of_lane:
         return Verdict(
@@ -537,6 +587,13 @@ def _grade(fx: NewsFixture, rec: AdvisorRecommendation) -> Verdict:
         except (TypeError, ValueError):
             return Verdict(fx.name, "BAD_VALUE", False, f"non-numeric spacing {spacing!r}")
         if _is_echo(val):
+            if fx.expect_low_confidence and rec.confidence != "low":
+                return Verdict(
+                    fx.name,
+                    "HELD_OVERCONFIDENT",
+                    False,
+                    "echoed hold but expected low confidence on empty window",
+                )
             return Verdict(fx.name, "OK", True, f"held (echoed current {val})")
         if val < _CURRENT_SPACING:
             return Verdict(
@@ -652,10 +709,13 @@ async def _run(args: argparse.Namespace) -> int:
         for fx in fixtures:
             try:
                 rec = await llm.get_recommendation(_summary(fx.items))
-            except AdvisorError as exc:
-                card.verdicts.append(Verdict(fx.name, "ERROR", False, str(exc)[:90]))
+            except (AdvisorError, LLMCostCapExceeded) as exc:
+                card.verdicts.append(Verdict(fx.name, "ERROR", False, str(exc)))
                 continue
-            card.verdicts.append(_grade(fx, rec))
+            verdict = _grade(fx, rec)
+            verdict.emitted = rec.recommendations
+            verdict.confidence = rec.confidence
+            card.verdicts.append(verdict)
     finally:
         aclose = getattr(llm, "aclose", None)
         if aclose is not None:
@@ -663,7 +723,15 @@ async def _run(args: argparse.Namespace) -> int:
         if storage is not None:
             await storage.close()
 
-    _LOGGER.info("=== %s: %d/%d ===", card.label, card.score, len(fixtures))
+    _LOGGER.info(
+        "=== %s: correct=%d/answered=%d; available=%d/%d; errored=%d ===",
+        card.label,
+        card.score,
+        card.answered,
+        card.answered,
+        len(fixtures),
+        len(fixtures) - card.answered,
+    )
     for v in card.verdicts:
         _LOGGER.info("  %-30s %-18s %s", v.fixture, v.verdict, v.detail)
     if args.json:
@@ -674,9 +742,31 @@ async def _run(args: argparse.Namespace) -> int:
                     "model": args.model,
                     "provider": args.provider,
                     "score": card.score,
-                    "max_score": len(fixtures),
+                    "max_score": card.answered,
+                    "answered": card.answered,
+                    "correct": card.score,
+                    "errored": len(fixtures) - card.answered,
+                    "total": len(fixtures),
+                    "judgment_accuracy": card.score / card.answered if card.answered else None,
+                    "availability": card.answered / len(fixtures),
+                    "requested_temperature": args.temperature,
+                    "effective_temperature": getattr(
+                        llm, "effective_temperature", args.temperature
+                    ),
+                    "max_tokens": args.max_tokens,
+                    "fixture_set": args.fixture_set,
+                    "contested_fixtures": (
+                        [] if args.fixture_set == "gen3" else list(_NEWS_DISPOSITIVE)
+                    ),
                     "verdicts": [
-                        {"fixture": v.fixture, "verdict": v.verdict, "ok": v.ok}
+                        {
+                            "fixture": v.fixture,
+                            "verdict": v.verdict,
+                            "ok": v.ok,
+                            "detail": v.detail,
+                            "emitted": v.emitted,
+                            "confidence": v.confidence,
+                        }
                         for v in card.verdicts
                     ],
                 }
@@ -702,15 +792,25 @@ def main() -> int:
     parser.add_argument(
         "--fixture-set",
         choices=tuple(FIXTURE_SETS),
-        default="gen2",
+        default="gen3",
         help="v1 = the original twelve (CEILINGED - three models at 12/12); "
-        "gen2 = v1 plus ten boundary cases. Default gen2.",
+        "gen2 = historical boundary cases; gen3 = explicit evidence repairs (default).",
     )
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
-    parser.add_argument("--session-cap", type=float, default=2.0)
-    parser.add_argument("--daily-cap", type=float, default=5.0)
+    parser.add_argument(
+        "--session-cap",
+        type=float,
+        default=2.0,
+        help="Per-model run budget; budget denial is availability, not judgment.",
+    )
+    parser.add_argument(
+        "--daily-cap",
+        type=float,
+        default=5.0,
+        help="Shared-ledger runaway backstop; earlier runs consume it. Plan an explicit sweep budget; never silently raise this cap.",
+    )
     parser.add_argument("--log-format", choices=("plain", "json"), default="plain")
     parser.add_argument("--json", action="store_true")
     # Match probe_freejudge / probe_risk: this module's docstring and

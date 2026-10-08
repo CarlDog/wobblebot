@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import UTC, datetime
@@ -346,10 +347,8 @@ async def _run_loop(  # pylint: disable=too-many-locals
                 exit_code = 1
                 break
 
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=shadow.tick_seconds)
-            except asyncio.TimeoutError:
-                pass
     finally:
         # Stage 8.4 hotfix: same structural fix as cli/live.py — each
         # cleanup step gets its own try/except so a failure in one
@@ -630,7 +629,7 @@ def main() -> int:
     log_file_path = config.shadow.log_file_path if config.shadow else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

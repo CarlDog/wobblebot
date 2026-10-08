@@ -23,8 +23,9 @@ What unit tests don't cover (lives in integration test against real API):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest

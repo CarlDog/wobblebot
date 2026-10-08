@@ -80,7 +80,9 @@ class TestCloseTransportTimeout:
         gateway_task = await _make_gateway_task(runs_forever=True)
         with caplog.at_level(logging.WARNING, logger="wobblebot.cli.operator"):
             await _close_transport_with_cap(
-                transport, gateway_task, timeout_seconds=0.05  # type: ignore[arg-type]
+                transport,
+                gateway_task,
+                timeout_seconds=0.05,  # type: ignore[arg-type]
             )
         assert any("exceeded" in r.getMessage() for r in caplog.records)
         assert any("0.05" in r.getMessage() for r in caplog.records)
@@ -92,7 +94,9 @@ class TestCloseTransportTimeout:
         transport = _FakeTransport(close_seconds=5.0)
         gateway_task = await _make_gateway_task(runs_forever=True)
         await _close_transport_with_cap(
-            transport, gateway_task, timeout_seconds=0.05  # type: ignore[arg-type]
+            transport,
+            gateway_task,
+            timeout_seconds=0.05,  # type: ignore[arg-type]
         )
         assert gateway_task.done()
 
@@ -104,7 +108,9 @@ class TestCloseTransportTimeout:
         gateway_task = await _make_gateway_task(runs_forever=True)
         # No pytest.raises — must return normally.
         await _close_transport_with_cap(
-            transport, gateway_task, timeout_seconds=0.05  # type: ignore[arg-type]
+            transport,
+            gateway_task,
+            timeout_seconds=0.05,  # type: ignore[arg-type]
         )
 
 

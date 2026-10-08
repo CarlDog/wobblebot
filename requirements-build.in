@@ -1,0 +1,3 @@
+# Wheel-building tools; resolved with hashes in requirements-build.lock.
+setuptools>=68.0
+wheel

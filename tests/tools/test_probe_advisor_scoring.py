@@ -119,7 +119,8 @@ def test_no_constant_value_beats_the_ceiling() -> None:
     worst = 0
     c = 0.40
     while c <= 3.05:
-        total, _ = _score_strategy(lambda fx, cc=round(c, 3): {"spacing_percentage": cc})
+        rounded = round(c, 3)
+        total, _ = _score_strategy(lambda fx, cc=rounded: {"spacing_percentage": cc})
         worst = max(worst, total)
         c += 0.05
     assert worst <= _CONSTANT_CEILING, f"a constant scored {worst}/{_MAX} (> ceiling)"

@@ -186,7 +186,7 @@ def _require_cloud_key(provider: str, cloud_wiring: _CloudWiring | None) -> str:
     api_key = os.environ.get(key_var)
     if not api_key or not api_key.strip():
         raise OperatorConfigError(
-            f"{key_var} missing from environment; required when " f"advisor.provider=='{provider}'."
+            f"{key_var} missing from environment; required when advisor.provider=='{provider}'."
         )
     return api_key
 
@@ -829,8 +829,8 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
         return 2
     model_name = model_name_holder[0]
 
-    observe_storage = SQLiteStorageAdapter(config.advise.observe_db)
-    news_storage = SQLiteStorageAdapter(config.advise.news_db)
+    observe_storage = SQLiteStorageAdapter(config.advise.observe_db, read_only=True)
+    news_storage = SQLiteStorageAdapter(config.advise.news_db, read_only=True)
     advise_storage = SQLiteStorageAdapter(config.advise.db)
     await observe_storage.connect()
     await news_storage.connect()
@@ -922,7 +922,7 @@ async def _open_orders_storage(config: Any) -> SQLiteStorageAdapter | None:
             "(null means unknown, not zero)"
         )
         return None
-    storage = SQLiteStorageAdapter(config.advise.orders_db)
+    storage = SQLiteStorageAdapter(config.advise.orders_db, read_only=True)
     await storage.connect()
     _LOGGER.info(
         "risk exposure inputs enabled from %s (caps: total $%s, daily $%s, per-coin $%s)",
@@ -987,7 +987,7 @@ def main() -> int:
     log_file_path = config.advise.log_file_path if config.advise else None
     configure_logging(log_format=log_format, rotating_file_path=log_file_path)
 
-    run_with_clean_exit(_main_async(config), logger=_LOGGER)
+    return run_with_clean_exit(_main_async(config), logger=_LOGGER)
 
 
 if __name__ == "__main__":

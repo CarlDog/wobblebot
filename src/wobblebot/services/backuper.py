@@ -32,6 +32,7 @@ Per ``stage-8.2-design.md`` decisions 4 + 5:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import sqlite3
@@ -131,10 +132,8 @@ def backup_database_locally(
         # If the dest file got partially written, remove it so a
         # subsequent retry isn't blocked by a half-formed artifact.
         if dest_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 dest_path.unlink()
-            except OSError:
-                pass
         raise StorageError(f"sqlite backup failed for {src_path} → {dest_path}: {exc}") from exc
     finally:
         src_conn.close()
@@ -333,8 +332,7 @@ def verify_backup_restoration(backup_path: Path) -> BackupVerificationResult:
         table_names = [
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         ]
         for name in table_names:

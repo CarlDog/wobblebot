@@ -223,7 +223,7 @@ def _render_withdrawal_submitted(event: WithdrawalSubmittedEvent) -> dict[str, A
     return {
         "title": f"💸 Withdrawal submitted — {event.amount} {event.asset}",
         "description": (
-            f"Kraken accepted proposal {event.proposal_id}. " "**Money has left the exchange.**"
+            f"Kraken accepted proposal {event.proposal_id}. **Money has left the exchange.**"
         ),
         "color": COLOR_WARNING,
         "fields": [

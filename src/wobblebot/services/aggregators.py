@@ -159,7 +159,7 @@ def aggregate_weighted_confidence(
         values = [op.recommendations[key] for op in contributing]
         weights = [_CONFIDENCE_WEIGHT[op.confidence] for op in contributing]
         if _all_numeric(values):
-            avg = sum(v * w for v, w in zip(values, weights)) / sum(weights)
+            avg = sum(v * w for v, w in zip(values, weights, strict=False)) / sum(weights)
             if _all_int(values):
                 weighted[key] = round(avg)
             else:
@@ -223,7 +223,7 @@ def _all_int(values: list[Any]) -> bool:
 def _weighted_mode(values: list[Any], weights: list[int]) -> Any | None:
     """Return the value with the highest accumulated weight; None on tie."""
     totals: Counter[Any] = Counter()
-    for v, w in zip(values, weights):
+    for v, w in zip(values, weights, strict=False):
         totals[_hashable(v)] += w
     if not totals:
         return None

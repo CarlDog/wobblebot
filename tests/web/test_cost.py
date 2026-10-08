@@ -15,7 +15,9 @@ from tests.web._helpers import TEST_PASSWORD, TEST_USERNAME, login_as
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.config.cli import WebConfig
 from wobblebot.domain.llm_cost import LLMCallRecord
+from wobblebot.domain.models import Trade
 from wobblebot.domain.value_objects import Timestamp
+from wobblebot.services.cycle_matcher import RecentCycle
 from wobblebot.web.app import create_app
 from wobblebot.web.auth import hash_password
 from wobblebot.web.routes.cost import (
@@ -248,7 +250,7 @@ def _trade(
     fee: str,
     hours_ago: float = 1.0,
     symbol_base: str = "BTC",
-) -> "Trade":
+) -> Trade:
     """Construct a Trade row for the rollup tests."""
     from wobblebot.domain.models import Trade
     from wobblebot.domain.value_objects import Amount, OrderSide, Price, Symbol
@@ -387,7 +389,7 @@ class TestTraceRollup:
         assert snap.per_trace == ()
 
 
-def _cycle(*, net_pnl: str, hours_ago: float, fee: str = "0.04") -> "RecentCycle":
+def _cycle(*, net_pnl: str, hours_ago: float, fee: str = "0.04") -> RecentCycle:
     """A completed cycle whose SELL fired ``hours_ago`` hours back.
 
     ``net_pnl`` is taken at face value — per cycle_matcher's contract

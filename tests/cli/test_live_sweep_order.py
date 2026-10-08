@@ -16,6 +16,7 @@ config order — such a bug is silent by construction.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -591,7 +592,30 @@ class TestOpenObserveStorage:
         the money path cannot depend on the observe DB being reachable."""
         assert await _open_observe_storage(str(tmp_path)) is None
 
-    async def test_a_real_path_opens(self, tmp_path: Any) -> None:
-        opened = await _open_observe_storage(str(tmp_path / "observe.db"))
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "observe #1%.db",
+            pytest.param(
+                "observe #1?.db",
+                marks=pytest.mark.skipif(
+                    os.name == "nt", reason="Windows forbids '?' in filenames"
+                ),
+            ),
+        ],
+    )
+    async def test_a_real_path_opens(self, tmp_path: Any, filename: str) -> None:
+        # Spaces, '#' and '%' require SQLite URI escaping and are legal on
+        # Windows as well as POSIX; '?' is not a legal Windows filename.
+        path = tmp_path / filename
+        owner = SQLiteStorageAdapter(path)
+        await owner.connect()
+        await owner.close()
+        opened = await _open_observe_storage(str(path))
         assert opened is not None
         await opened.close()
+
+    async def test_missing_database_is_not_created(self, tmp_path: Any) -> None:
+        path = tmp_path / "observe.db"
+        assert await _open_observe_storage(str(path)) is None
+        assert not path.exists()

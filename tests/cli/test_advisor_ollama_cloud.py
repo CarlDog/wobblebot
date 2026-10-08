@@ -204,7 +204,7 @@ async def test_missing_cloud_preconditions_fail_before_construction(
 @pytest.mark.parametrize("kind", ["single", "moe"])
 async def test_primary_provider_through_complete_advisor_builder(cloud_routes, kind):
     _, requests, wiring = cloud_routes
-    common = dict(provider="ollama_cloud", model="gpt-oss:120b", inference_params=PARAMS)
+    common = {"provider": "ollama_cloud", "model": "gpt-oss:120b", "inference_params": PARAMS}
     if kind == "single":
         config = AdvisorConfig(type="single", prompt_file="config/prompts/quant.md", **common)
         expected = {"single"}

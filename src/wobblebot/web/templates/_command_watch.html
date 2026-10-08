@@ -11,21 +11,26 @@
    execute_proposal, cli/live polls everything else. Naming the wrong
    daemon in a stall message sends the operator to the wrong container. #}
 {% set watch_daemon = "cli/harvest" if pending.command.kind == "execute_proposal" else "cli/live" %}
-{% if pending.status in ("awaiting_confirmation", "approved") %}
+{% if pending.status in ("awaiting_confirmation", "approved", "claimed") %}
   <div id="command-watch"
        hx-get="/commands/{{ pending.id }}/watch{% if watch_ctx is defined and watch_ctx == 'modal' %}?ctx=modal{% endif %}"
        hx-trigger="every 2s"
        hx-swap="outerHTML">
     <p class="muted">
       <span class="watch-spinner" aria-hidden="true"></span>
-      Approved — waiting for {{ watch_daemon }} to pick this up on its next poll…
-      {% if elapsed_seconds is defined and elapsed_seconds is not none and elapsed_seconds > 30 %}
+      {% if pending.status == "claimed" %}
+        Claimed by {{ watch_daemon }}; outcome not yet recorded. If the daemon
+        stopped, the external effect may be uncertain. Reconcile before issuing
+        a replacement command; this approval will not be retried automatically.
+      {% else %}
+        Approved — waiting for {{ watch_daemon }} to pick this up on its next poll…
+      {% endif %}
+      {% if pending.status != "claimed" and elapsed_seconds is defined and elapsed_seconds is not none and elapsed_seconds > 30 %}
         <br><span class="tag warn">slow</span>
         {{ watch_daemon }} hasn't picked this up after
         {{ elapsed_seconds | humanize_duration }} — is that daemon
         running? Check <a href="/health">/health</a>. The command stays
-        queued and executes when the daemon returns (or expires at its
-        TTL if it was never approved).
+        queued only until its TTL; an expired approval cannot execute.
       {% endif %}
     </p>
   </div>

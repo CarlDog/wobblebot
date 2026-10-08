@@ -182,13 +182,13 @@ def _write_dotted_path(document: Any, dotted_path: str, raw_value: Decimal | int
     for part in parts[:-1]:
         if not hasattr(cursor, "get") or cursor.get(part) is None:
             raise SettingsRewriteError(
-                f"dotted path {dotted_path!r} does not resolve: " f"missing {part!r} in document"
+                f"dotted path {dotted_path!r} does not resolve: missing {part!r} in document"
             )
         cursor = cursor[part]
     leaf = parts[-1]
     if not hasattr(cursor, "get"):
         raise SettingsRewriteError(
-            f"dotted path {dotted_path!r} parent is not a mapping; " f"cannot write {leaf!r}"
+            f"dotted path {dotted_path!r} parent is not a mapping; cannot write {leaf!r}"
         )
     if leaf not in cursor:
         raise SettingsRewriteError(
@@ -227,7 +227,7 @@ def _resolve_grid_target(grid_section: Any, *, symbol: str) -> Any:
 
 def _find_case_insensitive_key(mapping: Any, target: str) -> str | None:
     target_upper = target.upper()
-    for key in mapping.keys():
+    for key in mapping:
         if str(key).upper() == target_upper:
             return str(key)
     return None

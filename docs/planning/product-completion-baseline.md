@@ -1,0 +1,174 @@
+# Full-product completion baseline
+
+Work item: `CarlDog/wobblebot:product-completion`. Baseline source commit:
+`9a42a790f670eb74df0cc381c6a484c7324e6b90`. Initial branch `work`, clean tracked
+and untracked state; implementation branch `codex/product-completion`. The cloud
+checkout excludes unpushed laptop changes. Current receipts, command results and
+blocker dispositions belong in the [roadmap](roadmap.md#cloud-product-completion-verification).
+This file defines the finite acceptance inventory, not a second release ledger.
+
+## Authority and definition of done
+
+The [requirements](requirements.md) own FR/NFR meaning; accepted
+[ADRs](../architecture/decisions.md) and
+[operational decisions](../architecture/ratified-decisions.md) resolve architecture
+and supersession. The roadmap owns phase order and receipts. The accepted
+[closeout sequence](2.0-closeout-and-2.1-entry-plan.md), [backlog](backlog.md),
+and explicit adoption decisions distinguish committed work from candidates.
+Neither an open issue nor code presence independently establishes adoption.
+The old five-milestone shape is reconciled to the later eight-phase roadmap;
+M5's dashboard/recovery/release criteria remain attached to Phases 7/8.
+
+Done means every currently adopted, non-deferred behavior below is implemented and integrated, all
+required development gates pass (or the operator explicitly accepts an exception),
+documentation is accurate, and changes are preserved/accounted for. Historical
+production receipts are provenance, not fresh cloud-environment results.
+A blocked or proposed row is never counted as complete. Later phases remain
+in the inventory even when their entry/design/data gates prevent implementation.
+
+## Canonical requirements
+
+D = documented acceptance (summarized here, full source remains binding).
+I = inferred verification, additional to rather than replacing D. Existing
+implementation paths are relative to `src/wobblebot`; test paths to `tests`.
+The verification/blocker column names the evidence lane in the roadmap receipt.
+
+| ID / source | D: acceptance | Existing implementation | I: verification / remaining work and blockers |
+| --- | --- | --- | --- |
+| FR-001 / requirements | Per-asset configurable micro-grid, limit orders through adapter | `services/grid_engine.py`, grid helpers, `adapters/kraken_exchange.py` | Unit grid math/counter/fee tests; offline 1,000-tick SQLite integration; real API B2 |
+| FR-002 / requirements | Concurrent whitelisted assets | `cli/live.py`, symbol-scoped engine state | Multi-symbol cap/isolation tests; synthetic integration; production account B2 |
+| FR-003 / requirements | Per-asset, total exposure and daily spend limits | `services/grid_engine.py`, `config/safety.py` | Refusal/valuation/cost-basis/inventory tests; no weakening to place orders |
+| FR-004 / requirements | Summarize metrics, validate/store advisor JSON | `services/summary_builder.py`, advisor adapters, `cli/advise.py` | Parser/provider failure, summary and persistence tests; paid/provider qualification B2 |
+| FR-005 / requirements; ADR-012 | Opt-in whitelist/bounds/global safety; before/after suggestion audit | `cli/apply.py`, `services/auto_apply.py`, settings rewriter | Disabled/default, blocked news/gremlin, invalid values and comment-preserving writes; hot-tune daemon is G7 |
+| FR-006 / requirements; ADR-004 | Threshold balance monitoring and reasoned directional proposals | `services/harvester.py`, `cli/harvest.py` | Surplus/deficit/cap tests. Bank deposits operator-pushed; no banking adapter |
+| FR-007 / requirements; ADR-026/034 | Opt-in guarded withdrawals, per-action/day/liquidity limits | `cli/harvest_execute.py`, durable claims and web-approved queue | Replay/concurrency/ambiguous result/firewall tests; live withdrawal B2, no diagnostic transfer authorized |
+| FR-008 / requirements | Structured events, persisted histories, dashboard metrics | logging, SQLite, web routes, maintenance | Logging contract/redaction, rendered dashboards and database tests; production delivery B2 |
+| NFR-001 / requirements | Deterministic core for same input | pure grid/metrics, historical auditor | Fixed-fixture replay and offline integration |
+| NFR-002 / requirements; ADR-001/002/003/041 | Advisor advisory only; Harvester sole withdrawal authority; ports isolate modules | ports, AST boundary guard, Compose grants, approval union | Architecture/capability/firewall tests; residual mount isolation N1 retained |
+| NFR-003 / requirements | Reasonable NAS CPU/memory | schedules, WAL/indexes, storage profiler | Local profiling is directional; target NAS resource acceptance B2 |
+| NFR-004 / requirements; ADR-018/023/046 | Restart safely, reload orders, reconcile without duplicate effects | reconciler, terminal-order resolver, pending-fill markers | Restart/partial-fill/missing-trade/upgrade tests; broader lifecycle N3 retained |
+| NFR-005 / requirements; ADR-009 | Config/env-controlled behavior with documented defaults/ranges | Pydantic config, examples, profiles, CLI overrides | Config suite and deprived-env matrix; private operator drift B2; Linux Makefile repair D1 |
+
+## Adopted phase inventory
+
+Each stage below incorporates its complete corresponding roadmap paragraph and
+linked stage design acceptance criteria. The short label is an index, not a
+replacement specification. Phases 1-8 have dated historical receipts in the
+roadmap and phase summaries. Current local evidence is the full suite plus the
+lanes below; no historical live test is represented as rerun. The actual source
+and tests remain the implementation evidence, not the checkmarks alone.
+
+| Phase | Adopted stages (exact roadmap IDs) | Existing surfaces / inferred verification | Remaining verification |
+| --- | --- | --- | --- |
+| 1 / [roadmap](roadmap.md), phase summary/designs | 1.1 Repo & Scaffolding; 1.2 Hex Core Skeleton; 1.3 Storage & Logging Backbone; 1.4 Kraken Mock & Simulation Mode; 1.5 Phase 1 Integration Check | domain/ports, mock, SQLite, sandbox; real CLI sandbox | Fresh external/production checks B2; container gate B3 where applicable |
+| 2 / [roadmap](roadmap.md), phase summary/designs | 2.1 Kraken Adapter (Read‑Only + Minimal Data Collector); 2.2 Micro-Grid Engine; 2.3 Live Paper Mode / Tiny‑Size Mode; 2.4 Multi‑Asset Support; 2.5 Phase 2 Integration Check | Kraken/grid/caps/live; offline grid integration and adapter tests | Fresh external/production checks B2; container gate B3 where applicable |
+| 3 / [roadmap](roadmap.md), phase summary/designs | 3.0 Observer & Shadow Mode; 3.1 Data Collector & Metrics (v2); 3.2 Advisor Port & Single-Model Integration; 3.2.5 News Ingestion; 3.3 Passive Advisory Workflow; 3.4a Mixture of Experts (MoE); 3.4b Optional Auto-Tuning (Guarded); 3.5 Phase 3 Integration Check; 3.6 Operational polish (pre-Phase 4) | observe/shadow/news/metrics/advisor/MoE/apply; services/adapters/CLI suites | Fresh external/production checks B2; container gate B3 where applicable |
+| 4 / [roadmap](roadmap.md), phase summary/designs | 4.1 Harvester Domain & Ports; 4.2 Read‑Only Balance Monitoring; 4.3 Passive Mode Transfers; 4.4 Active Mode (Guarded Withdrawals); 4.5 Phase 4 Integration Check | treasury proposals/execution; Harvester guard and persistence tests | Fresh external/production checks B2; container gate B3 where applicable |
+| 5 / [roadmap](roadmap.md), phase summary/designs | 5.1 Operator Domain & Ports; 5.2 Discord Transport Adapter; 5.3 Operator Assistant (Ollama); 5.4 Engine Integration; 5.5 Outbound Notifications; 5.6 `cli/operator` Daemon; 5.7 Phase 5 Integration Check | Discord intent/approval/query; offline operator integration | Fresh external/production checks B2; container gate B3 where applicable |
+| 6 / [roadmap](roadmap.md), phase summary/designs | 6.1 Shared cloud-LLM infrastructure; 6.2 Anthropic adapter; 6.3 OpenAI adapter; 6.4 Google adapter; 6.5 Phase 6 Integration Check | cloud adapters/cost/retry/failover; synthetic provider/ledger tests | Fresh external/production checks B2; container gate B3 where applicable |
+| 7 / [roadmap](roadmap.md), phase summary/designs | 7.1 Web app skeleton + auth.; 7.2 Cost + status dashboards + mutation buttons.; 7.3 Advisor + harvester views.; 7.4 News + audit log views.; 7.5 Phase 7 close + integration check.; 7.6 Operational ergonomics: cli/recalibrate. | web auth/CSRF/status/commands/cost/recalibration; rendered HTTP tests | Fresh external/production checks B2; container gate B3 where applicable |
+| 8 / [roadmap](roadmap.md), phase summary/designs | 8.0 Deferred Phase 5 audit refactors; 8.1 Reliability & Recovery; 8.2 Background Maintenance Worker; 8.3 Performance & Resource Tuning; 8.4 Phase 8 / v1.0 Release Check; 8.5 Advisor Engine: Heuristic + LLM Cascade; 8.6 Advisor HARDENING + Grid Widen | reconciliation/maintenance/WAL/backup/cascade; failure, migration and recovery tests | Fresh external/production checks B2; container gate B3 where applicable |
+
+## Adopted post-v1 substrate and remaining phases
+
+| ID / source | D: acceptance / implementation boundary | I: checks, remaining work and blockers |
+| --- | --- | --- |
+| P0 / v1.1 index | Shared logging/grid primitives, simulator/auditor parity, four-home reconciliation | Existing core tests; retain individually gated source findings via catalog below |
+| P1 / v1.1 index | DMS, terminal/partial fills, loss-cap cooldown, spread/cost guards, replay protection and ready-now hardening | Existing engine/Harvester regression tests; R8 candidates are not silently promoted to adopted features |
+| P2 / v1.1 index | Backfill, bulk history import, OHLC/TA, real-engine Auditor, screener in documented order | Existing importer/replay/TA/screener tests; actual canonical history/scoring G3 |
+| P3 / v1.1 index | Shipped operator controls, status/health/UI, confirmations and operational visibility | Existing web/operator/health tests; anomaly/disk G1 and advisor action G2 remain unresolved |
+| P4.1-P4.3 / outcome-ledger design, v1.1 index | Persist outcomes, replay evaluator and scoreboard with provenance and fidelity labels | Existing evaluator/outcome/scoreboard tests; actual canonical corpus and scoring G3 |
+| P4.4 / p4-completion-plan | Trace clock, directional grading, observe-only Gremlin | Existing trace/context/directional/Gremlin firewall tests |
+| P4.5 / p4-completion-plan | Weather trends/report, deterministic fallback, named facts | Existing reports/TA/operator tests; live narrative B2 |
+| P4.6 / p4-completion-plan | Read-only long-horizon Historian, findings store and UI after scored corpus/design | Not implemented; G3 requires unavailable corpus and NAS scoring, model/cadence/privacy design |
+| P4.7 / p4-completion-plan | Cost honesty, infra declared-vs-unknown, trace grouping, no double-count fees | Existing cost page/evaluator tests |
+| C0-C4 / closeout plan | Preserved baseline, truthful starvation diagnostics, four repairs, migration/old-writer safety, full audit and review | Existing implementation and historical review; fresh suite/upgrade verification; D1 setup correction; B2/B4 audit limits |
+| C5 / closeout plan | Exact release/deploy/observation identity, individually accepted limitations and formal operator closure | Formal 2.0.x close accepted through main PR #166 with L1–L24 retained as limitations; fresh 2.1 acceptance remains separate. Release publication not authorized |
+| N0 / closeout plan | Accepted 2.0 close, reconciled N1-N5 scope, unique ADR references, first slice criteria | N0 accepted through PR #166; existing branch continuation explicitly authorized 2026-10-08. ADR-047 onward record implementation; 2.1 close remains separate |
+| N1 / closeout plan §5; ADR-041 | Per-service data/config/secret capabilities, WAL/backups/settings consumers; remove unnecessary web cloud keys using authoritative fresh health | Implemented locally under ADR-047; final-image capability and WAL rehearsals passed. Operator/NAS configuration and production migration remain B2; shared operator-table authority remains explicit |
+| N2 / closeout plan §5 | Hashed pip resolution, runtime/base digest identity, sanitized boot provenance, platform/Python matrix, tooling decision | Implemented locally under ADR-048 with aligned hashed locks; Reconciled code candidate cc95a21 passed Linux/Windows 3.13/3.14 CI; exact-candidate CodeQL and actual NAS identity remain required (roadmap receipt); ADR-054 authorizes retained pylint alongside Ruff |
+| N3a / closeout plan §5 | Immutable approval, atomic claims, expiry/mutation rejection, post-effect ambiguity reconciliation | Implemented locally under ADR-049; competing consumers, mutation/expiry, restart and failed-receipt tests passed. Reconciliation requires observed external effects; no blind replay |
+| N3b / closeout plan §5 | Durable notification outbox, independent delivery, bounded retries/terminal failure; no exactly-once claim | Implemented locally under ADR-050; independent sender, claims/receipts, retry/backoff and crash-boundary tests passed. Activation and real Discord verification remain separate; no G1 anomaly daemon added |
+| N4 / closeout plan §5 | Independent dead/wedged detection, read-only human/JSON doctor, unknown/stale evidence; money daemons page-only | Implemented locally under ADR-051: independent page-only observer, durable transition alerts and read-only human/JSON doctor. External supervisor/host/Discord acceptance remains B2; no restart actor or Docker socket |
+| N5a / closeout plan §5 | Correct Ollama envelopes/prompts/errors/truncation/local-only and telemetry | Implemented locally under ADR-052: native envelopes/system prompts, local metadata/provenance refusal, port errors, truncation and explicit identity/metric measurement. NAS digest qualification and server local-only setting remain B2 |
+| N5b / closeout plan §5; GH22/GH97 | Deduplicated contract/pricing/model-watch ownership; funding retention/migration decision | Manual deduplicated snapshot ledger and project-role ownership implemented under ADR-052; legacy funding explicitly retained pending account-tested migration. No unattended schedule accepted/installed; external current-source coverage remains B2 |
+| EQ-flag / operator scope revision 2026-10-03; ADR-055 | Disabled-by-default strict boolean; enabled without supported adapter fails before provider/task wiring; disabled preserves crypto workflows | Implemented config/profile/loader boundary; targeted tests cover no activation, clear failure and rejection of crypto substitution. Real-share integration is unavailable |
+| 9.0 / roadmap Phase 9, G9 | Preserve fresh official evidence and cash-account design target | Design record retained; full broker-specific risk ratification deferred with real integration |
+| 9.1 / roadmap Phase 9 | Stock/ETF API, identifiers, precision, sessions and error mapping | Explicitly deferred by operator 2026-10-03 until verified official securities API support; no API absence claim |
+| 9.2 / roadmap Phase 9 | Settlement/day-trading-aware safety | Dependent broker/account integration explicitly deferred; no guessed crypto-balance equivalence |
+| 9.3 / roadmap Phase 9 | Earnings pause windows, overrides and notifications | Dependent equities workflow explicitly deferred; no feed contract or active task invented |
+| 9.4 / roadmap Phase 9 | Tiny real equity cycle | Deferred with API integration; separate real-money authorization still required |
+| 9.5 / roadmap Phase 9 | Tax export, wash-sale lots and cost UI | Dependent equities data contract explicitly deferred; no fabricated tax output |
+| 9.6 / roadmap Phase 9 | Multi-symbol live integration and closing summary | Deferred with prior slices; not counted as implemented |
+
+## Complete retained-candidate crosswalk
+
+Every individual row in [backlog.md](backlog.md#catalog-crosswalk), not just its
+heading, is incorporated into this inventory with its stable ID, linked original
+source, disposition, trigger and acceptance. Its A/E/X/H/I/N/O/U/T registers and
+remaining F/R/PB/REL/IDEA/RULE registers must be reconciled before final completion.
+The following gates preserve adopted residuals without treating every idea as adopted:
+
+| Gate | Required unresolved evidence / implementation | Current blocker |
+| --- | --- | --- |
+| G1 | Per-signal baseline coverage/gaps/retention; anomaly and disk consumer/design | Private usable history and consumer decision B2; calendar age insufficient |
+| G2 | Advisor actions with settings-writer ownership; cloud summary consumer | ADR-034 ownership and concrete consumer still unratified |
+| G3 | Q2 imports, canonical NAS outcome scoring, fidelity/bias tallies, Historian design | No corpus or NAS database access B2; local synthetic scoring is not equivalent |
+| G4 | Each PB1-PB13 prerequisite before a paid seat campaign | Offline repairs are independent work; see roadmap follow-up for item-by-item receipts. Historical scores retain caveats; no new campaign authorized |
+| G5 | Proposed ADR-042 sell extension | Reconciled trade-and-ledger history, retirement policy, net-margin decision and ADR ratification; no speculative sell behavior |
+| G6 | Accepted ADR-040 writable POLICY/capital work | Second qualifying edit evidence, refreshed fixture and ownership/failure design unavailable; ADR-044 remains proposed |
+| G7 | Auto-tune/news-pause/confidence/learning candidates | Item-specific adoption/ADRs and credible outcomes; not automatically adopted by catalog membership |
+| G8 | Regime/Oracle/adaptive/buy-guard/MoE research | Comparative evidence then 60-90-day shadow gates; no result invented |
+| G9 | Retained equities track; current activation-boundary scope | Real API and dependent workflow explicitly deferred by operator 2026-10-03; EQ-flag remains current scope |
+| G10 | Individual demand/profile/consumer-triggered candidates | Each original trigger retained in backlog; no blanket cleanup or feature adoption |
+
+Exclusions: declined SDK/banking abstraction, stop-loss/take-profit/staking/
+conditional-order proposals and reinforcement learning remain declined under
+standing rules/ADRs. MoE/Discord original ideas are superseded by shipped designs.
+Margin/futures/options, long-hold strategies, multi-exchange and separate external
+repository/plugin projects lack adoption for this implementation. Optional cache,
+refactor, hosting and friend-onboarding entries require their documented triggers.
+No exclusion is based merely on cost, difficulty or a later-phase label.
+
+## Blocker keys and continuation contract
+
+- B1: resolved for local implementation by the user's broad task authorization,
+  confirmed by the parent. Continue all independently buildable adopted work.
+  Formal 2.0 acceptance is recorded in PR #166; fresh 2.1 production evidence and old exceptions remain separate;
+  no missing criterion is waived by the local sequencing decision.
+- B2: fresh external evidence/access: exact-candidate security analysis, required
+  provider checks, private configs/keys, canonical OHLC/outcome data, NAS and production observations.
+  Authorized GitHub connector reads and hosted matrix results are available;
+  shell GitHub API access remains forbidden.
+  Do not copy historical counts as current facts or run paid/money operations.
+- B3: local product image build and isolated capability rehearsal resolved with
+  hashed wheels, explicit proxy hostname mapping and an ephemeral trusted CA.
+  Rebuild/rehearse the final whole-product candidate after remaining changes.
+- B4: tooling availability resolved by read-only Fleet Kit source at verified
+  commit `990747556e73d874d76d4ab6d2212460eabe7652`; see the
+  [audit work item](product-completion-audit.md). Remote/OC unknowns remain.
+- D1: resolved local setup defect: Make now selects the platform interpreter,
+  preserves explicit overrides and runs non-mutating verification. Contributor
+  workflow is synchronized; historical repair evidence remains in the roadmap.
+
+The original local checkpoint `v2.1.0-alpha.1` is immutable. The expanded local
+candidate is `v2.1.0-alpha.2`; neither represents product/phase acceptance. See the
+latest roadmap receipt for exact verified tag, source and image identity.
+
+Resume from this branch, inspect `git status`, read the latest roadmap receipt,
+and address the named blockers before phase-dependent work. Keep existing code,
+financial invariants and all unresolved criteria intact. Never mark a handoff as
+product completion.
+
+N1 implementation: [source-derived capability inventory](n1-capability-inventory.md),
+ADR-047 and the [migration guide](../implementation/isolated-deployment.md).
+N2 implementation: ADR-048 and the [build guide](../implementation/reproducible-builds.md).
+Local verification receipts and external limitations remain in the roadmap;
+these implementation references do not mark formal phase acceptance.
+
+
+Follow-up correction: the no-paid-campaign gate does not block offline repair of
+G4's demonstrated battery defects. NW04's repeated source-failure trigger also
+supports a bounded reliability correction under the original defect-repair
+instruction. Both retain original acceptance and production limits; current
+implementation and verification evidence belong in the roadmap follow-up.

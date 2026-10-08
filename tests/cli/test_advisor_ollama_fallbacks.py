@@ -153,6 +153,8 @@ async def lab(monkeypatch):
         slot = _ROUTES["quant" if role == "single" else role].index((provider, kwargs["model"]))
 
         def handler(request):
+            if request.url.path == "/api/show":
+                return httpx.Response(200, json={"capabilities": ["completion"]})
             requests.append((role, slot, request))
             if slot == 0 and state["cap_after_primary"]:
                 wiring.session_tracker.add(Decimal("0.5"))
@@ -241,7 +243,8 @@ async def test_moe_stops_at_first_success_preserves_context_and_persists_actual_
                     continue
                 assert request.url == "http://ollama.test:11434/api/generate"
                 prompt = load_prompt(Path(f"config/prompts/{role}.md"))
-                assert body["prompt"] == prompt.body + "\n\n" + cloud_user
+                assert body["prompt"] == cloud_user
+                assert body["system"] == prompt.body
                 assert body["model"] == route[2][1] and body["stream"] is False
                 assert body["options"] == {"temperature": 0.4, "num_predict": 2048}
                 assert "confidence" in body["format"]["required"]

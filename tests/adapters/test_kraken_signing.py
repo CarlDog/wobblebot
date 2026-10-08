@@ -100,7 +100,7 @@ class TestMakeNonce:
         assert all(b > a for a, b in zip(nonces[:-1], nonces[1:], strict=True)), (
             "nonces must strictly increase: "
             f"first dip at index "
-            f"{next((i for i, (a, b) in enumerate(zip(nonces, nonces[1:])) if b <= a), None)}"
+            f"{next((i for i, (a, b) in enumerate(zip(nonces, nonces[1:], strict=False)) if b <= a), None)}"
         )
 
     def test_recovers_when_wall_clock_jumps_backward(self, monkeypatch: pytest.MonkeyPatch) -> None:

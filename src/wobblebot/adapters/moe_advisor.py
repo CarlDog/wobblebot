@@ -111,7 +111,7 @@ class MoEAdvisorAdapter(AdvisorPort):
             raise ValueError("MoE requires at least one expert")
         if aggregator not in _ALL_STRATEGIES:
             raise ValueError(
-                f"Unknown aggregator {aggregator!r}; " f"choose from {list(_ALL_STRATEGIES)}"
+                f"Unknown aggregator {aggregator!r}; choose from {list(_ALL_STRATEGIES)}"
             )
         if aggregator == "arbitrator" and arbitrator is None:
             raise ValueError(

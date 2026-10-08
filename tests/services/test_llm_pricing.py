@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from wobblebot.services import llm_pricing
 from wobblebot.services.llm_pricing import (
@@ -255,11 +256,11 @@ class TestCostFor:
 class TestPricePointValidation:
     def test_frozen(self) -> None:
         point = get_price_point("anthropic", "claude-sonnet-4-6")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             point.input_per_million_usd = Decimal("0")  # type: ignore[misc]
 
     def test_negative_input_rate_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMPricePoint(
                 provider="anthropic",
                 model="x",
@@ -269,7 +270,7 @@ class TestPricePointValidation:
             )
 
     def test_negative_reasoning_rate_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMPricePoint(
                 provider="anthropic",
                 model="x",
@@ -280,7 +281,7 @@ class TestPricePointValidation:
             )
 
     def test_empty_model_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             LLMPricePoint(
                 provider="anthropic",
                 model="",

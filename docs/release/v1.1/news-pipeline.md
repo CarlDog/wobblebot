@@ -277,3 +277,15 @@ surface anywhere in the web UI or Discord, or stay log-only.
 
 **Trigger:** next version's scope decision. Not gated behind G10's
 demand trigger — the demand already fired twice in one week.
+
+
+Implementation decision for the demonstrated failure workflow: the follow-up
+adopts an in-memory counter, first retry at the configured normal interval, then
+2x/4x/... delays capped at six hours (never below a longer configured interval).
+Only failed sources back off. Successful empty fetches recover; storage errors
+are not source failures. First failure and entry into backoff warn; subsequent
+failed retries log at INFO and recovery logs once. Daemon heartbeats continue
+while feeds wait. State resets on restart, so restart loops remain visible through
+the existing daemon-health workflow; no database migration, Discord alert,
+settings writer or automatic permanent disable is introduced. Current acceptance
+receipts live in the roadmap; no production feed was contacted during tests.

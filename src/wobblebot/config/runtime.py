@@ -21,12 +21,14 @@ omitted flags.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from wobblebot.config.identity import runtime_identity
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.resolver import resolve_config
 
@@ -75,7 +77,12 @@ def load_resolved_config(
     resolved_path = _discover_config_path(config_path)
     raw = _load_yaml(resolved_path)
     merged = resolve_config(raw, profile_name=profile_name, cli_overrides=cli_overrides)
-    return WobbleBotConfig.model_validate(merged)
+    config = WobbleBotConfig.model_validate(merged)
+    _LOGGER.info(
+        "runtime identity: %s",
+        json.dumps(runtime_identity(config.model_dump(mode="json"), profile_name), sort_keys=True),
+    )
+    return config
 
 
 def _discover_config_path(config_path: Path | None) -> Path:

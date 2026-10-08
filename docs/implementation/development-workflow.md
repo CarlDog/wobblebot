@@ -18,7 +18,7 @@ This guide covers local development setup, tooling, testing, and pre-commit work
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/wobblebot/wobblebot.git
+git clone https://github.com/CarlDog/wobblebot.git
 cd wobblebot
 ```
 
@@ -42,7 +42,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs WobbleBot in **editable mode** with all development dependencies (pytest, black, mypy, etc.).
+This installs WobbleBot in **editable mode** with all development dependencies (pytest, Ruff, mypy, pylint, etc.).
 
 ### 4. Verify Installation
 
@@ -50,7 +50,9 @@ This installs WobbleBot in **editable mode** with all development dependencies (
 pytest tests/test_import.py -v
 ```
 
-You should see all smoke tests pass with 100% coverage.
+The smoke tests should pass. Their coverage report covers the loaded package;
+it is not evidence of full-product coverage. Install the repository hooks before
+committing (`bash scripts/install-hooks.sh` or `scripts/install-hooks.ps1`).
 
 ---
 
@@ -58,16 +60,16 @@ You should see all smoke tests pass with 100% coverage.
 
 ### Code Formatting
 
-**Black** (code formatter):
+**Ruff** (code formatter):
 ```bash
-black src/ tests/                    # Format code
-black --check src/ tests/            # Check without modifying
+ruff format src/ tests/                    # Format code
+ruff format --check src/ tests/            # Check without modifying
 ```
 
-**isort** (import sorting):
+**Ruff** (import sorting):
 ```bash
-isort src/ tests/                    # Sort imports
-isort --check-only src/ tests/       # Check without modifying
+ruff check --select I --fix src/ tests/                    # Sort imports
+ruff check src/ tests/       # Check without modifying
 ```
 
 ### Type Checking
@@ -148,15 +150,14 @@ The workspace recommends these extensions (install via `.code-workspace`):
 
 - **Python** (`ms-python.python`) – Core Python support
 - **Pylance** (`ms-python.vscode-pylance`) – Fast language server
-- **Black Formatter** (`ms-python.black-formatter`) – Auto-formatting
-- **isort** (`ms-python.isort`) – Import sorting
+- **Ruff** (`charliermarsh.ruff`) – Formatting, import sorting and lint
 - **Mypy Type Checker** (`ms-python.mypy-type-checker`) – Type checking
 - **GitLens** (`eamodio.gitlens`) – Git superpowers
 - **GitHub Copilot** (`github.copilot`) – AI assistance
 
 ### Format on Save
 
-Workspace settings enable **format on save** with Black and isort. Files are automatically formatted when you save.
+Workspace settings enable **format on save** with Ruff. Files are automatically formatted when you save.
 
 ### Tasks
 
@@ -164,8 +165,8 @@ Use **Terminal → Run Task** or `Ctrl+Shift+P` → "Tasks: Run Task":
 
 - **Test: All** – Run all tests
 - **Test: Unit Only** – Run unit tests only
-- **Format: Black** – Format all code
-- **Format: isort** – Sort all imports
+- **Format: Ruff** – Format all code
+- **Format: Imports** – Sort all imports
 - **Lint: mypy** – Type check source
 - **Lint: pylint** – Lint source
 - **Pre-commit: All Checks** – Run all checks (format, lint, test)
@@ -186,16 +187,19 @@ Press `F5` to start debugging with the active configuration.
 
 If you have `make` installed, use these shortcuts:
 
+The Makefile selects the checkout's Windows or Linux/macOS virtual environment.
+Use `make PYTHON=/path/to/python check` to select a different interpreter.
+
 ```bash
 make help           # Show all available commands
 make install        # Install dependencies
 make test           # Run all tests
 make test-unit      # Run unit tests only
 make test-cov       # Run tests with coverage
-make lint           # Run mypy + pylint
-make format         # Format with black + isort
+make lint           # Run Ruff + mypy + retained pylint
+make format         # Format and sort imports with Ruff
 make format-check   # Check formatting without modifying
-make check          # Run all checks (format + lint + test)
+make check          # Check formatting, types, lint and tests without rewriting source
 make clean          # Remove build artifacts and cache
 ```
 
@@ -208,12 +212,13 @@ Before committing code, run all checks:
 ### Manual Checks
 
 ```bash
-# Format code
-black src/ tests/
-isort src/ tests/
+# Check formatting without rewriting the candidate
+ruff format --check src/ tests/
+ruff check src/ tests/
 
 # Type check
 mypy src/
+pylint src/
 
 # Run tests
 pytest
@@ -241,7 +246,7 @@ src/wobblebot/
   __init__.py          # Package metadata (__version__, __author__)
   domain/              # Pure business logic, no I/O
     __init__.py
-    models.py          # Domain models (Order, Trade, Position)
+    models.py          # Domain models (Order, Trade, Balance)
     exceptions.py      # Domain-specific exceptions
   ports/               # Abstract interfaces
     __init__.py
@@ -249,14 +254,14 @@ src/wobblebot/
     storage.py         # StoragePort interface
   adapters/            # Concrete implementations
     __init__.py
-    kraken.py          # Kraken API adapter
-    sqlite.py          # SQLite storage adapter
+    kraken_exchange.py # Kraken API adapter
+    sqlite_storage.py # SQLite storage adapter
   services/            # Orchestration
     __init__.py
-    orchestrator.py    # Main coordinator
+    grid_engine.py     # Trading engine orchestration
   cli/                 # Command-line tools
     __init__.py
-    main.py            # CLI entry point
+    sandbox.py         # Offline simulation entry point; see README for all CLIs
   config/              # Configuration loading
     __init__.py
     loader.py          # Config file loader
@@ -298,7 +303,7 @@ Dev-only dependencies (testing, linting) go under `[project.optional-dependencie
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
-    "black>=23.7.0",
+    "ruff==0.16.10",
     # Add dev tools here
 ]
 ```
@@ -342,18 +347,22 @@ ignore_missing_imports = true
 
 ## Branching Strategy
 
-- **`main`** – Stable, tagged releases only
-- **`develop`** – Integration branch for current phase
-- **`feature/phaseX-stageY-description`** – Feature branches
+- **`main`** – Accepted integration line; tags identify reviewed release commits.
+- **`codex/<work-item>`** – Short implementation branches from the accepted baseline.
+- `develop` and `v1.1` describe historical workflows, not another active integration line.
 
 Example:
 ```bash
-git checkout develop
-git checkout -b feature/phase1-stage2-domain-models
+git switch main
+git switch -c codex/work-item
 # ... make changes ...
-git push origin feature/phase1-stage2-domain-models
-# ... open pull request to develop ...
+# ... run the required checks and prepare a reviewable local commit ...
 ```
+
+Preserve existing work before switching branches. Publication, pull requests,
+merges, releases and deployment follow the user's explicit authorization;
+local verification does not imply any of these actions. See the authoritative
+[development process](../planning/process.md) and [roadmap](../planning/roadmap.md).
 
 ---
 
@@ -362,8 +371,8 @@ git push origin feature/phase1-stage2-domain-models
 Before submitting a pull request:
 
 - [ ] All tests pass (`pytest`)
-- [ ] Code is formatted (`black --check src/ tests/`)
-- [ ] Imports are sorted (`isort --check-only src/ tests/`)
+- [ ] Code is formatted (`ruff format --check src/ tests/`)
+- [ ] Imports are sorted (`ruff check src/ tests/`)
 - [ ] Type checking passes (`mypy src/`)
 - [ ] Linting passes (`pylint src/`)
 - [ ] New code has tests (unit tests minimum)

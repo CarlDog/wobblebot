@@ -15,6 +15,8 @@ Each document in this folder is the single source of truth for one aspect of pro
 | `2.0-closeout-audit.md` | Audit evidence, unresolved exceptions and the concrete release decision packet. |
 | `milestones.md` | Concrete phase/stage outcomes and release checkpoints. |
 | `requirements.md` | Functional and non‑functional requirements with phase mapping. |
+| `n1-capability-inventory.md` | Source-derived N1 database/credential consumers and implementation seams; preparation, not an accepted deployment change. |
+| `product-completion-baseline.md` | Full-product acceptance inventory, inferred checks, retained later phases, and blocker keys for the cloud completion task. |
 | `process.md` | Development workflow, branching, code reviews, and stage progression. |
 | `testing-plan.md` | Testing strategy across phases: unit, integration, paper trading, and live. |
 | `risks-plan.md` | Project‑level risks (schedule, scope, resourcing) and mitigations. |

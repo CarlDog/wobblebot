@@ -9,6 +9,7 @@ import pytest
 
 from tests.fixtures import grid_config, safety_config
 from wobblebot.cli import operator
+from wobblebot.config.schedules import SchedulesConfig
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -17,6 +18,7 @@ REQUIRED = {
     "operator-ttl-expirer",
     "operator-heartbeat-alerts",
     "operator-gateway",
+    "operator-provider-health",
 }
 ONE_SHOT = {"operator-history-backfill"}
 
@@ -71,12 +73,14 @@ async def test_real_main_constructs_and_supervises_every_task(monkeypatch, faile
     monkeypatch.setattr(operator, "derive_thresholds_from_config", lambda *_: object())
     monkeypatch.setattr(operator, "install_signal_handlers", lambda *_, **__: None)
     monkeypatch.setattr(operator, "_forwarder_loop", loop)
+    monkeypatch.setattr(operator, "run_provider_health", loop)
     monkeypatch.setattr(operator, "_ttl_expirer_loop", loop)
     monkeypatch.setattr(operator, "_heartbeat_alert_loop", loop)
     monkeypatch.setattr(operator, "_backfill_history_task", once)
     monkeypatch.setattr(operator, "_supervise_background_tasks", record_supervision)
     config = SimpleNamespace(
         grid=grid_config(),
+        schedules=SchedulesConfig({}),
         safety=safety_config(),
         live=None,
         harvester=None,
@@ -87,7 +91,9 @@ async def test_real_main_constructs_and_supervises_every_task(monkeypatch, faile
             advise_db=None,
             news_db=None,
             harvest_db=None,
-            assistant=SimpleNamespace(prompt_file="unused", model="stub"),
+            assistant=SimpleNamespace(
+                prompt_file="unused", model="stub", base_url="http://127.0.0.1:11434"
+            ),
             auth=SimpleNamespace(
                 outbound_channel_id="100",
                 allowed_channel_ids=frozenset({"100"}),
@@ -105,4 +111,4 @@ async def test_real_main_constructs_and_supervises_every_task(monkeypatch, faile
     exit_code = await asyncio.wait_for(operator._main_async(config), timeout=5)
     assert exit_code == (1 if failed_name else 0)
     assert closed.is_set()
-    assert len(observed) == 5 and all(task.done() for task in observed)
+    assert len(observed) == len(REQUIRED | ONE_SHOT) and all(task.done() for task in observed)

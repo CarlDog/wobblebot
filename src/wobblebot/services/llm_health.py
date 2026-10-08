@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 
 import httpx
 
@@ -39,9 +40,9 @@ class LLMEndpointHealth:
     """One endpoint's probe outcome for the /health view."""
 
     name: str
-    ok: bool
+    ok: bool | None
     detail: str
-    checked_at: datetime
+    checked_at: datetime | None
 
 
 def _normalize(value: str | None) -> str | None:
@@ -99,11 +100,9 @@ async def probe_llm_endpoints(
 ) -> tuple[LLMEndpointHealth, ...]:
     """GET each endpoint once; 2xx = healthy. Never raises.
 
-    Failure detail carries the HTTP status or the exception TYPE +
-    message (some, like ``ReadTimeout``, have an empty ``str()`` —
-    the type name is the signal). Auth headers never appear in
-    details; httpx error strings only embed the URL, which is
-    key-free by construction here.
+    Failure detail carries only the HTTP status or exception type. Raw
+    transport messages, URLs, response bodies and auth headers never enter
+    persisted observations or the dashboard.
     """
     results: list[LLMEndpointHealth] = []
     for endpoint in endpoints:
@@ -119,7 +118,7 @@ async def probe_llm_endpoints(
                 LLMEndpointHealth(
                     name=endpoint.name,
                     ok=False,
-                    detail=f"{type(exc).__name__}: {exc}".rstrip(": "),
+                    detail=type(exc).__name__,
                     checked_at=checked_at,
                 )
             )
@@ -162,7 +161,8 @@ class LLMHealthChecker:
         async with self._lock:
             now = datetime.now(UTC)
             if self._cached is not None and self._cached:
-                age = (now - self._cached[0].checked_at).total_seconds()
+                checked_at = self._cached[0].checked_at
+                age = (now - checked_at).total_seconds() if checked_at is not None else float("inf")
                 if age < self._ttl_seconds:
                     return self._cached
             elif self._cached is not None:
@@ -187,3 +187,10 @@ __all__ = (
     "build_llm_endpoints",
     "probe_llm_endpoints",
 )
+
+
+class ProviderHealthReader(Protocol):
+    """Common read contract for local probes and persisted daemon observations."""
+
+    async def get(self) -> tuple[LLMEndpointHealth, ...]:
+        """Read provider observations without granting a write capability."""

@@ -61,6 +61,7 @@ from wobblebot.ports.storage import StoragePort
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenUsage,
+    ensure_complete_response,
     execute_assistant_call,
     execute_cloud_call,
     parse_advisor_recommendation,
@@ -295,6 +296,11 @@ class OpenAIAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
+    @property
+    def effective_temperature(self) -> float | None:
+        """Requested sampling value actually sent; None means provider-controlled."""
+        return self._temperature if not is_reasoning_model(self._model) else None
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -359,6 +365,7 @@ class OpenAIAdvisorAdapter(AdvisorPort):  # pylint: disable=too-many-instance-at
                 extract_tokens=extract_openai_tokens,
             )
 
+        ensure_complete_response(envelope, AdvisorError)
         raw_text = parse_message_content(envelope)
         return parse_advisor_recommendation(
             raw_text,

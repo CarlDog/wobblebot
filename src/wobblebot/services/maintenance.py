@@ -127,12 +127,11 @@ def archive_price_snapshots_to_csv(snapshots: list[PriceSnapshot], dest_path: Pa
     # ADR-036 decision 5 — a ``.gz`` destination writes gzipped
     # (~6-8x smaller); any other suffix keeps the v1.0 plain CSV so
     # existing callers and tests are untouched.
-    opener = (
+    with (
         gzip.open(dest_path, "wt", newline="", encoding="utf-8")
         if dest_path.suffix == ".gz"
         else dest_path.open("w", newline="", encoding="utf-8")
-    )
-    with opener as f:
+    ) as f:
         writer = csv.writer(f)
         writer.writerow(_CSV_HEADER)
         for snap in snapshots:

@@ -334,6 +334,13 @@ def row_to_notification(row: aiosqlite.Row) -> PersistedNotification:
         ),
         created_at=Timestamp(dt=datetime.fromisoformat(row["created_at"])),
         read_at=(Timestamp(dt=datetime.fromisoformat(row["read_at"])) if row["read_at"] else None),
+        delivery_state=row["delivery_state"] if "delivery_state" in row.keys() else None,
+        delivery_attempts=(
+            (row["delivery_attempts"] or 0) if "delivery_attempts" in row.keys() else 0
+        ),
+        delivery_message_id=(
+            row["delivery_message_id"] if "delivery_message_id" in row.keys() else None
+        ),
     )
 
 

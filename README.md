@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
 [![CI](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/CarlDog/wobblebot/actions/workflows/docker-publish.yml)
 
 <!-- fleet-confidence -->
@@ -67,6 +67,9 @@ Every CLI accepts `--config PATH` and `--profile NAME` for YAML-driven configura
 | `python -m wobblebot.cli.live` | 2.3+2.4 | **✅ REAL MONEY** | Multi-asset operational loop. Hard caps: max session loss, max runtime, per-coin / total / daily-spend exposure. Clean SIGINT cancels all open orders. |
 | `python -m wobblebot.cli.news` | 3.2.5 | ❌ | Long-running news poller (7 RSS feeds + Kraken's exchange-status feed; CryptoCompare retired — CoinDesk Data ended free API access 2026-05-21, off by default everywhere, re-enable requires a paid plan). Persists items to `news_items` with `(source, external_id)` dedup. Per-source fault isolation. |
 | `python -m wobblebot.cli.advise` | 3.3 / 3.4a | ❌ | Long-running advisor daemon. Builds a `PerformanceSummary` from observe + news on a `schedules.advise` cadence, calls the configured single advisor or MoE committee, and persists `AdvisorSuggestion` rows for review. Supports local Ollama and cloud providers, including [Ollama Cloud](docs/implementation/ollama-cloud.md). **Never mutates running config** — that's `cli/apply`'s job. |
+| `python -m wobblebot.cli.doctor` | N4 | ✅ | Read-only local evidence in human/JSON form; no probes or repairs. |
+| `python tools/inspect_ollama.py` | N5 | ✅ | Metadata-only local model digest/version inspection; no inference. |
+| `python tools/provider_watch.py` | N5 | ❌ (local ledger only) | Ingest reviewed public-source hashes and report deduplicated changes; no remote actions. |
 | `python -m wobblebot.cli.apply` | 3.4b | ❌ (config writes) | Operator-in-the-loop auto-apply gate. Dry-run by default; `--commit` rewrites `settings.yml` (ruamel.yaml, comment-preserving) and persists an `AppliedSuggestion` audit row. Gate defaults OFF (`auto_apply.enabled=False`); news-role suggestions never auto-apply per ADR-007. |
 | `python -m wobblebot.cli.harvest` | 4.2-4.4 | Daemon and `--execute` **✅ REAL MONEY** | Treasury monitor generates and persists hypothetical transfer proposals. Its daemon also polls every 15s for web-approved `execute_proposal` commands (ADR-034); those and `--execute <proposal-id>` share the seven defense layers before calling Kraken `/Withdraw`. Harvester is the only module that can initiate withdrawals. |
 | `python -m wobblebot.cli.operator` | 5.6 | ❌ (chat surface only) | Discord-backed operator interaction daemon (ADR-013). Maintains a Gateway connection, drains the `notifications` SQLite table to Discord, parses inbound operator messages via `OllamaAssistantAdapter` into typed `OperatorIntent` payloads — Command → writes `PendingCommand` + posts confirm embed (cli/live polls the approved rows; that's the ADR-002 firewall); Query → reads engine + storage state via `OperatorService` and replies; Conversational / Unparseable → text reply. Background TTL expirer transitions abandoned `awaiting_confirmation` rows to `expired`. |
@@ -124,7 +127,7 @@ pip install -e ".[dev]"
 
 # 5. Verify the install
 pytest                          # default unit suite with coverage
-black --check src/ tests/
+ruff format --check src/ tests/
 mypy src/
 ```
 
@@ -207,11 +210,11 @@ pytest tests/path/to/test_file.py::TestClass::test_name   # one test
 ### Code Quality
 
 ```bash
-black src/ tests/            # format
-isort src/ tests/            # imports
+ruff format src/ tests/            # format
+ruff check --select I --fix src/ tests/            # imports
 mypy src/                    # type check (strict)
 pylint src/                  # lint
-make check                   # all of the above + tests
+make check                   # non-mutating format checks + type/lint checks + tests
 ```
 
 `pyproject.toml` config gotchas: `addopts` always runs with coverage; `filterwarnings = ["error", ...]` makes warnings other than `DeprecationWarning` fail the suite; only `unit`, `integration`, `slow` markers are valid.
@@ -278,3 +281,25 @@ Found a vulnerability? See [`SECURITY.md`](SECURITY.md). Please report privately
 ## License
 
 MIT — see [`LICENSE`](LICENSE) for details.
+
+For opt-in per-service directory isolation, see the [staging and migration guide](docs/implementation/isolated-deployment.md).
+
+See [reproducible builds and runtime identity](docs/implementation/reproducible-builds.md) for hashed installs and digest-pinned deployment plans.
+
+The [independent delivery guide](docs/implementation/notification-delivery.md) describes opt-in alert sending and uncertain outcomes.
+
+Read-only diagnosis: `python -m wobblebot.cli.doctor --config config/settings.yml --json`.
+Independent health alerts run in the opt-in delivery process; see
+[health response and doctor](docs/implementation/health-response-and-doctor.md).
+
+Local Ollama and provider maintenance: [local contract/identity](docs/implementation/ollama-local-contract.md)
+and [manual watch/funding decision](docs/implementation/provider-watch.md).
+
+
+Equities support is staged behind `equities.enabled: false` (also the default
+when omitted). This build has no supported Kraken Securities stock/ETF adapter;
+setting true fails configuration validation before provider/task setup and tells
+you to disable it. It does not enable xStocks, create a worker or expose an equity
+trading action. Real-share integration and its dependent workflows are explicitly
+deferred until a verified official contract is available; see
+[the scope and reentry record](docs/planning/stage-9.0-design.md) and ADR-055.

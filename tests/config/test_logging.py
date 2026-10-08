@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import logging
@@ -35,10 +36,8 @@ def _reset_wobblebot_logger():
     # Close any handlers the test added so file descriptors don't leak.
     for handler in logger.handlers:
         if handler not in original_handlers:
-            try:
+            with contextlib.suppress(Exception):
                 handler.close()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
     logger.handlers = original_handlers
     logger.level = original_level
     logger.propagate = original_propagate

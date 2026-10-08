@@ -322,8 +322,8 @@ class TestFaultTolerance:
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1
         # Structured-field assertion — the expert's name + role appear in the record's extra
-        assert getattr(warnings[0], "expert_name") == "cloud_news"
-        assert getattr(warnings[0], "expert_role") == "news"
+        assert warnings[0].expert_name == "cloud_news"
+        assert warnings[0].expert_role == "news"
 
 
 @pytest.mark.asyncio
