@@ -383,3 +383,35 @@ def test_health_observation_exception_never_reports_green(client_no_probe, monke
     assert response.status_code == 200
     assert response.json() == {"overall": "yellow", "reason": "observation_unavailable"}
     assert "private fixture detail" not in response.text
+
+
+@pytest.mark.parametrize("endpoint", ["/health", "/health/overall.json"])
+def test_health_database_paths_come_from_startup_config_not_request(
+    client_no_probe, monkeypatch, tmp_path, endpoint
+):
+    """FastAPI Depends(get_config) is application state, not a request model."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    configured = {
+        "observe_db": str(tmp_path / "configured-observe.db"),
+        "advise_db": str(tmp_path / "configured-advise.db"),
+        "operator_db": str(tmp_path / "configured-operator.db"),
+    }
+    client_no_probe.app.state.config = client_no_probe.app.state.config.model_copy(
+        update=configured
+    )
+    freshness = AsyncMock(return_value=[])
+    monkeypatch.setattr("wobblebot.web.routes.health.fetch_daemon_freshness", freshness)
+    login_as(client_no_probe)
+    response = client_no_probe.get(
+        endpoint,
+        params=dict.fromkeys(configured, "../../request-selected.db"),
+    )
+    assert response.status_code == 200
+    freshness.assert_awaited_once()
+    actual = freshness.await_args.kwargs
+    assert {name: actual[name] for name in configured} == {
+        name: Path(value) for name, value in configured.items()
+    }
+    assert not (tmp_path / "request-selected.db").exists()

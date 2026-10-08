@@ -30,6 +30,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Constrain the container HTTP health probe to loopback `/healthz`, reject
+  unintended destinations before I/O, and ignore redirects and proxy settings.
+- Replace deployment image-reference regex validation with equivalent linear
+  parsing, preserving pinned-digest syntax and rejecting invalid plans early.
+
 - Recheck command approval expiry after acquiring SQLite write ownership, so
   lock contention cannot dispatch an approval that expired while waiting.
 

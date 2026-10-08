@@ -7,6 +7,57 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 draft PR #170 security triage and bounded hardening
+
+The operator authorized draft [PR #170](https://github.com/CarlDog/wobblebot/pull/170)
+from this branch to main. It remains draft/unmerged. Original head `bcc29e0`
+passed ordinary PR CI `37723876740` (Linux/Windows matrix and quality; historical
+counts as in the prior receipt). CodeQL analysis jobs in `37723875426` succeeded,
+but aggregate security check `113137606505` **failed with five new alerts**, one
+critical and four high. A successful analysis job is not a security-clean result.
+
+The [five-alert triage](../implementation/pr170-security-triage.md) records exact
+sources, reachability, changes and proposed dispositions. Alert 43's environment
+URL could reach unrestricted urllib fetching; the intended container-local probe
+now connects only to fixed loopback HTTP `/healthz`, with a configurable port,
+no proxies/redirects, and early validation. Alert 47's image regex is replaced
+with equivalent linear parsing; local measurement did not reproduce polynomial
+behavior, and no exploitation is asserted. No dependencies, security settings,
+CodeQL rules/severities, alert dismissals or suppression comments were changed.
+
+For path alerts 44–46, independent source review recommends individual false-positive
+classification: actual FastAPI dependencies supply startup app configuration,
+and CLI database arguments intentionally select operator files. The configured
+path contract and URI escaping remain intact. Two endpoint regressions show that
+request parameters cannot choose database paths. This is a recommendation for
+parent/operator review, **not an accepted exception or dismissed alert**. Pending
+that decision and fresh scanner results, security qualification remains open.
+
+Verification before the security code checkpoint:
+
+- `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check`: exit 0; Ruff format/lint, mypy,
+  retained pylint 10.00/10; **4,550 passed, six private skips, 30 deselected**,
+  88.62% coverage. Explicit Ruff lint/format also passed on both changed tools.
+- `timeout 60 .venv/bin/python -m pytest tests/tools/test_healthcheck.py
+  tests/tools/test_prepare_isolated_deployment.py tests/web/test_health.py
+  --no-cov -q`: **76 passed**. The ten-case offline integration command in the
+  preceding receipt also passed; no paid or remote provider call was made.
+- Separate disposable checkout at `bcc29e0`: old HTTP implementation fails all
+  fifteen new destination/redirect checks; a mutation sourcing config from request
+  parameters fails both endpoint boundary checks. Restored implementations pass
+  all seventeen. Interpreter/module paths were checked in that checkout. Rejected
+  destinations were mocked so the negative control could not contact them.
+- Independent correctness and test-honesty reviews found no blocking issue in
+  the changes. The latter independently passed 31 selected non-network cases.
+  Three thousand deterministic varied image references matched the old validator's
+  accepted syntax. These are bounded checks, not NAS/provider acceptance.
+
+Fresh exact-head PR CI and aggregate CodeQL must be checked after push. No claim
+that all five findings are resolved is made by this local receipt. Existing
+private/NAS/provider/observation gates remain; real equities remain disabled.
+
+
 ### 2026-10-08 exact-code qualification receipt and remaining gates
 
 Reviewed code candidate: `cc95a21f7ebc0ad8bfab24d7f3eefb2bfaff19c5`, package

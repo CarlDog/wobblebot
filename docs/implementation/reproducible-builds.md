@@ -38,7 +38,12 @@ isolated deployments preserve these probes with the staged config path. One-shot
 
 For a direct daemon container, configure exactly one `WOBBLEBOT_HEALTH_DAEMON`
 (for example `cli/live` or `cli/delivery`) or `WOBBLEBOT_HEALTH_URL` (web's
-`http://127.0.0.1:8000/healthz`). Set `WOBBLEBOT_HEALTH_CONFIG` and optionally
+`http://127.0.0.1:8000/healthz`). HTTP probes accept only `http` and the exact
+`/healthz` path on `localhost`, `127.0.0.1`, or `[::1]`, with a configurable
+port. Credentials, query strings, fragments and non-loopback targets are rejected
+before I/O; redirects and environment proxies are never followed. This probes the
+container’s own web process, not arbitrary upstream services. Set
+`WOBBLEBOT_HEALTH_CONFIG` and optionally
 `WOBBLEBOT_HEALTH_PROFILE` to match the command's config/profile arguments. With
 neither role, or both roles, the default probe fails closed with an actionable
 message. Direct one-shot runs use `docker run --no-healthcheck ...`. A custom

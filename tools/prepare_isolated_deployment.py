@@ -12,9 +12,9 @@ import argparse
 import copy
 import json
 import logging
-import re
 import shlex
 import shutil
+import string
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,18 @@ def _referenced_roles(value: Any, paths: dict[str, str]) -> set[str]:
     return {paths[value]} if isinstance(value, str) and value in paths else set()
 
 
+def _is_digest_reference(value: str) -> bool:
+    """Validate the existing image syntax in linear-time string parsing."""
+    repository, separator, digest = value.partition("@sha256:")
+    return (
+        bool(repository)
+        and bool(separator)
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest)
+        and all(char in string.ascii_letters + string.digits + "._/:-" for char in repository)
+    )
+
+
 def prepare(
     config_path: Path,
     profile: str | None,
@@ -66,9 +78,7 @@ def prepare(
     image_ref: str | None = None,
 ) -> None:
     """Create reviewable files exclusively in a new output directory."""
-    if image_ref is not None and not re.fullmatch(
-        r"[A-Za-z0-9._/:-]+@sha256:[0-9a-f]{64}", image_ref
-    ):
+    if image_ref is not None and not _is_digest_reference(image_ref):
         raise ValueError("Deployment image must use a sha256 digest, not a mutable tag")
     raw = resolve_config(yaml.safe_load(config_path.read_text(encoding="utf-8")), profile)
     WobbleBotConfig.model_validate(raw)

@@ -15,8 +15,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import Mock
-from urllib.error import HTTPError
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from tools.healthcheck import main
@@ -78,14 +77,15 @@ class TestHttpMode:
     def test_http_error_closes_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An unhealthy response still owns a resource that must be released."""
         response = BytesIO(b"unavailable")
-        url = "http://fixture.invalid/healthz"
-        error = HTTPError(url, 503, "Service Unavailable", None, response)
-        monkeypatch.setattr("tools.healthcheck.urllib.request.urlopen", Mock(side_effect=error))
-        try:
-            assert main(["--http", url]) == 1
-            assert response.closed
-        finally:
-            error.close()
+        response.status = 503
+        connection = Mock()
+        connection.getresponse.return_value = response
+        monkeypatch.setattr(
+            "tools.healthcheck.http.client.HTTPConnection", Mock(return_value=connection)
+        )
+        assert main(["--http", "http://127.0.0.1:8000/healthz"]) == 1
+        assert response.closed
+        connection.close.assert_called_once()
 
 
 # --------------------------------------------------------------------- #
@@ -208,3 +208,79 @@ def test_container_invalid_http_target_is_unhealthy(container_env):
 )
 def test_invalid_probe_usage_never_returns_docker_reserved_two(argv):
     assert main(argv) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.invalid/healthz",
+        "http://169.254.169.254/healthz",
+        "http://127.0.0.1.example.invalid/healthz",
+        "file:///tmp/healthz",
+        "ftp://127.0.0.1/healthz",
+        "https://example.invalid/healthz",
+        "http://127.0.0.1/private",
+        "http://127.0.0.1/healthz?target=private",
+        "http://127.0.0.1/healthz#fragment",
+        "http://user:credential@127.0.0.1/healthz",
+        "http://127.0.0.1:0/healthz",
+        "http://127.0.0.1:65536/healthz",
+        "http://2130706433/healthz",
+        "http://127.0.0.1/healthz\n",
+    ],
+)
+def test_http_probe_rejects_unintended_destinations_before_io(monkeypatch, url, capsys):
+    connection = Mock()
+    legacy_response = MagicMock()
+    legacy_response.__enter__.return_value.status = 200
+    legacy_fetch = Mock(return_value=legacy_response)
+    # Both seams ensure this security regression cannot contact a rejected host
+    # even when mutation-verifying the former unrestricted urllib implementation.
+    monkeypatch.setattr("http.client.HTTPConnection", connection)
+    monkeypatch.setattr("urllib.request.urlopen", legacy_fetch)
+    assert main(["--http", url]) == 1
+    connection.assert_not_called()
+    legacy_fetch.assert_not_called()
+    assert "credential" not in capsys.readouterr().out
+
+
+def test_http_probe_ignores_environment_proxy(monkeypatch, http_server):
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+    assert main(["--http", http_server]) == 0
+    assert main(["--http", http_server.replace("127.0.0.1", "localhost")]) == 0
+
+
+def test_http_probe_does_not_follow_redirects():
+    visited = []
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            visited.append(self.path)
+            self.send_response(302 if self.path == "/healthz" else 200)
+            self.send_header("Location", "/other-service")
+            self.end_headers()
+
+        def log_message(self, *args):
+            del args
+
+    server = HTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert main(["--http", f"http://127.0.0.1:{server.server_port}/healthz"]) == 1
+        assert visited == ["/healthz"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("timeout", ["nan", "inf", "0", "-1"])
+def test_http_probe_requires_bounded_timeout(monkeypatch, timeout):
+    connection = Mock()
+    monkeypatch.setattr("http.client.HTTPConnection", connection)
+    assert main(["--http", "http://127.0.0.1:8000/healthz", "--timeout", timeout]) == 1
+    connection.assert_not_called()

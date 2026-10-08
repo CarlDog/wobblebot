@@ -108,3 +108,32 @@ def test_deployment_image_must_be_digest_pinned(tmp_path):
         service["environment"]["WOBBLEBOT_IMAGE_DIGEST"] == "sha256:" + "a" * 64
         for service in services.values()
     )
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "-" * 100000,
+        "registry/app@sha256:" + "a" * 63,
+        "registry/app@sha256:" + "a" * 65,
+        "registry/app@sha256:" + "A" * 64,
+        "registry/app@sha256:" + "g" * 64,
+        "registry/app@sha256:" + "a" * 64 + "\n",
+        "registry/app@sha256:@sha256:" + "a" * 64,
+        "registry/app?tag@sha256:" + "a" * 64,
+        "@sha256:" + "a" * 64,
+    ],
+)
+def test_invalid_image_reference_does_not_read_config_or_create_output(tmp_path, image):
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="digest"):
+        prepare(tmp_path / "absent.yml", None, output, None, image)
+    assert not output.exists()
+
+
+def test_digest_reference_preserves_registry_port_tag_and_punctuation(tmp_path):
+    image = "Registry.example:5000/team/my_app-v2.1:alpha@sha256:" + "0123456789abcdef" * 4
+    output = tmp_path / "output"
+    prepare(EXAMPLE, "cpu-only", output, None, image)
+    services = yaml.safe_load((output / "compose.yml").read_text())["services"]
+    assert all(service["image"] == image for service in services.values())

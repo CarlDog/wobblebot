@@ -11,9 +11,9 @@ Explicit modes plus the role-configured Dockerfile default:
   which is the whole point — a green running container was previously
   no evidence the loop was looping.
 
-* ``--http URL`` — liveness GET for the web container (target the
-  unauthenticated ``/healthz``; the real ``/health`` page requires a
-  session). Exit 0 on any 2xx; 1 otherwise.
+* ``--http URL`` — loopback HTTP GET for the web container’s unauthenticated
+  ``/healthz``. Accepts localhost, 127.0.0.1 or [::1] with a configurable port.
+  No proxies, credentials, query, fragment or redirects. Exit 0 on 2xx; 1 otherwise.
 
 * ``--container`` — use exactly one of ``WOBBLEBOT_HEALTH_DAEMON`` or
   ``WOBBLEBOT_HEALTH_URL``, with optional ``WOBBLEBOT_HEALTH_CONFIG`` and
@@ -34,12 +34,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import http.client
+import math
 import os
 import sys
-import urllib.error
-import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from wobblebot.config.runtime import load_resolved_config
 from wobblebot.services.daemon_health import (
@@ -57,19 +58,45 @@ _DEFAULT_ADVISE_DB = "data/wobblebot-advise.db"
 
 
 def _check_http(url: str, timeout: float) -> int:
+    """Probe only this container's web liveness endpoint, without proxy/redirects."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
-            status = resp.status
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
-        # HTTPError is also a response; urlopen raised before entering `with`.
-        if isinstance(exc, urllib.error.HTTPError):
-            exc.close()
-        print(f"unhealthy: GET {url} failed: {exc}")
+        target = urlsplit(url)
+        port = 80 if target.port is None else target.port
+        if (
+            target.scheme != "http"
+            or target.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or target.username is not None
+            or target.password is not None
+            or target.path != "/healthz"
+            or "?" in url
+            or "#" in url
+            or any(ord(char) <= 32 or ord(char) == 127 for char in url)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError("expected loopback HTTP /healthz and a positive finite timeout")
+    except ValueError:
+        print("unhealthy: HTTP probe requires a loopback HTTP /healthz URL and valid timeout")
         return 1
+
+    # Map the allowed names to literals, avoiding DNS and environment proxies.
+    # HTTPConnection does not follow redirects; only this fixed path is requested.
+    host = "::1" if target.hostname == "::1" else "127.0.0.1"
+    connection = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        connection.request("GET", "/healthz")
+        with connection.getresponse() as response:
+            status = response.status
+    except (http.client.HTTPException, OSError, TimeoutError, ValueError) as exc:
+        print(f"unhealthy: local HTTP /healthz failed: {type(exc).__name__}")
+        return 1
+    finally:
+        connection.close()
     if 200 <= status < 300:
-        print(f"healthy: GET {url} -> {status}")
+        print(f"healthy: local HTTP /healthz -> {status}")
         return 0
-    print(f"unhealthy: GET {url} -> {status}")
+    print(f"unhealthy: local HTTP /healthz -> {status}")
     return 1
 
 
