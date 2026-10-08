@@ -7,6 +7,18 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 separate next-version preparation
+
+The operator authorized preparing eligible next-version work while external 2.1
+gates remain open. Branch `codex/2.2-readiness` begins at unmerged candidate
+`a89d017`; it adds only the [history/monitoring prerequisite map](history-monitoring-prerequisites.md).
+The map cross-checks G1/G3, P4.6, existing importer/scorer/report tools and the
+OpenChronicle reference assessment. Independent review found no scope or gate
+overclaim. Relative source links and whitespace were checked. No runtime code,
+version assignment, accepted design, private-data result or gate waiver is added.
+Actual per-signal history, verified Q2 imports, authorized canonical NAS scoring
+and consumer/design decisions remain prerequisites. 2.2/2.3 grouping is proposed.
+
 ### 2026-10-08 draft PR #170 security triage and bounded hardening
 
 The operator authorized draft [PR #170](https://github.com/CarlDog/wobblebot/pull/170)
