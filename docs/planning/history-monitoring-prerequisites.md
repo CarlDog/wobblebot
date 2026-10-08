@@ -6,6 +6,11 @@ unmerged 2.1 candidate `a89d017d804dd0eae8dd16804aa2d71d7b38ee0f`; its inherited
 changes require the existing PR #170 review. Version assignment remains open.
 Current completion status belongs in [the roadmap](roadmap.md).
 
+The branch has since incorporated merged main `6c108ab` without rewriting its
+earlier preparation commit. The [offline timestamp inventory](../implementation/history-coverage.md)
+supports the G3 evidence-acquisition step; it does not establish source provenance,
+price quality, canonical scoring or gate acceptance.
+
 ## Source authority and dependencies
 
 The [backlog G1/G3 rows](backlog.md#gated-work) control eligibility. Historical

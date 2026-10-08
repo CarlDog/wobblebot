@@ -7,6 +7,51 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 isolated G3 offline evidence preparation
+
+Branch `codex/2.2-readiness` safely incorporated reviewed main
+`6c108abf77df565d2486ac7f92c0230e3df43a6e` in merge `8e6c413`; the sole roadmap
+conflict preserved both preparation and merged security receipts. Existing
+implementation branches/worktrees were not altered. The operator authorized
+useful offline preparation while production evidence remains open; 2.2/2.3
+grouping still is not an adopted runtime-feature scope.
+
+G3/backlog A01 and P4's standing import/scoring thread require coverage evidence.
+The existing importer and outcome scorer do not provide a whole-window timestamp
+inventory. The new [offline coverage tool](../implementation/history-coverage.md)
+fills that bounded preparation need: approved SQLite snapshot, explicit symbols,
+one-minute/hourly UTC grids, missing ranges, duplicate/off-grid/malformed/outside
+counts, one consistent read-only transaction and enforced row/time/slot/output
+bounds. It does not import, score, contact providers or read private data by default.
+Output never certifies source provenance, price quality, absence causes or readiness.
+
+Verification in `/workspace/wobblebot-2.2-readiness`:
+
+- `timeout 600 env PYTHONPATH=src:. PYLINTHOME=/tmp/wobblebot-readiness-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make PYTHON=/workspace/wobblebot/.venv/bin/python
+  check`: exit 0; Ruff, mypy and pylint 10.00/10;
+  **4,579 passed, six private skips, 30 deselected**, package coverage 88.63%.
+- `timeout 60 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  tests/tools/test_check_history_coverage.py --no-cov -q`: **13 passed** after the
+  review correction. Explicit Ruff lint/format passed on the tool and tests;
+  `python tools/check_history_coverage.py --help` passed.
+- A concurrent real SQLite WAL writer fixture proves all series use one read
+  snapshot. Other synthetic fixtures cover exact gap boundaries, equivalent-offset
+  duplicates, invalid timestamps, absent series, no input creation and budget limits.
+- Independent code review found no blocking defect and passed all 13 tests.
+  Test-honesty review found the SQL deadline test also accepted a later Python
+  deadline failure; it now requires `SQLITE_INTERRUPT`. The disabled-SQL-handler
+  mutant then fails, and the restored 13 tests pass. A separate process-only
+  writable-open mutation fails the missing-input noncreation test; restored 13 pass.
+
+No actual historical data was inspected and no gate was cleared. Actual Q2/source
+availability, approved snapshot provenance, canonical NAS import/scoring, outcome
+tallies/fidelity/bias analysis and accepted consumer/Historian design remain needed.
+G1's per-signal history/retention and consumer gates and 2.1's production gates are
+unchanged. No new PR, merge to main, release, deployment, provider cost or access
+change was performed. OpenChronicle/Serena are not callable here; no use is claimed.
+Evidence and the continuation record are in ignored `tmp/readiness/`.
+
 ### 2026-10-08 separate next-version preparation
 
 The operator authorized preparing eligible next-version work while external 2.1

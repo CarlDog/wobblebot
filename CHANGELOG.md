@@ -28,6 +28,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Added
+
+- Offline read-only OHLC timestamp coverage inventory for approved snapshots,
+  with explicit UTC windows, bounded gaps/work and no readiness certification.
+
 ### Fixed
 
 - HTTP health database reads are bound to startup-selected file capabilities;
