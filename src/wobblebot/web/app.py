@@ -37,6 +37,7 @@ from wobblebot.config.cli import TradingMode, WebConfig
 from wobblebot.domain.value_objects import Symbol, fmt_decimal, fmt_qty, fmt_usd
 from wobblebot.ports.storage import StoragePort
 from wobblebot.services.daemon_health import DaemonHealthThresholds
+from wobblebot.services.health_reader import HealthDatabaseReader
 from wobblebot.services.kraken_health import KrakenHealthProbe
 from wobblebot.services.llm_health import ProviderHealthReader
 from wobblebot.services.release_checker import ReleaseCheckResult
@@ -372,6 +373,12 @@ def create_app(  # pylint: disable=too-many-arguments,too-many-locals,too-many-s
     templates.env.globals["is_high_consequence"] = _is_high_consequence
     app.state.templates = templates
     app.state.config = config
+    app.state.health_database_reader = HealthDatabaseReader.bind(
+        observe_db=config.observe_db,
+        advise_db=config.advise_db,
+        operator_db=config.operator_db,
+        thresholds=daemon_health_thresholds,
+    )
     app.state.operator_storage = operator_storage
     app.state.advise_storage = advise_storage
     app.state.harvest_storage = harvest_storage

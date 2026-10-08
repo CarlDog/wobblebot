@@ -336,11 +336,11 @@ async def _heartbeats_or_empty(operator_db: Path | None) -> dict[str, datetime] 
         aiosqlite error returns None so the health page degrades
         gracefully rather than 500-ing.
     """
-    if operator_db is None or not operator_db.exists():
+    if operator_db is None:
         return None
-    uri = operator_db.resolve().as_uri() + "?mode=ro"
     out: dict[str, datetime] = {}
     try:
+        uri = operator_db.resolve().as_uri() + "?mode=ro"
         async with (
             managed_connection(uri, uri=True) as conn,
             conn.execute("SELECT name, last_beat_at FROM daemon_heartbeats") as cursor,

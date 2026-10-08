@@ -387,31 +387,36 @@ def test_health_observation_exception_never_reports_green(client_no_probe, monke
 
 @pytest.mark.parametrize("endpoint", ["/health", "/health/overall.json"])
 def test_health_database_paths_come_from_startup_config_not_request(
-    client_no_probe, monkeypatch, tmp_path, endpoint
+    storage, monkeypatch, tmp_path, endpoint
 ):
-    """FastAPI Depends(get_config) is application state, not a request model."""
+    """Neither query parameters nor later config substitution can widen grants."""
     from pathlib import Path
     from unittest.mock import AsyncMock
+
+    from wobblebot.web.dependencies import get_config
 
     configured = {
         "observe_db": str(tmp_path / "configured-observe.db"),
         "advise_db": str(tmp_path / "configured-advise.db"),
         "operator_db": str(tmp_path / "configured-operator.db"),
     }
-    client_no_probe.app.state.config = client_no_probe.app.state.config.model_copy(
-        update=configured
-    )
+    for path in configured.values():
+        Path(path).touch()
+    config = WebConfig(bcrypt_cost=10, **configured)
+    app = create_app(config=config, operator_storage=storage, session_secret="x" * 64)
+    forbidden = tmp_path / "request-selected.db"
+    forbidden.touch()
+    substituted = config.model_copy(update=dict.fromkeys(configured, str(forbidden)))
+    app.state.config = substituted
+    app.dependency_overrides[get_config] = lambda: substituted
     freshness = AsyncMock(return_value=[])
-    monkeypatch.setattr("wobblebot.web.routes.health.fetch_daemon_freshness", freshness)
-    login_as(client_no_probe)
-    response = client_no_probe.get(
-        endpoint,
-        params=dict.fromkeys(configured, "../../request-selected.db"),
-    )
+    monkeypatch.setattr("wobblebot.services.health_reader.fetch_daemon_freshness", freshness)
+    with TestClient(app, follow_redirects=False) as client:
+        login_as(client)
+        response = client.get(endpoint, params=dict.fromkeys(configured, str(forbidden)))
     assert response.status_code == 200
     freshness.assert_awaited_once()
     actual = freshness.await_args.kwargs
     assert {name: actual[name] for name in configured} == {
         name: Path(value) for name, value in configured.items()
     }
-    assert not (tmp_path / "request-selected.db").exists()

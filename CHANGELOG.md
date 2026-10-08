@@ -30,6 +30,16 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- HTTP health database reads are bound to startup-selected file capabilities;
+  request or later configuration substitution cannot select other files.
+  Detected file replacement produces unknown health until the web app restarts.
+- LLM streak reads now URI-escape configured database filenames consistently.
+
+- Health reads now degrade to unknown when operator-database path resolution
+  fails, using one read-only open without a separate existence check.
+- Missing web session-key diagnostics reference the configuration field without
+  echoing its configured environment-variable name.
+
 - Constrain the container HTTP health probe to loopback `/healthz`, reject
   unintended destinations before I/O, and ignore redirects and proxy settings.
 - Replace deployment image-reference regex validation with equivalent linear
