@@ -164,7 +164,7 @@ jobs:
         run: |
           printf 'revision=%s\nimage_digest=%s\n' "$REVISION" "$IMAGE_DIGEST" > image-identity.txt
           sha256sum requirements.lock >> image-identity.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: image-identity
           path: image-identity.txt
