@@ -123,6 +123,17 @@ def test_deployment_image_must_be_digest_pinned(tmp_path):
         "registry/app?tag@sha256:" + "a" * 64,
         "@sha256:" + "a" * 64,
     ],
+    ids=[
+        "long-missing-digest",
+        "short-digest",
+        "long-digest",
+        "uppercase-digest",
+        "nonhex-digest",
+        "trailing-newline",
+        "duplicate-delimiter",
+        "invalid-repository-character",
+        "empty-repository",
+    ],
 )
 def test_invalid_image_reference_does_not_read_config_or_create_output(tmp_path, image):
     output = tmp_path / "output"

@@ -53,9 +53,36 @@ Verification before the security code checkpoint:
   Three thousand deterministic varied image references matched the old validator's
   accepted syntax. These are bounded checks, not NAS/provider acceptance.
 
-Fresh exact-head PR CI and aggregate CodeQL must be checked after push. No claim
-that all five findings are resolved is made by this local receipt. Existing
-private/NAS/provider/observation gates remain; real equities remain disabled.
+Post-push verification at `a89d017d804dd0eae8dd16804aa2d71d7b38ee0f`:
+
+- Aggregate CodeQL check `113142262240` still fails, now with **three high**
+  findings. Analysis run `37725324024` succeeded; this does not waive the
+  outstanding path-alert adjudication. Secret scan `37725322579` passed.
+- Linux CI passed. Windows PR CI `37725327890` exposed a test-ID portability
+  defect: pytest put the 100,000-character adversarial input into
+  `PYTEST_CURRENT_TEST`, exceeding Windows' environment-value limit during setup
+  and teardown. The follow-up gives all nine inputs short descriptive IDs,
+  retaining the complete adversarial values and assertions. All 14 generator
+  tests and explicit Ruff checks passed locally; fresh Windows CI remains required.
+- `timeout 600 python3 tmp/qualification-2026-10-08/security_build_image.py`
+  built image `sha256:f767ce9eec3c405f8194046ff1ce12caff92e1e8db6729287556aebaea872c2c`
+  with the exact `a89d017` revision label. The subsequent test-ID/docs-only change
+  does not change packaged runtime bytes; it is not a new image revision claim.
+- `timeout 180 .venv/bin/python tmp/qualification-2026-10-08/security_image_smoke.py`
+  passed disabled/enabled equities behavior, real web `/healthz`, unhealthy
+  unconfigured role, and fresh-to-stale SQLite heartbeat Docker health.
+- `timeout 60 python3 tmp/qualification-2026-10-08/security_package_identity.py`
+  matched all 174 package sources, healthcheck and runtime lock to checkout bytes.
+- `timeout 600 env PYTHONPATH=. .venv/bin/python
+  tmp/qualification-2026-10-08/security_compose_rehearsal.py` passed all ten service
+  grant contracts, denied writes, non-root execution, actual backup/integrity/vacuum
+  and atomic settings replacement visibility.
+- `timeout 90 .venv/bin/python tmp/qualification-2026-10-08/security_wal_rehearsal.py`
+  passed two committed updates visible through the actual read-only adapter while
+  a writer retained WAL/SHM. Containers used disposable fixtures and no network.
+
+No claim that all five findings are resolved is made. Existing private/NAS/provider/
+observation gates remain; real equities remain disabled.
 
 
 ### 2026-10-08 exact-code qualification receipt and remaining gates
