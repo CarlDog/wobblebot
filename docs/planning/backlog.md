@@ -11,7 +11,7 @@ An eligible trigger permits a scope decision; it does not schedule implementatio
 Owners below are accountable roles, not claims that another person accepted a task.
 The operator assigns the implementation owner when a slice starts. E01-E03 were
 accepted on 2026-09-08; publication and NAS deployment were subsequently authorized
-and are recorded in the roadmap. Formal acceptance retains its closeout-plan decision.
+and are recorded in the roadmap. The formal 2.0.x close was accepted on 2026-10-03 and 2.1 is open.
 
 ## Closeout and tracker disposition
 
@@ -28,12 +28,12 @@ and are recorded in the roadmap. Formal acceptance retains its closeout-plan dec
 | PR138 / PR142 | [Original Pylint bump #138](https://github.com/CarlDog/wobblebot/pull/138) closed unmerged; [replacement #142](https://github.com/CarlDog/wobblebot/pull/142) merged 2026-09-10. Subsequent #159 advances pylint to 4.0.9. | Tooling owner; no remaining adoption task for these PRs. | GitHub statuses re-read 2026-10-01 UTC; later combined dependency verification is in the roadmap. Historical audit evidence remains unchanged. |
 | PR139 | [Old PyYAML stubs bump #139](https://github.com/CarlDog/wobblebot/pull/139) closed unmerged; #151 merged the later 6.0.12.20260906 pin on September 30. | Tooling owner; old proposal superseded. | Current GitHub status, merged manifest and local mypy verification in the roadmap. |
 | PR140 | [isort major #140](https://github.com/CarlDog/wobblebot/pull/140) merged 2026-09-30 after preceding dependency updates and fresh CI. | Tooling owner; explicit UTF-8 verification remains the Windows convention. | Combined Linux CI and local Windows isort 9 check with UTF-8 and warnings-as-errors passed; no bulk source reformat. |
-| C5 | Publication, NAS deployment and completed eight-hour observation receipts recorded in the roadmap; formal close remains gated. | Operator + release integrator; review the completed observation receipt and record acceptance of the remaining limitations. | Verified source/tag/image, preserved stack, verified backups, rollback rehearsal and [observation evidence](../release/2.0.11-observation-evidence.json); explicit phase close remains outstanding. |
+| C5 | Publication, NAS deployment and eight-hour observation receipts recorded; **formal 2.0.x close accepted 2026-10-03** with limitations L1–L24. | Operator + release integrator; review the completed observation receipt and record acceptance of the remaining limitations. | Verified source/tag/image, preserved stack, verified backups, rollback rehearsal and [observation evidence](../release/2.0.11-observation-evidence.json); close receipt in the roadmap (2026-10-03) and the decided [acceptance record](2.0-close-acceptance-record.md). |
 | C5-R1 | Ordinary failed-open shutdown repaired, published and deployed; historical v2.0.8 evidence remains unchanged. | Release integrator; implementation/publication/deployment complete within C5. | Deterministic real-worker regressions, independent review/mutations, supported-version and full Windows/Linux gates, plus [deployment evidence](../release/2.0.9-deployment-evidence.json). |
 
-## Proposed next phase
+## Current phase: 2.1
 
-All five slices wait for formal 2.0.x closure. The detailed contracts and ordering
+2.1 opened 2026-10-03 after the formal 2.0.x close. The [N0 entry record](2.1-entry-n0.md) accepts the N1 → N5 order. Current branch implementation and remaining qualification are recorded in the roadmap; the N0 receipt is not a claim that those slices remain unstarted. The detailed contracts and ordering
 are in the [accepted sequencing plan](2.0-closeout-and-2.1-entry-plan.md#5-reconciled-21-proposal).
 New ADRs use semantic names until an unused number is allocated from the current register.
 

@@ -7,6 +7,13 @@ verification belong in the [roadmap](roadmap.md#cloud-product-completion-verific
 The binding requirement is [closeout plan §5](2.0-closeout-and-2.1-entry-plan.md#5-reconciled-21-proposal),
 with accepted ADR-041's current grants and explicitly deferred mount split.
 
+## Historical preparation baseline
+
+The source inventory and future-tense questions below were recorded before
+implementation. ADR-047 and the linked migration guide now define the implemented
+layout; PR #166 accepts N0. The obsolete local sequencing/build blockers below
+are historical, not current blockers. See the roadmap for current qualification.
+
 ## Current consumers
 
 Database names below are logical roles, not a mandate to rename existing files.

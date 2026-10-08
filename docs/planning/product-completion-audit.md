@@ -13,6 +13,14 @@ and the bundled phase-end and hexagonal rules. Register confirms a full-tier
 Python service. User authorization permits local fixes without routine checkpoints;
 it does not authorize issue publication, OpenChronicle changes or deployment.
 
+## Reconciliation pointer (2026-10-08)
+
+The findings and external-gate lists below are dated historical audit evidence.
+Main PR #166 now records formal 2.0.x acceptance and N0; exact `fa625d0` hosted
+quality/platform and gitleaks passes are reconciled in the roadmap. Those passes
+do not qualify a changed candidate. Current 2.1 work and remaining private/NAS/
+security evidence are tracked in the roadmap’s renewed qualification receipt.
+
 ## Findings before repairs
 
 - PY-01: no Ruff configuration. Existing exact-pinned Black/isort/pylint/mypy

@@ -2,9 +2,10 @@
 
 **Single source of truth:** [the roadmap](docs/planning/roadmap.md).
 
-**Last updated:** 2026-09-08
+**Last updated:** 2026-10-03
 
 This compatibility entry point deliberately contains no duplicate status ledger.
 The project's documentation rule retains the roadmap as authoritative; this is
 an accepted exception to Fleet UNI-08's required ledger location, not full conformance.
-See the [closeout audit](docs/planning/2.0-closeout-audit.md) for its disposition.
+See the [closeout audit](docs/planning/2.0-closeout-audit.md) for its disposition;
+the operator reaffirmed it at the 2.1 entry on 2026-10-03.

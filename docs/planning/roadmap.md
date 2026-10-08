@@ -7,6 +7,59 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 accepted-main reconciliation and renewed qualification
+
+Work item: `CarlDog/wobblebot:2.1-qualification`. Initial saved checkout was clean
+on `codex/product-completion` at `fa625d0adf57e0d6925b0d925793cdae18fd15de`,
+version `2.1.0a2`. Origin was verified as `CarlDog/wobblebot`; main now resolves
+to `5c0e303a1e389cb5db6079af02dcaa1818249bb9` (merged PR #166). The branch is
+22 commits ahead and five behind that main before reconciliation. All five
+incoming commits change documentation only. Preserve both histories with a merge;
+retain all N1–N5, PB1–PB13 and NW04 implementation and immutable local alpha tags.
+The user explicitly authorized continuing this existing development branch rather
+than restarting from N0's historical fresh-branch instruction.
+
+Accepted D1/D4/D5 resolve the former formal 2.0-close/N0 blocker; they do not accept
+2.1, waive its private/NAS gates, or adopt the later 2.2/2.3 proposals. Real equities
+remain disabled and deferred. N0's accepted criteria remain intact; its inferred
+rollback proposal is reconciled with ADR-047's explicit stop-and-reconcile procedure.
+
+Prior exact-commit hosted evidence, now entered into the durable ledger:
+[CI 37093912493](https://github.com/CarlDog/wobblebot/actions/runs/37093912493)
+passed at `fa625d0`: quality, Linux 3.13/3.14 (each 4,515 passed, six private skips,
+30 deselected), Windows 3.13/3.14 (each 4,513 passed, eight skips, 30 deselected),
+and ten offline integration cases on each matrix target. Windows additionally
+skips the POSIX shell case and illegal question-mark filename; legal URI escaping
+remains exercised. Gitleaks run `37093912409` passed; image publication was skipped.
+These are historical passes, not qualification of the reconciled candidate.
+
+Current punch list: reconcile acceptance/status drift; independently review the
+implemented 2.1 boundaries; run fresh quality/upgrade/offline checks with pylint;
+record exact candidate security/CI evidence; continue any demonstrated offline
+repairs. External gates remain actual private-config tests, exact-candidate CodeQL,
+NAS isolation/WAL/backup/restore/runtime identity/health/notification/provider
+qualification and bounded observation. No paid call, live financial action,
+release, main merge, security-setting change or deployment is authorized here.
+Reconciliation checks: `timeout 600 env PYLINTHOME=/tmp/wobblebot-pylint
+WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make check` passed Ruff format/lint, mypy
+(174 source files), retained pylint and 4,515 tests (six private-config skips,
+30 integration deselections; 88.61% coverage). `timeout 120 .venv/bin/python
+-m pytest -m integration tests/integration/test_grid_engine_e2e.py
+tests/integration/test_phase5_operator_e2e.py tests/services/test_simulator.py
+--no-cov -q` passed all ten offline cases. `timeout 90
+/tmp/wobblebot-tools/gitleaks detect --source . --redact --no-banner` scanned
+1,119 commits with no findings; `git diff --cached --check` passed. These local
+checks cover the reconciled source; hosted results still need its exact commit.
+
+Independent review reproduced one N3 defect despite the green suite: a command
+can expire while its claim waits for SQLite's write lock, because the TTL check
+uses time sampled before waiting. This is an unblocked repair, not an accepted
+limitation; fix and lock-contention regression follow as a separate code commit.
+No new actionable N1/N4 defect was found in that bounded review. OpenChronicle
+and Serena tools are unavailable in this session; no usage or mirror update is
+claimed, and no integration/access change was made to enable them.
+
+
 ### 2026-10-03 authorized branch publication and hosted verification
 
 The operator explicitly authorized regular development-branch commits/pushes.
@@ -723,6 +776,41 @@ and disposable test data are the only delivery actions.
 this receipt and the baseline, then resolve B1 while restoring B2-B4 as applicable.
 The setup repair is isolated in `e7ab18a`; the following documentation commit
 preserves this inventory and evidence. Checkpoints are not product completion.
+
+## Historical 2.0.x close and N0 acceptance
+
+**2.0.x stabilization milestone closed; 2.1 opened with N1 next — ✅ 2026-10-03 UTC.**
+At 04:17:55 UTC the operator chose **"Close now"** on the decision card *"Choose how
+to close the 2.0.x milestone and open 2.1"*, whose stated premise was that
+`STATUS.md` stays a roadmap pointer. Under the
+[acceptance record](2.0-close-acceptance-record.md) that decides:
+
+- **D1, accepted.** The 2.0.x milestone closes on the v2.0.11 evidence
+  (`ddf3e8c`, tag image `sha256:f07af7ec…`, stack file v88, 33-checkpoint
+  eight-hour observation). Limitations **L1–L24** are accepted as owned
+  boundaries, not passes. They include no live withdrawal on 2.0.13 or later, no
+  production ADR-046 recovery, sampled and event-dependent observation, and the
+  unchecked OpenChronicle mirror.
+- **D2, close now.** Production runs untagged `sha-c9c6404` (stack file v93), whose
+  labels report 2.0.13 while it carries the `[Unreleased]` fixes. This is
+  recorded as L21 and owned by N2. A later 2.0.14 stays available on the 2.0
+  maintenance line.
+- **D3, not taken.** The receipt relies on the 2026-10-01 deployment read-back.
+  No same-day production check ran.
+- **D4, accepted.** 2.1 (deployment and lifecycle integrity) opens with slices
+  N1–N5 as reconciled in the [entry record](2.1-entry-n0.md). **N1, remaining
+  deployment isolation, is next.** Its decision will extend or amend ADR-041.
+  ADR-047 is the next unused number, allocated only when that decision is drafted.
+- **D5, reaffirmed.** Standards exception E02 stands: `STATUS.md` remains a
+  compatibility pointer and this roadmap the sole ledger.
+
+Issue state verified 2026-10-03: #18, #22 and #97 open as intentional records,
+#23 closed. The only open pull request is #166, which carries this receipt. The
+tested environment is the v2.0.11 release and observation receipts plus the
+2026-10-01 deployment receipt below. No trade, withdrawal, paid inference, tag
+or deployment accompanied the close. N1 implementation starts on a fresh branch
+from the `main` commit carrying this receipt. P3/P4 gated features (G1–G10) are
+not marked complete, and Phase 9 still waits for 2.1 to close.
 
 **Dependency image deployed and verified — 2026-10-01 UTC (September 30 local).**
 The operator authorized the production update after the dependency merges below.

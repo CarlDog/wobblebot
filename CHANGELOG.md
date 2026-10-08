@@ -28,6 +28,15 @@ fresh `[Unreleased]` heading created at that time.
 
 ## [Unreleased]
 
+### Documentation
+
+- **Close the 2.0.x stabilization milestone and open 2.1.** The
+  [acceptance record](docs/planning/2.0-close-acceptance-record.md) maps each
+  formal-close requirement to its receipt and the limitations the operator
+  accepted on 2026-10-03. The [N0 entry record](docs/planning/2.1-entry-n0.md)
+  reconciles the 2.1 slices and sets N1 (deployment isolation) next with its
+  acceptance criteria. Documentation only: no runtime change, tag or deployment.
+
 ## [2.1.0-alpha.2] — local test candidate, unpublished
 
 - Add a meaningful role-configured Dockerfile healthcheck, retain per-service
