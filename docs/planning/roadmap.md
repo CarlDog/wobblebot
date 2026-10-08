@@ -7,6 +7,49 @@ status ledger and sequencing guide; phase/stage shapes may be merged or adjusted
 
 ## Cloud product completion verification
 
+### 2026-10-08 PR #173 startup-bound health database capabilities
+
+At `461c590`, PR #173's CodeQL analysis reported alert 50 at the guarded URI
+operation. Browser-provided flows and independent review confirmed the same
+startup-config dependency source; no HTTP-selected path was established. The
+operator explicitly requested pre-emptive defense instead of dismissal.
+
+The [new reader contract](../implementation/health-database-capabilities.md)
+binds observe/advise/operator files once in the app factory. Health handlers no
+longer accept configuration or file-selection arguments. Canonical regular-file
+identities are pinned at startup or first appearance; detected replacements or
+path failures produce unknown/unavailable observations, including when a swap is
+detected after either query group. Operator external paths, startup symlink
+targets, read-only WAL and ordinary VACUUM remain supported. An intentional file
+replacement/path change requires web restart. Existing OS/mount permission and
+NAS qualification gates remain; separate path checks cannot sandbox a hostile
+filesystem writer. LLM streak URI escaping was corrected to preserve custom `#`/`%`
+filenames consistently with the freshness reader.
+
+Verification before this code checkpoint, in `/workspace/wobblebot-postmerge-security`:
+
+- `timeout 600 env PYTHONPATH=src:. PYLINTHOME=/tmp/wobblebot-postmerge-pylint
+  WOBBLEBOT_REQUIRE_UPGRADE_GATE=1 make PYTHON=/workspace/wobblebot/.venv/bin/python
+  check`: exit 0; Ruff format/lint, mypy (175 source files), pylint 10.00/10;
+  **4,566 passed, six private skips, 30 deselected**, 88.63% coverage.
+- `timeout 60 env PYTHONPATH=src:. /workspace/wobblebot/.venv/bin/python -m pytest
+  tests/services/test_health_reader.py tests/web/test_health.py
+  tests/services/test_llm_call_streak.py --no-cov -q`: **45 passed**.
+- The ten-case offline integration command in the preceding receipt passed again.
+- Isolated mutations: removing identity enforcement fails three tests (one
+  positive control passes); request-time reader rebinding fails both authenticated
+  route tests; removing post-read verification fails the swap regression.
+  Restoring the implementation passes all 32 reader/route tests.
+- Independent source review passed 76 health-related tests and found no blocking
+  issue; independent test-honesty review passed 32 and independently caught an
+  unchecked-path mutation in both replacement tests. Review requires the documented
+  restart/race limits, not an OS-sandbox claim. No provider or financial call ran.
+
+Exact-head hosted platform checks and aggregate CodeQL remain to be verified after
+push to the existing PR. No alert dismissal, scanner suppression, PR metadata edit,
+host permission change, merge, deployment or gate waiver was performed. Logs and
+continuation are in ignored `tmp/postmerge-security/capability-*` files.
+
 ### 2026-10-08 post-merge health and diagnostic hardening
 
 PR #170 merged at `dfd1156ee3d854e114898814823a1b40385c2a98`. The draft/unmerged

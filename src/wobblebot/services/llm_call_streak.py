@@ -202,7 +202,7 @@ async def fetch_llm_call_streaks(
         ]
     cutoff = ((now or datetime.now(UTC)) - timedelta(hours=window_hours)).isoformat()
     try:
-        uri = f"file:{operator_db}?mode=ro"
+        uri = operator_db.resolve().as_uri() + "?mode=ro"
         async with managed_connection(uri, uri=True) as conn:
             out = []
             for role in roles:

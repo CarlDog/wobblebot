@@ -1,5 +1,11 @@
 # Post-merge CodeQL alerts 48 and 49
 
+Follow-up: PR #173 reported alert 50 at the guarded URI sink, with the same
+startup-config dependency flow. The operator requested pre-emptive hardening
+instead of dismissal. [Startup-bound health database capabilities](health-database-capabilities.md)
+now remove path selection from HTTP handlers and add file-identity verification.
+No dismissal of alert 50 is implied; scanner outcomes belong in the roadmap.
+
 Inspected baseline: `dfd1156ee3d854e114898814823a1b40385c2a98`, the PR #170
 merge. These alerts were first reported by main analysis `37782370490`, using
 query source `a7057b836bf29767461026718b14d20790b9085f`. Parent-provided
