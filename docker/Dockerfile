@@ -17,7 +17,7 @@
 #   docker build -f docker/Dockerfile -t wobblebot:dev .
 
 # ---------- Stage 1: builder ----------
-FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS builder
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -39,7 +39,7 @@ RUN --mount=type=secret,id=build_ca \
  && pip wheel --no-deps --no-build-isolation --wheel-dir /app-wheel .
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS runtime
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 
 # Streaming-friendly output (Docker captures stderr per daemon)
 # and no .pyc cruft in the layered image.
