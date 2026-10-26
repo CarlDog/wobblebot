@@ -112,7 +112,7 @@ dev = [
     "pylint==4.1.2",
     "pylint-pydantic==0.4.1",
     "types-pyyaml==6.0.12.20260906",
-    "python-dotenv==1.2.3",
+    "python-dotenv==1.2.4",
     # Test-only HTTP client for `starlette.testclient`, which does
     # `import httpx2 as httpx` and falls back to plain `httpx` with a
     # StarletteDeprecationWarning. That fallback is not usable here: the
