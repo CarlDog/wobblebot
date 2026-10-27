@@ -5,6 +5,27 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Kraken OHLCVT dumps moved and landed; the watcher was blind — 2026-10-26.**
+Kraken now publishes the quarterly OHLCVT incrementals at
+`https://assets.kraken.com/marketing/institutions/Kraken_OHLCVT_<YYYY>Q<n>.zip`
+(support article 360047124832; the Google Drive folder is no longer linked from
+it). `2026Q2` (537,866,903 bytes, CDN Last-Modified 14 Sep 2026) and `2026Q3`
+(576,348,633 bytes, 6 Oct 2026) are both published; `2026Q4` is a 404. The
+weekly `kraken-q2-dump-watch` task kept fetching the abandoned Drive folder,
+whose control file (`Q1_2026`) still exists there, and grepped for the old
+`Q2_2026` spelling, so it reported "not published" on six consecutive runs
+(21 Sep–26 Oct) while both files sat on the CDN. Found when the operator
+compared the run's report against the support article. Rewritten the same day:
+the task now probes the CDN for every quarter after the latest local
+`data/kraken-history/<YYYY>Q<n>/`, and a negative result is trusted only when
+the support article still names that CDN path and a known-published file still
+HEADs 200 — a control must prove the source is still canonical, not that a page
+renders. Nothing downloaded: the 1,230 bars-missing suggestions (P4.2 receipt)
+still wait on the operator importing both quarters, and the new archives carry a
+`MANIFEST.json` the local `2026Q1/` lacks, so the CSV layout gets an `unzip -l`
+check before extraction. The incrementals have no published checksum (the
+SHA256SUMS file covers only the full-dump parts).
+
 ## Cloud product completion verification
 
 ### 2026-10-08 PR #173 startup-bound health database capabilities
@@ -4393,7 +4414,10 @@ is deprecated for this model`. The first roster attempt scored sonnet-5 and
      ten-week 0.65%-era heuristic post-cutover, correctly floor-blocked),
      324 pending, 1,230 bars-missing awaiting the Q2 OHLCVT dump import**
      (local + NAS 60m history: Q1-dump end → ~Jul 9 gap; Jul 1–8 needs
-     the Q3 dump in October). No dollars anywhere in the ledger surface.
+     the Q3 dump in October). [Both dumps were published by 6 Oct 2026
+     at a new location and the import is still pending — see the
+     2026-10-26 entry at the top of this file.] No dollars anywhere in
+     the ledger surface.
      3,365 tests, pylint 10.00, mypy clean. **P4.3 SHIPPED same day — the
      scoreboard**: `services/outcome_scoreboard.py` (pure aggregation the
      future web card reuses: hit-rate = better/decisive with ties beside,
@@ -4415,7 +4439,11 @@ is deprecated for this model`. The first roster attempt scored sonnet-5 and
      caveats apply until the Q2 dump drains the queue (weekly
      `kraken-q2-dump-watch` scheduled task watches for it, with a
      control-file guard so a Google rendering change reads as "watcher
-     broke," not "not published"). 3,379 tests, pylint 10.00, mypy clean.
+     broke," not "not published"). [That guard was not enough: Kraken
+     moved the dumps off Google Drive and the control file stayed behind
+     in the old folder, so the task reported "not published" on six runs
+     while Q2 and Q3 sat on the CDN — corrected 2026-10-26, see the
+     top-of-file entry.] 3,379 tests, pylint 10.00, mypy clean.
      Remaining before the scoreboard means anything: the Q2 dump import +
      the canonical scoring run. **P4.4+ plan ratified same day**
      (`docs/planning/p4-completion-plan.md`, four operator decisions):

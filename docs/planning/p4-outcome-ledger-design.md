@@ -101,13 +101,25 @@ evaluator against the real corpus, not by argument:
    `current_grid`, below-window-floor spacing) still write rows.
 
 Data logistics for the full 60m pass: 1,230 suggestions wait on the
-**Q2 2026 OHLCVT dump** (Apr–Jun; local 60m history ends at the Q1
-dump, and the live endpoint's ~720-bar retention only reaches back to
-~Jul 9). Jul 1–8 windows stay bars-missing until the **Q3 dump**
-(published ~October). The canonical ledger lives in the NAS
-`wobblebot-advise.db`; where the canonical scoring run executes (NAS
-tools container vs desktop against a synced copy) is an open operator
-call — every verification run so far used scratch copies only.
+**Q2 2026 OHLCVT dump** import (Apr–Jun; local 60m history ends at the
+Q1 dump, and the live endpoint's ~720-bar retention only reaches back
+to ~Jul 9). Jul 1–8 windows stay bars-missing until the **Q3 dump** is
+imported too. **Both dumps are published (noted 2026-10-26):** Kraken
+moved distribution off the Google Drive folder to
+`https://assets.kraken.com/marketing/institutions/` and renamed the
+incrementals `Kraken_OHLCVT_<YYYY>Q<n>.zip` — `2026Q2` (537,866,903
+bytes, CDN Last-Modified 14 Sep 2026) and `2026Q3` (576,348,633 bytes,
+6 Oct 2026). The Drive-folder watcher reported a false "not published"
+on six weekly runs (21 Sep–26 Oct) because its control file still
+existed in the abandoned folder; the `kraken-q2-dump-watch` task was
+rewritten 2026-10-26 to probe the CDN and to trust a negative only when
+the support article still names that CDN path. The new builds carry a
+`MANIFEST.json` the local `2026Q1/` lacks, so `unzip -l` the archive
+and confirm flat `<PAIR>_<minutes>.csv` files before extracting into
+`data/kraken-history/<YYYY>Q<n>/`. The canonical ledger lives in the
+NAS `wobblebot-advise.db`; where the canonical scoring run executes
+(NAS tools container vs desktop against a synced copy) is an open
+operator call — every verification run so far used scratch copies only.
 
 ## P4.3 implementation notes (2026-08-17)
 
