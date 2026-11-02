@@ -7,6 +7,7 @@ from typing import Any, Literal
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.ports.exceptions import StorageError
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.advisor_budget_health import advisor_uses_cloud
 from wobblebot.services.daemon_health import derive_thresholds_from_config, fetch_daemon_freshness
 from wobblebot.services.provider_health import PersistedProviderHealth
 
@@ -32,6 +33,7 @@ async def diagnose(config: WobbleBotConfig, storage: StoragePort | None) -> list
         advise_db=Path(config.advise.db) if config.advise else None,
         operator_db=Path(config.operator.operator_db) if config.operator else None,
         thresholds=derive_thresholds_from_config(config),
+        require_advisor_budget_evidence=advisor_uses_cloud(config),
     )
     findings = [
         Finding(
@@ -47,6 +49,7 @@ async def diagnose(config: WobbleBotConfig, storage: StoragePort | None) -> list
             evidence={
                 "last_seen": item.last_seen.isoformat() if item.last_seen else None,
                 "threshold_seconds": item.threshold_seconds,
+                "detail": item.detail,
             },
         )
         for item in health

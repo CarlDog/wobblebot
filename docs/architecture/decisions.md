@@ -530,6 +530,10 @@ Per operator decision 2026-05-16, the Operator Interaction Engine becomes the wh
 **Status:** Accepted (planned for Phase 6)
 **Date:** 2026-05-17
 
+**2026-11-02 amendment:** ADR-056 below replaces the advisor daemon's
+process-lifetime session with one scheduled sweep and records denied attempts
+for health monitoring. The sliding daily cap and configured amounts are unchanged.
+
 **Context:** Phase 6 introduces cloud LLM providers (Anthropic, OpenAI, Google) for both the operator-assistant role (added in Phase 5) and the MoE trading-advisor roles (Phase 3 placeholder slots in `_build_advisor`). Unlike Ollama (free / local), cloud APIs charge per request — typically a fraction of a cent per turn, occasionally several cents on long thinking-mode responses. A stuck retry loop, an unbounded conversation context, a misconfigured polling cadence, or an over-eager MoE expert lineup can burn $10s–$100s of dollars in hours without anyone noticing until the provider's monthly invoice lands. The project's safety design has a strong precedent for bounding monetary blast radius (ADR-003 separates withdrawal authority; Phase 2's `SafetyConfig` caps trading exposure; Phase 4's `HarvesterConfig` caps daily withdrawal). The same discipline should apply before the first cloud-LLM API call goes out.
 
 The existing real-money cost ledger is **$0.08** (one tiny Kraken round-trip during Phase 2's first-trade test). Phase 6 is the first project component that incurs ongoing per-use cost. The bookkeeping pattern (forensic SQLite table + structured logging + operator inspection tool) carries over cleanly from the trading and transfer history tables.
@@ -3961,3 +3965,53 @@ revised assignment. Reentry requires verified official real-share securities API
 support, account eligibility/entitlement and a reviewed risk/data contract. Actual
 financial activation remains separately authorized. No availability monitor or
 external contact is authorized by the deferral.
+
+
+## ADR-056 — Advisor work-session budgets and visible cost denials
+
+**Status:** Accepted for issue #184 correction, 2026-11-02.
+
+**Context:** ADR-014 described a session as one invocation while also calling
+`cli/advise` a tick. The deployed advisor is a long-running daemon. Its in-memory
+$10 session budget accumulated across container uptime, leaving 561 heuristic
+holds over approximately 17 days while suggestion freshness remained healthy.
+Raising that number to cover uptime would retain the mismatch and require a
+spending-policy change. A timer-driven container restart would hide it.
+
+**Decision:** For `cli/advise`, one budget session is one scheduled sweep across
+all configured symbols. Reset the existing shared tracker once before the sweep;
+every expert, arbitrator, fallback and gremlin in that sweep uses the same tracker.
+Never reset per symbol, request, retry, or fallback. A denial stops the attempted
+cloud call; existing heuristic fallback and advisory-only behavior continue.
+Other CLI callers retain their existing session lifecycle. This amendment does
+not change operator conversation budgets or generalize their reset semantics.
+
+The ledger-backed sliding 24-hour cap remains independent across all roles and
+providers, survives sweep boundaries and process restarts, and retains its
+configured value. No session/daily amount, enforcement switch, trading limit,
+exposure control, model seat, auto-apply gate or transfer authority changes.
+There is no new process-uptime cumulative limit: the existing session amount now
+bounds a defined unit of advisor work, while the daily amount bounds ongoing use.
+
+Persist denied attempts in the existing `llm_calls` ledger as unsuccessful,
+zero-token, zero-cost rows with `cost_cap_session` or `cost_cap_daily`, retaining
+role/model/provider/trace provenance. These rows mean no provider request was
+sent, not a billed failure. They do not consume budget. Persisting a denial must
+never authorize the denied request, even when storage fails.
+
+Use repeated denial evidence in advisor health as well as request failures.
+Fresh heuristic suggestions are evidence of liveness, not proof that required
+LLM recommendations work. Health must distinguish budget degradation from stale
+heartbeats, report the reason, and recover on subsequent successful calls.
+Monitoring does not raise limits, clear a cap, or restart a daemon to evade it.
+
+**Alternatives:** Rejected raising the $10 cap to a month of spending, disabling
+the session cap, per-symbol resets that multiply headroom, and periodic restarts.
+A second rolling spend window would add policy/configuration without a demonstrated
+need beyond the existing daily window plus one-sweep bound.
+
+**Validation:** Offline regressions exercise multiple sweeps in one process,
+within-sweep sharing, independent daily exhaustion, denial persistence and
+health classification with fresh heuristic suggestions. Deployment must target
+an independently qualified source/image; this ADR does not authorize deploying
+unrelated 2.1 alpha changes over the recorded 2.0.13 NAS image.

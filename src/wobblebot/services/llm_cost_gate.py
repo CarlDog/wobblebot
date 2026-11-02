@@ -13,7 +13,8 @@ Per ADR-014:
 - Daily cap is a **sliding 24-hour window** (not midnight-reset), to
   avoid the burst-around-midnight failure mode.
 - Session total is **tracked in-memory by the caller** and threaded
-  through this function. Restart-reset is the expected semantic.
+  through this function. The advisor resets it once per scheduled sweep;
+  other callers retain their existing invocation-scoped lifecycle.
 - Enforcement is **hard-stop on trip**: callers usually convert
   ``GateDeny`` into ``LLMCostCapExceeded`` and propagate. The two-step
   shape lets callers attach extra logging / context first.
@@ -50,7 +51,7 @@ class LLMCostConfig(BaseModel):
     max_spend_per_session_usd: Decimal = Field(
         default=Decimal("0.50"),
         gt=Decimal("0"),
-        description="Single-CLI-invocation USD cap.",
+        description="USD cap per advisor sweep; invocation-scoped for other callers.",
     )
     enforce: bool = Field(
         default=True,
@@ -67,21 +68,17 @@ class LLMCostConfig(BaseModel):
 
 
 class SessionCostTracker:
-    """Mutable in-memory running total of cloud-LLM spend for one CLI session.
+    """Mutable cloud-LLM spend shared by every adapter in one budget session.
 
-    A "session" is one CLI process lifetime (one ``cli/advise`` tick,
-    one ``cli/operator`` daemon run, etc.). The CLI mints one tracker
-    at startup and passes it to every cloud adapter it constructs;
-    each adapter adds its real cost to the tracker after a successful
-    call. The cost gate reads ``.total`` on the next ``check_budget``
-    call to enforce ADR-014's per-session cap.
+    The advisor daemon defines a session as one complete scheduled sweep
+    across all symbols, expert seats, fallback targets and the gremlin.
+    It calls ``reset()`` once before the sweep, never per symbol or call.
+    Other callers keep their existing invocation-scoped tracker lifecycle.
 
-    Restart-reset is the expected semantic (ADR-014 design decision 3
-    in the Stage 6.1 design doc) — the table still has all rows for
-    cross-session forensic queries.
-
-    Deliberately a tiny mutable class rather than a Pydantic model;
-    Pydantic's frozen=True would block ``add()``.
+    Resetting only clears this in-memory total. Persisted ``llm_calls``
+    rows remain intact, so the sliding 24-hour safeguard spans sweeps and
+    process restarts. Adapters add actual cost after a successful call;
+    the gate checks ``total`` before the next call.
     """
 
     def __init__(self, initial: Decimal | None = None) -> None:
@@ -90,6 +87,10 @@ class SessionCostTracker:
     @property
     def total(self) -> Decimal:
         return self._total
+
+    def reset(self) -> None:
+        """Begin the caller's next budget session without changing the ledger."""
+        self._total = Decimal("0")
 
     def add(self, amount: Decimal) -> None:
         """Increment the running total. Negative amounts rejected."""
@@ -145,7 +146,7 @@ async def check_budget(  # pylint: disable=too-many-arguments,too-many-positiona
             and ``max_tokens`` so the gate refuses calls that could
             tip the budget even if the actual response is cheaper.
         session_spent_usd: Running total of confirmed-cost calls made
-            during the current CLI invocation. Caller maintains this
+            during the current budget session. Caller maintains this
             in-memory and adds the actual ``cost_usd`` from each
             successful call's persisted record.
         config: Cap values + the enforce kill switch.

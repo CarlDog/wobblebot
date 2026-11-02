@@ -418,9 +418,10 @@ llm:
     # the call (cli/advise) or posts an operator notification
     # (cli/operator).
     max_spend_per_day_usd: "1.00"
-    # Per-CLI-invocation USD cap. In-memory tally, resets per
-    # process start. Catches runaway loops that the daily cap
-    # wouldn't notice fast enough.
+    # Work-session USD cap (ADR-056): cli/advise resets once per
+    # scheduled sweep, shared by every symbol, seat and fallback.
+    # Other CLI callers retain their existing process session.
+    # The separate sliding daily cap survives sweeps and restarts.
     max_spend_per_session_usd: "0.50"
     # Dry-run kill switch. true = gate enforces; false = gate
     # records calls but never denies (ADR-014 decision 8 — see

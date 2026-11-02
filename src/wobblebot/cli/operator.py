@@ -121,6 +121,7 @@ from wobblebot.ports.operator import (
     PendingCommand,
 )
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.advisor_budget_health import advisor_uses_cloud
 from wobblebot.services.confirm_decision import apply_confirm_decision
 from wobblebot.services.daemon_health import (
     DaemonHealth,
@@ -392,6 +393,9 @@ class _HeartbeatAlertTracker:
                 else "Check the container / logs."
             )
         )
+        if health.status is DaemonStatus.DEGRADED:
+            title = f"{health.label} LLM budget {'still blocked' if repeat else 'blocked'}"
+            message = health.detail or "Repeated LLM cost-cap denials; inspect advisor budget."
         context: dict[str, Any] = {
             "daemon": health.name,
             "status": str(health.status),
@@ -416,8 +420,9 @@ class _HeartbeatAlertTracker:
             if health.status is DaemonStatus.UNKNOWN:
                 continue  # no signal; keep prior definitive status
             prior = self._last_status.get(health.name)
-            if health.status is DaemonStatus.STALE:
-                if prior is not DaemonStatus.STALE:
+            unhealthy = (DaemonStatus.STALE, DaemonStatus.DEGRADED)
+            if health.status in unhealthy:
+                if prior is not health.status:
                     alerts.append(self._stale_alert(health, now, repeat=False))
                     self._last_alert_at[health.name] = now
                 else:
@@ -428,7 +433,7 @@ class _HeartbeatAlertTracker:
                     ):
                         alerts.append(self._stale_alert(health, now, repeat=True))
                         self._last_alert_at[health.name] = now
-            elif prior is DaemonStatus.STALE:  # STALE -> FRESH
+            elif prior in unhealthy:  # STALE/DEGRADED -> FRESH
                 alerts.append(
                     (
                         "info",
@@ -452,6 +457,7 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
     stop_event: asyncio.Event,
     check_seconds: float = _HEARTBEAT_CHECK_SECONDS,
     muted: frozenset[str] = frozenset(),
+    require_advisor_budget_evidence: bool = False,
 ) -> None:
     """Background task: freshness check + push alert, until ``stop_event``.
 
@@ -480,6 +486,7 @@ async def _heartbeat_alert_loop(  # pylint: disable=too-many-arguments
                 operator_db=operator_db,
                 thresholds=thresholds,
                 now=now,
+                require_advisor_budget_evidence=require_advisor_budget_evidence,
             )
         except (OSError, StorageError) as exc:
             _LOGGER.warning(
@@ -1818,6 +1825,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-statements,to
                 thresholds=derive_thresholds_from_config(config),
                 stop_event=stop_event,
                 muted=frozenset(operator_cfg.heartbeat_alert_mute),
+                require_advisor_budget_evidence=advisor_uses_cloud(config),
             ),
             name="operator-heartbeat-alerts",
         )

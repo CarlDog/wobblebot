@@ -7,6 +7,7 @@ from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.notifier import Notification
 from wobblebot.ports.storage import StoragePort
+from wobblebot.services.advisor_budget_health import advisor_uses_cloud
 from wobblebot.services.daemon_health import derive_thresholds_from_config, fetch_daemon_freshness
 
 
@@ -31,6 +32,7 @@ class HealthObserver:
             operator_db=Path(delivery.operator_db),
             thresholds=derive_thresholds_from_config(self._config),
             now=current,
+            require_advisor_budget_evidence=advisor_uses_cloud(self._config),
         )
         queued = 0
         for row in rows:
@@ -48,6 +50,7 @@ class HealthObserver:
                 level="info" if recovery else "critical",
                 title=f"Daemon health: {row.name} {row.status}",
                 message=f"Independent observer: {row.status}; last evidence {last_seen}. "
+                f"{row.detail + '. ' if row.detail else ''}"
                 "Inspect the daemon; no automatic restart or repair was attempted.",
                 timestamp=Timestamp(dt=current),
                 context={"daemon": row.name, "status": row.status.value},

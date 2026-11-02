@@ -36,7 +36,7 @@ interval get a proportionally adjusted health threshold for free.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -46,6 +46,7 @@ import aiosqlite
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.services.advisor_budget_health import advisor_budget_detail
 from wobblebot.sqlite_connection import managed_connection
 
 # Slack added on top of 2 * configured cadence — covers normal jitter
@@ -79,11 +80,14 @@ class DaemonStatus(StrEnum):
       table has never been written to, or the query failed. Surface
       to the operator without escalating severity — we don't have
       signal, but absence isn't proof of failure.
+    * ``degraded`` — the advisor is writing fresh suggestions, but repeated
+      cost-cap denials are preventing its cloud LLM recommendations.
     """
 
     FRESH = "fresh"
     STALE = "stale"
     UNKNOWN = "unknown"
+    DEGRADED = "degraded"
 
 
 @dataclass(frozen=True)
@@ -416,6 +420,7 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     thresholds: DaemonHealthThresholds | None = None,
     now: datetime | None = None,
     include_delivery: bool = False,
+    require_advisor_budget_evidence: bool | None = None,
 ) -> list[DaemonHealth]:
     """Read freshness for every detectable daemon.
 
@@ -440,6 +445,10 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
         now: Optional wallclock override (test seam).
         include_delivery: Include the opt-in sender's heartbeat for its independent
             container probe; absence does not add a false alarm to legacy stacks.
+        require_advisor_budget_evidence: True requires readable cost evidence for
+            configured cloud advisors; False disables the check for local/heuristic
+            deployments. None detects persisted denials when evidence is available
+            (dashboard readers that hold paths rather than full advisor config).
 
     Returns:
         One :class:`DaemonHealth` per daemon in display order:
@@ -504,6 +513,20 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             now=current,
         ),
     ]
+    # Fresh heuristic fallback suggestions prove liveness, not LLM availability.
+    # Reuse the ledger-backed signal across Docker, dashboard, doctor and the
+    # independent observer. Never label a genuinely stale daemon as fresh.
+    advisor = rows[2]
+    if (
+        advisor.status == DaemonStatus.FRESH
+        and require_advisor_budget_evidence is not False
+        and (operator_db is not None or require_advisor_budget_evidence)
+    ):
+        available, detail = await advisor_budget_detail(operator_db, now=current)
+        if available and detail:
+            rows[2] = replace(advisor, status=DaemonStatus.DEGRADED, detail=detail)
+        elif not available and require_advisor_budget_evidence:
+            rows[2] = replace(advisor, status=DaemonStatus.UNKNOWN, detail=detail)
     if include_delivery:
         rows.append(
             _classify_heartbeat(

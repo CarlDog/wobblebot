@@ -235,7 +235,11 @@ async def test_backup_checks_the_same_shared_budget_after_primary_failure(storag
             await entry.advisor.get_recommendation(_summary())
         backup_http.assert_not_awaited()
         calls = await storage.get_llm_calls()
-        assert len(calls) == 1 and calls[0].error_kind == "insufficient_credit"
+        assert len(calls) == 2
+        assert {call.error_kind for call in calls} == {"insufficient_credit", "cost_cap_session"}
+        denial = next(call for call in calls if call.error_kind == "cost_cap_session")
+        assert not denial.success and denial.cost_usd == 0
+        assert denial.tokens_in == denial.tokens_out == 0
 
 
 async def test_missing_backup_key_fails_before_any_client_is_created(storage, monkeypatch):
