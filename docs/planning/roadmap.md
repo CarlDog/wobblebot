@@ -5,6 +5,28 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Image build on `main` red for a week: the locks lagged Dependabot — fixed in PR #191,
+2026-11-02.** `CI & Publish to GHCR` failed on every `main` run after the 2026-10-26
+Dependabot merges (#181 fastapi 0.161.1, #182 starlette 1.9.0, #183 pip-dev group,
+run 40381146939): those PRs changed `pyproject.toml` only, so the runtime stage's
+`pip check` refused an application wheel pinned to fastapi 0.161.1 / starlette 1.9.0
+over a lock that installed 0.141.1 / 1.7.0. The quality and test jobs stayed green on
+the same commits because they install the dev lock and then `pip install --no-deps
+-e .`, which never compares the application's pins with what is installed. PR #191
+regenerates all three hashed locks with the documented commands (build lock
+unchanged; the dev lock header back to the documented form after carrying an
+undocumented `--constraint`; `opentelemetry-api` 1.45.2 enters as a hard dependency
+of fastapi 0.161.1) and clears the one `R1716` that the newly locked pylint 4.1.3
+reports on unchanged code, adding a zero-levels test that fails with the guard
+dropped — the 26 existing tests did not. Verified locally on Windows / 3.13.14:
+hashed install, `pip check`, ruff, mypy, pylint 10.00, 4,566 passed; the two local
+failures are the operator-config schema-drift check (this machine's `settings.yml`
+lacks the October keys) and a delivery-sender test that reads the machine's real
+observe/advise databases (filed as its own task). Open Dependabot PRs #185–#188
+will reopen the same gap unless the locks are regenerated with them; `pip check` in
+the quality job would catch a pin-only PR before merge. The post-merge image build
+is the proof and is not recorded here yet.
+
 **Kraken OHLCVT dumps moved and landed; the watcher was blind — 2026-10-26.**
 Kraken now publishes the quarterly OHLCVT incrementals at
 `https://assets.kraken.com/marketing/institutions/Kraken_OHLCVT_<YYYY>Q<n>.zip`
