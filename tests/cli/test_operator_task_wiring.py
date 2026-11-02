@@ -80,6 +80,7 @@ async def test_real_main_constructs_and_supervises_every_task(monkeypatch, faile
         safety=safety_config(),
         live=None,
         harvester=None,
+        advisor=None,
         operator=SimpleNamespace(
             operator_db=":memory:",
             live_db=None,

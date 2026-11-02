@@ -140,8 +140,18 @@ class MoEAdvisorAdapter(AdvisorPort):
         """Fan out to every expert in parallel; aggregate surviving opinions."""
         results = await asyncio.gather(
             *(self._call_expert(entry, summary) for entry in self._experts),
-            return_exceptions=False,  # _call_expert catches and tags failures itself
+            return_exceptions=True,
         )
+        # Cost denials and unexpected failures must still propagate, but only
+        # after every in-flight expert settles. Otherwise the daemon could
+        # reset the next sweep's tracker while a sibling is still charging it.
+        # Cancellation wins over ordinary failures and must never be aggregated.
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
         opinions: list[AdvisorRecommendation] = [
             r for r in results if isinstance(r, AdvisorRecommendation)
         ]
@@ -204,7 +214,8 @@ class MoEAdvisorAdapter(AdvisorPort):
         summary: PerformanceSummary,
     ) -> AdvisorRecommendation | None:
         """Invoke one expert. Returns the opinion on success, ``None`` on
-        recoverable failure (logged with structured fields). Never raises."""
+        recoverable failure. Cost denials, cancellation and unexpected failures
+        propagate after the fan-out barrier in ``get_recommendation``."""
         try:
             opinion = await entry.advisor.get_recommendation(summary)
         except AdvisorError as exc:

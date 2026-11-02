@@ -36,7 +36,7 @@ interval get a proportionally adjusted health threshold for free.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -46,6 +46,7 @@ import aiosqlite
 from wobblebot.config.loader import WobbleBotConfig
 from wobblebot.config.schedules import SchedulesConfig
 from wobblebot.ports.exceptions import StorageError
+from wobblebot.services.advisor_budget_health import advisor_budget_detail
 from wobblebot.sqlite_connection import managed_connection
 
 # Slack added on top of 2 * configured cadence — covers normal jitter
@@ -82,6 +83,7 @@ class DaemonStatus(StrEnum):
     """
 
     FRESH = "fresh"
+    DEGRADED = "degraded"
     STALE = "stale"
     UNKNOWN = "unknown"
 
@@ -220,7 +222,7 @@ async def _latest_iso_timestamp(db_path: Path, table: str, column: str) -> str |
     Read-only ``mode=ro`` URI prevents any accidental write — this is
     observability tooling, not a writer.
     """
-    uri = f"file:{db_path}?mode=ro"
+    uri = db_path.resolve().as_uri() + "?mode=ro"
     async with managed_connection(uri, uri=True) as conn:
         async with conn.execute(f"SELECT MAX({column}) FROM {table}") as cursor:
             row = await cursor.fetchone()
@@ -393,6 +395,7 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     operator_db: Path | None = None,
     thresholds: DaemonHealthThresholds | None = None,
     now: datetime | None = None,
+    require_advisor_budget_evidence: bool | None = None,
 ) -> list[DaemonHealth]:
     """Read freshness for every detectable daemon.
 
@@ -415,6 +418,9 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             callers should derive via
             :func:`derive_thresholds_from_config`.
         now: Optional wallclock override (test seam).
+        require_advisor_budget_evidence: Require readable cost evidence for cloud
+            advisor probes, disable the overlay for local/heuristic-only probes,
+            or detect persisted denials when unspecified by dashboard readers.
 
     Returns:
         One :class:`DaemonHealth` per daemon in display order:
@@ -424,7 +430,7 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
     current = now or datetime.now(UTC)
     t = thresholds or DaemonHealthThresholds()
     heartbeats = await _heartbeats_or_empty(operator_db)
-    return [
+    rows = [
         await _read_daemon(
             name="cli/observe",
             label="Price Observer",
@@ -479,6 +485,21 @@ async def fetch_daemon_freshness(  # pylint: disable=too-many-arguments
             now=current,
         ),
     ]
+    # Fresh heuristic suggestions prove liveness, not LLM availability.
+    # Reuse the ledger-backed signal across Docker and the dashboard.
+    # Never label a genuinely stale daemon as fresh.
+    advisor = rows[2]
+    if (
+        advisor.status == DaemonStatus.FRESH
+        and require_advisor_budget_evidence is not False
+        and (operator_db is not None or require_advisor_budget_evidence)
+    ):
+        available, detail = await advisor_budget_detail(operator_db, now=current)
+        if available and detail:
+            rows[2] = replace(advisor, status=DaemonStatus.DEGRADED, detail=detail)
+        elif not available and require_advisor_budget_evidence:
+            rows[2] = replace(advisor, status=DaemonStatus.UNKNOWN, detail=detail)
+    return rows
 
 
 __all__ = (

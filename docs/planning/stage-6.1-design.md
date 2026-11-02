@@ -73,6 +73,10 @@ ADR-014 + ADR-015 ratify the architecture; the items below are *implementation-l
 
 ### 3. Session total tracked in-memory by the CLI, not derived from the table
 
+**2026-11-02 amendment:** ADR-056 defines `cli/advise` sessions as scheduled
+sweeps across all symbols, not process uptime. The original rationale below is
+historical for that daemon; other callers retain their existing lifecycle.
+
 **Decision:** Each CLI tracks its own running session total in an in-memory `Decimal` accumulator passed to `check_budget`. The gate adds the estimated next-call cost to this total before deciding.
 
 **Why:** A "session" is a CLI-process scope. Reading the table to derive it would require either a `session_id` column (and a mechanism to mint one) or a heuristic (calls from the last N minutes). In-memory is simpler, restart-resetting is the expected semantic ("a fresh `cli/advise` invocation is a fresh session"), and the table still has all rows for offline audit.

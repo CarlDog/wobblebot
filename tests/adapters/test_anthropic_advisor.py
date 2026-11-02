@@ -337,9 +337,12 @@ class TestCostGate:
         with pytest.raises(LLMCostCapExceeded) as exc_info:
             await adapter.get_recommendation(_make_summary())
         assert exc_info.value.cap_kind == "daily"
-        # No new row added — the gate stopped us BEFORE the call.
+        # The refusal is visible in the ledger without billing a provider call.
         rows = await storage.get_llm_calls()
-        assert len(rows) == 5
+        assert len(rows) == 6
+        denied = next(row for row in rows if not row.success)
+        assert denied.error_kind == "cost_cap_daily"
+        assert denied.cost_usd == Decimal("0")
 
     async def test_session_cap_blocks_call(self, storage: SQLiteStorageAdapter) -> None:
         # Tracker shows session already near the cap.

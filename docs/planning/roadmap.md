@@ -5,6 +5,48 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+**Advisor session-cap correction (#184) — narrow 2.0.13 hotfix locally verified 2026-11-02.**
+Isolated branch `codex/hotfix-advisor-session-cap-184` starts at
+`c9c64041f6dce7f43065db2118388acd75f0aea9`, the deployed source identified in
+issue #184. This is a backport candidate, not a claim about today's running NAS
+image. Unrelated mainline 2.1 alpha changes, doctor, independent delivery and
+capability migrations are excluded.
+
+[ADR-056](../architecture/decisions.md#adr-056--advisor-work-session-budgets-and-visible-cost-denials)
+defines one advisor session as one scheduled sweep, sharing the existing tracker
+across every symbol and model seat. In-flight MoE calls settle before the sweep
+can finish. Cost denials write zero-cost audit rows; three consecutive denials
+for an advisor role degrade functional health despite fresh heuristic writes.
+Denial-write failures prevent a fresh fallback suggestion without restarting the
+daemon. The independent sliding 24-hour budget retains its configured amount.
+
+Validation on the final stable hotfix source, Python 3.13.16:
+
+- Full `PYTHONPATH=src:. WOBBLEBOT_REQUIRE_UPGRADE_GATE=1
+  WOBBLEBOT_STRICT_CONFIG_DRIFT=1 .venv/bin/python -m pytest --no-cov -q`:
+  **4,424 passed, six absent-private-file skips, 30 integration deselections in
+  187.84s**. The isolated environment's installed distribution is 2.0.13 and
+  source/import paths point to this worktree; mainline's environment is unchanged.
+- The separately selected offline grid/operator/simulator integration lane passes
+  **10 cases in 51.85s**. Black and isort check all **432 Python files**; mypy
+  passes **159 source files** and full pylint remains **10.00/10**.
+- Isolated negative controls fail as intended: removing the sweep reset fails
+  **two cases**, omitting the denial ledger write fails **three**, and disabling
+  the health overlay fails **two**. Restored controls pass **7/7**; the three
+  affected source files are restored byte-for-byte and SHA256 verified.
+- The existing operator task-wiring stub now includes `advisor=None`, matching
+  the real configuration contract; all five supervision cases remain intact.
+  Example YAML values compare equal to the base. Dependency manifest, Docker/
+  Compose files, database schema and deterministic trading engine are unchanged.
+
+No operator spending amount, enforcement switch, model seat, trading/exposure
+limit or financial authority changed. No billed provider call, trade, transfer,
+image publication, release, NAS configuration edit or container restart occurred.
+The [bounded rollout guide](../implementation/advisor-budget-sessions.md) requires
+actual container identity, private configuration and published-image verification
+before updating only the authorized advisor/monitor services. NAS access and
+post-rollout acceptance remain pending; this receipt does not waive them.
+
 **Post-v2 audit remediation merged and deployed — 2026-09-30 UTC.**
 [PR #165](https://github.com/CarlDog/wobblebot/pull/165) merged at 21:09:33 UTC
 as `d6a1d298383525214d2126dde621913e4f08b66f`. Merged-main

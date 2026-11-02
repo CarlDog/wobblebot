@@ -43,6 +43,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import takewhile
 from pathlib import Path
 
 import aiosqlite
@@ -81,6 +82,7 @@ class LLMCallStreak:  # pylint: disable=too-many-instance-attributes
     unavailable_reason: str | None = None
     failed_calls_in_window: int = 0
     recent_error_kind: str | None = None
+    consecutive_cost_denials: int = 0
 
     @property
     def has_data(self) -> bool:
@@ -164,6 +166,13 @@ def streak_from_rows(
         threshold=threshold,
         failed_calls_in_window=sum(1 for _, success, _ in rows if not success),
         recent_error_kind=next((kind for _, success, kind in rows if not success), None),
+        consecutive_cost_denials=sum(
+            1
+            for _ in takewhile(
+                lambda row: not row[1] and row[2] in {"cost_cap_daily", "cost_cap_session"},
+                rows,
+            )
+        ),
     )
 
 
@@ -202,7 +211,7 @@ async def fetch_llm_call_streaks(
         ]
     cutoff = ((now or datetime.now(UTC)) - timedelta(hours=window_hours)).isoformat()
     try:
-        uri = f"file:{operator_db}?mode=ro"
+        uri = operator_db.resolve().as_uri() + "?mode=ro"
         async with managed_connection(uri, uri=True) as conn:
             out = []
             for role in roles:

@@ -1,6 +1,7 @@
 """Cost-tracking value object for cloud-LLM calls (Phase 6 / ADR-014).
 
-One ``LLMCallRecord`` per cloud-LLM API call — success or failure.
+One ``LLMCallRecord`` per cloud-LLM attempt — success, failure or cost-gate denial.
+Denied attempts carry zero cost and tokens because no API request was made.
 Failed calls still record because some providers bill for them (e.g.
 content-moderation refusals). Ollama (local, free) calls bypass this
 machinery entirely; authenticated Ollama Cloud is metered and participates
@@ -40,9 +41,9 @@ class LLMCallRecord(BaseModel):
 
     Attributes:
         id: Caller-minted UUID (default ``uuid4()``).
-        timestamp: When the API request was issued.
+        timestamp: When the request was issued or the cost gate denied it.
         role: Which role drove the call (operator chat, MoE expert, etc.).
-        provider: Cloud provider that received the request.
+        provider: Intended cloud provider (no request is sent for a cost denial).
         model: Provider's model identifier (e.g. ``claude-sonnet-4-6``).
         tokens_in: UNCACHED prompt token count from the provider's
             usage block — cache-served tokens are carried separately in
@@ -76,7 +77,8 @@ class LLMCallRecord(BaseModel):
         success: Whether the call returned a usable response. Failed
             calls still get recorded because some providers bill.
         error_kind: Short label classifying the failure
-            (``rate_limited``, ``timeout``, ``server_error``, etc.).
+            (``rate_limited``, ``timeout``, ``server_error``,
+            ``cost_cap_session``, ``cost_cap_daily``, etc.).
             ``None`` on success.
         trace_id: Correlation id grouping the calls of one advisory
             evaluation (P4.4a — set ambiently via

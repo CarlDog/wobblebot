@@ -583,7 +583,7 @@ async def _run_cycle(  # pylint: disable=too-many-arguments
     try:
         with llm_trace(trace_id):
             recommendation = await advisor.get_recommendation(summary)
-    except AdvisorError as exc:
+    except (AdvisorError, StorageError) as exc:
         _LOGGER.error(
             "advisor call failed: %s: %s",
             type(exc).__name__,
@@ -678,6 +678,7 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
     gremlin_advisor: AdvisorPort | None = None,
     gremlin_model: str = "",
     gremlin_min_interval: timedelta = timedelta(minutes=240),
+    session_tracker: SessionCostTracker | None = None,
 ) -> int:
     started_at = time.monotonic()
     gremlin_last_emit: dict[str, datetime] = {}
@@ -705,6 +706,9 @@ async def _run_loop(  # pylint: disable=too-many-arguments,too-many-locals
 
     async def _one_cycle() -> None:
         nonlocal sweeps_run, cycles_run, cycles_succeeded
+        # ADR-056: one shared session per full sweep; the daily cap survives.
+        if session_tracker is not None:
+            session_tracker.reset()
         sweeps_run += 1
         for symbol in symbols:
             if stop_event.is_set():
@@ -884,6 +888,7 @@ async def _main_async(  # pylint: disable=too-many-locals,too-many-return-statem
             gremlin_advisor=gremlin_advisor,
             gremlin_model=config.advisor.gremlin.model,
             gremlin_min_interval=timedelta(minutes=config.advisor.gremlin.min_interval_minutes),
+            session_tracker=cloud_wiring.session_tracker if cloud_wiring is not None else None,
         )
     finally:
 

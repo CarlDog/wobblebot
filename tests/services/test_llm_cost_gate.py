@@ -306,3 +306,30 @@ class TestSessionCostTracker:
         t = SessionCostTracker()
         t.add(Decimal("0"))
         assert t.total == Decimal("0")
+
+    def test_reset_starts_a_new_session(self) -> None:
+        tracker = SessionCostTracker(initial=Decimal("0.25"))
+        tracker.add(Decimal("0.10"))
+        tracker.reset()
+        assert tracker.total == Decimal("0")
+        tracker.add(Decimal("0.05"))
+        assert tracker.total == Decimal("0.05")
+
+
+@pytest.mark.asyncio
+async def test_reset_does_not_clear_daily_history(storage: SQLiteStorageAdapter) -> None:
+    """The daemon may recover next sweep without bypassing its 24-hour cap."""
+    await storage.save_llm_call(_record(cost_usd="0.95"))
+    tracker = SessionCostTracker(initial=Decimal("0.50"))
+    tracker.reset()
+    decision = await check_budget(
+        storage,
+        role="quant",
+        estimated_cost_usd=Decimal("0.10"),
+        session_spent_usd=tracker.total,
+        config=_config(daily="1.00", session="0.50"),
+    )
+    assert isinstance(decision, GateDeny)
+    assert decision.cap_kind == "daily"
+    assert decision.daily_spent_usd == Decimal("0.95")
+    assert decision.session_spent_usd == Decimal("0")
