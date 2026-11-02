@@ -75,7 +75,7 @@ class EntryViability:
     @property
     def fully_blocked(self) -> bool:
         """No level can place — the symbol cannot enter the market at all."""
-        return self.total_levels > 0 and len(self.blocked_prices) == self.total_levels
+        return 0 < self.total_levels == len(self.blocked_prices)
 
 
 @dataclass(frozen=True)

@@ -202,6 +202,25 @@ class TestEntryViability:
         assert result.fully_blocked
         assert result.required_order_size_usd == Decimal("25")
 
+    def test_zero_levels_is_not_fully_blocked(self) -> None:
+        """No levels means nothing to place and nothing refused — not a block.
+
+        Pins the ``0 <`` half of ``fully_blocked``: with that guard dropped,
+        ``0 == len(())`` would report a grid that cannot exist as blocked.
+        """
+        result = check_entry_viability(
+            _SOL,
+            order_size_usd=Decimal("5.0"),
+            reference_price=Decimal("94.53"),
+            spacing_percentage=Decimal("3.0"),
+            levels_above=0,
+            levels_below=0,
+            limits=_SOL_LIMITS,
+        )
+        assert result.total_levels == 0
+        assert not result.blocked
+        assert not result.fully_blocked
+
 
 class TestExitViability:
     def test_zero_position_is_not_a_finding(self) -> None:
