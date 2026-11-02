@@ -30,6 +30,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Advisor session spending resets once per scheduled sweep, shared across symbols
+  and all model seats; the sliding daily cap and configured amounts are unchanged
+  (#184). Denied cloud requests are recorded as zero-cost failures so repeated
+  budget fallbacks can degrade advisor health despite fresh heuristic suggestions.
+
 - **Release resources after interrupted startup.** SQLite closes an opened connection
   if schema setup, migration, or cancellation interrupts startup. The operator daemon
   closes acquired databases, its assistant, and created tasks when partial startup fails.

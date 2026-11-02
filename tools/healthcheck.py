@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from wobblebot.config.runtime import load_resolved_config
+from wobblebot.services.advisor_budget_health import advisor_uses_cloud
 from wobblebot.services.daemon_health import (
     DaemonStatus,
     derive_thresholds_from_config,
@@ -81,12 +82,22 @@ async def _check_daemon(daemon: str, config_path: str | None, profile: str | Non
         return 1
     web = config.web
     observe_db = web.observe_db or _DEFAULT_OBSERVE_DB
-    advise_db = web.advise_db or _DEFAULT_ADVISE_DB
+    advise_db = (
+        config.advise.db
+        if daemon == "cli/advise" and config.advise is not None
+        else web.advise_db or _DEFAULT_ADVISE_DB
+    )
+    operator_db = (
+        config.operator.operator_db
+        if daemon == "cli/advise" and config.operator is not None
+        else web.operator_db
+    )
     daemons = await fetch_daemon_freshness(
         observe_db=Path(observe_db),
         advise_db=Path(advise_db),
-        operator_db=Path(web.operator_db),
+        operator_db=Path(operator_db),
         thresholds=derive_thresholds_from_config(config),
+        require_advisor_budget_evidence=daemon == "cli/advise" and advisor_uses_cloud(config),
     )
     match = next((d for d in daemons if d.name == daemon), None)
     if match is None:

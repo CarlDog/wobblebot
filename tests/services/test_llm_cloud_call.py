@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from decimal import Decimal
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ import pytest_asyncio
 
 from wobblebot.adapters.sqlite_storage import SQLiteStorageAdapter
 from wobblebot.domain.exceptions import LLMCostCapExceeded, LLMRetryExhausted
+from wobblebot.ports.exceptions import StorageError
 from wobblebot.services.llm_cloud_call import (
     CloudCallContext,
     TokenUsage,
@@ -266,6 +268,11 @@ class TestCostGate:
             )
         assert exc_info.value.cap_kind == "daily"
         assert call_count[0] == 0  # never even tried
+        rows = await storage.get_llm_calls()
+        assert len(rows) == 6
+        denied = next(row for row in rows if not row.success)
+        assert denied.error_kind == "cost_cap_daily"
+        assert denied.cost_usd == Decimal("0")
 
     async def test_session_cap_raises_before_call(self, storage: SQLiteStorageAdapter) -> None:
         tracker = SessionCostTracker(initial=Decimal("0.495"))
@@ -281,6 +288,89 @@ class TestCostGate:
                 extract_tokens=_simple_extract,
             )
         assert exc_info.value.cap_kind == "session"
+
+    async def test_denial_records_identity_trace_and_zero_usage(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        tracker = SessionCostTracker(initial=Decimal("0.495"))
+        call_fn = AsyncMock()
+        extract_tokens = AsyncMock()
+        with llm_trace("denied-sweep"), pytest.raises(LLMCostCapExceeded):
+            await execute_cloud_call(
+                ctx=_ctx(storage, tracker=tracker, role="risk"),
+                estimated_cost_usd=Decimal("0.01"),
+                call_fn=call_fn,
+                extract_tokens=extract_tokens,
+            )
+        call_fn.assert_not_awaited()
+        extract_tokens.assert_not_called()
+        assert tracker.total == Decimal("0.495")
+        rows = await storage.get_llm_calls()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.success is False
+        assert row.error_kind == "cost_cap_session"
+        assert row.role == "risk"
+        assert row.provider == "anthropic"
+        assert row.model == "claude-sonnet-4-6"
+        assert row.trace_id == "denied-sweep"
+        assert row.cost_usd == Decimal("0")
+        assert row.tokens_in == row.tokens_out == 0
+        assert row.tokens_cache_read == row.tokens_cache_write == 0
+        assert row.tokens_reasoning is None
+        assert row.request_id is None
+
+    async def test_denial_write_failure_propagates_storage_error(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        """An unrecorded denial must not be swallowed by the cascade fallback."""
+        tracker = SessionCostTracker(initial=Decimal("0.50"))
+        call_fn = AsyncMock()
+        write_error = StorageError("disk full")
+        with (
+            patch.object(storage, "save_llm_call", side_effect=write_error) as save,
+            pytest.raises(StorageError) as exc_info,
+        ):
+            await execute_cloud_call(
+                ctx=_ctx(storage, tracker=tracker),
+                estimated_cost_usd=Decimal("0.01"),
+                call_fn=call_fn,
+                extract_tokens=_simple_extract,
+            )
+        call_fn.assert_not_awaited()
+        assert exc_info.value is write_error
+        assert tracker.total == Decimal("0.50")
+        save.assert_awaited_once()
+        attempted = save.call_args.args[0]
+        assert attempted.error_kind == "cost_cap_session"
+        assert attempted.cost_usd == Decimal("0")
+        assert attempted.success is False
+
+    async def test_reset_allows_next_session_and_keeps_denial_history(
+        self, storage: SQLiteStorageAdapter
+    ) -> None:
+        tracker = SessionCostTracker(initial=Decimal("0.50"))
+        call_fn = AsyncMock(return_value={"usage": {"input_tokens": 1, "output_tokens": 1}})
+        ctx = _ctx(storage, tracker=tracker)
+        with pytest.raises(LLMCostCapExceeded):
+            await execute_cloud_call(
+                ctx=ctx,
+                estimated_cost_usd=Decimal("0.01"),
+                call_fn=call_fn,
+                extract_tokens=_simple_extract,
+            )
+        tracker.reset()
+        await execute_cloud_call(
+            ctx=ctx,
+            estimated_cost_usd=Decimal("0.01"),
+            call_fn=call_fn,
+            extract_tokens=_simple_extract,
+        )
+        call_fn.assert_awaited_once()
+        rows = await storage.get_llm_calls()
+        assert len(rows) == 2
+        assert sum(row.success for row in rows) == 1
+        assert tracker.total == Decimal("0.000018")
 
 
 # --------------------------------------------------------------------- #

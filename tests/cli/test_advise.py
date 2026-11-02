@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -29,6 +30,7 @@ from wobblebot.config.advisor import (
     InferenceParams,
 )
 from wobblebot.domain.exceptions import LLMCostCapExceeded
+from wobblebot.domain.llm_cost import LLMCallRecord
 from wobblebot.domain.value_objects import Price, Symbol, Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -36,7 +38,13 @@ from wobblebot.ports.advisor import (
     CurrentGridParams,
     PerformanceSummary,
 )
-from wobblebot.ports.exceptions import AdvisorError
+from wobblebot.ports.exceptions import AdvisorError, StorageError
+from wobblebot.services.llm_cost_gate import (
+    GateDeny,
+    LLMCostConfig,
+    SessionCostTracker,
+    check_budget,
+)
 from wobblebot.services.summary_builder import SummaryBuilder
 
 pytestmark = pytest.mark.unit
@@ -73,7 +81,7 @@ class _CannedAdvisor(AdvisorPort):
         self,
         *,
         recommendation: AdvisorRecommendation | None = None,
-        error: AdvisorError | None = None,
+        error: AdvisorError | StorageError | None = None,
     ) -> None:
         self._recommendation = recommendation
         self._error = error
@@ -249,11 +257,16 @@ class TestRunCycleHappyPath:
 
 @pytest.mark.asyncio
 class TestRunCycleFaultIsolation:
-    async def test_advisor_error_returns_false(self, storage: SQLiteStorageAdapter) -> None:
+    @pytest.mark.parametrize(
+        "error", [AdvisorError("LLM offline"), StorageError("denial ledger unwritable")]
+    )
+    async def test_advisor_error_returns_false(
+        self, storage: SQLiteStorageAdapter, error: AdvisorError | StorageError
+    ) -> None:
         """A bad advisor call doesn't kill the cycle — _run_cycle just
         returns False so the outer loop tries again next tick."""
         await _seed_prices(storage)
-        advisor = _CannedAdvisor(error=AdvisorError("LLM offline"))
+        advisor = _CannedAdvisor(error=error)
         builder = SummaryBuilder(storage)
 
         ok = await _run_cycle(
@@ -775,6 +788,124 @@ class TestMultiSymbolSweep:
     Each LLM call sees one coin's PerformanceSummary — no cross-
     contamination of opinions. Per-symbol cycle errors are swallowed at
     the daemon layer (matching cli/live's Stage 2.4 discipline)."""
+
+    async def test_budget_resets_per_sweep_but_daily_spend_survives(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Many daemon sweeps recover session headroom without bypassing daily caps."""
+        tracker = SessionCostTracker(initial=Decimal("10"))
+        limits = LLMCostConfig(
+            max_spend_per_session_usd=Decimal("0.50"),
+            max_spend_per_day_usd=Decimal("1.00"),
+        )
+        observed: list[Decimal] = []
+        denied: list[str] = []
+
+        class BudgetedAdvisor(_CannedAdvisor):
+            async def get_recommendation(
+                self, summary: PerformanceSummary
+            ) -> AdvisorRecommendation:
+                observed.append(tracker.total)
+                decision = await check_budget(
+                    storage, "single", Decimal("0.20"), tracker.total, limits
+                )
+                if isinstance(decision, GateDeny):
+                    denied.append(decision.cap_kind)
+                    raise LLMCostCapExceeded(
+                        cap_kind=decision.cap_kind,
+                        cap_value_usd=decision.cap_value_usd,
+                        daily_spent_usd=decision.daily_spent_usd,
+                        session_spent_usd=decision.session_spent_usd,
+                        message=decision.reason,
+                    )
+                await storage.save_llm_call(
+                    LLMCallRecord(
+                        timestamp=Timestamp(dt=datetime.now(UTC)),
+                        role="single",
+                        provider="anthropic",
+                        model="fixture",
+                        tokens_in=1,
+                        tokens_out=1,
+                        cost_usd=Decimal("0.20"),
+                        success=True,
+                    )
+                )
+                tracker.add(Decimal("0.20"))
+                return await super().get_recommendation(summary)
+
+        async def three_sweeps(cycle, **_kwargs) -> None:
+            for _ in range(3):
+                await cycle()
+
+        monkeypatch.setattr("wobblebot.cli.advise.run_poll_loop", three_sweeps)
+        symbols = [BTC_USD, Symbol(base="ETH", quote="USD"), Symbol(base="DOGE", quote="USD")]
+        advisor = BudgetedAdvisor(recommendation=_make_recommendation())
+        assert (
+            await _run_loop(
+                advisor=advisor,
+                summary_builder=SummaryBuilder(storage),
+                advise_storage=storage,
+                symbols=symbols,
+                interval=timedelta(hours=4),
+                metrics_lookback=timedelta(hours=1),
+                news_lookback=None,
+                news_limit=20,
+                news_match_coin=False,
+                current_grids={symbol.base: _default_grid() for symbol in symbols},
+                model_name="fixture",
+                stop_event=asyncio.Event(),
+                session_tracker=tracker,
+            )
+            == 0
+        )
+        assert observed == [
+            Decimal(value) for value in ("0", ".2", ".4", "0", ".2", ".4", "0", ".2", ".2")
+        ]
+        assert denied == ["session", "session", "daily", "daily"]
+        assert advisor.call_count == 5
+        assert sum(row.cost_usd for row in await storage.get_llm_calls()) == Decimal("1.00")
+        assert len(await storage.get_advisor_suggestions()) == 5
+
+    async def test_gremlin_and_symbols_share_one_sweep_budget(
+        self, storage: SQLiteStorageAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A reset per symbol or per gremlin would silently multiply the session cap."""
+        tracker = SessionCostTracker()
+        seen: list[Decimal] = []
+
+        class SpendingAdvisor(_CannedAdvisor):
+            async def get_recommendation(
+                self, summary: PerformanceSummary
+            ) -> AdvisorRecommendation:
+                seen.append(tracker.total)
+                tracker.add(Decimal("0.10"))
+                return await super().get_recommendation(summary)
+
+        async def two_sweeps(cycle, **_kwargs) -> None:
+            await cycle()
+            await cycle()
+
+        monkeypatch.setattr("wobblebot.cli.advise.run_poll_loop", two_sweeps)
+        symbols = [BTC_USD, Symbol(base="ETH", quote="USD")]
+        await _run_loop(
+            advisor=SpendingAdvisor(recommendation=_make_recommendation()),
+            gremlin_advisor=SpendingAdvisor(recommendation=_make_recommendation()),
+            gremlin_model="fixture-gremlin",
+            gremlin_min_interval=timedelta(0),
+            summary_builder=SummaryBuilder(storage),
+            advise_storage=storage,
+            symbols=symbols,
+            interval=timedelta(hours=4),
+            metrics_lookback=timedelta(hours=1),
+            news_lookback=None,
+            news_limit=20,
+            news_match_coin=False,
+            current_grids={symbol.base: _default_grid() for symbol in symbols},
+            model_name="fixture",
+            stop_event=asyncio.Event(),
+            session_tracker=tracker,
+        )
+        assert seen == [Decimal(value) for value in ("0", ".1", ".2", ".3")] * 2
 
     async def test_sweep_visits_every_symbol(self, storage: SQLiteStorageAdapter) -> None:
         """One sweep should produce one AdvisorSuggestion per configured

@@ -3,8 +3,10 @@
 Every cloud-LLM adapter runs the same sequence per call:
 
   1. Estimate worst-case cost from prompt + max_tokens.
-  2. Run the cost-gate ``check_budget`` (ADR-014); raise
-     ``LLMCostCapExceeded`` on deny.
+  2. Run the cost-gate ``check_budget`` (ADR-014); persist a zero-cost
+     denial record and raise ``LLMCostCapExceeded`` on deny. If the
+     denial cannot be recorded, propagate ``StorageError`` instead of
+     allowing an unobservable heuristic fallback.
   3. Wrap the HTTP call in ``retry_with_backoff`` (ADR-015).
   4. On success: build an ``LLMCallRecord`` from the response's usage
      block, persist, update the session tracker; return the parsed
@@ -164,9 +166,10 @@ async def _persist_best_effort(
 ) -> None:
     """Persist a record, swallowing StorageError + log it.
 
-    Used for the failure path — losing the forensic row must not mask
-    the original API exception to the caller. Success path uses the
-    direct ``save_llm_call`` call because a storage failure there is
+    Used for provider failures — losing the forensic row must not mask
+    the original API exception to the caller. Cost-gate denials require a
+    successful write so fallback cannot hide an unrecorded budget outage.
+    Success path uses the direct ``save_llm_call`` call because a storage failure there is
     a real bug we want to see.
     """
     try:
@@ -218,7 +221,9 @@ async def execute_cloud_call(  # pylint: disable=too-many-arguments,too-many-pos
         candidates) into its port's domain type.
 
     Raises:
-        LLMCostCapExceeded: Cost gate denied the call.
+        LLMCostCapExceeded: Cost gate denied the call and its denial was recorded.
+        StorageError: Ledger read/write failed, including denial persistence.
+            No provider request is sent after a cost-gate denial.
         httpx.HTTPStatusError: Permanent HTTP failure (non-429 4xx).
         LLMRetryExhausted: Transient retries exhausted.
         Anything else ``call_fn`` raises that the classifier marks
@@ -232,13 +237,23 @@ async def execute_cloud_call(  # pylint: disable=too-many-arguments,too-many-pos
         config=ctx.cost_config,
     )
     if isinstance(decision, GateDeny):
-        raise LLMCostCapExceeded(
+        denial = LLMCostCapExceeded(
             cap_kind=decision.cap_kind,
             cap_value_usd=decision.cap_value_usd,
             daily_spent_usd=decision.daily_spent_usd,
             session_spent_usd=decision.session_spent_usd,
             message=decision.reason,
         )
+        # Gate refusals never reach the provider, but must remain visible to
+        # the same streak monitor as transport failures. Cascade/MoE may catch
+        # the exception and produce heuristic advice while staying alive.
+        record = _make_failure_record(ctx, denial).model_copy(
+            update={"error_kind": f"cost_cap_{decision.cap_kind}"}
+        )
+        # A readable but unwritable ledger must not turn repeated denials
+        # into fresh heuristic suggestions with no visible failure signal.
+        await ctx.storage.save_llm_call(record)
+        raise denial
 
     try:
         envelope = await retry_with_backoff(call_fn, ctx.retry_config)
