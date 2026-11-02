@@ -24,8 +24,13 @@ failures are the operator-config schema-drift check (this machine's `settings.ym
 lacks the October keys) and a delivery-sender test that reads the machine's real
 observe/advise databases (filed as its own task). Open Dependabot PRs #185–#188
 will reopen the same gap unless the locks are regenerated with them; `pip check` in
-the quality job would catch a pin-only PR before merge. The post-merge image build
-is the proof and is not recorded here yet.
+the quality job would catch a pin-only PR before merge. A Copilot review noted the
+verification covered only Windows / 3.13, so the image was also built locally from
+the PR head with `docker build -f docker/Dockerfile .` on the pinned
+`python:3.14-slim` base: the hash-checked download fetched all 42 runtime packages
+(cp314 Linux wheels for uvloop and httptools included) and the runtime stage's
+`pip check` printed "No broken requirements found." The post-merge image build
+remains the CI proof and is not recorded here yet.
 
 **Kraken OHLCVT dumps moved and landed; the watcher was blind — 2026-10-26.**
 Kraken now publishes the quarterly OHLCVT incrementals at
