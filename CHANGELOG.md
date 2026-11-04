@@ -30,6 +30,11 @@ fresh `[Unreleased]` heading created at that time.
 
 ### Fixed
 
+- Advisor session spending resets once per scheduled sweep, shared across symbols
+  and all model seats; the sliding daily cap and configured amounts are unchanged
+  (#184). Denied cloud requests are recorded as zero-cost failures so repeated
+  budget fallbacks can degrade advisor health despite fresh heuristic suggestions.
+
 - HTTP health database reads are bound to startup-selected file capabilities;
   request or later configuration substitution cannot select other files.
   Detected file replacement produces unknown health until the web app restarts.

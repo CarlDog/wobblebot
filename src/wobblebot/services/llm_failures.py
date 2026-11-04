@@ -33,6 +33,10 @@ FAILOVER_ERROR_KINDS = frozenset(
 )
 
 _HINTS = {
+    "cost_cap_daily": ("Local sliding-24h LLM budget reached; wait for recorded spend to age out."),
+    "cost_cap_session": (
+        "Local advisor sweep budget reached; inspect sweep cost and session boundaries."
+    ),
     "insufficient_credit": (
         "Provider API credit is insufficient; check the provider billing balance."
     ),

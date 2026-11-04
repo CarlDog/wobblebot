@@ -5,6 +5,41 @@ and operator decisions warrant. We build like a house: lay the foundation, frame
 wire up systems, finish the surfaces, then polish and decorate. This roadmap is the authoritative
 status ledger and sequencing guide; phase/stage shapes may be merged or adjusted as we learn.
 
+## 2026-11-02 — Advisor session-budget reliability repair (#184)
+
+The operator requested a bounded repair before the projected November 7 recurrence.
+ADR-056 resolves ADR-014's invocation/tick mismatch: the advisor resets its shared
+in-memory session tracker once per scheduled sweep across all symbols, seats,
+fallbacks and gremlin calls. MoE waits for every outstanding expert before a cap
+denial propagates, so no sibling can charge a tracker after the next sweep resets
+it. The ledger-backed sliding daily gate, configured cap amounts, enforcement,
+model choices, trading/exposure controls and transfer boundaries are unchanged.
+
+Cost denials persist as zero-cost failures. Three consecutive denials in an
+advisor role degrade functional health despite fresh heuristic suggestions;
+Docker, dashboard and both monitor generations share that signal. Operator chat
+does not clear it. A denial-ledger write failure prevents fallback suggestions;
+the cycle logs an error and retains the daemon/tracker rather than resetting its
+budget through restart. In that storage-fault case ordinary freshness expires;
+instant detection of an otherwise-readable unwritable ledger is not claimed.
+
+Independent review and isolated mutations exercised missing production tracker
+wiring, per-symbol resets, old early-return MoE behavior, denial persistence and
+health classification. Focused source/tests passed; ten offline integration
+cases passed. Ruff format/lint, mypy (176 source files), pylint 10.00/10 and
+redacted Gitleaks history scanning passed. A full final-source rerun and hosted
+PR checks are recorded with the branch/PR validation results; earlier runs made
+during edits are not final-source acceptance.
+
+Deployment remains pending. The issue's recorded NAS revision is 2.0.13 at
+`c9c64041f6dce7f43065db2118388acd75f0aea9`; current main contains unrelated 2.1 alpha
+work. A narrow backport is prepared separately, without alpha doctor/delivery
+subsystems, dependencies, or schema migrations. No NAS/Portainer connection is
+available in this session, so running revision, private configuration and
+post-rollout behavior have not been verified. No image tag, service deployment,
+spending limit or gate waiver was applied. The bounded rollout and rollback
+procedure is [documented](../implementation/advisor-budget-sessions.md).
+
 **Kraken OHLCVT dumps moved and landed; the watcher was blind — 2026-10-26.**
 Kraken now publishes the quarterly OHLCVT incrementals at
 `https://assets.kraken.com/marketing/institutions/Kraken_OHLCVT_<YYYY>Q<n>.zip`

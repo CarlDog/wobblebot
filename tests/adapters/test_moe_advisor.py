@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from wobblebot.adapters.moe_advisor import MoEAdvisorAdapter, MoEExpertEntry
+from wobblebot.domain.exceptions import LLMCostCapExceeded
 from wobblebot.domain.value_objects import Timestamp
 from wobblebot.ports.advisor import (
     AdvisorPort,
@@ -421,3 +424,96 @@ class TestArbitratorDispatch:
         with pytest.raises(AdvisorError, match="All 2 MoE experts failed"):
             await adapter.get_recommendation(_summary())
         assert arb.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_kind", ["cost_cap", "cancelled", "unexpected", "base_exception"])
+async def test_failed_fanout_waits_for_sibling_before_leaving_session(failure_kind: str) -> None:
+    """No failure may let the next sweep reset a still-running expert's budget."""
+    denied_settled = asyncio.Event()
+    sibling_started = asyncio.Event()
+    release_sibling = asyncio.Event()
+    sibling_finished = asyncio.Event()
+    failures: dict[str, BaseException] = {
+        "cost_cap": LLMCostCapExceeded(
+            cap_kind="session",
+            cap_value_usd=Decimal("0.50"),
+            daily_spent_usd=Decimal("0"),
+            session_spent_usd=Decimal("0.49"),
+            message="session budget exhausted",
+        ),
+        "cancelled": asyncio.CancelledError("expert cancelled"),
+        "unexpected": RuntimeError("expert failed unexpectedly"),
+        "base_exception": BaseException("expert stopped"),
+    }
+    failure = failures[failure_kind]
+
+    class FailingExpert(_StubExpert):
+        async def get_recommendation(self, summary: PerformanceSummary) -> AdvisorRecommendation:
+            task = asyncio.current_task()
+            assert task is not None
+            # gather registers its done callback first. By the time this event
+            # wakes the test, an early-return gather has already resumed the
+            # outer recommendation task. No sleep or timing threshold is needed.
+            task.add_done_callback(lambda _: denied_settled.set())
+            raise failure
+
+    class SlowExpert(_StubExpert):
+        async def get_recommendation(self, summary: PerformanceSummary) -> AdvisorRecommendation:
+            sibling_started.set()
+            await release_sibling.wait()
+            sibling_finished.set()
+            return _rec(role="risk")
+
+    adapter = MoEAdvisorAdapter(
+        experts=[
+            _entry("quant", "quant", FailingExpert()),
+            _entry("risk", "risk", SlowExpert()),
+        ],
+        aggregator="weighted_confidence",
+    )
+    task = asyncio.create_task(adapter.get_recommendation(_summary()))
+    caught: BaseException | None = None
+    blocked_until_release = False
+    try:
+        async with asyncio.timeout(3):
+            await denied_settled.wait()
+            await sibling_started.wait()
+            blocked_until_release = not task.done()
+    finally:
+        release_sibling.set()
+        try:
+            await task
+        except BaseException as exc:
+            caught = exc
+    assert blocked_until_release, "MoE returned while a sibling could still accrue session cost"
+    assert sibling_finished.is_set()
+    assert isinstance(caught, type(failure))
+    if failure_kind != "cancelled":
+        assert caught is failure
+
+
+@pytest.mark.asyncio
+async def test_external_cancellation_cancels_and_waits_for_experts() -> None:
+    """A cancelled caller must not leave detached expert tasks running."""
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    class WaitingExpert(_StubExpert):
+        async def get_recommendation(self, summary: PerformanceSummary) -> AdvisorRecommendation:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned_up.set()
+            raise AssertionError("cancelled expert resumed")
+
+    adapter = MoEAdvisorAdapter(
+        experts=[_entry("quant", "quant", WaitingExpert())], aggregator="weighted_confidence"
+    )
+    task = asyncio.create_task(adapter.get_recommendation(_summary()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned_up.is_set()
