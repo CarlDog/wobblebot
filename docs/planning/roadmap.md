@@ -29,8 +29,13 @@ verification covered only Windows / 3.13, so the image was also built locally fr
 the PR head with `docker build -f docker/Dockerfile .` on the pinned
 `python:3.14-slim` base: the hash-checked download fetched all 42 runtime packages
 (cp314 Linux wheels for uvloop and httptools included) and the runtime stage's
-`pip check` printed "No broken requirements found." The post-merge image build
-remains the CI proof and is not recorded here yet.
+`pip check` printed "No broken requirements found." Merged 2026-11-06 as `e48565b`
+after one more catch-up (main had gained #185's pytest/pytest-asyncio/ruff/mypy pins
+after the PR's checks ran; only the dev lock changed again). The `main` build on
+`e48565b` (run 42196039312) passed every job including `build-and-push` — the first
+green image build since `9e6c560` on 2026-10-26, after four consecutive failures.
+Not deployed: an `IMAGE_TAG` bump is a separate operator step, and this image carries
+the one-line `capital_reporter.py` refactor, so the pre-deploy review applies to it.
 
 **Kraken OHLCVT dumps moved and landed; the watcher was blind — 2026-10-26.**
 Kraken now publishes the quarterly OHLCVT incrementals at
